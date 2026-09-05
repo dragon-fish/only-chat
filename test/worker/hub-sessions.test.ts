@@ -42,7 +42,8 @@ describe('project ops', () => {
     const renamed = await updateProject(db, mine.id, DEFAULT_USER_ID, { name: 'renamed', provider_id: null })
     expect(renamed).toMatchObject({ name: 'renamed', system_prompt: 'P' })
 
-    await deleteProject(db, theirs.id, DEFAULT_USER_ID)
+    // A cross-user delete must be distinguishable from a real one, not a silent no-op.
+    await expect(deleteProject(db, theirs.id, DEFAULT_USER_ID)).rejects.toThrow()
     expect(await getProject(db, theirs.id, other!.id)).toBeDefined()
   })
 
@@ -57,7 +58,7 @@ describe('project ops', () => {
     expect(s).toMatchObject({ project_id: p.id, system_prompt: 'draft prompt', params: { temperature: 0 } })
     expect((await listProjectSessions(db, p.id, DEFAULT_USER_ID)).map((r) => r.id)).toEqual([s.id])
 
-    await deleteProject(db, p.id, DEFAULT_USER_ID)
+    expect(await deleteProject(db, p.id, DEFAULT_USER_ID)).toMatchObject({ id: p.id })
     expect((await getSession(db, s.id))!.project_id).toBeNull()
   })
 })

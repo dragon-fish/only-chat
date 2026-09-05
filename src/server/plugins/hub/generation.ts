@@ -9,7 +9,8 @@ import { buildModelMessages, buildProviderOptions, type ImageBytes } from '../ll
 import { toUsage } from '../llm/usage'
 import type { Hub, InflightJob } from './index'
 import {
-  resolveEffectiveConfig, type EffectiveConfig, type ModelSource, type SessionConfigSource,
+  resolveEffectiveConfig,
+  type EffectiveConfig, type EffectiveModel, type ModelSource, type SessionConfigSource,
 } from './effective-config'
 import { getProject } from './projects'
 import {
@@ -30,8 +31,11 @@ interface Target {
   session: SessionRow
   provider: ProviderRow
   model: ModelRow
-  /** Snapshot taken once, at generation start; never re-read while the stream runs (spec §3.2). */
-  config: EffectiveConfig
+  /**
+   * Snapshot taken once, at generation start; never re-read while the stream runs (spec §3.2).
+   * `resolveTarget` has already proved the model resolved, so consumers never re-check it.
+   */
+  config: EffectiveConfig & { model: EffectiveModel }
 }
 
 /** The session-init draft carried by the first `send` of a new session (spec §5.2). */
@@ -43,8 +47,13 @@ const EMPTY_DRAFT: SessionDraft = { project_id: null, system_prompt: null, provi
 
 interface ResolveArgs {
   sessionId: number | null
-  /** The model this command asked for — the last layer of the precedence chain. */
+  /** The client's current selection — the last layer of the precedence chain. */
   fallbackModel?: { provider_id: number; model_id: string }
+  /**
+   * A deliberate one-shot choice for this generation alone (`regenerate` with a model). It beats
+   * both inheritance layers, and is never persisted onto the session.
+   */
+  explicitModel?: { provider_id: number; model_id: string }
   /** Parts of the first user message, used to title a session created here. */
   firstParts: Part[]
   /** Only meaningful when `sessionId` is null. */
@@ -69,12 +78,15 @@ async function resolveTarget(hub: Hub, args: ResolveArgs): Promise<Target> {
   const project = draft.project_id === null ? undefined : await getProject(hub.db, draft.project_id, DEFAULT_USER_ID)
   if (draft.project_id !== null && !project) throw new Error('project not found')
 
-  const config = resolveEffectiveConfig({ session: draft, project, fallbackModel: args.fallbackModel })
-  if (!config.model) throw new Error('no model selected')
+  const resolved = resolveEffectiveConfig({ session: draft, project, fallbackModel: args.fallbackModel })
+  // Only the model layer is overridden; the prompt and params keep inheriting as usual.
+  const effectiveModel = args.explicitModel ? { ...args.explicitModel, source: 'command' as const } : resolved.model
+  if (!effectiveModel) throw new Error('no model selected')
+  const config = { ...resolved, model: effectiveModel }
 
-  const provider = await getProvider(hub.db, config.model.provider_id)
-  const model = provider ? await getModel(hub.db, provider.id, config.model.model_id) : undefined
-  if (!provider || !provider.enabled || !model || !model.enabled) throw modelUnavailable(config.model.source)
+  const provider = await getProvider(hub.db, effectiveModel.provider_id)
+  const model = provider ? await getModel(hub.db, provider.id, effectiveModel.model_id) : undefined
+  if (!provider || !provider.enabled || !model || !model.enabled) throw modelUnavailable(effectiveModel.source)
 
   // The persisted override is the draft's, never this generation's model: copying the latter down
   // would silently end the session's Project inheritance.
@@ -257,13 +269,15 @@ export async function runSend(hub: Hub, cmd: SendCommand): Promise<void> {
 export async function runRegenerate(hub: Hub, cmd: Extract<WsCommand, { type: 'regenerate' }>): Promise<void> {
   const old = await getMessage(hub.db, cmd.message_id)
   if (!old || old.role !== 'assistant' || old.parent_id === null) throw new Error('not an assistant message')
-  // Without an explicit choice, regenerate reuses the model that produced the reply being replaced.
-  const fallbackModel = cmd.provider_id !== undefined && cmd.model_id !== undefined
+  // "Redo this reply with model X" is an explicit one-shot choice, so it outranks inheritance.
+  // Without one, regenerate reuses the model that produced the reply being replaced.
+  const explicitModel = cmd.provider_id !== undefined && cmd.model_id !== undefined
     ? { provider_id: cmd.provider_id, model_id: cmd.model_id }
-    : old.provider_id !== null && old.model_id !== null
-      ? { provider_id: old.provider_id, model_id: old.model_id }
-      : undefined
-  const target = await resolveTarget(hub, { sessionId: old.session_id, fallbackModel, firstParts: [] })
+    : undefined
+  const fallbackModel = old.provider_id !== null && old.model_id !== null
+    ? { provider_id: old.provider_id, model_id: old.model_id }
+    : undefined
+  const target = await resolveTarget(hub, { sessionId: old.session_id, explicitModel, fallbackModel, firstParts: [] })
   const shell = await openAssistantShell(hub, target, old.parent_id)
   await generate(hub, target, shell, old.parent_id)
 }

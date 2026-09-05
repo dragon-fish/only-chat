@@ -237,6 +237,35 @@ describe('project inheritance', () => {
     expect(created[1]!.doStreamCalls[0]!.prompt[0]).toMatchObject({ content: 'SECOND' })
   })
 
+  it('lets an explicit regenerate model outrank the session override and the Project default', async () => {
+    const projectProvider = await seedProvider('project-provider', 'model-a')
+    const sessionProvider = await seedProvider('session-provider', 'model-b')
+    const pickedProvider = await seedProvider('picked-provider', 'model-c')
+    const projectId = await seedProject({ system_prompt: 'PROJECT', provider_id: projectProvider, model_id: 'model-a', params: { temperature: 0.4 } })
+    const created = await installMock(streamingMock)
+    const c = await connect()
+    c.ws.send(JSON.stringify({
+      type: 'send', session_id: null, parent_id: null, parts: [{ type: 'text', text: 'hi' }],
+      provider_id: projectProvider, model_id: 'model-a',
+      project_id: projectId, session_provider_id: sessionProvider, session_model_id: 'model-b',
+    }))
+    await c.next('message.done')
+    const first = (c.events.filter((e) => e.type === 'message.created')[1] as { message: { id: number; session_id: number } }).message
+
+    c.ws.send(JSON.stringify({ type: 'regenerate', message_id: first.id, provider_id: pickedProvider, model_id: 'model-c' }))
+    await c.nextAfter('message.done', 2)
+
+    const rows = await listMessages(createDb(env.DB), first.session_id)
+    expect(rows[1]).toMatchObject({ provider_id: sessionProvider, model_id: 'model-b' })
+    // The one-shot choice wins outright — it is not the lowest fallback layer.
+    expect(rows[2]).toMatchObject({ provider_id: pickedProvider, model_id: 'model-c' })
+    // ...and it is never persisted onto the session, which keeps its own override.
+    expect(await getSession(createDb(env.DB), first.session_id)).toMatchObject({ provider_id: sessionProvider, model_id: 'model-b' })
+    // Prompt and params still inherit from the Project on the regenerated turn.
+    expect(created[1]!.doStreamCalls[0]!.prompt[0]).toMatchObject({ role: 'system', content: 'PROJECT' })
+    expect(created[1]!.doStreamCalls[0]).toMatchObject({ temperature: 0.4 })
+  })
+
   it('rejects an unavailable inherited model, naming the layer it came from', async () => {
     const db = createDb(env.DB)
     const projectProvider = await seedProvider('project-provider', 'model-a')

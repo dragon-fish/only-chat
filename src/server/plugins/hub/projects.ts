@@ -43,9 +43,15 @@ export async function updateProject(
   return row
 }
 
-/** Sessions keep existing: the `ON DELETE SET NULL` foreign key moves them back to Chats (spec §3.1). */
-export async function deleteProject(db: DB, id: number, userId: number): Promise<void> {
-  await db.delete(projects).where(and(eq(projects.id, id), eq(projects.user_id, userId)))
+/**
+ * Sessions keep existing: the `ON DELETE SET NULL` foreign key moves them back to Chats (spec §3.1).
+ * Returns the deleted row, and throws when nothing matched, so a caller cannot mistake "not yours"
+ * for "deleted" and broadcast `project.deleted` for a project it never touched.
+ */
+export async function deleteProject(db: DB, id: number, userId: number): Promise<ProjectRow> {
+  const [row] = await db.delete(projects).where(and(eq(projects.id, id), eq(projects.user_id, userId))).returning()
+  if (!row) throw new Error(`project ${id} not found`)
+  return row
 }
 
 export async function listProjectSessions(db: DB, projectId: number, userId: number): Promise<SessionRow[]> {
