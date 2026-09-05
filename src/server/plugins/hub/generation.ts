@@ -166,19 +166,29 @@ async function generate(hub: Hub, target: Target, shell: Message, leafUserId: nu
       error = err instanceof Error ? err.message : String(err)
       console.error('generation failed', err)
     }
-  } finally {
-    // `hub.stop()` waits on the settled promise that `untrackInflight` resolves, so no exit path
-    // may skip it — not even a failing finalize.
-    try {
-      await finalizeMessage(hub.db, shell.id, { parts: acc.parts, usage, status, error })
-    } finally {
-      await hub.untrackInflight(shell.id)
-    }
   }
 
-  const final: Message = { ...shell, parts: acc.parts, usage, status, error }
-  hub.broadcast({ type: 'message.done', message_id: shell.id, status, usage, error })
-  hub.app.emit('message/done', final)
+  // Spec §8.3 step 4, in this order on every exit path: UPDATE D1 → broadcast the terminal event →
+  // untrack. A failing finalize must not swallow `message.done`, or the client bubble would stay
+  // `streaming` forever with nothing left in `inflight` for a snapshot to recover; its error is
+  // therefore captured and rethrown only at the very end. `untrackInflight` resolves the promise
+  // `hub.stop()` awaits, so it comes last: by the time `stop()` (and thus `sessionDelete`) returns,
+  // every socket already has the terminal event.
+  let finalizeFailure: { err: unknown } | null = null
+  try {
+    await finalizeMessage(hub.db, shell.id, { parts: acc.parts, usage, status, error })
+  } catch (err) {
+    finalizeFailure = { err }
+    console.error('finalize failed for message', shell.id, err)
+  }
+  try {
+    const final: Message = { ...shell, parts: acc.parts, usage, status, error }
+    hub.broadcast({ type: 'message.done', message_id: shell.id, status, usage, error })
+    hub.app.emit('message/done', final)
+  } finally {
+    await hub.untrackInflight(shell.id)
+  }
+  if (finalizeFailure) throw finalizeFailure.err
 }
 
 // ---- entry points

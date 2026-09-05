@@ -126,9 +126,12 @@ describe('generation', () => {
     const sessionId = (c.events.find((e) => e.type === 'session.created') as { session: { id: number } }).session.id
     c.ws.send(JSON.stringify({ type: 'stop', session_id: sessionId }))
     const done = await c.next('message.done')
-    expect(done).toMatchObject({ status: 'aborted' })
+    // An aborted stream never emits `finish`, so usage is genuinely unknown rather than zero.
+    expect(done).toMatchObject({ status: 'aborted', usage: null })
     const rows = await listMessages(createDb(env.DB), sessionId)
     expect(rows[1]!.status).toBe('aborted')
+    // The delta we waited for is already accumulated, so the partial content must survive the abort.
+    expect(rows[1]!.parts.length).toBeGreaterThan(0)
   })
 
   it('reports provider errors as status error', async () => {
