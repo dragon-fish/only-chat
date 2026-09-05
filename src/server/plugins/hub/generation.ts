@@ -186,7 +186,7 @@ async function generate(hub: Hub, target: Target, shell: Message, leafUserId: nu
       temperature: params.temperature,
       topP: params.top_p,
       maxOutputTokens: params.max_tokens,
-      providerOptions: buildProviderOptions(target.provider.protocol, params, target.model.capabilities) as never,
+      providerOptions: buildProviderOptions(target.provider.protocol, params, target.model.capabilities),
     })
 
     let lastFlush = Date.now()

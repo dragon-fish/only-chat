@@ -187,11 +187,47 @@ describe('buildProviderOptions', () => {
   })
 
   it('never forwards an effort Anthropic does not accept', () => {
-    // `minimal` and `ultra` are valid in our slider but absent from Anthropic's effort enum.
+    // `minimal` and `ultra` are valid in our slider but absent from Anthropic's effort enum, even
+    // when the model itself declares them — the protocol, not the capability list, rejects these.
+    const caps: ModelCapabilities = { reasoning: true, reasoning_efforts: ['minimal', 'ultra'] }
     for (const effort of ['minimal', 'ultra'] as const) {
-      const opts = buildProviderOptions('anthropic', { reasoning_effort: effort }, REASONING)
+      const opts = buildProviderOptions('anthropic', { reasoning_effort: effort }, caps)
       expect(opts).toEqual({ anthropic: { thinking: { type: 'adaptive', display: 'summarized' } } })
       expect(JSON.stringify(opts)).not.toContain(effort)
+    }
+  })
+
+  it('never forwards a thinking level Gemini does not accept', () => {
+    // Gemini's thinkingLevel enum stops at `high`; the request stays a thinking request regardless.
+    const caps: ModelCapabilities = { reasoning: true, reasoning_efforts: ['xhigh', 'max', 'ultra'] }
+    for (const protocol of ['vertex', 'vertex-compatible'] as const) {
+      for (const effort of ['xhigh', 'max', 'ultra'] as const) {
+        const opts = buildProviderOptions(protocol, { reasoning_effort: effort }, caps)
+        expect(opts).toEqual({ googleVertex: { thinkingConfig: { includeThoughts: true } } })
+        expect(JSON.stringify(opts)).not.toContain(effort)
+      }
+    }
+  })
+
+  it('sends only an effort the model declares, and falls back to Auto for one it does not', () => {
+    const caps: ModelCapabilities = { reasoning: true, reasoning_efforts: ['low', 'high'] }
+    expect(buildProviderOptions('openai-responses', { reasoning_effort: 'high' }, caps))
+      .toEqual({ openai: { store: false, reasoningSummary: 'auto', reasoningEffort: 'high' } })
+    // `medium` is not declared: reasoning stays on, the stale level is simply not sent.
+    expect(buildProviderOptions('openai-responses', { reasoning_effort: 'medium' }, caps))
+      .toEqual({ openai: { store: false, reasoningSummary: 'auto' } })
+    expect(buildProviderOptions('openai-completions', { reasoning_effort: 'medium' }, caps)).toEqual({})
+    expect(buildProviderOptions('anthropic', { reasoning_effort: 'medium' }, caps))
+      .toEqual({ anthropic: { thinking: { type: 'adaptive', display: 'summarized' } } })
+    expect(buildProviderOptions('vertex', { reasoning_effort: 'medium' }, caps))
+      .toEqual({ googleVertex: { thinkingConfig: { includeThoughts: true } } })
+  })
+
+  it('keeps the effort when the model declares no level list at all', () => {
+    // An absent or empty declaration means "undeclared", never "nothing allowed".
+    for (const caps of [REASONING, { reasoning: true, reasoning_efforts: [] } as ModelCapabilities]) {
+      expect(buildProviderOptions('openai-responses', { reasoning_effort: 'medium' }, caps))
+        .toEqual({ openai: { store: false, reasoningSummary: 'auto', reasoningEffort: 'medium' } })
     }
   })
 
