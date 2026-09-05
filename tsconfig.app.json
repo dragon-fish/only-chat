@@ -2,6 +2,8 @@
   "extends": "@vue/tsconfig/tsconfig.dom.json",
   "compilerOptions": {
     "paths": { "@/*": ["./src/*"] },
+    // ES2022 to match Vite 8's baseline build target (the @vue/tsconfig default stops at ES2020).
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "types": ["vite/client"],
     "noUnusedLocals": true,
     "noUnusedParameters": true
@@ -9,5 +11,11 @@
   "vueCompilerOptions": {
     "plugins": ["@vue/language-plugin-pug"]
   },
-  "include": ["src/client/**/*.ts", "src/client/**/*.vue", "src/shared/**/*.ts"]
+  "include": [
+    "src/client/**/*.ts",
+    "src/client/**/*.vue",
+    "src/client/typed-router.d.ts",
+    "src/shared/**/*.ts",
+    "test/unit/client-*.test.ts"
+  ]
 }

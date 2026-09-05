@@ -1,8 +1,19 @@
 <script setup lang="ts">
-const title = 'only-chat'
+import { onMounted } from 'vue'
+import AppShell from '@/client/components/app-shell.vue'
+import { useSyncStore } from '@/client/stores/sync'
+import { useConfigStore } from '@/client/stores/config'
+
+const sync = useSyncStore()
+const config = useConfigStore()
+
+onMounted(async () => {
+  sync.connect()
+  await Promise.all([sync.loadSessions(), config.load()])
+})
 </script>
 
 <template lang="pug">
-main.p-4
-  h1.text-xl.font-bold {{ title }}
+AppShell
+  RouterView
 </template>

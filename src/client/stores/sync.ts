@@ -1,0 +1,149 @@
+import { computed, reactive, ref, shallowRef } from 'vue'
+import { defineStore } from 'pinia'
+import { api } from '@/client/lib/api'
+import { WsClient, type WsStatus } from '@/client/lib/ws-client'
+import type { Message, Session, UserSettings } from '@/shared/models'
+import type { Part } from '@/shared/parts'
+import type { WsCommand, WsEvent } from '@/shared/ws'
+
+function pathToRoot(byId: Map<number, Message>, headId: number | null): Message[] {
+  const out: Message[] = []
+  let cur = headId === null ? undefined : byId.get(headId)
+  const seen = new Set<number>()
+  while (cur && !seen.has(cur.id)) { seen.add(cur.id); out.push(cur); cur = cur.parent_id === null ? undefined : byId.get(cur.parent_id) }
+  return out.reverse()
+}
+
+export const useSyncStore = defineStore('sync', () => {
+  const status = ref<WsStatus>('closed')
+  const sessions = reactive(new Map<number, Session>())
+  const messages = reactive(new Map<number, Map<number, Message>>())
+  const streamingIds = reactive(new Set<number>())
+  const settings = ref<UserSettings>({ plugins: {} })
+  const lastError = ref<string | null>(null)
+  const client = shallowRef<WsClient | null>(null)
+
+  const sessionList = computed(() => [...sessions.values()].sort((a, b) => b.updated_at - a.updated_at))
+
+  function bucket(sessionId: number): Map<number, Message> {
+    let b = messages.get(sessionId)
+    if (!b) { b = reactive(new Map<number, Message>()); messages.set(sessionId, b) }
+    return b
+  }
+
+  function findMessage(id: number): Message | undefined {
+    for (const b of messages.values()) { const m = b.get(id); if (m) return m }
+    return undefined
+  }
+
+  function upsertMessage(m: Message): void {
+    const b = bucket(m.session_id)
+    const existing = b.get(m.id)
+    if (existing && streamingIds.has(m.id) && m.status !== 'streaming') {
+      // A stale REST row must not clobber a live stream.
+      return
+    }
+    b.set(m.id, { ...m, parts: m.parts.map((p) => ({ ...p })) })
+    if (m.status === 'streaming') streamingIds.add(m.id)
+  }
+
+  function ingestMessages(sessionId: number, rows: Message[]): void {
+    for (const r of rows) upsertMessage({ ...r, session_id: sessionId })
+  }
+
+  function applyEvent(e: WsEvent): void {
+    switch (e.type) {
+      case 'snapshot':
+        for (const m of e.inflight) { streamingIds.add(m.id); bucket(m.session_id).set(m.id, m) }
+        break
+      case 'session.created':
+      case 'session.updated':
+        sessions.set(e.session.id, e.session)
+        break
+      case 'session.deleted':
+        sessions.delete(e.session_id)
+        messages.delete(e.session_id)
+        break
+      case 'message.created':
+        upsertMessage(e.message)
+        break
+      case 'message.delta': {
+        const m = findMessage(e.message_id)
+        if (!m) return
+        const parts = m.parts as Part[]
+        while (parts.length <= e.part_index) parts.push({ type: e.kind, text: '' } as Part)
+        const p = parts[e.part_index]!
+        if (p.type === 'text' || p.type === 'reasoning') p.text += e.delta
+        break
+      }
+      case 'message.part': {
+        const m = findMessage(e.message_id)
+        if (!m) return
+        while (m.parts.length <= e.part_index) m.parts.push({ type: 'text', text: '' })
+        m.parts[e.part_index] = e.part
+        break
+      }
+      case 'message.done': {
+        const m = findMessage(e.message_id)
+        if (m) { m.status = e.status; m.usage = e.usage; m.error = e.error }
+        streamingIds.delete(e.message_id)
+        break
+      }
+      case 'head.changed': {
+        const s = sessions.get(e.session_id)
+        if (s) s.head_message_id = e.message_id
+        break
+      }
+      case 'settings.updated':
+        settings.value = e.settings
+        break
+      case 'error':
+        lastError.value = e.message
+        break
+    }
+  }
+
+  function pathFor(sessionId: number): Message[] {
+    const s = sessions.get(sessionId)
+    const b = messages.get(sessionId)
+    if (!s || !b) return []
+    return pathToRoot(b as Map<number, Message>, s.head_message_id)
+  }
+
+  function siblingsOf(sessionId: number, messageId: number): Message[] {
+    const b = messages.get(sessionId)
+    const m = b?.get(messageId)
+    if (!b || !m) return []
+    return [...b.values()].filter((x) => x.parent_id === m.parent_id).sort((a, c) => a.seq - c.seq)
+  }
+
+  function isStreaming(sessionId: number): boolean {
+    return pathFor(sessionId).some((m) => streamingIds.has(m.id))
+  }
+
+  async function loadSessions(): Promise<void> {
+    for (const s of await api.sessions()) sessions.set(s.id, s)
+  }
+
+  async function loadMessages(sessionId: number): Promise<void> {
+    ingestMessages(sessionId, await api.messages(sessionId))
+  }
+
+  function connect(): void {
+    if (client.value) return
+    client.value = new WsClient('/ws', {
+      onEvent: applyEvent,
+      onStatus: (s) => { status.value = s },
+    })
+    client.value.connect()
+  }
+
+  function send(cmd: WsCommand): void {
+    client.value?.send(cmd)
+  }
+
+  return {
+    status, sessions, messages, streamingIds, settings, lastError, sessionList,
+    applyEvent, ingestMessages, pathFor, siblingsOf, isStreaming, loadSessions, loadMessages, connect, send,
+  }
+})
