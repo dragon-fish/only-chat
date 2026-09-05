@@ -262,7 +262,7 @@ DO 内存 per-session 计数器，冷启动时从 D1 `max(seq)` 初始化，之�
 ## 10. 前端
 
 ### 10.1 路由
-- `/` → 重定向到最近会话，无则空白新会话
+- `/` → 空白新会话；首次发送后由服务端创建会话，客户端随即跳转到 `/c/:id`（实现阶段决定：不自动跳到最近会话，避免多设备下被别处新建的会话劫持路由）
 - `/c/:sessionId` 会话页
 - `/settings/providers`、`/settings/providers/:id`
 - `/settings/plugins` 功能插件开关（MVP 下列表为空，仅有机制）
@@ -287,7 +287,7 @@ DO 内存 per-session 计数器，冷启动时从 D1 `max(seq)` 初始化，之�
 
 - 供应商请求失败：assistant 消息以 `status: error` + `error` 文本收尾，气泡显示错误与"重试"（= regenerate）。不自动重试，不做供应商 fallback。
 - WS 命令校验失败：回 `error` 事件（带 `request_id`），前端 toast，不改状态。
-- D1 写失败：DO 内抛出，命令失败并回 `error`；`inflight` 保留到 alarm 清理。
+- D1 写失败：DO 内抛出，命令失败并回 `error`。生成结束时的落库失败也会先广播 `message.done`（携带 `error`），再从 inflight 移除并抛出——inflight 不再保留，`stop` / 删除会话依赖 inflight 清空来同步（实现阶段调整）。
 - 上传失败：composer 内该图标红可移除。
 - 原则：核心逻辑 fail-fast，UI 层优雅降级。
 
