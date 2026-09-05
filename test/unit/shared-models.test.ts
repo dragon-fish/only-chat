@@ -43,6 +43,14 @@ describe('models schemas', () => {
       .toEqual({ reasoning_enabled: true, reasoning_effort: null })
   })
 
+  it('accepts an explicit string reasoning_effort', () => {
+    expect(SessionParamsSchema.parse({ reasoning_effort: 'xhigh' })).toEqual({ reasoning_effort: 'xhigh' })
+  })
+
+  it('rejects an out-of-enum reasoning_effort', () => {
+    expect(SessionParamsSchema.safeParse({ reasoning_effort: 'turbo' }).success).toBe(false)
+  })
+
   it('accepts expanded reasoning efforts and image_output on model capabilities', () => {
     expect(ModelCapabilitiesSchema.parse({ image_output: true, reasoning_efforts: ['low', 'xhigh'] }))
       .toEqual({ image_output: true, reasoning_efforts: ['low', 'xhigh'] })

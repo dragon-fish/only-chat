@@ -27,17 +27,35 @@ describe('ws protocol', () => {
     expect(cmd.type).toBe('settings.update')
   })
 
-  it('send carries nullable project_id, system_prompt and params for first-message session init', () => {
+  it('send carries nullable project_id, system_prompt, params and a session model override for first-message session init', () => {
     const cmd = parseCommand(JSON.stringify({
       type: 'send', session_id: null, parent_id: null, parts: [{ type: 'text', text: 'hi' }],
       provider_id: 1, model_id: 'gpt-5.1', project_id: 3, system_prompt: 'be terse',
       params: { reasoning_enabled: true, reasoning_effort: null },
+      session_provider_id: 2, session_model_id: 'gpt-5.1-mini',
     }))
     expect(cmd.type).toBe('send')
     if (cmd.type === 'send') {
       expect(cmd.project_id).toBe(3)
       expect(cmd.system_prompt).toBe('be terse')
       expect(cmd.params).toEqual({ reasoning_enabled: true, reasoning_effort: null })
+      expect(cmd.session_provider_id).toBe(2)
+      expect(cmd.session_model_id).toBe('gpt-5.1-mini')
+    }
+  })
+
+  it('send omits all session-init fields, including the session model override, when not provided', () => {
+    const cmd = parseCommand(JSON.stringify({
+      type: 'send', session_id: null, parent_id: null, parts: [{ type: 'text', text: 'hi' }],
+      provider_id: 1, model_id: 'gpt-5.1',
+    }))
+    expect(cmd.type).toBe('send')
+    if (cmd.type === 'send') {
+      expect(cmd.project_id).toBeUndefined()
+      expect(cmd.system_prompt).toBeUndefined()
+      expect(cmd.params).toBeUndefined()
+      expect(cmd.session_provider_id).toBeUndefined()
+      expect(cmd.session_model_id).toBeUndefined()
     }
   })
 

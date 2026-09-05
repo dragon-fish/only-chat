@@ -13,12 +13,22 @@ export const SendCommandSchema = z.object({
   session_id: z.number().int().nullable(),
   parent_id: z.number().int().nullable(),
   parts: PartsSchema.min(1),
+  /** The provider/model actually used for this generation — always required, independent of any session override below. */
   provider_id: z.number().int(),
   model_id: z.string().min(1),
-  /** Session-init fields, used only when `session_id` is null (first message of a new session). */
+  /**
+   * Session-init fields, used only when `session_id` is null (first message of a new session):
+   * `project_id`, session prompt, session params overrides, and an optional session-level model
+   * override. `session_provider_id`/`session_model_id` are the session's *persisted* model
+   * override (maps to `sessions.provider_id`/`sessions.model_id`) — distinct from the required
+   * `provider_id`/`model_id` above, which is only the model used for this turn's generation.
+   * Missing/null means the session has no override and inherits from its Project (spec §3.2/§5.3).
+   */
   project_id: z.number().int().nullable().optional(),
   system_prompt: z.string().nullable().optional(),
   params: SessionParamsSchema.nullable().optional(),
+  session_provider_id: z.number().int().nullable().optional(),
+  session_model_id: z.string().nullable().optional(),
 })
 export const RegenerateCommandSchema = z.object({
   type: z.literal('regenerate'),
