@@ -63,9 +63,19 @@ R2：图片原件
 - DO storage：仅存"进行中"的生成状态（缓冲的 parts、开始时间），生成结束即删除。DO 被驱逐重建最多丢失约 1 秒的缓冲；alarm 兜底把超时任务收尾为 `aborted`。
 - 无生成任务且客户端静默时 DO 休眠；alarm 只在有进行中生成时设置。
 
-### 4.4 cordis 的边界
+### 4.4 cordis 的用法
 
-cordis 负责服务注册、插件装载与事件总线。能通过换插件解耦的：`Database`（Drizzle 驱动无关）、`Assets`（R2 / 本地 / S3）、`LlmProtocol` 注册表（每种协议一个插件）。**不解耦的**：UserHub 直接依赖 DO API（Hibernation WebSocket、alarm、单实例串行写），自部署时需重写 Hub 插件而非换配置；MVP 不为其抽象通用接口。
+cordis 是后端的骨架，不是风味 DI。要用足的三项能力：
+
+- **依赖解析**：每个插件用 `inject` 声明依赖的服务（如 hub 依赖 `llm` 与 `database`，llm 依赖 `database`），装载顺序由 cordis 解析，代码里不写任何"等待某服务就绪"的轮询。
+- **生命周期与副作用回收**：插件注册的事件监听、定时器、路由等副作用全部挂在自己的 scope 上，`dispose` 时由 cordis 统一回收。插件不得持有需要手动清理的全局状态。
+- **运行时热插拔**：核心插件（database、assets、llm、hub、api）常驻；功能插件可由用户在设置中开关，开关状态存于用户设置，DO 侧根据它 `ctx.plugin` / `dispose` 对应插件，无需重新部署。MVP 只搭这套机制并提供开关入口，不附带任何功能插件。
+
+能通过换插件解耦的：`Database`（Drizzle 驱动无关）、`Assets`（R2 / 本地 / S3）、`LlmProtocol` 注册表（每种协议一个插件）。**不解耦的**：UserHub 直接依赖 DO API（Hibernation WebSocket、alarm、单实例串行写），自部署时需重写 Hub 插件而非换配置；MVP 不为其抽象通用接口。
+
+**生成流程分阶段**：hub 内的生成流程拆成独立函数，阶段间传递明确的数据结构：接收命令 → 校验与分派 → 组装上下文（取路径、system prompt、模型）→ `buildModelMessages` → 流式生成 → 落库与广播。事件在阶段边界发出；未来新增钩子只是在某个边界多一行 `emit`。
+
+**已知坑**：cordis 用 Proxy 包装 Context 与 Service，被托管的类里不能用 ES `#private` 字段（brand check 在 Proxy 上失败，同 Vue3 reactive）。统一用 TypeScript `private`。
 
 Workers 的 `env` 只在请求 / DO 构造函数内可得，因此 cordis 根 Context 建两份：
 
@@ -115,7 +125,7 @@ only-chat/
 ## 6. 数据模型（D1，Drizzle）
 
 ### users
-`id`、`name`、`created_at`。MVP 只有 `id = 1` 一行。
+`id`、`name`、`settings`（JSON：`{ plugins: Record<string, boolean> }`，功能插件开关；MVP 无功能插件，默认 `{}`）、`created_at`。MVP 只有 `id = 1` 一行。
 
 ### providers
 `id`、`user_id`、`name`、`protocol`（`openai-completions` | `openai-responses` | `anthropic` | `vertex`）、`base_url`、`api_key`（AES-GCM 加密存储，密钥来自 Worker secret `KEY_ENCRYPTION_SECRET`）、`extra`（JSON，协议特有配置，如 Vertex 的 project / location）、`enabled`、`created_at`。
@@ -198,6 +208,7 @@ DO 侧按流事件维护当前 part：连续同类 delta 追加到同一 part，
 | `switch_head` | `session_id`、`message_id` | 切换分支 |
 | `session.update` | `session_id`、可选 `title` / `provider_id` / `model_id` / `system_prompt` / `params` | 更新元信息 |
 | `session.delete` | `session_id` | 删除会话及其消息 |
+| `settings.update` | `settings` 的部分字段 | 更新用户设置；若 `plugins` 变化，DO 据此装载 / dispose 功能插件 |
 
 DO → 所有客户端：
 
@@ -210,6 +221,7 @@ DO → 所有客户端：
 | `message.part` | `message_id`、`part_index`、`part` | 完整 part（非增量类型） |
 | `message.done` | `message_id`、`status`、`usage?`、`error?` | 生成结束 |
 | `head.changed` | `session_id`、`message_id` | 当前叶子变更 |
+| `settings.updated` | 完整 `settings` | 用户设置同步 |
 | `error` | `request_id?`、`message` | 命令失败 |
 
 ### 8.3 生成任务生命周期（DO 内）
@@ -232,6 +244,7 @@ DO 内存 per-session 计数器，冷启动时从 D1 `max(seq)` 初始化，之�
 
 ## 9. REST API（`plugins/api/`）
 
+- `GET /api/me` 当前用户（含 `settings`）
 - `GET /api/sessions` 会话列表（不含 archived）
 - `GET /api/sessions/:id/messages` 该会话全部消息（含所有分支）
 - `GET/POST/PUT/DELETE /api/providers`、`/api/providers/:id`
@@ -249,6 +262,7 @@ DO 内存 per-session 计数器，冷启动时从 D1 `max(seq)` 初始化，之�
 - `/` → 重定向到最近会话，无则空白新会话
 - `/c/:sessionId` 会话页
 - `/settings/providers`、`/settings/providers/:id`
+- `/settings/plugins` 功能插件开关（MVP 下列表为空，仅有机制）
 
 移动端与桌面共用布局，窄屏下会话列表变抽屉。
 
