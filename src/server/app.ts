@@ -1,6 +1,7 @@
 import { Context } from 'cordis'
 import { Database } from './plugins/database'
 import { Assets } from './plugins/assets'
+import { LlmPlugin } from './plugins/llm'
 
 export type Side = 'worker' | 'hub'
 
@@ -25,7 +26,12 @@ export async function createApp(options: AppOptions): Promise<Context> {
 
   await ctx.plugin(Database)
   await ctx.plugin(Assets)
-  // Task 8 adds: if (options.side === 'hub') await ctx.plugin(LlmPlugin)
+  if (options.side === 'hub') {
+    await ctx.plugin(LlmPlugin)
+    // `await ctx.plugin()` resolves even when the plugin stays PENDING on a missing injection,
+    // so assert the service is actually reachable rather than failing later at first use.
+    if (!ctx.get('llm')) throw new Error('LlmPlugin loaded but ctx.llm is unavailable')
+  }
   // Task 10 adds: if (options.side === 'hub') await ctx.plugin(HubPlugin)
   // Task 12 adds: if (options.side === 'worker') await ctx.plugin(ApiPlugin)
   return ctx
