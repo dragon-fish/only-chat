@@ -1,20 +1,16 @@
-import { Hono } from 'hono'
 import { DurableObject } from 'cloudflare:workers'
 import type { Context } from 'cordis'
 import { createApp } from './app'
-import { DEFAULT_USER_ID } from '@/shared/constants'
 
-const app = new Hono<{ Bindings: Env }>()
+let workerApp: Promise<Context> | undefined
 
-app.get('/api/health', (c) => c.json({ ok: true }))
-
-app.get('/ws', (c) => {
-  if (c.req.header('Upgrade') !== 'websocket') return c.text('Expected websocket', 426)
-  const stub = c.env.USER_HUB.getByName(String(DEFAULT_USER_ID))
-  return stub.fetch(c.req.raw)
-})
-
-export default { fetch: app.fetch } satisfies ExportedHandler<Env>
+export default {
+  async fetch(request, env, execCtx) {
+    workerApp ??= createApp({ env, side: 'worker' })
+    const ctx = await workerApp
+    return ctx.api.fetch(request, env, execCtx)
+  },
+} satisfies ExportedHandler<Env>
 
 export class UserHub extends DurableObject<Env> {
   private _app!: Context

@@ -3,6 +3,7 @@ import type { Assets } from './plugins/assets'
 import type { Llm } from './plugins/llm'
 import type { Hub } from './plugins/hub'
 import type { BeforeSendPayload } from './plugins/hub/generation'
+import type { ApiApp } from './plugins/api'
 import type { Message, Session } from '@/shared/models'
 
 declare module 'cordis' {
@@ -12,6 +13,7 @@ declare module 'cordis' {
     db: Database
     assets: Assets
     llm: Llm
+    api: ApiApp
   }
 }
 

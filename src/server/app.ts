@@ -3,6 +3,7 @@ import { Database } from './plugins/database'
 import { Assets } from './plugins/assets'
 import { LlmPlugin } from './plugins/llm'
 import { HubPlugin } from './plugins/hub'
+import { ApiPlugin } from './plugins/api'
 
 export type Side = 'worker' | 'hub'
 
@@ -36,6 +37,9 @@ export async function createApp(options: AppOptions): Promise<Context> {
     await ctx.plugin(HubPlugin)
     if (!ctx.get('hub')) throw new Error('HubPlugin loaded but ctx.hub is unavailable')
   }
-  // Task 12 adds: if (options.side === 'worker') await ctx.plugin(ApiPlugin)
+  if (options.side === 'worker') {
+    await ctx.plugin(ApiPlugin)
+    if (!ctx.get('api')) throw new Error('ApiPlugin loaded but ctx.api is unavailable')
+  }
   return ctx
 }
