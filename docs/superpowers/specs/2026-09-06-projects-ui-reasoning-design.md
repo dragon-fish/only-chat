@@ -1,4 +1,4 @@
-# Projects、聊天 UI 与 reasoning 完整性设计
+# Projects、聊天 UI、reasoning 与图片链路设计
 
 ## 1. 背景与目标
 
@@ -9,6 +9,8 @@ only-chat 的实时多设备聊天 MVP 已可用。本轮在不引入账号系�
 - 重做侧栏和 Composer 的信息层级，并修复页面、弹层与长列表缺少滚动的问题。
 - 为首 token 前的等待阶段提供明确反馈，并展示供应商实际返回的 reasoning summary。
 - 完整保存并回传供应商 reasoning 元数据，满足多轮推理、质量与前缀缓存要求。
+- 增加 Google / Vertex 兼容协议，并把模型生成图片安全转存到 R2。
+- 避免多轮对话反复内联历史图片，优先复用供应商短期文件指针。
 
 本轮继续使用 Cloudflare Access 作为外部门禁，`user_id` 仍固定为 `1`。
 
@@ -26,6 +28,9 @@ only-chat 的实时多设备聊天 MVP 已可用。本轮在不引入账号系�
 - 四种协议的 reasoning 内容及供应商元数据回传修复。
 - 页面、侧栏、弹层、选择器和长列表的滚动规则。
 - 移动端侧栏关闭按钮与设置按钮重合修复。
+- 独立的 Google 兼容协议类型：自定义 Base URL、API Key、Bearer 鉴权和 Vertex 风格模型路径。
+- 模型图片输出捕获、R2 转存、跨设备展示和供应商 Files API 指针复用。
+- 供应商文件的自动过期、本地指针清理和远端尽力删除。
 
 ### 不包含
 
@@ -34,6 +39,7 @@ only-chat 的实时多设备聊天 MVP 已可用。本轮在不引入账号系�
 - 从消息 fork 为新 session；它是后续独立功能，届时复用现有消息树。
 - Project 分享、协作成员、置顶、搜索和归档。
 - 自动从模型名称推断完整能力，或接入 models.dev。
+- 为 Cloudflare Access 新增公开例外路径；临时签名 URL 只保留为可选后备设计。
 
 ## 3. 产品语义
 
@@ -112,6 +118,7 @@ Project 配置不复制到 session。每次开始生成时，服务端从最新�
 
 - `reasoning_can_disable?: boolean`
 - `reasoning_efforts?: ReasoningEffort[]`
+- `image_output?: boolean`
 
 能力仍由用户配置或 preset 提供。远端 `/models` 只返回模型 ID 时不得根据名字猜测高级能力。
 
@@ -120,6 +127,45 @@ Project 配置不复制到 session。每次开始生成时，服务端从最新�
 `providerOptions` 不再只允许出现在 reasoning part。assistant 的 text、reasoning 和 tool-call part 均可保存供应商元数据；user parts 不需要此字段。
 
 流累积器以 stream part ID 关联持久 part，同一 part 最后一个非空 `providerMetadata` 胜出。D1、DO inflight storage、WebSocket 和重新组装的模型消息必须原样保留该数据。
+
+### 4.6 供应商文件指针
+
+新增 `attachment_provider_files` 表：
+
+- `id`
+- `attachment_id`
+- `provider_id`
+- `provider_file_id`
+- `expires_at`
+- `last_used_at`
+- `created_at`
+
+唯一索引为 `(attachment_id, provider_id)`。同一份 R2 图片上传到不同 provider 后必须分别保存指针；任何请求只可使用当前 provider 对应且未过期的指针。修改 provider 的协议、Base URL 或凭据时，使该 provider 的已有指针失效并进入清理队列。
+
+表内只保存供应商文件 ID 和时间戳，不保存文件内容。过期行不得参与上下文组装；需要该图片时重新上传并替换指针。
+
+### 4.7 图片持久化约束
+
+D1 永远不保存图片 base64、二进制或供应商临时 URL。所有模型输出图片必须先进入 R2：
+
+- 内联 base64 / bytes 在 Worker 内存中解码，校验 MIME 和大小，计算 SHA-256 后写入 R2。
+- HTTPS 输出 URL 由 Worker 下载后执行同一套校验与转存。
+- `attachments.origin` 写为 `generated`，消息 part 只保存 `attachment_id`。
+- SHA-256 相同的图片复用现有 attachment。
+- R2 与 attachment 行成功后才广播图片 part；转存失败时保留已有文本，并将回复标记为错误。
+
+图片内容不得作为 WebSocket 事件或 D1 JSON 的一部分传播。
+
+### 4.8 Provider 文件能力
+
+Provider 配置增加 `native_files?: boolean`，表示其 Base URL 实现可供当前协议使用的原生 Files API。该字段由供应商设置页的“支持原生文件转储（Files API）”复选框控制：
+
+- 自定义 provider 默认关闭，避免仅因协议名称相同就误调用不完整的兼容网关。
+- 已知支持 Files API 的内置 preset 可默认开启。
+- 关闭时不探测 `/files`，直接使用下一层附件传输策略。
+- 开启后 Files API 返回认证、限流或服务端错误时正常暴露错误，不静默改成 base64；明确的端点不支持错误可提示用户关闭该选项。
+
+复选框下方说明文件会临时上传到当前供应商、按 provider 隔离保存指针并定期清理，不表示永久云存储或 only-chat 的 R2 保存开关。
 
 ## 5. 实时协议与服务端数据流
 
@@ -177,6 +223,47 @@ reasoning 开启与 effort 分别映射：
 
 协议映射只发送模型能力允许的值。核心解析不因 UI 标签或模型名称产生隐式行为。
 
+### 5.5 Google 兼容协议
+
+新增独立的 `google` 协议，服务于 ZenMux 等 Google Generate Content / Vertex 风格兼容网关；现有 `vertex` 继续只代表 Google Cloud 原生 IAM：
+
+- `google` 设置只要求 Base URL 和普通 API Key，不显示 Project、Location 或 Service Account JSON。
+- 鉴权使用 `Authorization: Bearer <API Key>`；不套用 Google Vertex Express Mode 的 `x-goog-api-key` 行为。
+- 模型 ID 使用 `{publisher}/{model}`，例如 `google/gemini-2.5-pro`。适配器拆分 publisher 与 model，并构造 `/v1/publishers/{publisher}/models/{model}:generateContent` 或 `:streamGenerateContent`。
+- Base URL 由用户完整控制，协议层只移除尾部斜杠，不猜测或重复追加供应商路径。
+- Google 兼容与原生 Vertex 共享 Gemini 内容、reasoning 和图片输出转换，但认证与 URL 构造保持独立。
+
+### 5.6 图片输入传输
+
+当前实现每轮从 R2 读取对话路径中的所有历史图片并内联发送。单次请求随历史图片线性增长，整段会话的累计重复上传量接近二次增长。改造后按以下顺序解析每个附件：
+
+1. 当前 provider 支持 Files API，且存在未过期的 `attachment_provider_files` 行：直接构造 provider file reference，并更新 `last_used_at`。
+2. 支持 Files API 但没有有效指针：从 R2 读取一次，上传到当前 provider，向上游 API 设置 `purpose: user_data` 与 `expires_after = 604800`（7 天），再保存 provider file ID 和供应商返回的实际过期时间。
+3. provider 明确配置了可用的公开 / 签名 URL 传输：发送稳定 HTTPS URL。
+4. 其余情况继续内联 bytes，保证不支持 Files API 的兼容端点仍可使用图片。
+
+Files API 是 provider 能力，不是 model 能力。OpenAI Responses preset 默认启用；自定义兼容 provider 在设置中显式开启，不能仅凭协议名称假定网关实现完整。上传失败不得把认证错误等问题伪装成能力缺失；只有用户关闭 Files API 或已知“不支持端点”的响应才走后备传输。
+
+provider file ID 只属于上传它的 provider。切换 session 模型时，如果 provider 变化，必须查找或创建新 provider 的独立指针，绝不复用前一个 provider 的 file ID。
+
+### 5.7 供应商文件清理
+
+供应商文件不得永久保存：
+
+- 上传时优先请求供应商在 7 天后自动过期；OpenAI Files API 的允许范围为 1 小时至 30 天，7 天处于有效范围。
+- Worker Cron Trigger 每日扫描已过期或进入清理队列的指针，调用对应 provider 的文件删除接口；远端删除为幂等、尽力执行，文件已不存在视为成功。
+- 无论远端删除结果如何，过期指针都不会再次用于生成。确认删除或供应商已返回不存在后移除本地行；暂时性远端失败保留行供下次清理重试。
+- provider 删除或关键连接配置变化时，将其全部文件指针加入清理队列。
+- 到期后仍被会话引用的 R2 原图不删除；下一次需要时重新上传并生成新的短期指针。
+
+临时签名 URL 不是默认传输方式。整站位于 Cloudflare Access 后，供应商无法访问受保护的附件路由；启用 URL 传输必须由部署者额外配置 Access 例外路径或独立公开 hostname，并由 only-chat 的短期签名继续完成应用层鉴权。
+
+### 5.8 模型图片输出
+
+带 `image_output` 能力的聊天模型继续走流式生成，而不是建立独立且割裂的聊天记录。生成循环处理 AI SDK 的 `file` 事件，并在持久化为 R2 attachment 后把它转换成普通 `image` part。Google / Vertex 模型按协议设置图片输出 modality；不具备该能力的模型不发送相关参数。
+
+输出文件必须在落入 `PartAccumulator` 之前完成异步转存，确保累加器、DO inflight snapshot、D1 和 WebSocket 中只出现 `attachment_id`。base64 只在单次生成的 Worker 内存生命周期内短暂存在。
+
 ## 6. reasoning 持久化与回传
 
 ### 6.1 当前结论
@@ -221,6 +308,8 @@ Project 行菜单进入独立设置页。v1 页面包含：
 
 默认模型和所有配置允许为空。页面结构为未来 Sources、Tools / MCP、Memory 增加导航位置，但 v1 不渲染空入口。
 
+供应商设置页同时增加“支持原生文件转储（Files API）”复选框。该项靠近协议与 Base URL 设置，不放进单个模型能力编辑区。
+
 ### 7.3 Composer 与会话设置
 
 Composer 是一个整体输入面板：
@@ -263,6 +352,9 @@ assistant shell 到达后立即产生可见状态：
 - 继承模型不可用：显示来源和不可用状态，禁止发送，直到清除 override / default 或选择有效模型。
 - reasoning provider option 被供应商拒绝：保持现有生成 error 流程，不静默重试其他强度。
 - 已收到的部分 text / reasoning 在停止或错误时照常持久化。
+- 供应商文件上传失败：保留 Composer 和已有消息状态；认证、限流和服务端错误直接报告，不自动降级为内联数据。
+- 模型图片输出下载、校验或 R2 写入失败：不得把 base64 或临时 URL 写入消息；保留已有文本并将回复标记为错误。
+- 清理任务遇到暂时性远端错误：保留待清理指针并在下次计划任务重试，不影响聊天请求。
 
 ## 10. 测试与验收
 
@@ -274,6 +366,11 @@ assistant shell 到达后立即产生可见状态：
 - reasoning 三态：继承、显式 Auto、显式档位；reasoning 开关独立继承。
 - 第一条 `send` 原子创建 Project session；失败时无孤立消息。
 - Project 与 session 事件在两个 WebSocket 客户端一致。
+- provider 的 `native_files` 创建、更新和 preset 默认值正确；关键连接配置变化后旧文件指针不可复用。
+- 同一 attachment 在同一 provider 内复用 file ID，在不同 provider 间分别上传；过期后重新上传。
+- 上传请求包含 7 天过期策略，供应商返回的实际 `expires_at` 被持久化。
+- 每日清理对成功删除、已不存在和暂时失败三种结果保持幂等。
+- Files API 关闭时不请求 `/files`；开启后的认证 / 限流错误不静默降级。
 
 ### reasoning round-trip
 
@@ -283,6 +380,14 @@ assistant shell 到达后立即产生可见状态：
 - Vertex / Gemini：text、reasoning、tool-call 的 `thoughtSignature` 不因序列化丢失。
 - 内存数据与 D1 JSON round-trip 后构造的模型消息深比较相等。
 - Auto 不发送 effort，但仍启用协议所需的 summary / thoughts 输出选项。
+
+### 图片链路
+
+- Google 兼容协议按 publisher / model 构造 generateContent 与流式 URL，并使用 Bearer API Key。
+- 生成流的内联图片与 HTTPS 图片都转存 R2，D1 / WebSocket 只出现 `attachment_id`。
+- 相同输出 bytes 按 SHA-256 去重，`origin` 为 `generated`。
+- 图片转存失败时不会留下 base64、临时 URL、孤立 attachment 行或半写 R2 指针。
+- 超长多轮图片会话验证优先发送 provider file reference，不重复发送 R2 bytes。
 
 ### 客户端
 
