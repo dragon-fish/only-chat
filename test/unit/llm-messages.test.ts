@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { buildModelMessages, buildProviderOptions, type BuildInput } from '@/server/plugins/llm/messages'
-import type { Message } from '@/shared/models'
+import type { Message, ModelCapabilities } from '@/shared/models'
 import type { Protocol } from '@/shared/models'
 
 const png = new Uint8Array([137, 80, 78, 71])
@@ -15,8 +15,13 @@ function msg(over: Partial<Message> & Pick<Message, 'id' | 'role' | 'parts'>): M
 const path: Message[] = [
   msg({ id: 1, role: 'user', parts: [{ type: 'text', text: 'look' }, { type: 'image', attachment_id: 9 }] }),
   msg({ id: 2, role: 'assistant', parts: [
-    { type: 'reasoning', text: 'hmm', providerOptions: { anthropic: { signature: 'SIG' }, openai: { itemId: 'rs_1', reasoningEncryptedContent: 'ENC' } } },
-    { type: 'text', text: 'a cat' },
+    { type: 'reasoning', text: 'hmm', providerOptions: {
+      anthropic: { signature: 'SIG', redactedData: 'RED' },
+      openai: { itemId: 'rs_1', reasoningEncryptedContent: 'ENC' },
+    } },
+    { type: 'text', text: 'a cat', providerOptions: { google: { thoughtSignature: 'TS_TEXT' } } },
+    { type: 'tool_call', id: 'call_1', name: 'lookup', args: { q: 'cat' }, providerOptions: { google: { thoughtSignature: 'TS_TOOL' } } },
+    { type: 'tool_result', call_id: 'call_1', name: 'lookup', content: { ok: true } },
   ] }),
   msg({ id: 3, role: 'user', parts: [{ type: 'text', text: 'and now?' }] }),
 ]
@@ -25,14 +30,21 @@ function input(protocol: Protocol): BuildInput {
   return { protocol, systemPrompt: 'be brief', path, images: new Map([[9, { bytes: png, mime: 'image/png' }]]) }
 }
 
-describe('buildModelMessages', () => {
-  const protocols: Protocol[] = ['openai-completions', 'openai-responses', 'anthropic', 'vertex']
+/** The assistant message of the fixture path, whichever index the protocol put it at. */
+function assistantContent(out: unknown[]): Array<{ type: string; text?: string; providerOptions?: unknown }> {
+  const m = out.find((x) => (x as { role: string }).role === 'assistant') as { content: Array<{ type: string }> }
+  return m.content
+}
 
-  for (const p of protocols) {
-    it(`is byte-identical after a JSON round trip of the parts (${p})`, () => {
+const PROTOCOLS: Protocol[] = ['openai-completions', 'openai-responses', 'anthropic', 'vertex', 'vertex-compatible']
+
+describe('buildModelMessages', () => {
+  for (const p of PROTOCOLS) {
+    it(`is byte-identical and deep-equal after a JSON round trip of the parts (${p})`, () => {
       const a = buildModelMessages(input(p))
       const roundTripped: BuildInput = { ...input(p), path: JSON.parse(JSON.stringify(path)) }
       const b = buildModelMessages(roundTripped)
+      expect(b).toEqual(a)
       expect(JSON.stringify(b)).toBe(JSON.stringify(a))
     })
 
@@ -57,12 +69,58 @@ describe('buildModelMessages', () => {
     expect(user.content[1]).toEqual({ type: 'file', mediaType: 'image/png', data: { type: 'data', data: png } })
   })
 
-  it('drops reasoning for openai-completions and keeps it elsewhere', () => {
-    const compat = buildModelMessages(input('openai-completions'))
-    const anthropic = buildModelMessages(input('anthropic'))
-    const types = (m: unknown) => (m as { content: Array<{ type: string }> }).content.map((c) => c.type)
-    expect(types(compat[2])).toEqual(['text'])
-    expect(types(anthropic[2])).toEqual(['reasoning', 'text'])
+  it('replays reasoning on every protocol, openai-completions included', () => {
+    for (const p of PROTOCOLS) {
+      const content = assistantContent(buildModelMessages(input(p)))
+      expect(content.map((c) => c.type)).toEqual(['reasoning', 'text', 'tool-call'])
+      expect(content[0]).toMatchObject({ type: 'reasoning', text: 'hmm' })
+    }
+  })
+
+  it('replays a plain reasoning text so the compatible protocol can send reasoning_content', () => {
+    const plain: Message[] = [
+      msg({ id: 1, role: 'user', parts: [{ type: 'text', text: 'q' }] }),
+      msg({ id: 2, role: 'assistant', parts: [{ type: 'reasoning', text: 'analysis' }, { type: 'text', text: 'answer' }] }),
+    ]
+    const out = buildModelMessages({ protocol: 'openai-completions', systemPrompt: null, path: plain, images: new Map() })
+    expect(assistantContent(out)).toContainEqual({ type: 'reasoning', text: 'analysis' })
+  })
+
+  it('keeps provider metadata on reasoning, text and tool-call parts verbatim', () => {
+    const content = assistantContent(buildModelMessages(input('vertex')))
+    expect(content[0]).toMatchObject({ providerOptions: {
+      anthropic: { signature: 'SIG', redactedData: 'RED' },
+      openai: { itemId: 'rs_1', reasoningEncryptedContent: 'ENC' },
+    } })
+    expect(content[1]).toMatchObject({ providerOptions: { google: { thoughtSignature: 'TS_TEXT' } } })
+    expect(content[2]).toMatchObject({ providerOptions: { google: { thoughtSignature: 'TS_TOOL' } } })
+  })
+
+  it('replays an empty reasoning summary that only carries encrypted metadata', () => {
+    const encrypted: Message[] = [
+      msg({ id: 1, role: 'user', parts: [{ type: 'text', text: 'q' }] }),
+      msg({ id: 2, role: 'assistant', parts: [
+        { type: 'reasoning', text: '', providerOptions: { openai: { itemId: 'rs_1', reasoningEncryptedContent: 'ENC' } } },
+        { type: 'text', text: 'answer' },
+      ] }),
+    ]
+    const out = buildModelMessages({ protocol: 'openai-responses', systemPrompt: null, path: encrypted, images: new Map() })
+    expect(assistantContent(out)[0]).toEqual({
+      type: 'reasoning', text: '', providerOptions: { openai: { itemId: 'rs_1', reasoningEncryptedContent: 'ENC' } },
+    })
+  })
+
+  it('drops a part that carries neither text nor metadata', () => {
+    const empty: Message[] = [
+      msg({ id: 1, role: 'user', parts: [{ type: 'text', text: 'q' }] }),
+      msg({ id: 2, role: 'assistant', parts: [
+        { type: 'reasoning', text: '' },
+        { type: 'text', text: '' },
+        { type: 'text', text: 'answer' },
+      ] }),
+    ]
+    const out = buildModelMessages({ protocol: 'anthropic', systemPrompt: null, path: empty, images: new Map() })
+    expect(assistantContent(out)).toEqual([{ type: 'text', text: 'answer' }])
   })
 
   it('places anthropic cache breakpoints on system and last user message only', () => {
@@ -79,21 +137,88 @@ describe('buildModelMessages', () => {
   })
 })
 
+const REASONING: ModelCapabilities = { reasoning: true }
+const CAN_DISABLE: ModelCapabilities = { reasoning: true, reasoning_can_disable: true }
+
 describe('buildProviderOptions', () => {
   it('forces store:false on openai responses', () => {
     expect(buildProviderOptions('openai-responses', null, {})).toEqual({ openai: { store: false } })
   })
-  it('maps reasoning_effort per protocol', () => {
-    expect(buildProviderOptions('openai-responses', { reasoning_effort: 'high' }, { reasoning: true }))
-      .toEqual({ openai: { store: false, reasoningEffort: 'high', reasoningSummary: 'auto' } })
-    expect(buildProviderOptions('openai-completions', { reasoning_effort: 'low' }, { reasoning: true }))
+
+  it('sends nothing reasoning-related for a model without the capability', () => {
+    for (const p of PROTOCOLS) {
+      const opts = buildProviderOptions(p, { reasoning_effort: 'high' }, {})
+      expect(JSON.stringify(opts)).not.toContain('high')
+    }
+    expect(buildProviderOptions('anthropic', { reasoning_effort: 'high' }, {})).toEqual({})
+  })
+
+  it('enables reasoning with no effort for an explicit Auto', () => {
+    const auto = { reasoning_enabled: true, reasoning_effort: null } as const
+    expect(buildProviderOptions('openai-responses', auto, REASONING))
+      .toEqual({ openai: { store: false, reasoningSummary: 'auto' } })
+    expect(buildProviderOptions('openai-completions', auto, REASONING)).toEqual({})
+    expect(buildProviderOptions('anthropic', auto, REASONING))
+      .toEqual({ anthropic: { thinking: { type: 'adaptive', display: 'summarized' } } })
+    expect(buildProviderOptions('vertex', auto, REASONING))
+      .toEqual({ googleVertex: { thinkingConfig: { includeThoughts: true } } })
+  })
+
+  it('treats an inherited-empty reasoning setting as enabled', () => {
+    // Nothing was ever chosen: reasoning stays on, and the protocol still asks for its summary.
+    expect(buildProviderOptions('openai-responses', {}, REASONING))
+      .toEqual({ openai: { store: false, reasoningSummary: 'auto' } })
+    expect(buildProviderOptions('vertex', {}, REASONING))
+      .toEqual({ googleVertex: { thinkingConfig: { includeThoughts: true } } })
+  })
+
+  it('maps an explicit effort per protocol', () => {
+    expect(buildProviderOptions('openai-responses', { reasoning_effort: 'high' }, REASONING))
+      .toEqual({ openai: { store: false, reasoningSummary: 'auto', reasoningEffort: 'high' } })
+    expect(buildProviderOptions('openai-completions', { reasoning_effort: 'low' }, REASONING))
       .toEqual({ compat: { reasoningEffort: 'low' } })
-    expect(buildProviderOptions('anthropic', { reasoning_effort: 'medium' }, { reasoning: true }))
-      .toEqual({ anthropic: { effort: 'medium', thinking: { type: 'adaptive', display: 'summarized' } } })
-    expect(buildProviderOptions('vertex', { reasoning_effort: 'high' }, { reasoning: true }))
+    expect(buildProviderOptions('anthropic', { reasoning_effort: 'medium' }, REASONING))
+      .toEqual({ anthropic: { thinking: { type: 'adaptive', display: 'summarized' }, effort: 'medium' } })
+    expect(buildProviderOptions('vertex', { reasoning_effort: 'high' }, REASONING))
+      .toEqual({ googleVertex: { thinkingConfig: { includeThoughts: true, thinkingLevel: 'high' } } })
+    // The Vertex-compatible gateways share Gemini's reasoning mapping (spec §5.5).
+    expect(buildProviderOptions('vertex-compatible', { reasoning_effort: 'high' }, REASONING))
       .toEqual({ googleVertex: { thinkingConfig: { includeThoughts: true, thinkingLevel: 'high' } } })
   })
-  it('ignores reasoning_effort when the model has no reasoning capability', () => {
-    expect(buildProviderOptions('anthropic', { reasoning_effort: 'high' }, {})).toEqual({})
+
+  it('never forwards an effort Anthropic does not accept', () => {
+    // `minimal` and `ultra` are valid in our slider but absent from Anthropic's effort enum.
+    for (const effort of ['minimal', 'ultra'] as const) {
+      const opts = buildProviderOptions('anthropic', { reasoning_effort: effort }, REASONING)
+      expect(opts).toEqual({ anthropic: { thinking: { type: 'adaptive', display: 'summarized' } } })
+      expect(JSON.stringify(opts)).not.toContain(effort)
+    }
+  })
+
+  it('omits the disable value when the model cannot turn reasoning off', () => {
+    const off = { reasoning_enabled: false } as const
+    expect(buildProviderOptions('openai-responses', off, REASONING)).toEqual({ openai: { store: false } })
+    expect(buildProviderOptions('openai-completions', off, REASONING)).toEqual({})
+    expect(buildProviderOptions('anthropic', off, REASONING)).toEqual({})
+    expect(buildProviderOptions('vertex', off, REASONING)).toEqual({})
+  })
+
+  it('sends the protocol disable value when the model can turn reasoning off', () => {
+    const off = { reasoning_enabled: false } as const
+    expect(buildProviderOptions('openai-responses', off, CAN_DISABLE))
+      .toEqual({ openai: { store: false, reasoningEffort: 'none' } })
+    expect(buildProviderOptions('openai-completions', off, CAN_DISABLE)).toEqual({})
+    expect(buildProviderOptions('anthropic', off, CAN_DISABLE))
+      .toEqual({ anthropic: { thinking: { type: 'disabled' } } })
+    expect(buildProviderOptions('vertex', off, CAN_DISABLE))
+      .toEqual({ googleVertex: { thinkingConfig: { thinkingBudget: 0, includeThoughts: false } } })
+  })
+
+  it('ignores an effort once reasoning is explicitly disabled', () => {
+    const off = { reasoning_enabled: false, reasoning_effort: 'high' } as const
+    expect(buildProviderOptions('openai-responses', off, CAN_DISABLE))
+      .toEqual({ openai: { store: false, reasoningEffort: 'none' } })
+    expect(buildProviderOptions('anthropic', off, CAN_DISABLE))
+      .toEqual({ anthropic: { thinking: { type: 'disabled' } } })
   })
 })

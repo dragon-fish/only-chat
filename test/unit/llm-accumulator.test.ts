@@ -54,6 +54,48 @@ describe('PartAccumulator', () => {
     expect(ev).toEqual([{ kind: 'part', part_index: 0, part: { type: 'tool_call', id: 'c1', name: 'f', args: { a: 1 } } }])
   })
 
+  it('keeps provider metadata on text and tool-call parts', () => {
+    const acc = new PartAccumulator()
+    acc.apply({ type: 'text-start', id: 't1' })
+    acc.apply({ type: 'text-delta', id: 't1', text: 'hi' })
+    // Gemini attaches the thought signature to the closing event of the block it belongs to.
+    acc.apply({ type: 'text-end', id: 't1', providerMetadata: { google: { thoughtSignature: 'TS_TEXT' } } })
+    const ev = acc.apply({ type: 'tool-call', toolCallId: 'c1', toolName: 'f', input: { a: 1 }, providerMetadata: { google: { thoughtSignature: 'TS_TOOL' } } } as never)
+    expect(ev).toEqual([{
+      kind: 'part',
+      part_index: 1,
+      part: { type: 'tool_call', id: 'c1', name: 'f', args: { a: 1 }, providerOptions: { google: { thoughtSignature: 'TS_TOOL' } } },
+    }])
+    expect(acc.parts).toEqual([
+      { type: 'text', text: 'hi', providerOptions: { google: { thoughtSignature: 'TS_TEXT' } } },
+      { type: 'tool_call', id: 'c1', name: 'f', args: { a: 1 }, providerOptions: { google: { thoughtSignature: 'TS_TOOL' } } },
+    ])
+  })
+
+  it('keeps an empty reasoning summary that only carries encrypted metadata', () => {
+    const acc = new PartAccumulator()
+    // OpenAI Responses with `store: false`: no visible summary, but an item id and encrypted content.
+    acc.apply({ type: 'reasoning-start', id: 'r1', providerMetadata: { openai: { itemId: 'rs_1' } } })
+    acc.apply({ type: 'reasoning-end', id: 'r1', providerMetadata: { openai: { itemId: 'rs_1', reasoningEncryptedContent: 'ENC' } } })
+    expect(acc.parts).toEqual([
+      { type: 'reasoning', text: '', providerOptions: { openai: { itemId: 'rs_1', reasoningEncryptedContent: 'ENC' } } },
+    ])
+  })
+
+  it('never lets a later event without metadata clear what was already captured', () => {
+    const acc = new PartAccumulator()
+    acc.apply({ type: 'reasoning-start', id: 'r1' })
+    acc.apply({ type: 'reasoning-delta', id: 'r1', text: 'why', providerMetadata: { anthropic: { signature: 'SIG' } } })
+    acc.apply({ type: 'reasoning-end', id: 'r1' })
+    acc.apply({ type: 'text-start', id: 't1' })
+    acc.apply({ type: 'text-delta', id: 't1', text: 'because', providerMetadata: { google: { thoughtSignature: 'TS' } } })
+    acc.apply({ type: 'text-end', id: 't1' })
+    expect(acc.parts).toEqual([
+      { type: 'reasoning', text: 'why', providerOptions: { anthropic: { signature: 'SIG' } } },
+      { type: 'text', text: 'because', providerOptions: { google: { thoughtSignature: 'TS' } } },
+    ])
+  })
+
   it('ignores lifecycle parts', () => {
     const acc = new PartAccumulator()
     expect(acc.apply({ type: 'start' })).toEqual([])

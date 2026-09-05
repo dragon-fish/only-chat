@@ -6,9 +6,12 @@ import { describe, expect, it } from 'vitest'
 import { createDb } from '@/server/db/client'
 import { ensureDefaultUser } from '@/server/plugins/database'
 import { encryptSecret } from '@/server/plugins/llm/crypto'
-import { getSession, listMessages } from '@/server/plugins/hub/sessions'
+import { buildModelMessages } from '@/server/plugins/llm/messages'
+import { createSession, getSession, insertMessage, listMessages, toMessage } from '@/server/plugins/hub/sessions'
 import { models, projects, providers, users } from '@/server/db/schema'
 import { DEFAULT_USER_ID } from '@/shared/constants'
+import type { Message } from '@/shared/models'
+import type { Part } from '@/shared/parts'
 import type { UserHub } from '@/server/index'
 import { connect } from './ws-helper'
 
@@ -326,5 +329,71 @@ describe('project inheritance', () => {
     expect((err as { message: string }).message).toContain('session init fields')
     // The rejected command must not have persisted anything.
     expect(await listMessages(createDb(env.DB), sessionId)).toHaveLength(2)
+  })
+})
+
+describe('provider metadata round trip', () => {
+  /** OpenAI Responses shape: no visible summary, but an item id and encrypted content to replay. */
+  const META_STREAM: StreamPart[] = [
+    { type: 'stream-start', warnings: [] },
+    { type: 'response-metadata', id: 'r', modelId: 'mock', timestamp: new Date(0) },
+    { type: 'reasoning-start', id: 'r1', providerMetadata: { openai: { itemId: 'rs_1' } } },
+    { type: 'reasoning-end', id: 'r1', providerMetadata: { openai: { itemId: 'rs_1', reasoningEncryptedContent: 'ENC' } } },
+    { type: 'text-start', id: 't1' },
+    { type: 'text-delta', id: 't1', delta: 'Hello' },
+    // Gemini hangs its thought signature off the text block, not the reasoning block.
+    { type: 'text-end', id: 't1', providerMetadata: { google: { thoughtSignature: 'TS_TEXT' } } },
+    STREAM.at(-1)!,
+  ]
+
+  it('persists stream metadata and replays it on the next turn', async () => {
+    const providerId = await seedProvider()
+    const created = await installMock(() => new MockLanguageModelV4({
+      doStream: async () => ({ stream: simulateReadableStream({ chunks: [...META_STREAM], chunkDelayInMs: null, initialDelayInMs: null }) }),
+    }))
+    const c = await connect()
+    c.ws.send(JSON.stringify({ type: 'send', session_id: null, parent_id: null, parts: [{ type: 'text', text: 'hi' }], provider_id: providerId, model_id: 'mock-1' }))
+    await c.next('message.done')
+    const sessionId = (c.events.find((e) => e.type === 'session.created') as { session: { id: number } }).session.id
+
+    const stored: Part[] = [
+      { type: 'reasoning', text: '', providerOptions: { openai: { itemId: 'rs_1', reasoningEncryptedContent: 'ENC' } } },
+      { type: 'text', text: 'Hello', providerOptions: { google: { thoughtSignature: 'TS_TEXT' } } },
+    ]
+    // An empty summary is not an absent round trip: the encrypted item still has to reach D1.
+    expect((await listMessages(createDb(env.DB), sessionId))[1]!.parts).toEqual(stored)
+
+    c.ws.send(JSON.stringify({ type: 'send', session_id: sessionId, parent_id: null, parts: [{ type: 'text', text: 'more' }], provider_id: providerId, model_id: 'mock-1' }))
+    await c.nextAfter('message.done', 2)
+    const prompt = created[1]!.doStreamCalls[0]!.prompt
+    expect(prompt.find((m) => m.role === 'assistant')!.content).toEqual([
+      { type: 'reasoning', text: '', providerOptions: { openai: { itemId: 'rs_1', reasoningEncryptedContent: 'ENC' } } },
+      { type: 'text', text: 'Hello', providerOptions: { google: { thoughtSignature: 'TS_TEXT' } } },
+    ])
+  })
+
+  it('rebuilds identical model messages from memory and from D1 JSON', async () => {
+    const db = createDb(env.DB)
+    await ensureDefaultUser(db)
+    const session = await createSession(db, { user_id: DEFAULT_USER_ID, title: 't', provider_id: null, model_id: null })
+    const userParts: Part[] = [{ type: 'text', text: 'q' }]
+    const assistantParts: Part[] = [
+      { type: 'reasoning', text: 'hmm', providerOptions: { anthropic: { signature: 'SIG', redactedData: 'RED' } } },
+      { type: 'text', text: 'a cat', providerOptions: { google: { thoughtSignature: 'TS_TEXT' } } },
+      { type: 'tool_call', id: 'call_1', name: 'lookup', args: { q: 'cat' }, providerOptions: { google: { thoughtSignature: 'TS_TOOL' } } },
+      { type: 'tool_result', call_id: 'call_1', name: 'lookup', content: { ok: true } },
+    ]
+    const base = { session_id: session.id, provider_id: null, model_id: null, usage: null, status: 'done' as const, error: null, created_at: 0 }
+    const user = await insertMessage(db, { ...base, parent_id: null, seq: 0, role: 'user', parts: userParts })
+    const assistant = await insertMessage(db, { ...base, parent_id: user.id, seq: 1, role: 'assistant', parts: assistantParts })
+
+    // The literals never left memory; the rows came back out of the D1 JSON column.
+    const inMemory: Message[] = [{ ...toMessage(user), parts: userParts }, { ...toMessage(assistant), parts: assistantParts }]
+    const fromD1 = (await listMessages(db, session.id)).map((r) => toMessage(r))
+    expect(fromD1).toEqual(inMemory)
+    for (const protocol of ['openai-completions', 'openai-responses', 'anthropic', 'vertex'] as const) {
+      const args = { protocol, systemPrompt: null, images: new Map() }
+      expect(buildModelMessages({ ...args, path: fromD1 })).toEqual(buildModelMessages({ ...args, path: inMemory }))
+    }
   })
 })
