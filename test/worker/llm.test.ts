@@ -1,6 +1,8 @@
+import { runInDurableObject } from 'cloudflare:test'
 import { env } from 'cloudflare:workers'
+import type { Context } from 'cordis'
 import { describe, expect, it } from 'vitest'
-import { createApp } from '@/server/app'
+import type { UserHub } from '@/server/index'
 import { encryptSecret } from '@/server/plugins/llm/crypto'
 import type { ModelRow, ProviderRow } from '@/server/db/schema'
 import type { LanguageModel } from 'ai'
@@ -20,36 +22,44 @@ async function provider(protocol: ProviderRow['protocol'], key: string | null, e
   }
 }
 
+/** The hub-side cordis root only lives inside a UserHub DO, so run these assertions in one. */
+function inHub<R>(fn: (ctx: Context) => Promise<R>): Promise<R> {
+  return runInDurableObject(env.USER_HUB.getByName('llm-test'), (instance: UserHub) => fn(instance.app))
+}
+
 describe('Llm service', () => {
   it('registers the four protocols and builds models without network', async () => {
-    const ctx = await createApp({ env, side: 'hub' })
-    for (const p of ['openai-completions', 'openai-responses', 'anthropic', 'vertex'] as const) expect(ctx.llm.has(p)).toBe(true)
+    await inHub(async (ctx) => {
+      for (const p of ['openai-completions', 'openai-responses', 'anthropic', 'vertex'] as const) expect(ctx.llm.has(p)).toBe(true)
 
-    const compat = built(await ctx.llm.createModel(await provider('openai-completions', 'k'), model))
-    expect(compat.provider).toBe('compat.chat')
-    expect(compat.modelId).toBe('test-model')
+      const compat = built(await ctx.llm.createModel(await provider('openai-completions', 'k'), model))
+      expect(compat.provider).toBe('compat.chat')
+      expect(compat.modelId).toBe('test-model')
 
-    const responses = built(await ctx.llm.createModel(await provider('openai-responses', 'k'), model))
-    expect(responses.provider).toBe('openai.responses')
+      const responses = built(await ctx.llm.createModel(await provider('openai-responses', 'k'), model))
+      expect(responses.provider).toBe('openai.responses')
 
-    const anthropic = built(await ctx.llm.createModel(await provider('anthropic', 'k'), model))
-    expect(anthropic.provider).toBe('anthropic.messages')
+      const anthropic = built(await ctx.llm.createModel(await provider('anthropic', 'k'), model))
+      expect(anthropic.provider).toBe('anthropic.messages')
 
-    const sa = JSON.stringify({ client_email: 'a@b', private_key: 'PEM', private_key_id: 'kid' })
-    const vertex = built(await ctx.llm.createModel(await provider('vertex', sa, { project: 'proj', location: 'us-central1' }), model))
-    expect(vertex.provider).toBe('google.vertex.chat')
+      const sa = JSON.stringify({ client_email: 'a@b', private_key: 'PEM', private_key_id: 'kid' })
+      const vertex = built(await ctx.llm.createModel(await provider('vertex', sa, { project: 'proj', location: 'us-central1' }), model))
+      expect(vertex.provider).toBe('google.vertex.chat')
+    })
   })
 
   it('rejects a missing key', async () => {
-    const ctx = await createApp({ env, side: 'hub' })
-    await expect(ctx.llm.createModel(await provider('anthropic', null), model)).rejects.toThrow(/api key/i)
+    await inHub(async (ctx) => {
+      await expect(ctx.llm.createModel(await provider('anthropic', null), model)).rejects.toThrow(/api key/i)
+    })
   })
 
   it('lets a test register a custom protocol and disposes it with the caller', async () => {
-    const ctx = await createApp({ env, side: 'hub' })
-    const fiber = await ctx.plugin({ name: 'mock-protocol', inject: ['llm'], apply(c) { c.llm.register('mock', () => ({ provider: 'mock' }) as never) } })
-    expect(ctx.llm.has('mock')).toBe(true)
-    await fiber.dispose()
-    expect(ctx.llm.has('mock')).toBe(false)
+    await inHub(async (ctx) => {
+      const fiber = await ctx.plugin({ name: 'mock-protocol', inject: ['llm'], apply(c) { c.llm.register('mock', () => ({ provider: 'mock' }) as never) } })
+      expect(ctx.llm.has('mock')).toBe(true)
+      await fiber.dispose()
+      expect(ctx.llm.has('mock')).toBe(false)
+    })
   })
 })

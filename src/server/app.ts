@@ -2,6 +2,7 @@ import { Context } from 'cordis'
 import { Database } from './plugins/database'
 import { Assets } from './plugins/assets'
 import { LlmPlugin } from './plugins/llm'
+import { HubPlugin } from './plugins/hub'
 
 export type Side = 'worker' | 'hub'
 
@@ -16,6 +17,7 @@ export interface AppOptions {
  * Plugin activation in cordis is always async, so callers must await this before using services.
  */
 export async function createApp(options: AppOptions): Promise<Context> {
+  if (options.side === 'hub' && !options.doState) throw new Error('hub side requires doState')
   const ctx = new Context()
   ctx.logger.exporter({
     colors: false,
@@ -31,8 +33,9 @@ export async function createApp(options: AppOptions): Promise<Context> {
     // `await ctx.plugin()` resolves even when the plugin stays PENDING on a missing injection,
     // so assert the service is actually reachable rather than failing later at first use.
     if (!ctx.get('llm')) throw new Error('LlmPlugin loaded but ctx.llm is unavailable')
+    await ctx.plugin(HubPlugin)
+    if (!ctx.get('hub')) throw new Error('HubPlugin loaded but ctx.hub is unavailable')
   }
-  // Task 10 adds: if (options.side === 'hub') await ctx.plugin(HubPlugin)
   // Task 12 adds: if (options.side === 'worker') await ctx.plugin(ApiPlugin)
   return ctx
 }
