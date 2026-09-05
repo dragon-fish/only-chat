@@ -3873,9 +3873,10 @@ git commit -m "feat(api): REST routes for sessions, providers, models and attach
 ### Task 13: Client foundation — Tailwind/shadcn, router, API client, WebSocket client, sync store
 
 **Files:**
-- Create: `components.json`, `src/client/lib/utils.ts` (from shadcn init), `src/client/ui/*` (shadcn add), `src/client/styles/main.scss`, `src/client/router.ts`, `src/client/lib/api.ts`, `src/client/lib/ws-client.ts`, `src/client/stores/sync.ts`, `src/client/stores/config.ts`, `src/client/components/app-shell.vue`, placeholder views
-- Modify: `src/client/main.ts`, `src/client/app.vue`, `src/client/style.css`
+- Create: `components.json`, `src/client/lib/utils.ts` (from shadcn init), `src/client/ui/*` (shadcn add), `src/client/styles/main.scss`, `src/client/router.ts`, `src/client/pages/**` (file-based routes), `src/client/typed-router.d.ts` (generated), `src/client/lib/api.ts`, `src/client/lib/ws-client.ts`, `src/client/stores/sync.ts`, `src/client/stores/config.ts`, `src/client/components/app-shell.vue`, placeholder views
+- Modify: `src/client/main.ts`, `src/client/app.vue`, `src/client/style.css`, `vite.config.ts`, `tsconfig.app.json`
 - Test: `test/unit/client-sync-store.test.ts`, `test/unit/client-ws-client.test.ts`
+- Allowed but optional: `@vueuse/core` for browser composables (e.g. `useLocalStorage`). Do not add `unplugin-vue-components`; keep explicit imports.
 
 **Interfaces:**
 - Produces:
@@ -4373,20 +4374,29 @@ export const useConfigStore = defineStore('config', () => {
 })
 ```
 
+File-based routing (vue-router 5 ships the former unplugin-vue-router as `vue-router/vite`). Add the plugin to `vite.config.ts` BEFORE `vue()`:
+```ts
+import VueRouter from 'vue-router/vite'
+// plugins: [VueRouter({ routesFolder: 'src/client/pages', dts: 'src/client/typed-router.d.ts' }), vue(), tailwindcss(), cloudflare()]
+```
+Verify the option names against `node_modules/vue-router/dist/vite.d.ts` (or the `unplugin` entry) before relying on them; if the option is named `routesFolder` with a different shape, follow the installed types. Commit the generated `src/client/typed-router.d.ts` and add `"src/client/typed-router.d.ts"` to `tsconfig.app.json` `include`.
+
+Pages (the route table is derived from these paths):
+```
+src/client/pages/index.vue                      → /
+src/client/pages/c/[sessionId].vue              → /c/:sessionId
+src/client/pages/settings/providers/index.vue   → /settings/providers
+src/client/pages/settings/providers/[id].vue    → /settings/providers/:id
+src/client/pages/settings/plugins.vue           → /settings/plugins
+```
+`index.vue` and `c/[sessionId].vue` both render the same `ChatView` component (`src/client/views/chat.vue`), the dynamic one passing `sessionId` from `useRoute().params`. Settings pages likewise wrap the view components in `src/client/views/`. This keeps the view code identical to the plan text below; only the thin page files differ.
+
 `src/client/router.ts`:
 ```ts
 import { createRouter, createWebHistory } from 'vue-router'
+import { routes } from 'vue-router/auto-routes'
 
-export const router = createRouter({
-  history: createWebHistory(),
-  routes: [
-    { path: '/', component: () => import('./views/chat.vue') },
-    { path: '/c/:sessionId', component: () => import('./views/chat.vue'), props: true },
-    { path: '/settings/providers', component: () => import('./views/settings-providers.vue') },
-    { path: '/settings/providers/:id', component: () => import('./views/settings-provider-edit.vue'), props: true },
-    { path: '/settings/plugins', component: () => import('./views/settings-plugins.vue') },
-  ],
-})
+export const router = createRouter({ history: createWebHistory(), routes })
 ```
 
 `src/client/main.ts`:
