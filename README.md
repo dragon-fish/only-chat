@@ -54,5 +54,9 @@ Design notes: `docs/superpowers/specs/2026-09-05-only-chat-mvp-design.md`.
   is already configured in front of `chat.epb.wiki`.
 - **The Vertex OAuth token is not cached.** Each generation re-signs the service-account JWT and
   exchanges it for an access token.
-- **Feature plugins: mechanism only.** Settings carry a per-user plugin toggle map and the DO loads
-  and disposes plugins from it, but no feature plugin ships with the MVP, so the page is empty.
+- **Feature plugins: mechanism reserved, not wired up.** Settings carry a per-user plugin toggle
+  map and there's a toggle UI for it, but the DO does not yet load or dispose feature plugins from
+  that map, and no feature plugin ships with the MVP, so the page is empty.
+- **Anthropic model listing only reads the first page.** `fetch-models` calls `GET /models` once
+  and ignores `has_more`/pagination, so an Anthropic account with more models than fit on one page
+  will only import the first page's worth.

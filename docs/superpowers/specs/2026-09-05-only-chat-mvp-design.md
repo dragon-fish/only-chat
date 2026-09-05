@@ -70,7 +70,7 @@ cordis 是后端的骨架，不是风味 DI。要用足的三项能力：
 
 - **依赖解析**：每个插件用 `inject` 声明依赖的服务（如 hub 依赖 `llm` 与 `database`，llm 依赖 `database`），装载顺序由 cordis 解析，代码里不写任何"等待某服务就绪"的轮询。
 - **生命周期与副作用回收**：插件注册的事件监听、定时器、路由等副作用全部挂在自己的 scope 上，`dispose` 时由 cordis 统一回收。插件不得持有需要手动清理的全局状态。
-- **运行时热插拔**：核心插件（database、assets、llm、hub、api）常驻；功能插件可由用户在设置中开关，开关状态存于用户设置，DO 侧根据它 `ctx.plugin` / `dispose` 对应插件，无需重新部署。MVP 只搭这套机制并提供开关入口，不附带任何功能插件。
+- **运行时热插拔**：核心插件（database、assets、llm、hub、api）常驻；功能插件可由用户在设置中开关，开关状态存于用户设置，DO 侧根据它 `ctx.plugin` / `dispose` 对应插件，无需重新部署。MVP 只搭这套机制并提供开关入口，不附带任何功能插件。DO 侧根据 `settings.plugins` 实际 `ctx.plugin` / `dispose` 功能插件尚未实现，settings 目前只存储开关状态、UI 只是个空白的开关列表（实现阶段调整）。
 
 能通过换插件解耦的：`Database`（Drizzle 驱动无关）、`Assets`（R2 / 本地 / S3）、`LlmProtocol` 注册表（每种协议一个插件）。**不解耦的**：UserHub 直接依赖 DO API（Hibernation WebSocket、alarm、单实例串行写），自部署时需重写 Hub 插件而非换配置；MVP 不为其抽象通用接口。
 
@@ -168,7 +168,7 @@ assistant 消息的 reasoning、text、tool_call 都是同一条消息的 parts�
 
 ### 7.1 结构（`plugins/llm/`）
 
-- 注册表：`ctx.llm.register(protocol, factory)`；四个子插件各注册一个 `factory(providerRow, modelRow) => LanguageModel`，分别基于 `@ai-sdk/openai`（`openai-completions` 用 `.chat()`；`openai-responses` 用 `.responses()`，注意 SDK 7 默认即 responses）、`@ai-sdk/anthropic`、`@ai-sdk/google-vertex/edge`（必须 `/edge` 路径；SDK 不缓存 OAuth token，每请求签一次 JWT，llm 插件内按 provider 缓存 token）、`@ai-sdk/openai-compatible`（必须 `includeUsage: true` 才有流式 usage）。`base_url`、解密后的 key、`extra` 在 factory 内注入，所有凭据显式传参，不依赖 `process.env`。
+- 注册表：`ctx.llm.register(protocol, factory)`；四个子插件各注册一个 `factory(providerRow, modelRow) => LanguageModel`，分别基于 `@ai-sdk/openai`（`openai-completions` 用 `.chat()`；`openai-responses` 用 `.responses()`，注意 SDK 7 默认即 responses）、`@ai-sdk/anthropic`、`@ai-sdk/google-vertex/edge`（必须 `/edge` 路径；SDK 不缓存 OAuth token，每请求签一次 JWT，llm 插件内按 provider 缓存 token）、`@ai-sdk/openai-compatible`（必须 `includeUsage: true` 才有流式 usage）。`base_url`、解密后的 key、`extra` 在 factory 内注入，所有凭据显式传参，不依赖 `process.env`。Vertex 的 llm 插件内按 provider 缓存 OAuth token 尚未实现：MVP 每次生成都重新签发 JWT 并换取 access token（实现阶段调整）。
 - `messages.ts`：`buildModelMessages(systemPrompt, pathMessages, protocol)` 纯函数，输出 AI SDK 的 `ModelMessage[]`，以及 `result.stream` 事件到本项目 delta / part 的归一化。只消费 `text-delta`、`reasoning-delta`、`reasoning-end`（取 providerMetadata）、`tool-call`、`finish`、`abort`、`error`。
 - `usage.ts`：AI SDK 7 的嵌套 usage（`inputTokenDetails.cacheReadTokens` 等）映射为本项目的扁平 `{ prompt, completion, cached, reasoning }`；`undefined` 与 `0` 区分保留。
 - `presets.ts`：预制供应商模板。
