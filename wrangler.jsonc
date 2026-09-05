@@ -17,7 +17,7 @@
     {
       "binding": "DB",
       "database_name": "only-chat-db",
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "48da2d06-2a1a-4b1d-bb89-a4627a26e0ae",
       "migrations_dir": "migrations"
     }
   ],
