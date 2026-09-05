@@ -6,6 +6,14 @@ export interface WsHarness {
   events: WsEvent[]
   /** Resolves with the first event of that type already received or the next one to arrive. */
   next: (type: WsEvent['type']) => Promise<WsEvent>
+  /** Resolves with the `count`-th (1-based) event of that type, waiting for it if needed. */
+  nextAfter: (type: WsEvent['type'], count: number) => Promise<WsEvent>
+}
+
+interface Waiter {
+  type: string
+  count: number
+  resolve: (e: WsEvent) => void
 }
 
 export async function connect(): Promise<WsHarness> {
@@ -14,17 +22,23 @@ export async function connect(): Promise<WsHarness> {
   const ws = res.webSocket
   ws.accept()
   const events: WsEvent[] = []
-  const waiters: Array<{ type: string; resolve: (e: WsEvent) => void }> = []
+  const waiters: Waiter[] = []
   ws.addEventListener('message', (ev) => {
     const e = JSON.parse(ev.data as string) as WsEvent
     events.push(e)
-    for (const w of [...waiters]) if (w.type === e.type) { waiters.splice(waiters.indexOf(w), 1); w.resolve(e) }
+    for (const w of [...waiters]) {
+      if (w.type !== e.type) continue
+      const seen = events.filter((x) => x.type === w.type)
+      if (seen.length < w.count) continue
+      waiters.splice(waiters.indexOf(w), 1)
+      w.resolve(seen[w.count - 1]!)
+    }
   })
-  const next = (type: WsEvent['type']) => new Promise<WsEvent>((resolve, reject) => {
-    const found = events.find((e) => e.type === type)
-    if (found) return resolve(found)
-    waiters.push({ type, resolve })
-    setTimeout(() => reject(new Error(`timeout waiting for ${type}`)), 5000)
+  const nextAfter = (type: WsEvent['type'], count: number) => new Promise<WsEvent>((resolve, reject) => {
+    const seen = events.filter((e) => e.type === type)
+    if (seen.length >= count) return resolve(seen[count - 1]!)
+    waiters.push({ type, count, resolve })
+    setTimeout(() => reject(new Error(`timeout waiting for ${type} #${count}`)), 5000)
   })
-  return { ws, events, next }
+  return { ws, events, next: (type) => nextAfter(type, 1), nextAfter }
 }

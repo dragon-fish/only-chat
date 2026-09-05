@@ -47,7 +47,9 @@ export class UserHub extends DurableObject<Env> {
   }
 
   async webSocketClose(ws: WebSocket, code: number, reason: string): Promise<void> {
-    ws.close(code, reason)
+    // workerd rejects the reserved codes (1005 "no status", 1006 "abnormal") on close().
+    if (code >= 1000 && code !== 1005 && code !== 1006) ws.close(code, reason)
+    else ws.close()
   }
 
   async webSocketError(_ws: WebSocket, error: unknown): Promise<void> {

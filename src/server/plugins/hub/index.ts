@@ -17,6 +17,8 @@ export interface InflightJob {
   controller: AbortController
   startedAt: number
   parts: Part[]
+  /** Resolves once the job untracked itself. Assigned by `trackInflight`; awaited by `stop`. */
+  settled: Promise<void>
 }
 
 interface StoredInflight {
@@ -26,6 +28,10 @@ interface StoredInflight {
 }
 
 const INFLIGHT_PREFIX = 'inflight:'
+/** How long `stop()` waits for aborted generations to unwind before giving up on them. */
+const STOP_TIMEOUT_MS = 5000
+/** Re-arm delay when jobs are still tracked but all of them already timed out. */
+const ALARM_WATCHDOG_MS = 60_000
 
 export class Hub extends Service {
   static readonly provide = 'hub'
@@ -37,6 +43,7 @@ export class Hub extends Service {
   readonly db: DB
   readonly seq = new SeqAllocator()
   private readonly _inflight = new Map<number, InflightJob>()
+  private readonly _settlers = new Map<number, () => void>()
 
   constructor(ctx: Context) {
     super(ctx, 'hub')
@@ -102,8 +109,28 @@ export class Hub extends Service {
 
   // ---- non-generation commands
 
+  /**
+   * Aborts the session's generations and waits for them to unwind, so a caller like `sessionDelete`
+   * can touch the rows right afterwards. `generation.ts` must always call `untrackInflight()` from
+   * its finally path; otherwise a job only settles through the timeout below.
+   */
   async stop(sessionId: number): Promise<void> {
-    for (const job of this._inflight.values()) if (job.sessionId === sessionId) job.controller.abort('user stopped')
+    const settled: Promise<void>[] = []
+    for (const job of this._inflight.values()) {
+      if (job.sessionId !== sessionId) continue
+      job.controller.abort('user stopped')
+      settled.push(job.settled)
+    }
+    if (settled.length === 0) return
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      await Promise.race([
+        Promise.all(settled).then(() => undefined),
+        new Promise<void>((resolve) => { timer = setTimeout(resolve, STOP_TIMEOUT_MS) }),
+      ])
+    } finally {
+      if (timer !== undefined) clearTimeout(timer)
+    }
   }
 
   async switchHead(sessionId: number, messageId: number): Promise<void> {
@@ -154,9 +181,12 @@ export class Hub extends Service {
     return [...this._inflight.values()]
   }
 
-  async trackInflight(job: InflightJob): Promise<void> {
-    this._inflight.set(job.message.id, job)
-    await this.flushInflight(job)
+  /** Takes the job without its `settled` promise and assigns one in place (identity is preserved). */
+  async trackInflight(job: Omit<InflightJob, 'settled'>): Promise<void> {
+    const tracked = job as InflightJob
+    tracked.settled = new Promise<void>((resolve) => { this._settlers.set(tracked.message.id, resolve) })
+    this._inflight.set(tracked.message.id, tracked)
+    await this.flushInflight(tracked)
     await this.ensureAlarm()
   }
 
@@ -169,6 +199,11 @@ export class Hub extends Service {
     this._inflight.delete(messageId)
     await this.state.storage.delete(`${INFLIGHT_PREFIX}${messageId}`)
     if (this._inflight.size === 0) await this.state.storage.deleteAlarm()
+    const settle = this._settlers.get(messageId)
+    if (settle) {
+      this._settlers.delete(messageId)
+      settle()
+    }
   }
 
   async ensureAlarm(): Promise<void> {
@@ -185,13 +220,21 @@ export class Hub extends Service {
       else earliest = Math.min(earliest, job.startedAt)
     }
     if (earliest !== Infinity) await this.state.storage.setAlarm(earliest + GENERATION_TIMEOUT_MS)
+    // Everything left is already aborted but not yet untracked: keep watching instead of going dark.
+    else if (this._inflight.size > 0) await this.state.storage.setAlarm(now + ALARM_WATCHDOG_MS)
   }
 
   /** A previous DO instance died mid-generation: persist what it had as aborted. */
   private async _recoverInflight(): Promise<void> {
     const stored = await this.state.storage.list<StoredInflight>({ prefix: INFLIGHT_PREFIX })
     for (const [key, job] of stored) {
-      await finalizeMessage(this.db, job.message.id, { parts: job.parts, usage: null, status: 'aborted', error: 'interrupted' })
+      // Best-effort per entry: a failed finalize must not brick the DO on every wake, so the key
+      // goes away either way.
+      try {
+        await finalizeMessage(this.db, job.message.id, { parts: job.parts, usage: null, status: 'aborted', error: 'interrupted' })
+      } catch (err) {
+        console.error('inflight recovery failed for message', job.message.id, err)
+      }
       await this.state.storage.delete(key)
     }
     await this.state.storage.deleteAlarm()

@@ -1,8 +1,11 @@
+import { runInDurableObject } from 'cloudflare:test'
 import { env, exports } from 'cloudflare:workers'
 import { describe, expect, it } from 'vitest'
 import { createDb } from '@/server/db/client'
+import type { UserHub } from '@/server/index'
 import { ensureDefaultUser } from '@/server/plugins/database'
 import { createSession } from '@/server/plugins/hub/sessions'
+import type { Message } from '@/shared/models'
 import { connect } from './ws-helper'
 
 describe('UserHub DO', () => {
@@ -30,12 +33,35 @@ describe('UserHub DO', () => {
   })
 
   it('answers invalid commands with an error event carrying request_id', async () => {
-    const { ws, next } = await connect()
+    const { ws, next, nextAfter } = await connect()
     ws.send(JSON.stringify({ type: 'session.update', request_id: 'r9' }))
     const err = await next('error')
-    expect(err).toMatchObject({ type: 'error', request_id: 'r9' })
+    expect(err).toMatchObject({ type: 'error', request_id: 'r9', message: 'invalid command' })
     ws.send('not json')
-    expect((await next('error')).type).toBe('error')
+    expect(await nextAfter('error', 2)).toEqual({ type: 'error', message: 'malformed json' })
+  })
+
+  it('stop() only resolves once the aborted job untracks itself', async () => {
+    await runInDurableObject(env.USER_HUB.getByName('stop-test'), async (instance: UserHub) => {
+      const hub = instance.app.hub
+      const message: Message = {
+        id: 4242, session_id: 99, parent_id: null, seq: 1, role: 'assistant', parts: [],
+        provider_id: null, model_id: null, usage: null, status: 'streaming', error: null, created_at: 0,
+      }
+      const job = { message, sessionId: 99, controller: new AbortController(), startedAt: Date.now(), parts: [] }
+      await hub.trackInflight(job)
+
+      let settled = false
+      const stopped = hub.stop(99).then(() => { settled = true })
+      await new Promise((r) => setTimeout(r, 20))
+      expect(job.controller.signal.aborted).toBe(true)
+      expect(settled).toBe(false)
+
+      await hub.untrackInflight(message.id)
+      await stopped
+      expect(settled).toBe(true)
+      expect(hub.inflight()).toEqual([])
+    })
   })
 
   it('updates settings and broadcasts them', async () => {
