@@ -140,7 +140,7 @@ Project 配置不复制到 session。每次开始生成时，服务端从最新�
 - `last_used_at`
 - `created_at`
 
-唯一索引为 `(attachment_id, provider_id)`。同一份 R2 图片上传到不同 provider 后必须分别保存指针；任何请求只可使用当前 provider 对应且未过期的指针。修改 provider 的协议、Base URL 或凭据时，立即删除该 provider 的本地指针；远端临时文件等待供应商按上传时设置的期限自动删除。
+唯一索引为 `(attachment_id, provider_id)`，不包含 `session_id` 或 `model_id`。指针是当前用户范围内的附件—供应商缓存：同一份 R2 图片上传到不同 provider 后分别保存，在一个对话中反复切换 provider 时保留各自指针；切回曾使用过的 provider 会直接复用其未过期指针，不重新上传。任何请求只可使用当前 provider 对应且未过期的指针。修改 provider 的协议、Base URL 或凭据时，立即删除该 provider 的本地指针；远端临时文件等待供应商按上传时设置的期限自动删除。
 
 表内只保存供应商文件 ID 和时间戳，不保存文件内容。过期行不得参与上下文组装；需要该图片时重新上传并替换指针。
 
@@ -244,7 +244,7 @@ reasoning 开启与 effort 分别映射：
 
 Files API 是 provider 能力，不是 model 能力。OpenAI Responses preset 默认启用；自定义兼容 provider 在设置中显式开启，不能仅凭协议名称假定网关实现完整。上传失败不得把认证错误等问题伪装成能力缺失；只有用户关闭 Files API 或已知“不支持端点”的响应才走后备传输。
 
-provider file ID 只属于上传它的 provider。切换 session 模型时，如果 provider 变化，必须查找或创建新 provider 的独立指针，绝不复用前一个 provider 的 file ID。
+provider file ID 只属于上传它的 provider。切换 session 模型时，如果 provider 变化，必须查找或创建新 provider 的独立指针，绝不复用前一个 provider 的 file ID；如果随后切回原 provider，则继续使用其尚未过期的原指针。
 
 ### 5.7 供应商文件过期与本地清理
 
@@ -368,6 +368,7 @@ assistant shell 到达后立即产生可见状态：
 - Project 与 session 事件在两个 WebSocket 客户端一致。
 - provider 的 `native_files` 创建、更新和 preset 默认值正确；关键连接配置变化后旧文件指针不可复用。
 - 同一 attachment 在同一 provider 内复用 file ID，在不同 provider 间分别上传；过期后重新上传。
+- 单个 session 在 A → B → A 间切换 provider 时，第二次使用 A 命中第一次创建且仍有效的指针。
 - 上传请求包含 7 天过期策略；供应商返回实际 `expires_at` 时持久化返回值，否则记录请求期限。
 - 每日任务只清理过期的 D1 指针，不调用供应商 DELETE；清理失败可安全重试。
 - Files API 关闭时不请求 `/files`；开启后的认证 / 限流错误不静默降级。
