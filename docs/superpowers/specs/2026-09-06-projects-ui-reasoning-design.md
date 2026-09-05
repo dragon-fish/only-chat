@@ -9,7 +9,7 @@ only-chat 的实时多设备聊天 MVP 已可用。本轮在不引入账号系�
 - 重做侧栏和 Composer 的信息层级，并修复页面、弹层与长列表缺少滚动的问题。
 - 为首 token 前的等待阶段提供明确反馈，并展示供应商实际返回的 reasoning summary。
 - 完整保存并回传供应商 reasoning 元数据，满足多轮推理、质量与前缀缓存要求。
-- 增加 Google / Vertex 兼容协议，并把模型生成图片安全转存到 R2。
+- 增加 Vertex 兼容协议，并把模型生成图片安全转存到 R2。
 - 避免多轮对话反复内联历史图片，优先复用供应商短期文件指针。
 
 本轮继续使用 Cloudflare Access 作为外部门禁，`user_id` 仍固定为 `1`。
@@ -25,10 +25,10 @@ only-chat 的实时多设备聊天 MVP 已可用。本轮在不引入账号系�
 - `Project → chats` 可折叠侧栏树。
 - Composer 内的会话设置弹层和 reasoning 离散滑块。
 - 首 token 前的“正在思考”状态与 reasoning summary 展示。
-- 四种协议的 reasoning 内容及供应商元数据回传修复。
+- 五种协议的 reasoning 内容及供应商元数据回传修复。
 - 页面、侧栏、弹层、选择器和长列表的滚动规则。
 - 移动端侧栏关闭按钮与设置按钮重合修复。
-- 独立的 Google 兼容协议类型：自定义 Base URL、API Key、Bearer 鉴权和 Vertex 风格模型路径。
+- 独立的 Vertex 兼容协议类型：自定义 Base URL、API Key、Bearer 鉴权和 Vertex 风格模型路径。
 - 模型图片输出捕获、R2 转存、跨设备展示和供应商 Files API 指针复用。
 - 供应商文件的自动过期和本地指针清理。
 
@@ -135,9 +135,8 @@ Project 配置不复制到 session。每次开始生成时，服务端从最新�
 - `id`
 - `attachment_id`
 - `provider_id`
-- `provider_file_id`
+- `provider_reference`（JSON 字符串映射，例如 `{ "openai": "file-..." }`）
 - `expires_at`
-- `last_used_at`
 - `created_at`
 
 唯一索引为 `(attachment_id, provider_id)`，不包含 `session_id` 或 `model_id`。指针是当前用户范围内的附件—供应商缓存：同一份 R2 图片上传到不同 provider 后分别保存，在一个对话中反复切换 provider 时保留各自指针；切回曾使用过的 provider 会直接复用其未过期指针，不重新上传。任何请求只可使用当前 provider 对应且未过期的指针。修改 provider 的协议、Base URL 或凭据时，立即删除该 provider 的本地指针；远端临时文件等待供应商按上传时设置的期限自动删除。
@@ -219,25 +218,25 @@ reasoning 开启与 effort 分别映射：
 - OpenAI Responses：始终 `store: false`；reasoning 开启时请求 `reasoningSummary: 'auto'`，只有显式 effort 才发送 `reasoningEffort`。关闭能力可用时发送协议支持的关闭值。
 - OpenAI-compatible：Auto 时不发送 `reasoning_effort`；显式档位才发送。无论是否发送 effort，都接收并回传供应商产生的 `reasoning_content`。
 - Anthropic：reasoning 开启时使用 adaptive thinking 和 summarized display；effort 可独立省略。关闭时使用 disabled thinking。
-- Vertex：reasoning 开启时设置 `includeThoughts: true`；只有显式 effort 才设置 `thinkingLevel`。支持关闭的模型使用 SDK 对应的关闭配置。
+- Vertex / Google：reasoning 开启时设置 `includeThoughts: true`；只有显式 effort 才设置 `thinkingLevel`。支持关闭的模型使用 `thinkingBudget: 0` 并关闭 thoughts 输出；`includeThoughts: false` 本身不被视为关闭模型推理。
 
 协议映射只发送模型能力允许的值。核心解析不因 UI 标签或模型名称产生隐式行为。
 
-### 5.5 Google 兼容协议
+### 5.5 Vertex 兼容协议
 
-新增独立的 `google` 协议，服务于 ZenMux 等 Google Generate Content / Vertex 风格兼容网关；现有 `vertex` 继续只代表 Google Cloud 原生 IAM：
+新增独立的 `vertex-compatible` 协议，服务于 ZenMux 等 Vertex 风格兼容网关；现有 `vertex` 继续只代表 Google Cloud 原生 IAM。Gemini Developer API 使用不同的 URL 与鉴权语义，不归入该协议：
 
-- `google` 设置只要求 Base URL 和普通 API Key，不显示 Project、Location 或 Service Account JSON。
+- `vertex-compatible` 设置只要求 Base URL 和普通 API Key，不显示 Project、Location 或 Service Account JSON。
 - 鉴权使用 `Authorization: Bearer <API Key>`；不套用 Google Vertex Express Mode 的 `x-goog-api-key` 行为。
 - 模型 ID 使用 `{publisher}/{model}`，例如 `google/gemini-2.5-pro`。适配器拆分 publisher 与 model，并构造 `/v1/publishers/{publisher}/models/{model}:generateContent` 或 `:streamGenerateContent`。
 - Base URL 由用户完整控制，协议层只移除尾部斜杠，不猜测或重复追加供应商路径。
-- Google 兼容与原生 Vertex 共享 Gemini 内容、reasoning 和图片输出转换，但认证与 URL 构造保持独立。
+- Vertex 兼容与原生 Vertex 共享 Gemini 内容、reasoning 和图片输出转换，但认证与 URL 构造保持独立。
 
 ### 5.6 图片输入传输
 
 当前实现每轮从 R2 读取对话路径中的所有历史图片并内联发送。单次请求随历史图片线性增长，整段会话的累计重复上传量接近二次增长。改造后按以下顺序解析每个附件：
 
-1. 当前 provider 支持 Files API，且存在未过期的 `attachment_provider_files` 行：直接构造 provider file reference，并更新 `last_used_at`。
+1. 当前 provider 支持 Files API，且存在未过期的 `attachment_provider_files` 行：直接构造 provider file reference，不产生额外 D1 写入。
 2. 支持 Files API 但没有有效指针：从 R2 读取一次，上传到当前 provider，向上游 API 设置 `purpose: user_data` 与 `expires_after = 604800`（7 天），再保存 provider file ID。供应商返回实际过期时间时以返回值为准，否则使用请求中的 7 天期限作为本地指针失效时间。
 3. provider 明确配置了可用的公开 / 签名 URL 传输：发送稳定 HTTPS URL。
 4. 其余情况继续内联 bytes，保证不支持 Files API 的兼容端点仍可使用图片。
@@ -384,7 +383,7 @@ assistant shell 到达后立即产生可见状态：
 
 ### 图片链路
 
-- Google 兼容协议按 publisher / model 构造 generateContent 与流式 URL，并使用 Bearer API Key。
+- Vertex 兼容协议按 publisher / model 构造 generateContent 与流式 URL，并使用 Bearer API Key。
 - 生成流的内联图片与 HTTPS 图片都转存 R2，D1 / WebSocket 只出现 `attachment_id`。
 - 相同输出 bytes 按 SHA-256 去重，`origin` 为 `generated`。
 - 图片转存失败时不会留下 base64、临时 URL、孤立 attachment 行或半写 R2 指针。
