@@ -26,6 +26,10 @@ const drawerOpen = ref(false)
       span.text-sm.font-medium only-chat
       span.ml-auto.size-2.rounded-full(:class="sync.status === 'open' ? 'bg-emerald-500' : 'bg-zinc-400'" :title="sync.status")
     p.border-b.px-3.py-2.text-xs(v-if="bootError" class="bg-destructive/10 text-destructive") 加载失败，请刷新重试：{{ bootError }}
+    //- Spec §11: a rejected WS command must surface instead of silently doing nothing.
+    p.flex.items-center.gap-2.border-b.px-3.py-2.text-xs(v-if="sync.lastError" class="bg-destructive/10 text-destructive")
+      span 操作失败：{{ sync.lastError }}
+      button.ml-auto.underline(@click="sync.lastError = null") 关闭
     .min-h-0.flex-1
       slot
 </template>
