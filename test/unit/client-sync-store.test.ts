@@ -37,6 +37,41 @@ describe('sync store', () => {
     expect(s.messages.get(1)!.get(5)).toMatchObject({ status: 'streaming', parts: [{ type: 'text', text: 'partial' }] })
   })
 
+  it('reconciles the streaming set from a snapshot so a finished stream can be overwritten', () => {
+    const s = useSyncStore()
+    s.applyEvent({ type: 'session.created', session })
+    s.applyEvent({ type: 'message.created', message: msg(4, null, 'user') })
+    s.applyEvent({ type: 'message.created', message: msg(5, 4, 'assistant', { status: 'streaming' }) })
+    s.applyEvent({ type: 'head.changed', session_id: 1, message_id: 5 })
+    expect(s.streamingIds.has(5)).toBe(true)
+    // Reconnect: the stream finished while we were offline, so the snapshot no longer lists it.
+    s.applyEvent({ type: 'snapshot', inflight: [] })
+    expect(s.streamingIds.has(5)).toBe(false)
+    s.ingestMessages(1, [msg(4, null, 'user'), msg(5, 4, 'assistant', { status: 'done', parts: [{ type: 'text', text: 'final' }] })])
+    expect(s.messages.get(1)!.get(5)).toMatchObject({ status: 'done', parts: [{ type: 'text', text: 'final' }] })
+    expect(s.isStreaming(1)).toBe(false)
+  })
+
+  it('ignores a duplicate streaming shell so accumulated parts survive', () => {
+    const s = useSyncStore()
+    s.applyEvent({ type: 'session.created', session })
+    s.applyEvent({ type: 'message.created', message: msg(2, null, 'assistant', { status: 'streaming' }) })
+    s.applyEvent({ type: 'message.delta', message_id: 2, part_index: 0, kind: 'text', delta: 'Hi' })
+    s.applyEvent({ type: 'message.created', message: msg(2, null, 'assistant', { status: 'streaming' }) })
+    expect(s.messages.get(1)!.get(2)!.parts).toEqual([{ type: 'text', text: 'Hi' }])
+    expect(s.streamingIds.has(2)).toBe(true)
+  })
+
+  it('drops the streaming ids of a deleted session', () => {
+    const s = useSyncStore()
+    s.applyEvent({ type: 'session.created', session })
+    s.applyEvent({ type: 'message.created', message: msg(7, null, 'assistant', { status: 'streaming' }) })
+    expect(s.streamingIds.has(7)).toBe(true)
+    s.applyEvent({ type: 'session.deleted', session_id: 1 })
+    expect(s.streamingIds.has(7)).toBe(false)
+    expect(s.streamingIds.size).toBe(0)
+  })
+
   it('computes siblings for the branch switcher', () => {
     const s = useSyncStore()
     s.applyEvent({ type: 'session.created', session })

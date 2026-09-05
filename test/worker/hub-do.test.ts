@@ -41,6 +41,15 @@ describe('UserHub DO', () => {
     expect(await nextAfter('error', 2)).toEqual({ type: 'error', message: 'malformed json' })
   })
 
+  it('auto-answers the ping keepalive without waking handleCommand', async () => {
+    const { ws, raw, events } = await connect()
+    ws.send('ping')
+    const deadline = Date.now() + 2000
+    while (raw.length === 0 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 10))
+    expect(raw).toEqual(['pong'])
+    expect(events.filter((e) => e.type === 'error')).toEqual([])
+  })
+
   it('stop() only resolves once the aborted job untracks itself', async () => {
     await runInDurableObject(env.USER_HUB.getByName('stop-test'), async (instance: UserHub) => {
       const hub = instance.app.hub

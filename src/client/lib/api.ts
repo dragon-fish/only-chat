@@ -4,10 +4,11 @@ import type { PresetProvider } from '@/server/plugins/llm/presets'
 
 async function request<T>(method: string, path: string, body?: unknown, init: RequestInit = {}): Promise<T> {
   const res = await fetch(path, {
+    ...init,
     method,
+    // After `...init` on purpose: a caller's custom headers are merged in below, never dropping content-type.
     headers: body instanceof Blob ? init.headers : { 'content-type': 'application/json', ...(init.headers ?? {}) },
     body: body === undefined ? undefined : body instanceof Blob ? body : JSON.stringify(body),
-    ...init,
   })
   if (!res.ok) {
     let detail = ''

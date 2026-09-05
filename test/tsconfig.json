@@ -4,5 +4,7 @@
     "paths": { "@/*": ["../src/*"] },
     "types": ["@cloudflare/vitest-plugin/types", "./env.d.ts", "../worker-configuration.d.ts"]
   },
-  "include": ["./**/*.ts", "../src/server/**/*.ts", "../src/shared/**/*.ts", "../worker-configuration.d.ts"]
+  "include": ["./**/*.ts", "../src/server/**/*.ts", "../src/shared/**/*.ts", "../worker-configuration.d.ts"],
+  // Client tests are typechecked by tsconfig.app.json (DOM lib); worker types conflict with DOM.
+  "exclude": ["unit/client-*.test.ts"]
 }

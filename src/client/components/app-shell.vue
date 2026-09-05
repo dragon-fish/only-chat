@@ -6,6 +6,8 @@ import { Sheet, SheetContent } from '@/client/ui/sheet'
 import SessionList from '@/client/components/session-list.vue'
 import { useSyncStore } from '@/client/stores/sync'
 
+defineProps<{ bootError?: string | null }>()
+
 const sync = useSyncStore()
 const drawerOpen = ref(false)
 </script>
@@ -23,6 +25,7 @@ const drawerOpen = ref(false)
         Menu(class="size-5")
       span.text-sm.font-medium only-chat
       span.ml-auto.size-2.rounded-full(:class="sync.status === 'open' ? 'bg-emerald-500' : 'bg-zinc-400'" :title="sync.status")
+    p.border-b.px-3.py-2.text-xs(v-if="bootError" class="bg-destructive/10 text-destructive") 加载失败，请刷新重试：{{ bootError }}
     .min-h-0.flex-1
       slot
 </template>

@@ -39,8 +39,10 @@ export const useSyncStore = defineStore('sync', () => {
   function upsertMessage(m: Message): void {
     const b = bucket(m.session_id)
     const existing = b.get(m.id)
-    if (existing && streamingIds.has(m.id) && m.status !== 'streaming') {
-      // A stale REST row must not clobber a live stream.
+    if (existing && streamingIds.has(m.id)) {
+      // While the id is in the streaming set nothing may replace the live row: neither a stale
+      // REST/terminal row nor a repeated `streaming` shell (which would drop accumulated parts).
+      // `snapshot` reconciles the set on reconnect, which is what lets a terminal row land.
       return
     }
     b.set(m.id, { ...m, parts: m.parts.map((p) => ({ ...p })) })
@@ -54,16 +56,21 @@ export const useSyncStore = defineStore('sync', () => {
   function applyEvent(e: WsEvent): void {
     switch (e.type) {
       case 'snapshot':
+        // Authoritative: streams that finished while we were offline must leave the set, so a
+        // REST reload can overwrite them.
+        streamingIds.clear()
         for (const m of e.inflight) { streamingIds.add(m.id); bucket(m.session_id).set(m.id, m) }
         break
       case 'session.created':
       case 'session.updated':
         sessions.set(e.session.id, e.session)
         break
-      case 'session.deleted':
+      case 'session.deleted': {
         sessions.delete(e.session_id)
+        for (const id of messages.get(e.session_id)?.keys() ?? []) streamingIds.delete(id)
         messages.delete(e.session_id)
         break
+      }
       case 'message.created':
         upsertMessage(e.message)
         break

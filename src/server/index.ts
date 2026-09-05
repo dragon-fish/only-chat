@@ -17,6 +17,8 @@ export class UserHub extends DurableObject<Env> {
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env)
+    // Answered by the runtime without waking the DO, so client keepalives never reach handleCommand.
+    ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping', 'pong'))
     ctx.blockConcurrencyWhile(async () => {
       this._app = await createApp({ env, side: 'hub', doState: ctx })
     })

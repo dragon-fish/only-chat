@@ -4,6 +4,8 @@ import type { WsEvent } from '@/shared/ws'
 export interface WsHarness {
   ws: WebSocket
   events: WsEvent[]
+  /** Frames that are not JSON events, e.g. the `pong` auto-response. */
+  raw: string[]
   /** Resolves with the first event of that type already received or the next one to arrive. */
   next: (type: WsEvent['type']) => Promise<WsEvent>
   /** Resolves with the `count`-th (1-based) event of that type, waiting for it if needed. */
@@ -22,9 +24,17 @@ export async function connect(): Promise<WsHarness> {
   const ws = res.webSocket
   ws.accept()
   const events: WsEvent[] = []
+  const raw: string[] = []
   const waiters: Waiter[] = []
   ws.addEventListener('message', (ev) => {
-    const e = JSON.parse(ev.data as string) as WsEvent
+    const data = ev.data as string
+    let e: WsEvent
+    try {
+      e = JSON.parse(data) as WsEvent
+    } catch {
+      raw.push(data)
+      return
+    }
     events.push(e)
     for (const w of [...waiters]) {
       if (w.type !== e.type) continue
@@ -40,5 +50,5 @@ export async function connect(): Promise<WsHarness> {
     waiters.push({ type, count, resolve })
     setTimeout(() => reject(new Error(`timeout waiting for ${type} #${count}`)), 5000)
   })
-  return { ws, events, next: (type) => nextAfter(type, 1), nextAfter }
+  return { ws, events, raw, next: (type) => nextAfter(type, 1), nextAfter }
 }

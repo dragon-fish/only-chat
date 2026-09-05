@@ -36,6 +36,7 @@ export class WsClient {
 
   connect(): void {
     this._closedByUser = false
+    this._attempt = 0
     this._open()
   }
 
@@ -65,14 +66,21 @@ export class WsClient {
     }
     ws.onmessage = (ev) => {
       if (typeof ev.data !== 'string' || ev.data === 'pong') return
-      const parsed = WsEventSchema.safeParse(JSON.parse(ev.data))
+      let payload: unknown
+      try {
+        payload = JSON.parse(ev.data)
+      } catch {
+        console.warn('non-json ws frame', ev.data)
+        return
+      }
+      const parsed = WsEventSchema.safeParse(payload)
       if (parsed.success) this._handlers.onEvent(parsed.data)
       else console.warn('unknown ws event', ev.data)
     }
     ws.onerror = () => { /* onclose follows */ }
     ws.onclose = () => {
-      this._stopPing()
       if (this._socket !== ws) return
+      this._stopPing()
       this._socket = null
       this._handlers.onStatus('closed')
       if (!this._closedByUser) this._scheduleReconnect()
