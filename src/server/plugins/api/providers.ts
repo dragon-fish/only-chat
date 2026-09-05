@@ -42,6 +42,9 @@ export function providerRoutes(ctx: Context) {
     if (!parsed.success) return c.json({ error: 'invalid input', issues: parsed.error.issues }, 400)
     const { api_key, ...patch } = parsed.data
     const set: Partial<ProviderRow> = { ...patch }
+    // A protocol switch invalidates the previous protocol's `extra` config; clear it unless the
+    // caller explicitly supplied a new one in the same request.
+    if (patch.protocol !== undefined && patch.extra === undefined) set.extra = null
     if (api_key !== undefined) set.api_key = api_key === '' ? null : await encryptSecret(secret, api_key)
     const [row] = await db.update(providers).set(set).where(owned(id)).returning()
     return row ? c.json(toProviderDto(row)) : c.json({ error: 'not found' }, 404)
@@ -61,6 +64,8 @@ export function providerRoutes(ctx: Context) {
     const ids = await listRemoteModels(row, key)
     let imported = 0
     for (const model_id of ids) {
+      // Insert-if-absent only: fetch-models returns bare ids, so "upsert" here must never
+      // overwrite a user-edited display_name/enabled/sort/pricing on an existing row.
       const res = await db.insert(models)
         .values({ provider_id: id, model_id, display_name: model_id, capabilities: {}, pricing: null, enabled: true, sort: 0 })
         .onConflictDoNothing().returning({ id: models.id })

@@ -63,4 +63,29 @@ describe('REST api', () => {
     expect(Array.isArray(await res.json())).toBe(true)
     expect((await json('GET', '/api/sessions/999999/messages')).status).toBe(404)
   })
+
+  it('rejects a duplicate model_id with 409 and preserves the existing edit', async () => {
+    const created = await json('POST', '/api/providers', { name: 'C', protocol: 'anthropic', base_url: 'https://api.anthropic.com/v1' })
+    const p = (await created.json()) as { id: number }
+    const m = await json('POST', `/api/providers/${p.id}/models`, { model_id: 'dup-model', display_name: 'Dup' })
+    const createdModel = (await m.json()) as { id: number }
+    await json('PUT', `/api/providers/${p.id}/models/${createdModel.id}`, { enabled: false })
+    const dup = await json('POST', `/api/providers/${p.id}/models`, { model_id: 'dup-model', display_name: 'Should not apply' })
+    expect(dup.status).toBe(409)
+    expect(await dup.json()).toEqual({ error: 'model already exists' })
+    const list = await (await json('GET', `/api/providers/${p.id}/models`)).json() as Array<{ model_id: string; enabled: boolean }>
+    expect(list.find((x) => x.model_id === 'dup-model')?.enabled).toBe(false)
+  })
+
+  it('clears extra when protocol changes but leaves it alone otherwise', async () => {
+    const created = await json('POST', '/api/providers', { name: 'V', protocol: 'vertex', base_url: 'https://aiplatform.googleapis.com', extra: { project: 'p', location: 'l' } })
+    const p = (await created.json()) as { id: number; extra: unknown }
+    expect(p.extra).toEqual({ project: 'p', location: 'l' })
+
+    const untouched = await json('PUT', `/api/providers/${p.id}`, { name: 'x' })
+    expect((await untouched.json()) as { extra: unknown }).toMatchObject({ extra: { project: 'p', location: 'l' } })
+
+    const switched = await json('PUT', `/api/providers/${p.id}`, { protocol: 'anthropic' })
+    expect((await switched.json()) as { extra: unknown; protocol: string }).toMatchObject({ protocol: 'anthropic', extra: null })
+  })
 })

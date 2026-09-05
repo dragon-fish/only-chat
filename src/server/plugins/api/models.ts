@@ -26,12 +26,13 @@ export function modelRoutes(ctx: Context) {
     const parsed = ModelInputSchema.safeParse(await c.req.json())
     if (!parsed.success) return c.json({ error: 'invalid input', issues: parsed.error.issues }, 400)
     const i = parsed.data
+    // Manual add is a plain insert (spec §6): a duplicate (provider_id, model_id) is a 409, never
+    // an overwrite, so a user's edited enabled/sort/pricing on the existing row is never clobbered.
+    const existing = await db.query.models.findFirst({ where: and(eq(models.provider_id, pid), eq(models.model_id, i.model_id)) })
+    if (existing) return c.json({ error: 'model already exists' }, 409)
     const [row] = await db.insert(models).values({
       provider_id: pid, model_id: i.model_id, display_name: i.display_name ?? i.model_id,
       capabilities: i.capabilities ?? {}, pricing: i.pricing ?? null, enabled: i.enabled ?? true, sort: i.sort ?? 0,
-    }).onConflictDoUpdate({
-      target: [models.provider_id, models.model_id],
-      set: { display_name: i.display_name ?? i.model_id, capabilities: i.capabilities ?? {}, pricing: i.pricing ?? null, enabled: i.enabled ?? true, sort: i.sort ?? 0 },
     }).returning()
     return c.json(row, 201)
   })
