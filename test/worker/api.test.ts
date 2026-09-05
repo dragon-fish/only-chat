@@ -1,5 +1,8 @@
 import { env, exports } from 'cloudflare:workers'
 import { describe, expect, it } from 'vitest'
+import { createDb } from '@/server/db/client'
+import { createProject } from '@/server/plugins/hub/projects'
+import { DEFAULT_USER_ID } from '@/shared/constants'
 
 const json = (method: string, path: string, body?: unknown) =>
   exports.default.fetch(new Request(`https://x${path}`, { method, headers: { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) }))
@@ -62,6 +65,14 @@ describe('REST api', () => {
     expect(res.status).toBe(200)
     expect(Array.isArray(await res.json())).toBe(true)
     expect((await json('GET', '/api/sessions/999999/messages')).status).toBe(404)
+  })
+
+  it('lists projects for the current user, read-only', async () => {
+    const db = createDb(env.DB)
+    const mine = await createProject(db, { user_id: DEFAULT_USER_ID, name: 'Mine', system_prompt: 'sys' })
+    const list = await (await json('GET', '/api/projects')).json() as Array<{ id: number; name: string }>
+    expect(list.find((p) => p.id === mine.id)).toMatchObject({ name: 'Mine', system_prompt: 'sys' })
+    expect((await json('POST', '/api/projects', { name: 'nope' })).status).toBe(404)
   })
 
   it('rejects a duplicate model_id with 409 and preserves the existing edit', async () => {

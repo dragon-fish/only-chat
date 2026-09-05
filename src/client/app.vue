@@ -13,7 +13,7 @@ onMounted(async () => {
   sync.connect()
   try {
     // The plugin switches render from settings, so the client needs them before first paint.
-    const [me] = await Promise.all([api.me(), sync.loadSessions(), config.load()])
+    const [me] = await Promise.all([api.me(), sync.loadSessions(), sync.loadProjects(), config.load()])
     sync.settings = me.settings
   } catch (err) {
     bootError.value = err instanceof Error ? err.message : String(err)

@@ -2,12 +2,13 @@ import { Context, Service } from 'cordis'
 import { ZodError } from 'zod'
 import type { DB } from '../../db/client'
 import { DEFAULT_USER_ID, GENERATION_TIMEOUT_MS } from '@/shared/constants'
-import type { Message, Session, UserSettings } from '@/shared/models'
+import type { Message, Project, Session, UserSettings } from '@/shared/models'
 import type { Part } from '@/shared/parts'
 import { encodeEvent, parseCommand, type WsCommand, type WsEvent } from '@/shared/ws'
 import {
   deleteSession, finalizeMessage, getMessage, getSession, getUser, toMessage, updateSession, updateUserSettings,
 } from './sessions'
+import { createProject, deleteProject, getProject, listProjectSessions, updateProject } from './projects'
 import { SeqAllocator } from './seq'
 import { runEdit, runRegenerate, runSend } from './generation'
 
@@ -104,6 +105,9 @@ export class Hub extends Service {
       case 'session.update': return this.sessionUpdate(cmd)
       case 'session.delete': return this.sessionDelete(cmd.session_id)
       case 'settings.update': return this.settingsUpdate(cmd.settings)
+      case 'project.create': return this.projectCreate(cmd)
+      case 'project.update': return this.projectUpdate(cmd)
+      case 'project.delete': return this.projectDelete(cmd.project_id)
     }
   }
 
@@ -144,6 +148,10 @@ export class Hub extends Service {
   async sessionUpdate(cmd: Extract<WsCommand, { type: 'session.update' }>): Promise<void> {
     const { type: _t, request_id: _r, session_id, ...patch } = cmd
     if (!(await getSession(this.db, session_id))) throw new Error('session not found')
+    // Moving a session into a Project must never cross into another user's Project (spec §5.1).
+    if (patch.project_id != null && !(await getProject(this.db, patch.project_id, DEFAULT_USER_ID))) {
+      throw new Error('project not found')
+    }
     const s = await updateSession(this.db, session_id, patch)
     this.emitSessionUpdated(s)
   }
@@ -165,6 +173,29 @@ export class Hub extends Service {
     // Feature plugins toggled here would be loaded/disposed at this point; MVP ships none.
   }
 
+  async projectCreate(cmd: Extract<WsCommand, { type: 'project.create' }>): Promise<void> {
+    const { type: _t, request_id: _r, ...input } = cmd
+    const p = await createProject(this.db, { user_id: DEFAULT_USER_ID, ...input })
+    this.emitProjectCreated(p)
+  }
+
+  async projectUpdate(cmd: Extract<WsCommand, { type: 'project.update' }>): Promise<void> {
+    const { type: _t, request_id: _r, project_id, ...patch } = cmd
+    const p = await updateProject(this.db, project_id, DEFAULT_USER_ID, patch)
+    this.emitProjectUpdated(p)
+  }
+
+  /**
+   * Fetches affected sessions before deleting (spec §5.1): the FK nulls their `project_id` in the
+   * same delete statement, so the pre-delete read is the only way to know which sessions moved.
+   */
+  async projectDelete(projectId: number): Promise<void> {
+    const affected = await listProjectSessions(this.db, projectId, DEFAULT_USER_ID)
+    const deleted = await deleteProject(this.db, projectId, DEFAULT_USER_ID)
+    this.emitProjectDeleted(deleted.id)
+    for (const row of affected) this.emitSessionUpdated({ ...row, project_id: null })
+  }
+
   emitSessionCreated(s: Session): void {
     this.broadcast({ type: 'session.created', session: s })
     this.app.emit('session/created', s)
@@ -173,6 +204,21 @@ export class Hub extends Service {
   emitSessionUpdated(s: Session): void {
     this.broadcast({ type: 'session.updated', session: s })
     this.app.emit('session/updated', s)
+  }
+
+  emitProjectCreated(p: Project): void {
+    this.broadcast({ type: 'project.created', project: p })
+    this.app.emit('project/created', p)
+  }
+
+  emitProjectUpdated(p: Project): void {
+    this.broadcast({ type: 'project.updated', project: p })
+    this.app.emit('project/updated', p)
+  }
+
+  emitProjectDeleted(projectId: number): void {
+    this.broadcast({ type: 'project.deleted', project_id: projectId })
+    this.app.emit('project/deleted', projectId)
   }
 
   // ---- inflight bookkeeping (used by generation.ts)

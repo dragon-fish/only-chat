@@ -1,5 +1,5 @@
 import type { AttachmentCheckResponse, AttachmentUploadResponse, FetchModelsResponse, ModelInput, ProviderInput } from '@/shared/api'
-import type { Message, Model, Provider, Session, User } from '@/shared/models'
+import type { Message, Model, Project, Provider, Session, User } from '@/shared/models'
 import type { PresetProvider } from '@/server/plugins/llm/presets'
 
 async function request<T>(method: string, path: string, body?: unknown, init: RequestInit = {}): Promise<T> {
@@ -22,6 +22,7 @@ export const api = {
   me: () => request<User>('GET', '/api/me'),
   presets: () => request<PresetProvider[]>('GET', '/api/presets'),
   sessions: () => request<Session[]>('GET', '/api/sessions'),
+  projects: () => request<Project[]>('GET', '/api/projects'),
   messages: (sessionId: number) => request<Message[]>('GET', `/api/sessions/${sessionId}/messages`),
   providers: () => request<Provider[]>('GET', '/api/providers'),
   createProvider: (input: ProviderInput) => request<Provider>('POST', '/api/providers', input),

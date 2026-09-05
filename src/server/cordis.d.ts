@@ -4,7 +4,7 @@ import type { Llm } from './plugins/llm'
 import type { Hub } from './plugins/hub'
 import type { BeforeSendPayload } from './plugins/hub/generation'
 import type { ApiApp } from './plugins/api'
-import type { Message, Session } from '@/shared/models'
+import type { Message, Project, Session } from '@/shared/models'
 
 declare module 'cordis' {
   interface Context {
@@ -28,5 +28,8 @@ declare module 'cordis' {
     'session/deleted'(sessionId: number): void
     'message/before-send'(payload: BeforeSendPayload): void
     'message/done'(message: Message): void
+    'project/created'(project: Project): void
+    'project/updated'(project: Project): void
+    'project/deleted'(projectId: number): void
   }
 }

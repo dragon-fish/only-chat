@@ -2,7 +2,7 @@ import { computed, reactive, ref, shallowRef } from 'vue'
 import { defineStore } from 'pinia'
 import { api } from '@/client/lib/api'
 import { WsClient, type WsStatus } from '@/client/lib/ws-client'
-import type { Message, Session, UserSettings } from '@/shared/models'
+import type { Message, Project, Session, UserSettings } from '@/shared/models'
 import type { Part } from '@/shared/parts'
 import type { WsCommand, WsEvent } from '@/shared/ws'
 
@@ -21,6 +21,7 @@ export const useSyncStore = defineStore('sync', () => {
   // key on this instead to reload only once the snapshot has actually landed.
   const snapshotSeq = ref(0)
   const sessions = reactive(new Map<number, Session>())
+  const projects = reactive(new Map<number, Project>())
   const messages = reactive(new Map<number, Map<number, Message>>())
   const streamingIds = reactive(new Set<number>())
   const settings = ref<UserSettings>({ plugins: {} })
@@ -28,6 +29,7 @@ export const useSyncStore = defineStore('sync', () => {
   const client = shallowRef<WsClient | null>(null)
 
   const sessionList = computed(() => [...sessions.values()].sort((a, b) => b.updated_at - a.updated_at))
+  const projectList = computed(() => [...projects.values()].sort((a, b) => b.updated_at - a.updated_at))
 
   function bucket(sessionId: number): Map<number, Message> {
     let b = messages.get(sessionId)
@@ -109,6 +111,18 @@ export const useSyncStore = defineStore('sync', () => {
       case 'settings.updated':
         settings.value = e.settings
         break
+      case 'project.created':
+      case 'project.updated':
+        projects.set(e.project.id, e.project)
+        break
+      case 'project.deleted': {
+        // No optimistic deletion (spec §9): this only runs once the server confirms. The
+        // `session.updated` broadcast that follows carries the authoritative post-delete row;
+        // nulling it here too keeps a session reachable through this event alone (e.g. offline).
+        projects.delete(e.project_id)
+        for (const s of sessions.values()) if (s.project_id === e.project_id) s.project_id = null
+        break
+      }
       case 'error':
         lastError.value = e.message
         break
@@ -137,6 +151,10 @@ export const useSyncStore = defineStore('sync', () => {
     for (const s of await api.sessions()) sessions.set(s.id, s)
   }
 
+  async function loadProjects(): Promise<void> {
+    for (const p of await api.projects()) projects.set(p.id, p)
+  }
+
   async function loadMessages(sessionId: number): Promise<void> {
     ingestMessages(sessionId, await api.messages(sessionId))
   }
@@ -155,7 +173,7 @@ export const useSyncStore = defineStore('sync', () => {
   }
 
   return {
-    status, snapshotSeq, sessions, messages, streamingIds, settings, lastError, sessionList,
-    applyEvent, ingestMessages, pathFor, siblingsOf, isStreaming, loadSessions, loadMessages, connect, send,
+    status, snapshotSeq, sessions, projects, messages, streamingIds, settings, lastError, sessionList, projectList,
+    applyEvent, ingestMessages, pathFor, siblingsOf, isStreaming, loadSessions, loadProjects, loadMessages, connect, send,
   }
 })

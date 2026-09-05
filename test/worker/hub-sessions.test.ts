@@ -6,6 +6,7 @@ import { createSession, finalizeMessage, getSession, insertMessage, listMessages
 import { createProject, deleteProject, getProject, listProjectSessions, listProjects, updateProject } from '@/server/plugins/hub/projects'
 import { users } from '@/server/db/schema'
 import { DEFAULT_USER_ID } from '@/shared/constants'
+import { connect } from './ws-helper'
 
 describe('session ops', () => {
   it('creates, inserts, finalizes, and reads back with wire status', async () => {
@@ -60,5 +61,61 @@ describe('project ops', () => {
 
     expect(await deleteProject(db, p.id, DEFAULT_USER_ID)).toMatchObject({ id: p.id })
     expect((await getSession(db, s.id))!.project_id).toBeNull()
+  })
+})
+
+describe('project realtime commands', () => {
+  it('creates, updates, and deletes a project over the socket, broadcasting to two clients and moving sessions back to Chats', async () => {
+    const db = createDb(env.DB)
+    await ensureDefaultUser(db)
+    const a = await connect()
+    const b = await connect()
+
+    a.ws.send(JSON.stringify({ type: 'project.create', name: 'Proj', system_prompt: 'sys' }))
+    const created = await a.next('project.created')
+    expect(created).toMatchObject({ type: 'project.created', project: { name: 'Proj', system_prompt: 'sys' } })
+    expect(await b.next('project.created')).toEqual(created)
+    const projectId = (created as { project: { id: number } }).project.id
+
+    const session = await createSession(db, {
+      user_id: DEFAULT_USER_ID, title: 't', project_id: projectId, provider_id: null, model_id: null,
+    })
+
+    a.ws.send(JSON.stringify({ type: 'project.update', project_id: projectId, name: 'Renamed' }))
+    const updated = await a.next('project.updated')
+    expect(updated).toMatchObject({ type: 'project.updated', project: { id: projectId, name: 'Renamed', system_prompt: 'sys' } })
+    expect(await b.next('project.updated')).toEqual(updated)
+
+    a.ws.send(JSON.stringify({ type: 'project.delete', project_id: projectId }))
+    expect(await a.next('project.deleted')).toEqual({ type: 'project.deleted', project_id: projectId })
+    expect(await b.next('project.deleted')).toEqual({ type: 'project.deleted', project_id: projectId })
+    const moved = await a.next('session.updated')
+    expect(moved).toMatchObject({ type: 'session.updated', session: { id: session.id, project_id: null } })
+    expect(await b.next('session.updated')).toEqual(moved)
+  })
+
+  it('rejects moving a session to another user’s project, leaving it untouched', async () => {
+    const db = createDb(env.DB)
+    await ensureDefaultUser(db)
+    const [other] = await db.insert(users).values({ name: 'other', settings: { plugins: {} }, created_at: 0 }).returning()
+    const theirs = await createProject(db, { user_id: other!.id, name: 'theirs' })
+    const s = await createSession(db, { user_id: DEFAULT_USER_ID, title: 't', provider_id: null, model_id: null })
+
+    const { ws, next } = await connect()
+    ws.send(JSON.stringify({ type: 'session.update', session_id: s.id, project_id: theirs.id, request_id: 'r1' }))
+    expect(await next('error')).toMatchObject({ type: 'error', request_id: 'r1' })
+    expect((await getSession(db, s.id))!.project_id).toBeNull()
+  })
+
+  it('answers a project.update for a project it does not own with an error carrying request_id', async () => {
+    const db = createDb(env.DB)
+    await ensureDefaultUser(db)
+    const [other] = await db.insert(users).values({ name: 'other2', settings: { plugins: {} }, created_at: 0 }).returning()
+    const theirs = await createProject(db, { user_id: other!.id, name: 'theirs' })
+
+    const { ws, next } = await connect()
+    ws.send(JSON.stringify({ type: 'project.update', project_id: theirs.id, name: 'stolen', request_id: 'r2' }))
+    expect(await next('error')).toMatchObject({ type: 'error', request_id: 'r2' })
+    expect((await getProject(db, theirs.id, other!.id))!.name).toBe('theirs')
   })
 })
