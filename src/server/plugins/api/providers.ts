@@ -4,7 +4,7 @@ import { and, eq } from 'drizzle-orm'
 import { DEFAULT_USER_ID } from '@/shared/constants'
 import { ProviderInputSchema } from '@/shared/api'
 import type { Provider } from '@/shared/models'
-import { models, providers, type ProviderRow } from '../../db/schema'
+import { attachmentProviderFiles, models, providers, type ProviderRow } from '../../db/schema'
 import { decryptSecret, encryptSecret } from '../llm/crypto'
 import { listRemoteModels } from '../llm/list-models'
 import { parseId } from './params'
@@ -32,7 +32,8 @@ export function providerRoutes(ctx: Context) {
     const [row] = await db.insert(providers).values({
       user_id: DEFAULT_USER_ID, name: input.name, protocol: input.protocol, base_url: input.base_url,
       api_key: api_key ? await encryptSecret(secret, api_key) : null,
-      extra: input.extra ?? null, enabled: input.enabled ?? true, created_at: Date.now(),
+      extra: input.extra ?? null, enabled: input.enabled ?? true,
+      native_files: input.native_files ?? false, created_at: Date.now(),
     }).returning()
     return c.json(toProviderDto(row!), 201)
   })
@@ -42,6 +43,8 @@ export function providerRoutes(ctx: Context) {
     if (id === null) return c.json({ error: 'not found' }, 404)
     const parsed = ProviderInputSchema.partial().safeParse(await c.req.json())
     if (!parsed.success) return c.json({ error: 'invalid input', issues: parsed.error.issues }, 400)
+    const before = await db.query.providers.findFirst({ where: owned(id) })
+    if (!before) return c.json({ error: 'not found' }, 404)
     const { api_key, ...patch } = parsed.data
     const set: Partial<ProviderRow> = { ...patch }
     // A protocol switch invalidates the previous protocol's `extra` config; clear it unless the
@@ -49,7 +52,17 @@ export function providerRoutes(ctx: Context) {
     if (patch.protocol !== undefined && patch.extra === undefined) set.extra = null
     if (api_key !== undefined) set.api_key = api_key === '' ? null : await encryptSecret(secret, api_key)
     const [row] = await db.update(providers).set(set).where(owned(id)).returning()
-    return row ? c.json(toProviderDto(row)) : c.json({ error: 'not found' }, 404)
+    if (!row) return c.json({ error: 'not found' }, 404)
+    // Files uploaded to the old endpoint are unreachable from the new one, so drop the local
+    // pointers once the provider row is safely updated. The remote temporary files expire on the
+    // provider's own schedule; we never call its DELETE endpoints. Comparing stored values rather
+    // than the request body keeps a rename that resends the same connection fields from clearing
+    // usable pointers. Re-submitting the same key re-encrypts to fresh ciphertext and so counts as
+    // a change — a conservative miss that only costs one re-upload.
+    if (row.protocol !== before.protocol || row.base_url !== before.base_url || row.api_key !== before.api_key) {
+      await db.delete(attachmentProviderFiles).where(eq(attachmentProviderFiles.provider_id, id))
+    }
+    return c.json(toProviderDto(row))
   })
 
   r.delete('/providers/:id', async (c) => {

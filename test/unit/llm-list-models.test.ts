@@ -37,4 +37,11 @@ describe('listRemoteModels', () => {
   it('refuses vertex (no listing endpoint)', async () => {
     await expect(listRemoteModels({ ...base, protocol: 'vertex' }, 'sk')).rejects.toThrow(/not supported/)
   })
+
+  // A Vertex-shaped Base URL has no `/models` listing: the gateway's catalogue lives under its
+  // separate OpenAI-compatible base, which we must not guess at.
+  it('refuses vertex-compatible without probing the base URL', async () => {
+    const fetchFn = (async () => { throw new Error('must not be called') }) as unknown as typeof fetch
+    await expect(listRemoteModels({ ...base, protocol: 'vertex-compatible' }, 'sk', fetchFn)).rejects.toThrow(/not supported/)
+  })
 })

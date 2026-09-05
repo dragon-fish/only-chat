@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { api } from '@/client/lib/api'
 import { Button } from '@/client/ui/button'
@@ -14,17 +14,20 @@ const props = defineProps<{ providerId: number | null }>()
 const router = useRouter()
 const config = useConfigStore()
 
-const form = reactive({ name: '', protocol: 'openai-completions' as Protocol, base_url: '', api_key: '', enabled: true, project: '', location: '' })
+const form = reactive({ name: '', protocol: 'openai-completions' as Protocol, base_url: '', api_key: '', enabled: true, native_files: false, project: '', location: '' })
 const models = ref<Model[]>([])
 const newModelId = ref('')
 const status = ref('')
+
+/** Both Vertex shapes address models by resource path and expose no `/models` catalogue. */
+const canFetchModels = computed(() => form.protocol !== 'vertex' && form.protocol !== 'vertex-compatible')
 
 onMounted(async () => {
   if (!config.loaded) await config.load()
   const pid = props.providerId
   const p = pid === null ? undefined : config.providers.find((x) => x.id === pid)
   if (pid === null || !p) { await router.push('/settings/providers'); return }
-  Object.assign(form, { name: p.name, protocol: p.protocol, base_url: p.base_url, enabled: p.enabled, project: String(p.extra?.project ?? ''), location: String(p.extra?.location ?? '') })
+  Object.assign(form, { name: p.name, protocol: p.protocol, base_url: p.base_url, enabled: p.enabled, native_files: p.native_files, project: String(p.extra?.project ?? ''), location: String(p.extra?.location ?? '') })
   models.value = await api.models(pid)
 })
 
@@ -48,7 +51,7 @@ async function save() {
   try {
     // The server clears `extra` whenever `protocol` arrives without it, so always send both.
     const extra = form.protocol === 'vertex' ? { project: form.project, location: form.location } : null
-    await api.updateProvider(requireId(), { name: form.name, protocol: form.protocol, base_url: form.base_url, enabled: form.enabled, extra, ...(form.api_key ? { api_key: form.api_key } : {}) })
+    await api.updateProvider(requireId(), { name: form.name, protocol: form.protocol, base_url: form.base_url, enabled: form.enabled, native_files: form.native_files, extra, ...(form.api_key ? { api_key: form.api_key } : {}) })
     form.api_key = ''
     status.value = '已保存'
     await config.load()
@@ -115,6 +118,7 @@ async function removeModel(m: Model) {
           SelectItem(value="openai-responses") OpenAI Responses
           SelectItem(value="anthropic") Anthropic Messages
           SelectItem(value="vertex") Google Vertex AI
+          SelectItem(value="vertex-compatible") Google Vertex 兼容
     div
       Label Base URL
       Input(v-model="form.base_url" placeholder="https://api.example.com/v1")
@@ -128,12 +132,17 @@ async function removeModel(m: Model) {
       div
         Label Location
         Input(v-model="form.location" placeholder="us-central1 / global")
+    .flex.items-start.gap-2
+      Switch(:model-value="form.native_files" @update:model-value="form.native_files = $event")
+      div
+        Label 支持原生文件转储（Files API）
+        p.text-xs.text-muted-foreground 文件临时上传到当前供应商并自动过期；兼容端点未实现 /files 时请勿开启。
     .flex.items-center.gap-2
       Switch(:model-value="form.enabled" @update:model-value="form.enabled = $event")
       Label 启用
   .flex.gap-2
     Button(@click="save") 保存
-    Button(variant="secondary" :disabled="form.protocol === 'vertex'" @click="fetchModels") 从 /models 拉取
+    Button(variant="secondary" :disabled="!canFetchModels" @click="fetchModels") 从 /models 拉取
     Button(variant="destructive" class="ml-auto" @click="remove") 删除供应商
   p.text-xs.text-muted-foreground(v-if="status") {{ status }}
   h2.font-medium 模型

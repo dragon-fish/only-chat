@@ -6,6 +6,7 @@ import { openaiCompletionsProtocol } from './protocols/openai-completions'
 import { openaiResponsesProtocol } from './protocols/openai-responses'
 import { anthropicProtocol } from './protocols/anthropic'
 import { vertexProtocol } from './protocols/vertex'
+import { vertexCompatibleProtocol } from './protocols/vertex-compatible'
 
 export type ModelFactory = (provider: ProviderRow, model: ModelRow, apiKey: string | null) => LanguageModel
 
@@ -54,5 +55,6 @@ export const LlmPlugin = {
     await ctx.plugin(openaiResponsesProtocol)
     await ctx.plugin(anthropicProtocol)
     await ctx.plugin(vertexProtocol)
+    await ctx.plugin(vertexCompatibleProtocol)
   },
 }

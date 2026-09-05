@@ -1,6 +1,8 @@
 import { env, exports } from 'cloudflare:workers'
+import { eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
 import { createDb } from '@/server/db/client'
+import { attachmentProviderFiles, attachments } from '@/server/db/schema'
 import { createProject } from '@/server/plugins/hub/projects'
 import { DEFAULT_USER_ID } from '@/shared/constants'
 
@@ -98,5 +100,53 @@ describe('REST api', () => {
 
     const switched = await json('PUT', `/api/providers/${p.id}`, { protocol: 'anthropic' })
     expect((await switched.json()) as { extra: unknown; protocol: string }).toMatchObject({ protocol: 'anthropic', extra: null })
+  })
+
+  it('round-trips native_files on create and update, defaulting it off', async () => {
+    const off = (await (await json('POST', '/api/providers', { name: 'NF-off', protocol: 'openai-completions', base_url: 'https://api.example.com/v1' })).json()) as { id: number; native_files: boolean }
+    expect(off.native_files).toBe(false)
+
+    const on = (await (await json('POST', '/api/providers', { name: 'NF-on', protocol: 'openai-responses', base_url: 'https://api.openai.com/v1', native_files: true })).json()) as { id: number; native_files: boolean }
+    expect(on.native_files).toBe(true)
+    const listed = (await (await json('GET', '/api/providers')).json()) as Array<{ id: number; native_files: boolean }>
+    expect(listed.find((x) => x.id === on.id)?.native_files).toBe(true)
+
+    const patched = (await (await json('PUT', `/api/providers/${on.id}`, { native_files: false })).json()) as { native_files: boolean }
+    expect(patched.native_files).toBe(false)
+    const back = (await (await json('PUT', `/api/providers/${off.id}`, { native_files: true })).json()) as { native_files: boolean }
+    expect(back.native_files).toBe(true)
+  })
+
+  it('drops provider file pointers when the connection changes but keeps them on an unrelated edit', async () => {
+    const db = createDb(env.DB)
+    const created = await json('POST', '/api/providers', { name: 'FP', protocol: 'openai-responses', base_url: 'https://api.openai.com/v1', api_key: 'sk-one' })
+    const p = (await created.json()) as { id: number }
+    const [a] = await db.insert(attachments).values({
+      user_id: DEFAULT_USER_ID, sha256: 'f'.repeat(64), mime: 'image/png', size: 4, width: null, height: null,
+      r2_key: 'k/fp', origin: 'upload', created_at: 0,
+    }).returning()
+
+    const seed = async () => {
+      await db.insert(attachmentProviderFiles).values({
+        attachment_id: a!.id, provider_id: p.id, provider_reference: { file_id: 'file-1' }, expires_at: 1, created_at: 0,
+      }).onConflictDoNothing()
+    }
+    const pointers = async () => (await db.select().from(attachmentProviderFiles).where(eq(attachmentProviderFiles.provider_id, p.id))).length
+
+    // A rename, or a resend of the same connection fields, must not throw away usable pointers.
+    await seed()
+    await json('PUT', `/api/providers/${p.id}`, { name: 'FP renamed', protocol: 'openai-responses', base_url: 'https://api.openai.com/v1' })
+    expect(await pointers()).toBe(1)
+
+    await json('PUT', `/api/providers/${p.id}`, { base_url: 'https://gateway.example.com/v1' })
+    expect(await pointers()).toBe(0)
+
+    await seed()
+    await json('PUT', `/api/providers/${p.id}`, { protocol: 'openai-completions' })
+    expect(await pointers()).toBe(0)
+
+    await seed()
+    await json('PUT', `/api/providers/${p.id}`, { api_key: 'sk-two' })
+    expect(await pointers()).toBe(0)
   })
 })

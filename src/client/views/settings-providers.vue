@@ -25,7 +25,7 @@ async function addFromPreset() {
   status.value = ''
   try {
     const created = preset
-      ? await api.createProvider({ name: preset.name, protocol: preset.protocol, base_url: preset.base_url })
+      ? await api.createProvider({ name: preset.name, protocol: preset.protocol, base_url: preset.base_url, native_files: preset.native_files })
       : await api.createProvider({ name: '自定义供应商', protocol: 'openai-completions', base_url: 'https://api.example.com/v1' })
     if (preset) for (const m of preset.models) await api.createModel(created.id, { model_id: m.model_id, display_name: m.display_name, capabilities: m.capabilities })
     await config.load()
