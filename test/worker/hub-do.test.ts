@@ -17,6 +17,17 @@ describe('UserHub DO', () => {
     expect(snap).toEqual({ type: 'snapshot', inflight: [] })
   })
 
+  it('rejects a websocket upgrade whose Origin does not match the request host', async () => {
+    const res = await exports.default.fetch(new Request('https://x/ws', { headers: { Upgrade: 'websocket', Origin: 'https://evil.example' } }))
+    expect(res.status).toBe(403)
+    expect(await res.json()).toEqual({ error: 'origin not allowed' })
+  })
+
+  it('accepts a websocket upgrade whose Origin matches the request host', async () => {
+    const res = await exports.default.fetch(new Request('https://x/ws', { headers: { Upgrade: 'websocket', Origin: 'https://x' } }))
+    expect(res.status).toBe(101)
+  })
+
   it('updates and deletes a session, broadcasting to two sockets', async () => {
     const db = createDb(env.DB)
     await ensureDefaultUser(db)

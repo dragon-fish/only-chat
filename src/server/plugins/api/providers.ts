@@ -7,6 +7,7 @@ import type { Provider } from '@/shared/models'
 import { models, providers, type ProviderRow } from '../../db/schema'
 import { decryptSecret, encryptSecret } from '../llm/crypto'
 import { listRemoteModels } from '../llm/list-models'
+import { parseId } from './params'
 
 export function toProviderDto(row: ProviderRow): Provider {
   const { api_key, ...rest } = row
@@ -37,7 +38,8 @@ export function providerRoutes(ctx: Context) {
   })
 
   r.put('/providers/:id', async (c) => {
-    const id = Number(c.req.param('id'))
+    const id = parseId(c.req.param('id'))
+    if (id === null) return c.json({ error: 'not found' }, 404)
     const parsed = ProviderInputSchema.partial().safeParse(await c.req.json())
     if (!parsed.success) return c.json({ error: 'invalid input', issues: parsed.error.issues }, 400)
     const { api_key, ...patch } = parsed.data
@@ -51,13 +53,15 @@ export function providerRoutes(ctx: Context) {
   })
 
   r.delete('/providers/:id', async (c) => {
-    const id = Number(c.req.param('id'))
+    const id = parseId(c.req.param('id'))
+    if (id === null) return c.json({ error: 'not found' }, 404)
     await db.delete(providers).where(owned(id))
     return c.body(null, 204)
   })
 
   r.post('/providers/:id/fetch-models', async (c) => {
-    const id = Number(c.req.param('id'))
+    const id = parseId(c.req.param('id'))
+    if (id === null) return c.json({ error: 'not found' }, 404)
     const row = await db.query.providers.findFirst({ where: owned(id) })
     if (!row) return c.json({ error: 'not found' }, 404)
     const key = row.api_key ? await decryptSecret(secret, row.api_key) : null

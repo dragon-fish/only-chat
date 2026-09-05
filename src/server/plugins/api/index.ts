@@ -17,6 +17,20 @@ export const ApiPlugin = {
     app.get('/api/health', (c) => c.json({ ok: true }))
     app.get('/ws', (c) => {
       if (c.req.header('Upgrade') !== 'websocket') return c.text('Expected websocket', 426)
+      // R17: browsers always send Origin, so a mismatch there means some other site's page is
+      // trying to open this socket cross-origin. Non-browser clients send no Origin at all and
+      // are allowed through — Cloudflare Access still gates the request in front of the Worker.
+      const origin = c.req.header('Origin')
+      if (origin) {
+        const requestHost = new URL(c.req.url).host.toLowerCase()
+        let originHost: string
+        try {
+          originHost = new URL(origin).host.toLowerCase()
+        } catch {
+          return c.json({ error: 'origin not allowed' }, 403)
+        }
+        if (originHost !== requestHost) return c.json({ error: 'origin not allowed' }, 403)
+      }
       return c.env.USER_HUB.getByName(String(DEFAULT_USER_ID)).fetch(c.req.raw)
     })
     app.route('/api', meRoutes(ctx))

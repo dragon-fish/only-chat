@@ -22,4 +22,9 @@ describe('createApp', () => {
     const b = await createApp({ env, side: 'worker' })
     expect(a.db).not.toBe(b.db)
   })
+
+  it('rejects a missing or too-short KEY_ENCRYPTION_SECRET', async () => {
+    await expect(createApp({ env: { ...env, KEY_ENCRYPTION_SECRET: '' } as Env, side: 'worker' }))
+      .rejects.toThrow('KEY_ENCRYPTION_SECRET is missing or too short')
+  })
 })

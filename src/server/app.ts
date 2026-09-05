@@ -19,6 +19,9 @@ export interface AppOptions {
  */
 export async function createApp(options: AppOptions): Promise<Context> {
   if (options.side === 'hub' && !options.doState) throw new Error('hub side requires doState')
+  if (typeof options.env.KEY_ENCRYPTION_SECRET !== 'string' || options.env.KEY_ENCRYPTION_SECRET.length < 16) {
+    throw new Error('KEY_ENCRYPTION_SECRET is missing or too short')
+  }
   const ctx = new Context()
   ctx.logger.exporter({
     colors: false,

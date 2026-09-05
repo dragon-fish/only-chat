@@ -4,6 +4,7 @@ import { and, eq } from 'drizzle-orm'
 import { DEFAULT_USER_ID } from '@/shared/constants'
 import { ModelInputSchema } from '@/shared/api'
 import { models, providers } from '../../db/schema'
+import { parseId } from './params'
 
 export function modelRoutes(ctx: Context) {
   const r = new Hono<{ Bindings: Env }>()
@@ -15,14 +16,14 @@ export function modelRoutes(ctx: Context) {
   }
 
   r.get('/providers/:id/models', async (c) => {
-    const pid = Number(c.req.param('id'))
-    if (!(await ownsProvider(pid))) return c.json({ error: 'not found' }, 404)
+    const pid = parseId(c.req.param('id'))
+    if (pid === null || !(await ownsProvider(pid))) return c.json({ error: 'not found' }, 404)
     return c.json(await db.select().from(models).where(eq(models.provider_id, pid)).orderBy(models.sort, models.id))
   })
 
   r.post('/providers/:id/models', async (c) => {
-    const pid = Number(c.req.param('id'))
-    if (!(await ownsProvider(pid))) return c.json({ error: 'not found' }, 404)
+    const pid = parseId(c.req.param('id'))
+    if (pid === null || !(await ownsProvider(pid))) return c.json({ error: 'not found' }, 404)
     const parsed = ModelInputSchema.safeParse(await c.req.json())
     if (!parsed.success) return c.json({ error: 'invalid input', issues: parsed.error.issues }, 400)
     const i = parsed.data
@@ -38,9 +39,9 @@ export function modelRoutes(ctx: Context) {
   })
 
   r.put('/providers/:id/models/:modelRowId', async (c) => {
-    const pid = Number(c.req.param('id'))
-    const mid = Number(c.req.param('modelRowId'))
-    if (!(await ownsProvider(pid))) return c.json({ error: 'not found' }, 404)
+    const pid = parseId(c.req.param('id'))
+    const mid = parseId(c.req.param('modelRowId'))
+    if (pid === null || mid === null || !(await ownsProvider(pid))) return c.json({ error: 'not found' }, 404)
     const parsed = ModelInputSchema.partial().safeParse(await c.req.json())
     if (!parsed.success) return c.json({ error: 'invalid input', issues: parsed.error.issues }, 400)
     const [row] = await db.update(models).set(parsed.data).where(and(eq(models.id, mid), eq(models.provider_id, pid))).returning()
@@ -48,9 +49,9 @@ export function modelRoutes(ctx: Context) {
   })
 
   r.delete('/providers/:id/models/:modelRowId', async (c) => {
-    const pid = Number(c.req.param('id'))
-    const mid = Number(c.req.param('modelRowId'))
-    if (!(await ownsProvider(pid))) return c.json({ error: 'not found' }, 404)
+    const pid = parseId(c.req.param('id'))
+    const mid = parseId(c.req.param('modelRowId'))
+    if (pid === null || mid === null || !(await ownsProvider(pid))) return c.json({ error: 'not found' }, 404)
     await db.delete(models).where(and(eq(models.id, mid), eq(models.provider_id, pid)))
     return c.body(null, 204)
   })

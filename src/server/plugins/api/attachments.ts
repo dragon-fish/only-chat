@@ -4,6 +4,7 @@ import { and, eq } from 'drizzle-orm'
 import { DEFAULT_USER_ID } from '@/shared/constants'
 import { AttachmentCheckRequestSchema } from '@/shared/api'
 import { attachments } from '../../db/schema'
+import { parseId } from './params'
 
 const MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 
@@ -50,13 +51,19 @@ export function attachmentRoutes(ctx: Context) {
   })
 
   r.get('/attachments/:id', async (c) => {
-    const id = Number(c.req.param('id'))
+    const id = parseId(c.req.param('id'))
+    if (id === null) return c.json({ error: 'not found' }, 404)
     const row = await db.query.attachments.findFirst({ where: and(eq(attachments.id, id), eq(attachments.user_id, DEFAULT_USER_ID)) })
     if (!row) return c.json({ error: 'not found' }, 404)
     const stored = await ctx.assets.getStream(row.r2_key)
     if (!stored) return c.json({ error: 'object missing' }, 404)
     return new Response(stored.body, {
-      headers: { 'content-type': row.mime, 'content-length': String(stored.size), 'cache-control': 'private, max-age=31536000, immutable' },
+      headers: {
+        'content-type': row.mime,
+        'content-length': String(stored.size),
+        'cache-control': 'private, max-age=31536000, immutable',
+        'x-content-type-options': 'nosniff',
+      },
     })
   })
 
