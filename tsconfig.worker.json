@@ -1,0 +1,13 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "paths": { "@/*": ["./src/*"] },
+    "types": ["@types/node", "./worker-configuration.d.ts"]
+  },
+  "include": ["src/server/**/*.ts", "src/shared/**/*.ts", "vite.config.ts", "vitest.config.ts", "drizzle.config.ts", "worker-configuration.d.ts"]
+}
