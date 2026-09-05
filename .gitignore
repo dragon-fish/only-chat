@@ -9,3 +9,4 @@ dist/
 !.dev.vars.example
 .wrangler/
 node_modules/.tmp/
+.playwright-mcp/
