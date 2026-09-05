@@ -32,6 +32,22 @@ describe('PartAccumulator', () => {
     expect(acc.parts).toEqual([{ type: 'text', text: 'a' }])
   })
 
+  it('opens a new part when the same stream id changes kind', () => {
+    const acc = new PartAccumulator()
+    const events = [
+      ...acc.apply({ type: 'reasoning-delta', id: 'same', text: 'why' }),
+      ...acc.apply({ type: 'text-delta', id: 'same', text: 'because' }),
+    ]
+    expect(events).toEqual([
+      { kind: 'delta', part_index: 0, part_kind: 'reasoning', delta: 'why' },
+      { kind: 'delta', part_index: 1, part_kind: 'text', delta: 'because' },
+    ])
+    expect(acc.parts).toEqual([
+      { type: 'reasoning', text: 'why' },
+      { type: 'text', text: 'because' },
+    ])
+  })
+
   it('emits a full part for tool calls', () => {
     const acc = new PartAccumulator()
     const ev = acc.apply({ type: 'tool-call', toolCallId: 'c1', toolName: 'f', input: { a: 1 } } as never)

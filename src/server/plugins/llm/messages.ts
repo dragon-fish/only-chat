@@ -71,6 +71,10 @@ function assistantParts(parts: Part[], protocol: Protocol): { assistant: Assista
 /**
  * Pure. Same input → byte-identical output, whether the parts came from memory or from D1.
  * Nothing request-specific may ever be added here (see spec §7.2).
+ *
+ * Callers must pass `allowSystemInMessages: true` to streamText; the system prompt is emitted as a
+ * system message so Anthropic cache breakpoints can attach to it. The option defaults to false,
+ * which rejects a `role: 'system'` message inside `messages`.
  */
 export function buildModelMessages(input: BuildInput): ModelMessage[] {
   const { protocol, systemPrompt, path, images } = input

@@ -57,8 +57,11 @@ export class PartAccumulator {
     return idx
   }
 
+  /** Reuses the part this id already owns, but a kind change always opens a new part. */
   private _ensure(id: string, part: Part): number {
-    return this._indexById.get(id) ?? this._open(id, part)
+    const idx = this._indexById.get(id)
+    if (idx !== undefined && this.parts[idx]!.type === part.type) return idx
+    return this._open(id, part)
   }
 
   private _mergeMeta(idx: number, meta: unknown): void {
