@@ -20,6 +20,13 @@ const reasoning = computed(() => props.message.parts.filter((p) => p.type === 'r
 const images = computed(() => props.message.parts.filter((p) => p.type === 'image'))
 const markdown = computed(() => textParts.value.map((p) => p.text).join(''))
 
+// Hover is unavailable on touch, and a failed/stopped message must expose 重试 without one, so the
+// row only fades on `md` and up, and never on a terminal-failure message.
+const terminal = computed(() => props.message.status === 'error' || props.message.status === 'aborted')
+const actionsClass = computed(() => terminal.value
+  ? 'opacity-100'
+  : 'opacity-100 md:opacity-0 md:group-hover:opacity-100 md:focus-within:opacity-100')
+
 function startEdit() {
   draft.value = textParts.value.map((p) => p.text).join('\n')
   editing.value = true
@@ -54,7 +61,7 @@ function regenerate() {
       MarkdownRender(mode="chat" :content="markdown" :final="!streaming" smooth-streaming="auto" :fade="false")
       p.text-xs.text-destructive(v-if="message.status === 'error'") 出错：{{ message.error }}
       p.text-xs.text-muted-foreground(v-else-if="message.status === 'aborted'") 已停止
-  .flex.items-center.gap-2.text-xs.text-muted-foreground.opacity-0(class="group-hover:opacity-100 focus-within:opacity-100")
+  .flex.items-center.gap-2.text-xs.text-muted-foreground.transition-opacity(:class="actionsClass")
     BranchSwitcher(:message="message")
     button.inline-flex.items-center.gap-1(v-if="message.role === 'assistant' && !streaming" @click="regenerate")
       RefreshCw(class="size-3")

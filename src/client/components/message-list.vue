@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, ref, watch } from 'vue'
+import { nextTick, onMounted, ref, watch } from 'vue'
 import MessageItem from '@/client/components/message-item.vue'
 import type { Message } from '@/shared/models'
 
@@ -13,11 +13,17 @@ function onScroll() {
   stick.value = e.scrollHeight - e.scrollTop - e.clientHeight < 48
 }
 
-watch(() => props.messages.map((m) => m.parts.map((p) => ('text' in p ? p.text.length : 0)).join(',')).join('|'), async () => {
+async function scrollToBottom() {
   if (!stick.value) return
   await nextTick()
   el.value?.scrollTo({ top: el.value.scrollHeight })
-})
+}
+
+// `immediate` covers the first paint: the list mounts with a full path already in place, so a lazy
+// watch would leave an existing session parked at the top. `onMounted` covers the case where the
+// immediate run fires before the element exists.
+watch(() => props.messages.map((m) => m.parts.map((p) => ('text' in p ? p.text.length : 0)).join(',')).join('|'), scrollToBottom, { immediate: true })
+onMounted(scrollToBottom)
 </script>
 
 <template lang="pug">

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import { ImagePlus, Send, Square, X } from '@lucide/vue'
 import { Button } from '@/client/ui/button'
 import { Textarea } from '@/client/ui/textarea'
@@ -8,22 +8,33 @@ import { uploadImage } from '@/client/lib/image-prep'
 import type { ModelRef } from '@/shared/api'
 import type { Part } from '@/shared/parts'
 
+interface Attached { attachment_id: number; preview: string; failed?: boolean }
+
 const props = defineProps<{ streaming: boolean; connected: boolean; model: ModelRef | null }>()
 const emit = defineEmits<{ send: [parts: Part[]]; stop: []; 'update:model': [ModelRef | null] }>()
 
 const text = ref('')
-const images = ref<Array<{ attachment_id: number; preview: string; failed?: boolean }>>([])
-const busy = ref(false)
+const images = ref<Attached[]>([])
+// A counter, not a flag: concurrent uploads must not let the first one to finish clear `busy`.
+const pending = ref(0)
+const busy = computed(() => pending.value > 0)
 const fileInput = ref<HTMLInputElement | null>(null)
 
-async function addFiles(files: Iterable<File>) {
+/** Takes a materialised array: a live `FileList` empties out across the `await`s below. */
+async function addFiles(files: File[]) {
   for (const f of files) {
     if (!f.type.startsWith('image/')) continue
-    busy.value = true
+    pending.value++
     try { images.value.push(await uploadImage(f)) }
     catch (err) { console.error(err); images.value.push({ attachment_id: -1, preview: '', failed: true }) }
-    finally { busy.value = false }
+    finally { pending.value-- }
   }
+}
+function releasePreviews(items: Attached[]) {
+  for (const i of items) if (i.preview) URL.revokeObjectURL(i.preview)
+}
+function removeImage(index: number) {
+  releasePreviews(images.value.splice(index, 1))
 }
 function onPaste(e: ClipboardEvent) {
   const files = [...(e.clipboardData?.files ?? [])]
@@ -31,14 +42,16 @@ function onPaste(e: ClipboardEvent) {
 }
 function onDrop(e: DragEvent) {
   e.preventDefault()
-  void addFiles(e.dataTransfer?.files ?? [])
+  void addFiles([...(e.dataTransfer?.files ?? [])])
 }
 function submit() {
+  if (busy.value) return
   const parts: Part[] = images.value.filter((i) => !i.failed).map((i) => ({ type: 'image', attachment_id: i.attachment_id }))
   if (text.value.trim()) parts.push({ type: 'text', text: text.value })
   if (!parts.length || !props.model || !props.connected) return
   emit('send', parts)
   text.value = ''
+  releasePreviews(images.value)
   images.value = []
 }
 function onKeydown(e: KeyboardEvent) {
@@ -46,12 +59,14 @@ function onKeydown(e: KeyboardEvent) {
 }
 function onFileChange(e: Event) {
   const input = e.target as HTMLInputElement
-  void addFiles(input.files ?? [])
+  void addFiles([...(input.files ?? [])])
   input.value = ''
 }
 function onModelChange(value: ModelRef | null) {
   emit('update:model', value)
 }
+
+onBeforeUnmount(() => releasePreviews(images.value))
 </script>
 
 <template lang="pug">
@@ -61,7 +76,7 @@ function onModelChange(value: ModelRef | null) {
       .relative(v-for="(img, i) in images" :key="i")
         img.h-16.w-16.rounded.object-cover(v-if="!img.failed" :src="img.preview")
         .h-16.w-16.rounded.bg-destructive.text-xs.text-white.flex.items-center.justify-center(v-else) 失败
-        button.absolute.rounded-full.bg-background.border(class="-right-1 -top-1" @click="images.splice(i, 1)")
+        button.absolute.rounded-full.bg-background.border(class="-right-1 -top-1" @click="removeImage(i)")
           X(class="size-3")
     Textarea(v-model="text" rows="3" placeholder="输入消息，Enter 发送，Shift+Enter 换行，可粘贴图片" @keydown="onKeydown" @paste="onPaste")
     .flex.items-center.gap-2
@@ -70,6 +85,7 @@ function onModelChange(value: ModelRef | null) {
       Button(variant="ghost" size="icon" :disabled="busy" @click="fileInput?.click()")
         ImagePlus(class="size-4")
       .ml-auto.flex.items-center.gap-2
+        span.text-xs.text-muted-foreground(v-if="busy") 上传中…
         span.text-xs.text-muted-foreground(v-if="!connected") 未连接
         Button(v-if="streaming" size="sm" variant="destructive" @click="emit('stop')")
           Square(class="size-4")
