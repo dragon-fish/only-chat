@@ -21,6 +21,8 @@ export const providers = sqliteTable('providers', {
   api_key: text(),
   extra: text({ mode: 'json' }).$type<Record<string, unknown>>(),
   enabled: integer({ mode: 'boolean' }).notNull().default(true),
+  /** Supports this provider's native Files API with upload-time expiry. Custom providers default false. */
+  native_files: integer({ mode: 'boolean' }).notNull().default(false),
   created_at: integer().notNull(),
 }, (t) => [index('providers_user_idx').on(t.user_id)])
 
@@ -35,9 +37,22 @@ export const models = sqliteTable('models', {
   sort: integer().notNull().default(0),
 }, (t) => [uniqueIndex('models_provider_model_uq').on(t.provider_id, t.model_id)])
 
+export const projects = sqliteTable('projects', {
+  id: integer().primaryKey({ autoIncrement: true }),
+  user_id: integer().notNull().references(() => users.id, { onDelete: 'cascade' }),
+  name: text().notNull(),
+  system_prompt: text(),
+  provider_id: integer(),
+  model_id: text(),
+  params: text({ mode: 'json' }).$type<SessionParams>(),
+  created_at: integer().notNull(),
+  updated_at: integer().notNull(),
+}, (t) => [index('projects_user_updated_idx').on(t.user_id, t.updated_at)])
+
 export const sessions = sqliteTable('sessions', {
   id: integer().primaryKey({ autoIncrement: true }),
   user_id: integer().notNull().references(() => users.id, { onDelete: 'cascade' }),
+  project_id: integer().references(() => projects.id, { onDelete: 'set null' }),
   title: text().notNull(),
   head_message_id: integer(),
   provider_id: integer(),
@@ -47,7 +62,10 @@ export const sessions = sqliteTable('sessions', {
   created_at: integer().notNull(),
   updated_at: integer().notNull(),
   archived_at: integer(),
-}, (t) => [index('sessions_user_updated_idx').on(t.user_id, t.updated_at)])
+}, (t) => [
+  index('sessions_user_updated_idx').on(t.user_id, t.updated_at),
+  index('sessions_project_updated_idx').on(t.project_id, t.updated_at),
+])
 
 export const messages = sqliteTable('messages', {
   id: integer().primaryKey({ autoIncrement: true }),
@@ -80,9 +98,27 @@ export const attachments = sqliteTable('attachments', {
   created_at: integer().notNull(),
 }, (t) => [uniqueIndex('attachments_user_sha_uq').on(t.user_id, t.sha256)])
 
+/**
+ * Provider-scoped cache of an attachment's short-lived provider file pointer, keyed by
+ * (attachment_id, provider_id) — not by session or model. Never holds file content.
+ */
+export const attachmentProviderFiles = sqliteTable('attachment_provider_files', {
+  id: integer().primaryKey({ autoIncrement: true }),
+  attachment_id: integer().notNull().references(() => attachments.id, { onDelete: 'cascade' }),
+  provider_id: integer().notNull().references(() => providers.id, { onDelete: 'cascade' }),
+  provider_reference: text({ mode: 'json' }).$type<Record<string, string>>().notNull(),
+  expires_at: integer().notNull(),
+  created_at: integer().notNull(),
+}, (t) => [
+  uniqueIndex('attachment_provider_files_uq').on(t.attachment_id, t.provider_id),
+  index('attachment_provider_files_expiry_idx').on(t.expires_at),
+])
+
 export type UserRow = typeof users.$inferSelect
 export type ProviderRow = typeof providers.$inferSelect
 export type ModelRow = typeof models.$inferSelect
+export type ProjectRow = typeof projects.$inferSelect
 export type SessionRow = typeof sessions.$inferSelect
 export type MessageRow = typeof messages.$inferSelect
 export type AttachmentRow = typeof attachments.$inferSelect
+export type AttachmentProviderFileRow = typeof attachmentProviderFiles.$inferSelect

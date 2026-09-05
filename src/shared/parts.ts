@@ -3,7 +3,11 @@ import { z } from 'zod'
 export const ProviderOptionsSchema = z.record(z.string(), z.record(z.string(), z.unknown()))
 export type ProviderOptions = z.infer<typeof ProviderOptionsSchema>
 
-export const TextPartSchema = z.object({ type: z.literal('text'), text: z.string() })
+export const TextPartSchema = z.object({
+  type: z.literal('text'),
+  text: z.string(),
+  providerOptions: ProviderOptionsSchema.optional(),
+})
 export const ImagePartSchema = z.object({ type: z.literal('image'), attachment_id: z.number().int() })
 export const ReasoningPartSchema = z.object({
   type: z.literal('reasoning'),
@@ -15,6 +19,7 @@ export const ToolCallPartSchema = z.object({
   id: z.string(),
   name: z.string(),
   args: z.unknown(),
+  providerOptions: ProviderOptionsSchema.optional(),
 })
 export const ToolResultPartSchema = z.object({
   type: z.literal('tool_result'),

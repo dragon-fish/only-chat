@@ -1,10 +1,20 @@
 import { z } from 'zod'
-import { ModelCapabilitiesSchema, ModelPricingSchema, ProtocolSchema } from './models'
+import { ModelCapabilitiesSchema, ModelPricingSchema, ProtocolSchema, SessionParamsSchema } from './models'
 
 export interface ModelRef {
   provider_id: number
   model_id: string
 }
+
+/** Only `name` is required; prompt, model and params may all be absent or explicitly cleared. */
+export const ProjectInputSchema = z.object({
+  name: z.string().min(1).max(200),
+  system_prompt: z.string().nullable().optional(),
+  provider_id: z.number().int().nullable().optional(),
+  model_id: z.string().nullable().optional(),
+  params: SessionParamsSchema.nullable().optional(),
+})
+export type ProjectInput = z.infer<typeof ProjectInputSchema>
 
 export const ProviderInputSchema = z.object({
   name: z.string().min(1).max(100),
@@ -14,6 +24,8 @@ export const ProviderInputSchema = z.object({
   api_key: z.string().optional(),
   extra: z.record(z.string(), z.unknown()).nullable().optional(),
   enabled: z.boolean().optional(),
+  /** Supports the provider's native Files API with upload-time expiry. Custom providers default false. */
+  native_files: z.boolean().optional(),
 })
 export type ProviderInput = z.infer<typeof ProviderInputSchema>
 

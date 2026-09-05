@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { useSyncStore } from '@/client/stores/sync'
 import type { Message, Session } from '@/shared/models'
 
-const session: Session = { id: 1, user_id: 1, title: 't', head_message_id: null, provider_id: null, model_id: null, system_prompt: null, params: null, created_at: 1, updated_at: 1, archived_at: null }
+const session: Session = { id: 1, user_id: 1, project_id: null, title: 't', head_message_id: null, provider_id: null, model_id: null, system_prompt: null, params: null, created_at: 1, updated_at: 1, archived_at: null }
 const msg = (id: number, parent_id: number | null, role: 'user' | 'assistant', over: Partial<Message> = {}): Message =>
   ({ id, session_id: 1, parent_id, seq: id, role, parts: [], provider_id: null, model_id: null, usage: null, status: 'done', error: null, created_at: 0, ...over })
 

@@ -11,11 +11,11 @@ import { useSyncStore } from '@/client/stores/sync'
 import { useConfigStore } from '@/client/stores/config'
 import type { ModelRef } from '@/shared/api'
 import type { Part } from '@/shared/parts'
-import type { SessionParams } from '@/shared/models'
+import type { ReasoningEffort, SessionParams } from '@/shared/models'
 
 /** `reasoning_effort` has no "unset" member, so the picker carries a sentinel option. */
 const EFFORT_DEFAULT = 'default'
-type EffortChoice = typeof EFFORT_DEFAULT | 'low' | 'medium' | 'high'
+type EffortChoice = typeof EFFORT_DEFAULT | ReasoningEffort
 
 const props = defineProps<{ sessionId: number | null }>()
 const router = useRouter()

@@ -18,7 +18,8 @@ const model: ModelRow = { id: 1, provider_id: 1, model_id: 'test-model', display
 async function provider(protocol: ProviderRow['protocol'], key: string | null, extra: Record<string, unknown> | null = null): Promise<ProviderRow> {
   return {
     id: 1, user_id: 1, name: 'p', protocol, base_url: 'https://example.com/v1',
-    api_key: key ? await encryptSecret(env.KEY_ENCRYPTION_SECRET, key) : null, extra, enabled: true, created_at: 0,
+    api_key: key ? await encryptSecret(env.KEY_ENCRYPTION_SECRET, key) : null, extra, enabled: true,
+    native_files: false, created_at: 0,
   }
 }
 

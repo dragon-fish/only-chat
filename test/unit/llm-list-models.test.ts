@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { listRemoteModels } from '@/server/plugins/llm/list-models'
 import type { ProviderRow } from '@/server/db/schema'
 
-const base: ProviderRow = { id: 1, user_id: 1, name: 'p', protocol: 'openai-completions', base_url: 'https://api.example.com/v1', api_key: null, extra: null, enabled: true, created_at: 0 }
+const base: ProviderRow = { id: 1, user_id: 1, name: 'p', protocol: 'openai-completions', base_url: 'https://api.example.com/v1', api_key: null, extra: null, enabled: true, native_files: false, created_at: 0 }
 
 describe('listRemoteModels', () => {
   it('calls {base_url}/models with a bearer token for openai protocols', async () => {

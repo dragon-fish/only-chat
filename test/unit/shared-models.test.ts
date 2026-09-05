@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { MessageSchema, ProviderSchema, SessionParamsSchema, UsageSchema, UserSettingsSchema } from '@/shared/models'
+import {
+  MessageSchema, ModelCapabilitiesSchema, ProjectSchema, ProtocolSchema, ProviderSchema,
+  SessionParamsSchema, UsageSchema, UserSettingsSchema,
+} from '@/shared/models'
 
 describe('models schemas', () => {
   it('distinguishes undefined and 0 in usage', () => {
@@ -29,5 +32,27 @@ describe('models schemas', () => {
 
   it('accepts partial session params', () => {
     expect(SessionParamsSchema.parse({ temperature: 0.7 })).toEqual({ temperature: 0.7 })
+  })
+
+  it('accepts the vertex-compatible protocol', () => {
+    expect(ProtocolSchema.parse('vertex-compatible')).toBe('vertex-compatible')
+  })
+
+  it('treats explicit null reasoning_effort as Auto, independent of reasoning_enabled', () => {
+    expect(SessionParamsSchema.parse({ reasoning_enabled: true, reasoning_effort: null }))
+      .toEqual({ reasoning_enabled: true, reasoning_effort: null })
+  })
+
+  it('accepts expanded reasoning efforts and image_output on model capabilities', () => {
+    expect(ModelCapabilitiesSchema.parse({ image_output: true, reasoning_efforts: ['low', 'xhigh'] }))
+      .toEqual({ image_output: true, reasoning_efforts: ['low', 'xhigh'] })
+  })
+
+  it('parses a Project with only name required', () => {
+    expect(ProjectSchema.parse({
+      id: 1, user_id: 1, name: 'Design', system_prompt: null,
+      provider_id: null, model_id: null, params: null,
+      created_at: 1, updated_at: 1,
+    }).name).toBe('Design')
   })
 })
