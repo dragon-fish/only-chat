@@ -30,11 +30,12 @@
 ## 3. 技术栈
 
 - 运行时：Cloudflare Workers + Durable Objects + D1 + R2。KV 在 MVP 中不使用。
-- 后端：Hono（HTTP 路由）+ cordis（DI / 插件 / 事件总线）+ Drizzle ORM（D1 driver）+ Vercel AI SDK core（协议层）。
-- 前端：Vue 3（pug 模板 + scss）+ Vite + vue-router + Pinia + shadcn-vue + markstream-vue。
+- 后端：Hono 4（HTTP 路由）+ cordis 4（DI / 插件 / 事件总线，rc 线，锁版本）+ Drizzle ORM 0.45（D1 driver；不用 1.0-RC）+ Vercel AI SDK 7 core（协议层）。
+- 前端：Vue 3（pug 模板 + scss）+ Vite 8 + vue-router 5 + Pinia 4 + shadcn-vue 2（Tailwind 4）+ markstream-vue 2。
 - 一体化：`@cloudflare/vite-plugin`，本地 `vite dev` 与线上 Worker 行为一致，一条 `wrangler deploy` 同时发布前端与 API。
-- 测试：Vitest；DO 集成测试用 `@cloudflare/vitest-pool-workers`。
-- 包管理：pnpm。
+- 测试：Vitest 4（锁 4.1.x，5 与 CF 插件不兼容）；DO 集成测试用 `@cloudflare/vitest-plugin`（`vitest-pool-workers` 的新名字）。
+- TypeScript 锁 5.9.x（7.x 破坏 vue-tsc）。包管理：pnpm。
+- 各库的核实笔记（版本、签名、坑）在 plan 中随任务引用。
 
 ## 4. 架构
 
@@ -80,9 +81,9 @@ cordis 是后端的骨架，不是风味 DI。要用足的三项能力：
 Workers 的 `env` 只在请求 / DO 构造函数内可得，因此 cordis 根 Context 建两份：
 
 - Worker 侧：首个请求时懒初始化，装载 database、assets、api 插件，服务 REST。
-- DO 侧：构造函数内创建，装载 database、assets、llm、hub 插件。
+- DO 侧：构造函数内创建，在 `blockConcurrencyWhile` 中 `await` 全部核心插件装载完成（cordis 插件激活永远是异步的），装载 database、assets、llm、hub 插件。
 
-两侧共享同一组插件定义，仅装载清单不同。
+两侧共享同一组插件定义，仅装载清单不同。两侧都必须注册 `ctx.logger.exporter` 把日志转到 `console`，否则 cordis 会把插件加载错误吞进内存缓冲。
 
 ### 4.5 事件
 
@@ -153,7 +154,7 @@ only-chat/
 ```
 text        { type: 'text', text }
 image       { type: 'image', attachment_id }
-reasoning   { type: 'reasoning', text, providerMetadata? }
+reasoning   { type: 'reasoning', text, providerOptions? }   // 存 AI SDK 回放时需要的 providerOptions（由流事件的 providerMetadata 转来）
 tool_call   { type: 'tool_call', id, name, args }          // MVP 定义不产生
 tool_result { type: 'tool_result', call_id, content }      // MVP 定义不产生
 ```
@@ -167,9 +168,9 @@ assistant 消息的 reasoning、text、tool_call 都是同一条消息的 parts�
 
 ### 7.1 结构（`plugins/llm/`）
 
-- 注册表：`ctx.llm.register(protocol, factory)`；四个子插件各注册一个 `factory(providerRow, modelRow) => LanguageModel`，分别基于 `@ai-sdk/openai`（`.chat()` / `.responses()`）、`@ai-sdk/anthropic`、`@ai-sdk/google-vertex/edge`、`@ai-sdk/openai-compatible`。`base_url`、解密后的 key、`extra` 在 factory 内注入。
-- `messages.ts`：`buildModelMessages(systemPrompt, pathMessages, protocol)` 纯函数，以及 AI SDK `fullStream` 事件到本项目 delta / part 的归一化。只消费 `text-delta`、`reasoning-delta`、`tool-call`、`finish`、`error`。
-- `usage.ts`：各协议 usage 映射。Anthropic 的 `input_tokens` 不含 cache read / creation，需加回。
+- 注册表：`ctx.llm.register(protocol, factory)`；四个子插件各注册一个 `factory(providerRow, modelRow) => LanguageModel`，分别基于 `@ai-sdk/openai`（`openai-completions` 用 `.chat()`；`openai-responses` 用 `.responses()`，注意 SDK 7 默认即 responses）、`@ai-sdk/anthropic`、`@ai-sdk/google-vertex/edge`（必须 `/edge` 路径；SDK 不缓存 OAuth token，每请求签一次 JWT，llm 插件内按 provider 缓存 token）、`@ai-sdk/openai-compatible`（必须 `includeUsage: true` 才有流式 usage）。`base_url`、解密后的 key、`extra` 在 factory 内注入，所有凭据显式传参，不依赖 `process.env`。
+- `messages.ts`：`buildModelMessages(systemPrompt, pathMessages, protocol)` 纯函数，输出 AI SDK 的 `ModelMessage[]`，以及 `result.stream` 事件到本项目 delta / part 的归一化。只消费 `text-delta`、`reasoning-delta`、`reasoning-end`（取 providerMetadata）、`tool-call`、`finish`、`abort`、`error`。
+- `usage.ts`：AI SDK 7 的嵌套 usage（`inputTokenDetails.cacheReadTokens` 等）映射为本项目的扁平 `{ prompt, completion, cached, reasoning }`；`undefined` 与 `0` 区分保留。
 - `presets.ts`：预制供应商模板。
 
 ### 7.2 前缀一致性不变量
@@ -177,12 +178,14 @@ assistant 消息的 reasoning、text、tool_call 都是同一条消息的 parts�
 同一条路径、同一 system prompt、同一协议，`buildModelMessages` 的输出必须逐字节相同，无论 parts 来自内存还是 D1 读回。目的是命中供应商的前缀缓存。为此：
 
 - 请求级可变信息（时间、设备、随机数）不得进入 messages 或 system prompt。
-- `reasoning` part 原样保存供应商附属数据（Anthropic thinking `signature`、OpenAI responses reasoning item 的 id 与加密内容）于 `providerMetadata`，回放时原样带回。
+- `reasoning` part 原样保存供应商附属数据（Anthropic thinking `signature` / `redactedData`、OpenAI responses 的 `itemId` / `reasoningEncryptedContent`）于 `providerOptions`，回放时原样带回。流式累积时以最后一个非空 `providerMetadata` 为准（签名在块末尾到达）。
+- `openai-compatible` 协议的 reasoning 没有可回放的元数据，`buildModelMessages` 对该协议**固定剔除** reasoning parts（规则确定，仍满足不变量）。
+- OpenAI responses 协议固定 `store: false`，reasoning 靠 `reasoningEncryptedContent` 回放，不依赖服务端状态。
 - `text` part 不做任何规范化：不 trim、不改换行。
 - image 始终以 base64 内联发送（从 R2 读 bytes），不用 URL。
 - MVP 不做上下文裁剪，整条路径全部发送。未来裁剪规则必须单调（只在 turn 边界砍最老的）且实现在此函数内。
 - tools 列表（未来）的顺序与 schema 必须确定性。
-- Anthropic `cache_control` 断点规则固定：system prompt 一个、路径中最后一条 user 消息一个，通过 `providerOptions` 传递，不影响 messages 内容。
+- Anthropic `cache_control` 断点规则固定：system prompt 一个、路径中最后一条 user 消息一个，通过消息级 `providerOptions` 传递，不影响 messages 内容。为此 system prompt 以 `role: 'system'` 消息放进 `messages` 数组并开启 `allowSystemInMessages`，四种协议统一走这条路径。
 - 测试：构造含 text / image / reasoning 的多分支树，取一条路径，内存构建与 D1 round-trip 后构建深比较相等；每种协议一个 golden 快照。
 
 ### 7.3 part_index 维护
@@ -228,7 +231,7 @@ DO → 所有客户端：
 
 1. 收到 `send`：zod 校验 → 若新会话则插 `sessions` 并广播 `session.created` → 分配 `seq`、插 user 消息 → 广播 `message.created` → 分配 `seq`、插 assistant 占位行（D1 中 `status: error`，语义为"DO 若死亡则它就是 error"）→ 广播 `status: streaming` 空壳 → 更新 `head_message_id` 并广播 `head.changed`。
 2. 将 `{message_id, session_id, parts 缓冲, started_at}` 写入 DO storage 的 `inflight` map；若尚无 alarm 则设置（10 分钟）。
-3. 触发 `message/before-send` → `buildModelMessages` → `streamText`。每个 delta 追加到内存缓冲并广播；约每 1 秒把缓冲刷入 DO storage。
+3. 触发 `message/before-send` → `buildModelMessages` → `streamText`。每个 delta 追加到内存缓冲并广播；约每 1 秒把缓冲刷入 DO storage。**整个生成在触发它的 `webSocketMessage` 事件内 `await` 到结束**，不做 fire-and-forget：DO 只在有事件 / 请求在途时保证存活，普通 `fetch()` 子请求本身不续命，`waitUntil` 在 DO 内是空操作。DO 的事件处理是并发的，等待期间其它命令（`stop` 等）照常处理。
 4. 结束：完整 parts、usage、`status: done` 一次性 UPDATE 到 D1 → 广播 `message.done` → 触发 `message/done` → 从 `inflight` 删除 → 无其他任务则取消 alarm。
 5. `stop`：abort 对应 AbortController，走同样结束路径，`status: aborted`，已生成内容保留。
 6. alarm 触发：超过 10 分钟的任务按 `aborted` 收尾。
@@ -293,18 +296,23 @@ DO 内存 per-session 计数器，冷启动时从 D1 `max(seq)` 初始化，之�
 - `shared/`：parts 与 WS 事件 schema 的 round-trip。
 - `plugins/llm/messages.ts`：前缀一致性测试（内存 vs D1 round-trip 深比较）+ 每协议 golden 快照。
 - `plugins/llm/usage.ts`：各协议映射，含 Anthropic 加回 cache 与 undefined vs 0。
-- `plugins/hub/`：seq 分配器、路径回溯与兄弟计数纯函数单测；DO 集成用例"send → delta → done"，provider 用 AI SDK 的 mock LanguageModel。
+- `plugins/hub/`：seq 分配器、路径回溯与兄弟计数纯函数单测；DO 集成用例"send → delta → done"在 `@cloudflare/vitest-plugin` 的 workerd 项目里跑，provider 用 `ai/test` 的 `MockLanguageModelV4`。
 - 前端：`useSyncStore` 事件 apply 单测（幂等、混合来源）。组件不写测试。
 - 手动验收：四种协议各真跑一次，双设备同时观看同一条流。
 
-## 13. 计划阶段需核实的版本相关事项
+## 13. 已核实的版本（2026-09-05）
 
-以下 API 不凭记忆写，写 plan 前读当前版本源码或文档：
+以下版本均已通过装包读类型 / 实跑验证，plan 中的接口以此为准：
 
-- `@cloudflare/vite-plugin` 与 Vue + Hono 的项目布局与 `wrangler.jsonc` 配置。
-- cordis 当前版本的 Context / Service / 事件 API。
-- Vercel AI SDK 当前主版本：`streamText` 的 `fullStream` 事件名、`providerMetadata` / `providerOptions` 形状、各 provider 包名与 `.responses()` 用法、`@ai-sdk/google-vertex/edge` 的认证配置、mock LanguageModel 的导出名。
-- Drizzle 的 D1 driver 与 `drizzle-kit` 生成 D1 迁移的配置。
-- markstream-vue 当前版本的组件 API。
-- Durable Objects Hibernation WebSocket 与 alarm API。
-- `@cloudflare/vitest-pool-workers` 对 DO 的测试方式。
+| 库 | 版本 | 关键事实 |
+|---|---|---|
+| cordis | 4.0.0-rc.9 | v4 API（Fiber、`[Service.init]`、`ctx.effect`、无 optional inject、无 `dispose` 事件）；零 Node 依赖 |
+| ai | 7.0.9x | `instructions` / `result.stream` / 嵌套 usage / `responseMessages` 回放 / `MockLanguageModelV4` |
+| @ai-sdk/openai · anthropic · google-vertex · openai-compatible | 4.0.5x · 4.0.4x · 5.0.7x · 3.0.4x | vertex 必须 `/edge`；compatible 必须 `includeUsage` |
+| @cloudflare/vite-plugin · wrangler | 1.54.x · 4.129.x | `run_worker_first`、`new_sqlite_classes`、`.dev.vars` |
+| @cloudflare/vitest-plugin · vitest | 1.1.x · 4.1.x（锁） | `cloudflareTest()`、`runInDurableObject`、`applyD1Migrations` |
+| drizzle-orm · drizzle-kit | 0.45.x · 0.31.x（锁） | 迁移布局与 wrangler 默认 glob 兼容；`casing` 两处都要设 |
+| markstream-vue · stream-diffs | 2.0.x · 0.0.2 | `final` 是流结束标志；Tailwind 用 `index.tailwind.css` |
+| shadcn-vue · tailwindcss | 2.8.x · 4.3.x | `aliases.ui` 可指向 `@/client/ui`；SCSS 不要裸元素选择器 |
+| vue · vue-router · pinia | 3.5.x · 5.3.x · 4.0.x | pinia 4 需显式装 `@vue/devtools-api` |
+| typescript | 5.9.x（锁） | 7.x 破坏 vue-tsc；tsconfig 不用 `baseUrl` |
