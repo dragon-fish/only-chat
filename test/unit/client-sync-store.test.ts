@@ -45,11 +45,15 @@ describe('sync store', () => {
     s.applyEvent({ type: 'head.changed', session_id: 1, message_id: 5 })
     expect(s.streamingIds.has(5)).toBe(true)
     // Reconnect: the stream finished while we were offline, so the snapshot no longer lists it.
+    expect(s.snapshotSeq).toBe(0)
     s.applyEvent({ type: 'snapshot', inflight: [] })
     expect(s.streamingIds.has(5)).toBe(false)
+    expect(s.snapshotSeq).toBe(1)
     s.ingestMessages(1, [msg(4, null, 'user'), msg(5, 4, 'assistant', { status: 'done', parts: [{ type: 'text', text: 'final' }] })])
     expect(s.messages.get(1)!.get(5)).toMatchObject({ status: 'done', parts: [{ type: 'text', text: 'final' }] })
     expect(s.isStreaming(1)).toBe(false)
+    s.applyEvent({ type: 'snapshot', inflight: [] })
+    expect(s.snapshotSeq).toBe(2)
   })
 
   it('ignores a duplicate streaming shell so accumulated parts survive', () => {

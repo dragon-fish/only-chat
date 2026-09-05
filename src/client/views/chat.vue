@@ -39,7 +39,11 @@ watch(() => [config.loaded, config.enabledModels().map((e) => `${e.provider.id}:
 }, { immediate: true })
 
 watch(sid, (id) => { if (id !== null) void sync.loadMessages(id) }, { immediate: true })
-watch(() => sync.status, (s) => { if (s === 'open' && sid.value !== null) void sync.loadMessages(sid.value) })
+// Reload on the snapshot itself, not on `status` flipping to `open`: `status` changes before the
+// snapshot event is applied, so a reload keyed on it can race ahead and miss messages that only
+// the snapshot's reconciliation reveals as finished. `snapshotSeq` starts at 0, so skip that
+// initial value — only a later increment means a snapshot actually landed.
+watch(() => sync.snapshotSeq, (seq) => { if (seq > 0 && sid.value !== null) void sync.loadMessages(sid.value) })
 
 // A `send` on a fresh page creates the session server-side; jump to it when it appears.
 const pendingNew = ref(false)

@@ -16,6 +16,10 @@ function pathToRoot(byId: Map<number, Message>, headId: number | null): Message[
 
 export const useSyncStore = defineStore('sync', () => {
   const status = ref<WsStatus>('closed')
+  // Bumped at the end of every `snapshot` application. `status` flips to `open` before the
+  // snapshot event arrives, so a reload keyed on `status` can race ahead of it; watchers should
+  // key on this instead to reload only once the snapshot has actually landed.
+  const snapshotSeq = ref(0)
   const sessions = reactive(new Map<number, Session>())
   const messages = reactive(new Map<number, Map<number, Message>>())
   const streamingIds = reactive(new Set<number>())
@@ -60,6 +64,7 @@ export const useSyncStore = defineStore('sync', () => {
         // REST reload can overwrite them.
         streamingIds.clear()
         for (const m of e.inflight) { streamingIds.add(m.id); bucket(m.session_id).set(m.id, m) }
+        snapshotSeq.value++
         break
       case 'session.created':
       case 'session.updated':
@@ -150,7 +155,7 @@ export const useSyncStore = defineStore('sync', () => {
   }
 
   return {
-    status, sessions, messages, streamingIds, settings, lastError, sessionList,
+    status, snapshotSeq, sessions, messages, streamingIds, settings, lastError, sessionList,
     applyEvent, ingestMessages, pathFor, siblingsOf, isStreaming, loadSessions, loadMessages, connect, send,
   }
 })
