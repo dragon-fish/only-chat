@@ -23,7 +23,7 @@ If the scratchpad is gone, the facts you need are repeated inline in each task; 
 - Single package, pnpm, ESM only. Repo root: `E:\GitRepositories\only-chat`, branch `feat/mvp`.
 - Node 24 on Windows 11. Shell commands in this plan are Git Bash syntax; network commands need `https_proxy=http://127.0.0.1:7897 http_proxy=http://127.0.0.1:7897` prefixed, and the shadcn CLI additionally needs `NODE_OPTIONS=--use-env-proxy`.
 - The Vite dev server on Windows binds IPv6 only: use `http://localhost:5173`, never `127.0.0.1`.
-- Version locks (exact): `typescript` **5.9.3**, `vitest` **4.1.11** (+ `@vitest/runner`, `@vitest/snapshot` 4.1.11), `cordis` **4.0.0-rc.9**. Caret ranges: `drizzle-orm ^0.45.2`, `drizzle-kit ^0.31.10` (never the 1.0 RC), everything else per Task 1.
+- Version locks: `typescript` **~6.0.x** (7.x breaks vue-tsc; if 6.x also fails, fall back to 5.9.3), `vitest` **4.1.11** (+ `@vitest/runner`, `@vitest/snapshot` 4.1.11), `cordis` **4.0.0-rc.9**. Caret ranges: `drizzle-orm ^0.45.2`, `drizzle-kit ^0.31.10` (never the 1.0 RC), everything else per Task 1.
 - The user's global pnpm has a `minimumReleaseAge` policy. If `pnpm add` rejects a version, let pnpm pick an older one inside the caret range; do not add `minimum-release-age=0` to the project.
 - `user_id` is hard-coded to `1` everywhere (`DEFAULT_USER_ID` in `src/shared/constants.ts`). No auth in MVP.
 - All timestamps are epoch milliseconds stored as SQLite integers and transported as JSON numbers. No `Date` objects cross module boundaries.
@@ -171,7 +171,7 @@ only-chat/
     "drizzle-kit": "^0.31.10",
     "pug": "^3.0.4",
     "sass-embedded": "^1.104.0",
-    "typescript": "5.9.3",
+    "typescript": "~6.0.2",
     "vite": "^8.2.2",
     "vitest": "4.1.11",
     "vue-tsc": "^3.3.11",

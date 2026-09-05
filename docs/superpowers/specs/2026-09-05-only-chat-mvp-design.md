@@ -34,7 +34,7 @@
 - 前端：Vue 3（pug 模板 + scss）+ Vite 8 + vue-router 5 + Pinia 4 + shadcn-vue 2（Tailwind 4）+ markstream-vue 2。
 - 一体化：`@cloudflare/vite-plugin`，本地 `vite dev` 与线上 Worker 行为一致，一条 `wrangler deploy` 同时发布前端与 API。
 - 测试：Vitest 4（锁 4.1.x，5 与 CF 插件不兼容）；DO 集成测试用 `@cloudflare/vitest-plugin`（`vitest-pool-workers` 的新名字）。
-- TypeScript 锁 5.9.x（7.x 破坏 vue-tsc）。包管理：pnpm。
+- TypeScript 用 6.0.x（7.x 破坏 vue-tsc；不用 `baseUrl`）。包管理：pnpm。
 - 各库的核实笔记（版本、签名、坑）在 plan 中随任务引用。
 
 ## 4. 架构
@@ -315,4 +315,4 @@ DO 内存 per-session 计数器，冷启动时从 D1 `max(seq)` 初始化，之�
 | markstream-vue · stream-diffs | 2.0.x · 0.0.2 | `final` 是流结束标志；Tailwind 用 `index.tailwind.css` |
 | shadcn-vue · tailwindcss | 2.8.x · 4.3.x | `aliases.ui` 可指向 `@/client/ui`；SCSS 不要裸元素选择器 |
 | vue · vue-router · pinia | 3.5.x · 5.3.x · 4.0.x | pinia 4 需显式装 `@vue/devtools-api` |
-| typescript | 5.9.x（锁） | 7.x 破坏 vue-tsc；tsconfig 不用 `baseUrl` |
+| typescript | 6.0.x | 7.x 破坏 vue-tsc；tsconfig 不用 `baseUrl` |
