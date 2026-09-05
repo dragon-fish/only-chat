@@ -1,8 +1,8 @@
-import { and, desc, eq, isNull, sql } from 'drizzle-orm'
+import { and, desc, eq, isNotNull, isNull, sql } from 'drizzle-orm'
 import type { DB } from '../../db/client'
 import { attachments, messages, models, providers, sessions, users } from '../../db/schema'
 import type { AttachmentRow, MessageRow, ModelRow, ProviderRow, SessionRow, UserRow } from '../../db/schema'
-import type { Message, MessageStatus, PersistedStatus, Usage, UserSettings } from '@/shared/models'
+import type { Message, MessageStatus, PersistedStatus, SessionParams, Usage, UserSettings } from '@/shared/models'
 import type { Part } from '@/shared/parts'
 
 /** Row → wire DTO. Persisted rows only carry the persisted statuses; live ones pass `status` in. */
@@ -18,16 +18,41 @@ export async function getSession(db: DB, id: number): Promise<SessionRow | undef
   return db.query.sessions.findFirst({ where: eq(sessions.id, id) })
 }
 
-export async function createSession(db: DB, input: { user_id: number; title: string; provider_id: number | null; model_id: string | null }): Promise<SessionRow> {
+/**
+ * Creates a session from the draft the first `send` carried (spec §5.2). `provider_id`/`model_id`
+ * are the session's *override* — never the model used for that first generation, or the session
+ * would stop inheriting from its Project on every later turn.
+ */
+export async function createSession(db: DB, input: {
+  user_id: number
+  title: string
+  provider_id: number | null
+  model_id: string | null
+  project_id?: number | null
+  system_prompt?: string | null
+  params?: SessionParams | null
+}): Promise<SessionRow> {
   const now = Date.now()
-  const [row] = await db.insert(sessions).values({ ...input, head_message_id: null, system_prompt: null, params: null, created_at: now, updated_at: now, archived_at: null }).returning()
+  const [row] = await db.insert(sessions).values({
+    user_id: input.user_id,
+    title: input.title,
+    project_id: input.project_id ?? null,
+    provider_id: input.provider_id,
+    model_id: input.model_id,
+    system_prompt: input.system_prompt ?? null,
+    params: input.params ?? null,
+    head_message_id: null,
+    created_at: now,
+    updated_at: now,
+    archived_at: null,
+  }).returning()
   return row!
 }
 
 export async function updateSession(
   db: DB,
   id: number,
-  patch: Partial<Pick<SessionRow, 'title' | 'provider_id' | 'model_id' | 'system_prompt' | 'params' | 'head_message_id'>>,
+  patch: Partial<Pick<SessionRow, 'title' | 'project_id' | 'provider_id' | 'model_id' | 'system_prompt' | 'params' | 'head_message_id'>>,
 ): Promise<SessionRow> {
   const [row] = await db.update(sessions).set({ ...patch, updated_at: Date.now() }).where(eq(sessions.id, id)).returning()
   if (!row) throw new Error(`session ${id} not found`)
@@ -57,6 +82,21 @@ export async function finalizeMessage(
   patch: { parts: Part[]; usage: Usage | null; status: PersistedStatus; error: string | null },
 ): Promise<void> {
   await db.update(messages).set(patch).where(eq(messages.id, id))
+}
+
+/**
+ * The model the session last generated with. `edit` carries no model of its own, and
+ * `sessions.provider_id` is now the user's explicit override rather than a sticky record of the
+ * last generation, so the answer has to come from the messages themselves.
+ */
+export async function lastGenerationModel(db: DB, sessionId: number): Promise<{ provider_id: number; model_id: string } | undefined> {
+  const [row] = await db.select({ provider_id: messages.provider_id, model_id: messages.model_id })
+    .from(messages)
+    .where(and(eq(messages.session_id, sessionId), isNotNull(messages.provider_id), isNotNull(messages.model_id)))
+    .orderBy(desc(messages.seq))
+    .limit(1)
+  if (!row || row.provider_id === null || row.model_id === null) return undefined
+  return { provider_id: row.provider_id, model_id: row.model_id }
 }
 
 export async function maxSeq(db: DB, sessionId: number): Promise<number> {

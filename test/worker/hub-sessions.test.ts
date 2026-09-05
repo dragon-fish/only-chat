@@ -2,7 +2,10 @@ import { env } from 'cloudflare:workers'
 import { describe, expect, it } from 'vitest'
 import { createDb } from '@/server/db/client'
 import { ensureDefaultUser } from '@/server/plugins/database'
-import { createSession, finalizeMessage, insertMessage, listMessages, maxSeq, toMessage, updateSession } from '@/server/plugins/hub/sessions'
+import { createSession, finalizeMessage, getSession, insertMessage, listMessages, maxSeq, toMessage, updateSession } from '@/server/plugins/hub/sessions'
+import { createProject, deleteProject, getProject, listProjectSessions, listProjects, updateProject } from '@/server/plugins/hub/projects'
+import { users } from '@/server/db/schema'
+import { DEFAULT_USER_ID } from '@/shared/constants'
 
 describe('session ops', () => {
   it('creates, inserts, finalizes, and reads back with wire status', async () => {
@@ -20,5 +23,41 @@ describe('session ops', () => {
     const s2 = await updateSession(db, s.id, { head_message_id: a.id, title: 'renamed' })
     expect(s2.head_message_id).toBe(a.id)
     expect(s2.updated_at).toBeGreaterThanOrEqual(s.updated_at)
+  })
+})
+
+describe('project ops', () => {
+  it('scopes every read and write to the owning user', async () => {
+    const db = createDb(env.DB)
+    await ensureDefaultUser(db)
+    const [other] = await db.insert(users).values({ name: 'other', settings: { plugins: {} }, created_at: 0 }).returning()
+    const mine = await createProject(db, { user_id: DEFAULT_USER_ID, name: 'mine', system_prompt: 'P', params: { temperature: 0.2 } })
+    const theirs = await createProject(db, { user_id: other!.id, name: 'theirs' })
+
+    expect(await getProject(db, mine.id, DEFAULT_USER_ID)).toMatchObject({ name: 'mine', system_prompt: 'P', params: { temperature: 0.2 } })
+    expect(await getProject(db, theirs.id, DEFAULT_USER_ID)).toBeUndefined()
+    expect((await listProjects(db, DEFAULT_USER_ID)).map((p) => p.id)).toEqual([mine.id])
+
+    await expect(updateProject(db, theirs.id, DEFAULT_USER_ID, { name: 'stolen' })).rejects.toThrow()
+    const renamed = await updateProject(db, mine.id, DEFAULT_USER_ID, { name: 'renamed', provider_id: null })
+    expect(renamed).toMatchObject({ name: 'renamed', system_prompt: 'P' })
+
+    await deleteProject(db, theirs.id, DEFAULT_USER_ID)
+    expect(await getProject(db, theirs.id, other!.id)).toBeDefined()
+  })
+
+  it('lists a project’s sessions and releases them to Chats when it is deleted', async () => {
+    const db = createDb(env.DB)
+    await ensureDefaultUser(db)
+    const p = await createProject(db, { user_id: DEFAULT_USER_ID, name: 'p' })
+    const s = await createSession(db, {
+      user_id: DEFAULT_USER_ID, title: 't', project_id: p.id, provider_id: null, model_id: null,
+      system_prompt: 'draft prompt', params: { temperature: 0 },
+    })
+    expect(s).toMatchObject({ project_id: p.id, system_prompt: 'draft prompt', params: { temperature: 0 } })
+    expect((await listProjectSessions(db, p.id, DEFAULT_USER_ID)).map((r) => r.id)).toEqual([s.id])
+
+    await deleteProject(db, p.id, DEFAULT_USER_ID)
+    expect((await getSession(db, s.id))!.project_id).toBeNull()
   })
 })
