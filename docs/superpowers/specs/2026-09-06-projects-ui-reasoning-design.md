@@ -30,7 +30,7 @@ only-chat 的实时多设备聊天 MVP 已可用。本轮在不引入账号系�
 - 移动端侧栏关闭按钮与设置按钮重合修复。
 - 独立的 Google 兼容协议类型：自定义 Base URL、API Key、Bearer 鉴权和 Vertex 风格模型路径。
 - 模型图片输出捕获、R2 转存、跨设备展示和供应商 Files API 指针复用。
-- 供应商文件的自动过期、本地指针清理和远端尽力删除。
+- 供应商文件的自动过期和本地指针清理。
 
 ### 不包含
 
@@ -140,7 +140,7 @@ Project 配置不复制到 session。每次开始生成时，服务端从最新�
 - `last_used_at`
 - `created_at`
 
-唯一索引为 `(attachment_id, provider_id)`。同一份 R2 图片上传到不同 provider 后必须分别保存指针；任何请求只可使用当前 provider 对应且未过期的指针。修改 provider 的协议、Base URL 或凭据时，使该 provider 的已有指针失效并进入清理队列。
+唯一索引为 `(attachment_id, provider_id)`。同一份 R2 图片上传到不同 provider 后必须分别保存指针；任何请求只可使用当前 provider 对应且未过期的指针。修改 provider 的协议、Base URL 或凭据时，立即删除该 provider 的本地指针；远端临时文件等待供应商按上传时设置的期限自动删除。
 
 表内只保存供应商文件 ID 和时间戳，不保存文件内容。过期行不得参与上下文组装；需要该图片时重新上传并替换指针。
 
@@ -158,14 +158,14 @@ D1 永远不保存图片 base64、二进制或供应商临时 URL。所有模型
 
 ### 4.8 Provider 文件能力
 
-Provider 配置增加 `native_files?: boolean`，表示其 Base URL 实现可供当前协议使用的原生 Files API。该字段由供应商设置页的“支持原生文件转储（Files API）”复选框控制：
+Provider 配置增加 `native_files?: boolean`，表示其 Base URL 实现可供当前协议使用、并支持上传时设置自动过期的原生 Files API。该字段由供应商设置页的“支持原生文件转储（Files API）”复选框控制：
 
 - 自定义 provider 默认关闭，避免仅因协议名称相同就误调用不完整的兼容网关。
 - 已知支持 Files API 的内置 preset 可默认开启。
 - 关闭时不探测 `/files`，直接使用下一层附件传输策略。
 - 开启后 Files API 返回认证、限流或服务端错误时正常暴露错误，不静默改成 base64；明确的端点不支持错误可提示用户关闭该选项。
 
-复选框下方说明文件会临时上传到当前供应商、按 provider 隔离保存指针并定期清理，不表示永久云存储或 only-chat 的 R2 保存开关。
+复选框下方说明文件会临时上传到当前供应商、按 provider 隔离保存指针且必须由供应商自动过期；only-chat 定期清理的是本地失效指针，不表示永久云存储或 R2 保存开关。
 
 ## 5. 实时协议与服务端数据流
 
@@ -238,7 +238,7 @@ reasoning 开启与 effort 分别映射：
 当前实现每轮从 R2 读取对话路径中的所有历史图片并内联发送。单次请求随历史图片线性增长，整段会话的累计重复上传量接近二次增长。改造后按以下顺序解析每个附件：
 
 1. 当前 provider 支持 Files API，且存在未过期的 `attachment_provider_files` 行：直接构造 provider file reference，并更新 `last_used_at`。
-2. 支持 Files API 但没有有效指针：从 R2 读取一次，上传到当前 provider，向上游 API 设置 `purpose: user_data` 与 `expires_after = 604800`（7 天），再保存 provider file ID 和供应商返回的实际过期时间。
+2. 支持 Files API 但没有有效指针：从 R2 读取一次，上传到当前 provider，向上游 API 设置 `purpose: user_data` 与 `expires_after = 604800`（7 天），再保存 provider file ID。供应商返回实际过期时间时以返回值为准，否则使用请求中的 7 天期限作为本地指针失效时间。
 3. provider 明确配置了可用的公开 / 签名 URL 传输：发送稳定 HTTPS URL。
 4. 其余情况继续内联 bytes，保证不支持 Files API 的兼容端点仍可使用图片。
 
@@ -246,14 +246,14 @@ Files API 是 provider 能力，不是 model 能力。OpenAI Responses preset �
 
 provider file ID 只属于上传它的 provider。切换 session 模型时，如果 provider 变化，必须查找或创建新 provider 的独立指针，绝不复用前一个 provider 的 file ID。
 
-### 5.7 供应商文件清理
+### 5.7 供应商文件过期与本地清理
 
 供应商文件不得永久保存：
 
-- 上传时优先请求供应商在 7 天后自动过期；OpenAI Files API 的允许范围为 1 小时至 30 天，7 天处于有效范围。
-- Worker Cron Trigger 每日扫描已过期或进入清理队列的指针，调用对应 provider 的文件删除接口；远端删除为幂等、尽力执行，文件已不存在视为成功。
-- 无论远端删除结果如何，过期指针都不会再次用于生成。确认删除或供应商已返回不存在后移除本地行；暂时性远端失败保留行供下次清理重试。
-- provider 删除或关键连接配置变化时，将其全部文件指针加入清理队列。
+- 上传时要求供应商在 7 天后自动过期；OpenAI Files API 的允许范围为 1 小时至 30 天，7 天处于有效范围。开启 `native_files` 即表示部署者确认该兼容供应商兑现这一语义。
+- Worker Cron Trigger 每日删除 D1 中已过期的 provider file 指针，不定期调用供应商 DELETE 接口。
+- 过期指针不会再次用于生成，即使本地清理任务尚未运行。
+- provider 删除或关键连接配置变化时立即删除其本地文件指针；远端文件仍由供应商在原定期限自动删除。
 - 到期后仍被会话引用的 R2 原图不删除；下一次需要时重新上传并生成新的短期指针。
 
 临时签名 URL 不是默认传输方式。整站位于 Cloudflare Access 后，供应商无法访问受保护的附件路由；启用 URL 传输必须由部署者额外配置 Access 例外路径或独立公开 hostname，并由 only-chat 的短期签名继续完成应用层鉴权。
@@ -354,7 +354,7 @@ assistant shell 到达后立即产生可见状态：
 - 已收到的部分 text / reasoning 在停止或错误时照常持久化。
 - 供应商文件上传失败：保留 Composer 和已有消息状态；认证、限流和服务端错误直接报告，不自动降级为内联数据。
 - 模型图片输出下载、校验或 R2 写入失败：不得把 base64 或临时 URL 写入消息；保留已有文本并将回复标记为错误。
-- 清理任务遇到暂时性远端错误：保留待清理指针并在下次计划任务重试，不影响聊天请求。
+- 本地指针清理失败：保留过期行供下次计划任务重试；生成流程仍按 `expires_at` 拒绝复用，不受清理延迟影响。
 
 ## 10. 测试与验收
 
@@ -368,8 +368,8 @@ assistant shell 到达后立即产生可见状态：
 - Project 与 session 事件在两个 WebSocket 客户端一致。
 - provider 的 `native_files` 创建、更新和 preset 默认值正确；关键连接配置变化后旧文件指针不可复用。
 - 同一 attachment 在同一 provider 内复用 file ID，在不同 provider 间分别上传；过期后重新上传。
-- 上传请求包含 7 天过期策略，供应商返回的实际 `expires_at` 被持久化。
-- 每日清理对成功删除、已不存在和暂时失败三种结果保持幂等。
+- 上传请求包含 7 天过期策略；供应商返回实际 `expires_at` 时持久化返回值，否则记录请求期限。
+- 每日任务只清理过期的 D1 指针，不调用供应商 DELETE；清理失败可安全重试。
 - Files API 关闭时不请求 `/files`；开启后的认证 / 限流错误不静默降级。
 
 ### reasoning round-trip
