@@ -66,7 +66,7 @@ function cycle() {
   .flex.items-center.gap-2
     Zap(class="size-3.5 shrink-0" :class="tone.text")
     button.flex.min-w-0.flex-1.items-center.justify-center.gap-1.text-sm.font-medium(
-      type="button" :class="tone.text" :disabled="!stops.length" @click="cycle")
+      type="button" :class="tone.text" :aria-disabled="!stops.length" @click="cycle")
       span.truncate {{ label }}
       ChevronRight(v-if="stops.length" class="size-3.5 shrink-0 opacity-60")
     button.shrink-0.text-muted-foreground(

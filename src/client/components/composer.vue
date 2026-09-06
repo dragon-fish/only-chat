@@ -105,6 +105,10 @@ async function submit() {
 function onKeydown(e: KeyboardEvent) {
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); void submit() }
 }
+function pickFiles() {
+  if (busy.value) return
+  fileInput.value?.click()
+}
 function onFileChange(e: Event) {
   const input = e.target as HTMLInputElement
   void addFiles([...(input.files ?? [])])
@@ -163,7 +167,13 @@ onBeforeUnmount(() => { releasePreviews(images.value); dropSent() })
     //- `align="block-end"` is what makes InputGroup lay out as a column with this row last.
     InputGroupAddon(align="block-end")
       input.hidden(ref="fileInput" type="file" accept="image/*" multiple @change="onFileChange")
-      InputGroupButton(size="icon-xs" title="添加图片" :disabled="busy" @click="fileInput?.click()")
+      //- `aria-disabled`, not `disabled`, throughout this row: `InputGroup` carries
+      //- `has-disabled:opacity-50`, which keys off the `:disabled` pseudo-class and would grey out
+      //- the whole card whenever a send is blocked. A real `disabled` button also stops firing
+      //- pointer events, which hides the `title` explaining why. Both handlers guard themselves.
+      InputGroupButton(
+        size="icon-xs" title="添加图片" class="aria-disabled:opacity-50"
+        :aria-disabled="busy" @click="pickFiles")
         ImagePlus
       slot(name="controls")
       .ml-auto.flex.items-center.gap-2
@@ -175,7 +185,7 @@ onBeforeUnmount(() => { releasePreviews(images.value); dropSent() })
           Square
         InputGroupButton(
           v-else size="icon-sm" variant="default"
-          class="rounded-full" title="发送"
-          :disabled="!connected || !canSend || busy" @click="submit")
+          class="rounded-full aria-disabled:opacity-50" title="发送"
+          :aria-disabled="!connected || !canSend || busy" @click="submit")
           Send
 </template>
