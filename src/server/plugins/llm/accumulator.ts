@@ -1,14 +1,21 @@
 import type { TextStreamPart, ToolSet } from 'ai'
-import type { Part, ProviderOptions, ReasoningPart, TextPart } from '@/shared/parts'
+import type { Part, ProviderOptions, ReasoningPart, TextPart, ToolCallPart } from '@/shared/parts'
 
 export type AccEvent =
   | { kind: 'delta'; part_index: number; part_kind: 'text' | 'reasoning'; delta: string }
   | { kind: 'part'; part_index: number; part: Part }
 
+/** The half of `AccEvent` that carries a whole part, which is all `append` can ever produce. */
+export type AccPartEvent = Extract<AccEvent, { kind: 'part' }>
+
+/** The part kinds that carry provider metadata; images and tool results never do. */
+type MetaPart = TextPart | ReasoningPart | ToolCallPart
+
 /**
  * Folds AI SDK stream parts into our Part[] while emitting broadcastable events.
  * One stream `id` maps to one part; consecutive deltas append; type changes open a new part.
- * Provider metadata on reasoning parts: last non-null wins (signatures arrive at the end).
+ * Provider metadata on text, reasoning and tool-call parts: the last non-null one wins, because
+ * signatures and encrypted content arrive on the closing event of the block they belong to.
  */
 export class PartAccumulator {
   readonly parts: Part[] = []
@@ -16,38 +23,57 @@ export class PartAccumulator {
 
   apply(part: TextStreamPart<ToolSet>): AccEvent[] {
     switch (part.type) {
-      case 'text-start':
-        this._open(part.id, { type: 'text', text: '' })
+      case 'text-start': {
+        const idx = this._open(part.id, { type: 'text', text: '' })
+        this._setMeta(idx, part.providerMetadata)
         return []
+      }
       case 'text-delta': {
         const idx = this._ensure(part.id, { type: 'text', text: '' })
         ;(this.parts[idx] as TextPart).text += part.text
+        this._setMeta(idx, part.providerMetadata)
         return [{ kind: 'delta', part_index: idx, part_kind: 'text', delta: part.text }]
+      }
+      case 'text-end': {
+        const idx = this._ensure(part.id, { type: 'text', text: '' })
+        this._setMeta(idx, part.providerMetadata)
+        return []
       }
       case 'reasoning-start': {
         const idx = this._open(part.id, { type: 'reasoning', text: '' })
-        this._mergeMeta(idx, part.providerMetadata)
+        this._setMeta(idx, part.providerMetadata)
         return []
       }
       case 'reasoning-delta': {
         const idx = this._ensure(part.id, { type: 'reasoning', text: '' })
         ;(this.parts[idx] as ReasoningPart).text += part.text
-        this._mergeMeta(idx, part.providerMetadata)
+        this._setMeta(idx, part.providerMetadata)
         return part.text.length > 0 ? [{ kind: 'delta', part_index: idx, part_kind: 'reasoning', delta: part.text }] : []
       }
       case 'reasoning-end': {
         const idx = this._ensure(part.id, { type: 'reasoning', text: '' })
-        this._mergeMeta(idx, part.providerMetadata)
+        this._setMeta(idx, part.providerMetadata)
         return []
       }
       case 'tool-call': {
         const p: Part = { type: 'tool_call', id: part.toolCallId, name: part.toolName, args: part.input }
         this.parts.push(p)
-        return [{ kind: 'part', part_index: this.parts.length - 1, part: p }]
+        const idx = this.parts.length - 1
+        this._setMeta(idx, part.providerMetadata)
+        return [{ kind: 'part', part_index: idx, part: p }]
       }
       default:
         return []
     }
+  }
+
+  /**
+   * Adds a part that never arrived as a stream delta — a generated image, already persisted to R2
+   * and reduced to an `attachment_id`. It owns no stream id, so no later event can reopen it.
+   */
+  append(part: Part): AccPartEvent {
+    this.parts.push(part)
+    return { kind: 'part', part_index: this.parts.length - 1, part }
   }
 
   private _open(id: string, part: Part): number {
@@ -64,9 +90,9 @@ export class PartAccumulator {
     return this._open(id, part)
   }
 
-  private _mergeMeta(idx: number, meta: unknown): void {
+  /** Stored verbatim: encrypted reasoning and signatures are never parsed, merged or rewritten. */
+  private _setMeta(idx: number, meta: unknown): void {
     if (!meta) return
-    const p = this.parts[idx] as ReasoningPart
-    p.providerOptions = meta as ProviderOptions
+    ;(this.parts[idx] as MetaPart).providerOptions = meta as ProviderOptions
   }
 }

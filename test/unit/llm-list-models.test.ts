@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { listRemoteModels } from '@/server/plugins/llm/list-models'
 import type { ProviderRow } from '@/server/db/schema'
 
-const base: ProviderRow = { id: 1, user_id: 1, name: 'p', protocol: 'openai-completions', base_url: 'https://api.example.com/v1', api_key: null, extra: null, enabled: true, created_at: 0 }
+const base: ProviderRow = { id: 1, user_id: 1, name: 'p', protocol: 'openai-completions', base_url: 'https://api.example.com/v1', api_key: null, extra: null, enabled: true, native_files: false, created_at: 0 }
 
 describe('listRemoteModels', () => {
   it('calls {base_url}/models with a bearer token for openai protocols', async () => {
@@ -36,5 +36,12 @@ describe('listRemoteModels', () => {
 
   it('refuses vertex (no listing endpoint)', async () => {
     await expect(listRemoteModels({ ...base, protocol: 'vertex' }, 'sk')).rejects.toThrow(/not supported/)
+  })
+
+  // A Vertex-shaped Base URL has no `/models` listing: the gateway's catalogue lives under its
+  // separate OpenAI-compatible base, which we must not guess at.
+  it('refuses vertex-compatible without probing the base URL', async () => {
+    const fetchFn = (async () => { throw new Error('must not be called') }) as unknown as typeof fetch
+    await expect(listRemoteModels({ ...base, protocol: 'vertex-compatible' }, 'sk', fetchFn)).rejects.toThrow(/not supported/)
   })
 })

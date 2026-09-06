@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { api } from '@/client/lib/api'
 import { Button } from '@/client/ui/button'
@@ -8,23 +8,34 @@ import { Label } from '@/client/ui/label'
 import { Switch } from '@/client/ui/switch'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/client/ui/select'
 import { useConfigStore } from '@/client/stores/config'
-import { ProtocolSchema, type Model, type Protocol } from '@/shared/models'
+import { REASONING_LABELS } from '@/client/stores/sync'
+import { ProtocolSchema, ReasoningEffortSchema, type Model, type ModelCapabilities, type Protocol, type ReasoningEffort } from '@/shared/models'
+import type { ModelInput } from '@/shared/api'
+
+/** The capability flags stored as plain booleans, next to the row's own `enabled` switch. */
+type BooleanCapability = 'vision' | 'reasoning' | 'tools' | 'reasoning_can_disable' | 'image_output'
+
+/** Weakest to strongest, straight from the schema, so the chips read in the slider's order. */
+const REASONING_EFFORTS = ReasoningEffortSchema.options
 
 const props = defineProps<{ providerId: number | null }>()
 const router = useRouter()
 const config = useConfigStore()
 
-const form = reactive({ name: '', protocol: 'openai-completions' as Protocol, base_url: '', api_key: '', enabled: true, project: '', location: '' })
+const form = reactive({ name: '', protocol: 'openai-completions' as Protocol, base_url: '', api_key: '', enabled: true, native_files: false, project: '', location: '' })
 const models = ref<Model[]>([])
 const newModelId = ref('')
 const status = ref('')
+
+/** Both Vertex shapes address models by resource path and expose no `/models` catalogue. */
+const canFetchModels = computed(() => form.protocol !== 'vertex' && form.protocol !== 'vertex-compatible')
 
 onMounted(async () => {
   if (!config.loaded) await config.load()
   const pid = props.providerId
   const p = pid === null ? undefined : config.providers.find((x) => x.id === pid)
   if (pid === null || !p) { await router.push('/settings/providers'); return }
-  Object.assign(form, { name: p.name, protocol: p.protocol, base_url: p.base_url, enabled: p.enabled, project: String(p.extra?.project ?? ''), location: String(p.extra?.location ?? '') })
+  Object.assign(form, { name: p.name, protocol: p.protocol, base_url: p.base_url, enabled: p.enabled, native_files: p.native_files, project: String(p.extra?.project ?? ''), location: String(p.extra?.location ?? '') })
   models.value = await api.models(pid)
 })
 
@@ -48,7 +59,7 @@ async function save() {
   try {
     // The server clears `extra` whenever `protocol` arrives without it, so always send both.
     const extra = form.protocol === 'vertex' ? { project: form.project, location: form.location } : null
-    await api.updateProvider(requireId(), { name: form.name, protocol: form.protocol, base_url: form.base_url, enabled: form.enabled, extra, ...(form.api_key ? { api_key: form.api_key } : {}) })
+    await api.updateProvider(requireId(), { name: form.name, protocol: form.protocol, base_url: form.base_url, enabled: form.enabled, native_files: form.native_files, extra, ...(form.api_key ? { api_key: form.api_key } : {}) })
     form.api_key = ''
     status.value = '已保存'
     await config.load()
@@ -80,14 +91,65 @@ async function addModel() {
     await config.load()
   } catch (err) { report(err) }
 }
-async function toggleModel(m: Model, key: 'enabled' | 'vision' | 'reasoning' | 'tools', value: boolean) {
-  try {
-    const patch = key === 'enabled' ? { enabled: value } : { capabilities: { ...m.capabilities, [key]: value } }
-    await api.updateModel(requireId(), m.id, patch)
-    models.value = await api.models(requireId())
-    await config.load()
-  } catch (err) { report(err) }
+
+/**
+ * Declaring capabilities is several clicks in a row, and the server replaces `capabilities`
+ * wholesale, so a patch computed from the row as it was at the last render would erase the click
+ * before it. Each handler therefore writes its intent into the row first — the switch and the
+ * chips move on the click, and the next click builds on the value already there — and this is the
+ * one path that carries it to the server.
+ *
+ * The writes are chained so they reach the server in click order, and only the newest one's
+ * re-read is applied: an older response landing later would repaint the table with a row the user
+ * has already moved past. A failed write re-reads too, because the optimistic row is then a lie.
+ */
+let writes: Promise<void> = Promise.resolve()
+let writeSeq = 0
+
+function applyModel(m: Model, patch: Partial<ModelInput>) {
+  const seq = ++writeSeq
+  writes = writes.then(async () => {
+    try {
+      await api.updateModel(requireId(), m.id, patch)
+    } catch (err) { report(err) }
+    if (seq !== writeSeq) return
+    try {
+      models.value = await api.models(requireId())
+      await config.load()
+    } catch (err) { report(err) }
+  })
 }
+
+function toggleModel(m: Model, key: 'enabled' | BooleanCapability, value: boolean) {
+  if (key === 'enabled') {
+    m.enabled = value
+    applyModel(m, { enabled: value })
+    return
+  }
+  const capabilities: ModelCapabilities = { ...m.capabilities, [key]: value }
+  m.capabilities = capabilities
+  applyModel(m, { capabilities })
+}
+
+function hasEffort(m: Model, effort: ReasoningEffort): boolean {
+  return m.capabilities.reasoning_efforts?.includes(effort) ?? false
+}
+
+/**
+ * Reasoning levels are declared by the user and never inferred from a model id (spec §4.4).
+ * Clearing the last one drops the key instead of storing `[]`: `reasoningStopsFor` and
+ * `buildProviderOptions` both read absent *and* empty as "undeclared", which downstream means no
+ * restriction rather than nothing allowed, so the undeclared state keeps a single spelling.
+ */
+function toggleEffort(m: Model, effort: ReasoningEffort, on: boolean) {
+  const next = REASONING_EFFORTS.filter((e) => (e === effort ? on : hasEffort(m, e)))
+  const capabilities: ModelCapabilities = { ...m.capabilities }
+  if (next.length) capabilities.reasoning_efforts = next
+  else delete capabilities.reasoning_efforts
+  m.capabilities = capabilities
+  applyModel(m, { capabilities })
+}
+
 async function removeModel(m: Model) {
   try {
     await api.deleteModel(requireId(), m.id)
@@ -98,70 +160,103 @@ async function removeModel(m: Model) {
 </script>
 
 <template lang="pug">
-.mx-auto.max-w-2xl.p-4.flex.flex-col.gap-4
-  RouterLink.text-xs.text-muted-foreground(to="/settings/providers") ← 返回供应商列表
-  h1.text-lg.font-semibold 编辑供应商
-  .grid.gap-3
-    div
-      Label 名称
-      Input(v-model="form.name")
-    div
-      Label 协议
-      Select(:model-value="form.protocol" @update:model-value="onProtocolChange")
-        SelectTrigger
-          SelectValue
-        SelectContent
-          SelectItem(value="openai-completions") OpenAI Chat Completions（含各类兼容中转）
-          SelectItem(value="openai-responses") OpenAI Responses
-          SelectItem(value="anthropic") Anthropic Messages
-          SelectItem(value="vertex") Google Vertex AI
-    div
-      Label Base URL
-      Input(v-model="form.base_url" placeholder="https://api.example.com/v1")
-    div
-      Label {{ form.protocol === 'vertex' ? '服务账号 JSON（留空保持不变）' : 'API Key（留空保持不变）' }}
-      Input(v-model="form.api_key" type="password" autocomplete="off")
-    template(v-if="form.protocol === 'vertex'")
-      div
-        Label Project
-        Input(v-model="form.project")
-      div
-        Label Location
-        Input(v-model="form.location" placeholder="us-central1 / global")
-    .flex.items-center.gap-2
-      Switch(:model-value="form.enabled" @update:model-value="form.enabled = $event")
-      Label 启用
-  .flex.gap-2
-    Button(@click="save") 保存
-    Button(variant="secondary" :disabled="form.protocol === 'vertex'" @click="fetchModels") 从 /models 拉取
-    Button(variant="destructive" class="ml-auto" @click="remove") 删除供应商
-  p.text-xs.text-muted-foreground(v-if="status") {{ status }}
-  h2.font-medium 模型
-  .flex.gap-2
-    Input(v-model="newModelId" placeholder="model id，例如 gpt-5.1" @keydown.enter="addModel")
-    Button(@click="addModel") 添加
-  table.w-full.text-sm
-    thead
-      tr.text-left.text-xs.text-muted-foreground
-        th.py-1 模型
-        th 启用
-        th 视觉
-        th 推理
-        th 工具
-        th
-    tbody
-      tr.border-t(v-for="m in models" :key="m.id")
-        td.py-1
-          span {{ m.display_name }}
-          span.ml-1.text-xs.text-muted-foreground(v-if="m.display_name !== m.model_id") {{ m.model_id }}
-        td
-          Switch(:model-value="m.enabled" @update:model-value="toggleModel(m, 'enabled', $event)")
-        td
-          Switch(:model-value="!!m.capabilities.vision" @update:model-value="toggleModel(m, 'vision', $event)")
-        td
-          Switch(:model-value="!!m.capabilities.reasoning" @update:model-value="toggleModel(m, 'reasoning', $event)")
-        td
-          Switch(:model-value="!!m.capabilities.tools" @update:model-value="toggleModel(m, 'tools', $event)")
-        td.text-right
-          button.text-xs.text-destructive(@click="removeModel(m)") 删除
+//- Spec §8: the route root is fixed-height and clips; the body below is its only vertical scroll
+//- owner, so a provider with many models never hands a scrollbar back to the document.
+.h-full.min-h-0.overflow-hidden
+  .oc-scroll.h-full.overflow-y-auto
+    .mx-auto.max-w-2xl.p-4.flex.flex-col.gap-4
+      RouterLink.text-xs.text-muted-foreground(to="/settings/providers") ← 返回供应商列表
+      h1.text-lg.font-semibold 编辑供应商
+      .grid.gap-3
+        div
+          Label 名称
+          Input(v-model="form.name")
+        div
+          Label 协议
+          Select(:model-value="form.protocol" @update:model-value="onProtocolChange")
+            SelectTrigger
+              SelectValue
+            SelectContent
+              SelectItem(value="openai-completions") OpenAI Chat Completions（含各类兼容中转）
+              SelectItem(value="openai-responses") OpenAI Responses
+              SelectItem(value="anthropic") Anthropic Messages
+              SelectItem(value="vertex") Google Vertex AI
+              SelectItem(value="vertex-compatible") Google Vertex 兼容
+        div
+          Label Base URL
+          Input(v-model="form.base_url" placeholder="https://api.example.com/v1")
+        div
+          Label {{ form.protocol === 'vertex' ? '服务账号 JSON（留空保持不变）' : 'API Key（留空保持不变）' }}
+          Input(v-model="form.api_key" type="password" autocomplete="off")
+        template(v-if="form.protocol === 'vertex'")
+          div
+            Label Project
+            Input(v-model="form.project")
+          div
+            Label Location
+            Input(v-model="form.location" placeholder="us-central1 / global")
+        .flex.items-start.gap-2
+          Switch(:model-value="form.native_files" @update:model-value="form.native_files = $event")
+          div
+            Label 支持原生文件转储（Files API）
+            p.text-xs.text-muted-foreground 文件临时上传到当前供应商并自动过期；兼容端点未实现 /files 时请勿开启。
+        .flex.items-center.gap-2
+          Switch(:model-value="form.enabled" @update:model-value="form.enabled = $event")
+          Label 启用
+      .flex.gap-2
+        Button(@click="save") 保存
+        Button(variant="secondary" :disabled="!canFetchModels" @click="fetchModels") 从 /models 拉取
+        Button(variant="destructive" class="ml-auto" @click="remove") 删除供应商
+      p.text-xs.text-muted-foreground(v-if="status") {{ status }}
+      h2.font-medium 模型
+      p.text-xs.text-muted-foreground
+        | 能力全部由这里声明，不会从模型名推断（spec §4.4）。推理档位留空表示未声明，不构成限制。
+      .flex.gap-2
+        Input(v-model="newModelId" placeholder="model id，例如 gpt-5.1" @keydown.enter="addModel")
+        Button(@click="addModel") 添加
+      //- Spec §8: the capability grid is wider than a phone, so one box owns both axes. It has to
+      //- be one box and not a vertical box wrapping a horizontal one: the inner scroller would be
+      //- as tall as the whole table, putting its horizontal scrollbar thousands of pixels below
+      //- the visible area on a provider with a hundred-odd models. Neither axis may widen the
+      //- page, and 保存 / 删除供应商 sit above the box where no model list can push them away.
+      .oc-scroll.max-h-96.overflow-auto.rounded-md.border
+        table.w-full.text-sm
+          thead
+            tr.text-left.text-xs.text-muted-foreground
+              th.px-2.py-1.whitespace-nowrap 模型
+              th.px-2.whitespace-nowrap 启用
+              th.px-2.whitespace-nowrap 视觉
+              th.px-2.whitespace-nowrap 推理
+              th.px-2.whitespace-nowrap 工具
+              th.px-2.whitespace-nowrap 图片输出
+              th.px-2.whitespace-nowrap 可关闭推理
+              th.px-2.whitespace-nowrap 推理档位
+              th
+          tbody
+            tr.border-t.align-top(v-for="m in models" :key="m.id")
+              td.px-2.py-2
+                span.whitespace-nowrap {{ m.display_name }}
+                span.ml-1.whitespace-nowrap.text-xs.text-muted-foreground(v-if="m.display_name !== m.model_id") {{ m.model_id }}
+              td.px-2.py-2
+                Switch(:model-value="m.enabled" @update:model-value="toggleModel(m, 'enabled', $event)")
+              td.px-2.py-2
+                Switch(:model-value="!!m.capabilities.vision" @update:model-value="toggleModel(m, 'vision', $event)")
+              td.px-2.py-2
+                Switch(:model-value="!!m.capabilities.reasoning" @update:model-value="toggleModel(m, 'reasoning', $event)")
+              td.px-2.py-2
+                Switch(:model-value="!!m.capabilities.tools" @update:model-value="toggleModel(m, 'tools', $event)")
+              td.px-2.py-2
+                Switch(:model-value="!!m.capabilities.image_output" @update:model-value="toggleModel(m, 'image_output', $event)")
+              td.px-2.py-2
+                Switch(:model-value="!!m.capabilities.reasoning_can_disable" @update:model-value="toggleModel(m, 'reasoning_can_disable', $event)")
+              td.px-2.py-2
+                .flex.w-52.flex-wrap.gap-1
+                  button(
+                    v-for="e in REASONING_EFFORTS" :key="e" type="button"
+                    class="rounded border px-1.5 py-0.5 text-xs"
+                    :class="hasEffort(m, e) ? 'border-primary bg-accent text-foreground' : 'border-transparent bg-muted text-muted-foreground'"
+                    :aria-pressed="hasEffort(m, e)"
+                    @click="toggleEffort(m, e, !hasEffort(m, e))") {{ REASONING_LABELS[e] }}
+              td.px-2.py-2.text-right
+                button.whitespace-nowrap.text-xs.text-destructive(@click="removeModel(m)") 删除
 </template>

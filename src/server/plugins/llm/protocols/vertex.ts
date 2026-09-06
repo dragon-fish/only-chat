@@ -13,15 +13,17 @@ export const vertexProtocol = {
   name: 'llm-vertex',
   inject: ['llm'],
   apply(ctx: Context) {
-    ctx.llm.register('vertex', (provider, model, apiKey) => {
-      const sa = ServiceAccountSchema.parse(JSON.parse(apiKey ?? '{}'))
-      const extra = ExtraSchema.parse(provider.extra ?? {})
-      const p = createGoogleVertex({
-        project: extra.project,
-        location: extra.location,
-        googleCredentials: { clientEmail: sa.client_email, privateKey: sa.private_key, privateKeyId: sa.private_key_id },
-      })
-      return p(model.model_id)
+    ctx.llm.register('vertex', {
+      createModel(provider, model, apiKey) {
+        const sa = ServiceAccountSchema.parse(JSON.parse(apiKey))
+        const extra = ExtraSchema.parse(provider.extra ?? {})
+        const p = createGoogleVertex({
+          project: extra.project,
+          location: extra.location,
+          googleCredentials: { clientEmail: sa.client_email, privateKey: sa.private_key, privateKeyId: sa.private_key_id },
+        })
+        return p(model.model_id)
+      },
     })
   },
 }

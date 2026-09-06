@@ -6,7 +6,8 @@ import { AttachmentCheckRequestSchema } from '@/shared/api'
 import { attachments } from '../../db/schema'
 import { parseId } from './params'
 
-const MAX_UPLOAD_BYTES = 20 * 1024 * 1024
+/** One limit for everything that becomes an attachment, uploaded or generated (spec §4.7). */
+export const MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 
 function hex(buf: ArrayBuffer): string {
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('')

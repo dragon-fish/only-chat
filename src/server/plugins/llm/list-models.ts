@@ -6,7 +6,11 @@ export async function listRemoteModels(
   apiKey: string | null,
   fetchFn: typeof fetch = fetch,
 ): Promise<string[]> {
-  if (provider.protocol === 'vertex') throw new Error('model listing is not supported for vertex')
+  // Neither Vertex shape exposes an OpenAI-style catalogue under its own Base URL; a compatible
+  // gateway keeps its listing on a separate base that we must not guess at.
+  if (provider.protocol === 'vertex' || provider.protocol === 'vertex-compatible') {
+    throw new Error(`model listing is not supported for ${provider.protocol}`)
+  }
   const url = `${provider.base_url.replace(/\/$/, '')}/models`
   const headers: Record<string, string> = provider.protocol === 'anthropic'
     ? { 'x-api-key': apiKey ?? '', 'anthropic-version': '2023-06-01' }

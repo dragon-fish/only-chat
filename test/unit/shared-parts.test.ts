@@ -20,4 +20,16 @@ describe('PartSchema', () => {
   it('keeps reasoning providerOptions optional', () => {
     expect(PartSchema.parse({ type: 'reasoning', text: '' })).toEqual({ type: 'reasoning', text: '' })
   })
+
+  it('accepts providerOptions on a text part', () => {
+    expect(PartSchema.parse({ type: 'text', text: 'ok', providerOptions: { google: { thoughtSignature: 'sig' } } }))
+      .toHaveProperty('providerOptions')
+  })
+
+  it('accepts providerOptions on a tool_call part', () => {
+    expect(PartSchema.parse({
+      type: 'tool_call', id: 'c1', name: 'get_weather', args: {},
+      providerOptions: { google: { thoughtSignature: 'sig' } },
+    })).toHaveProperty('providerOptions')
+  })
 })

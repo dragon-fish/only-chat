@@ -5,13 +5,20 @@ import type { Part } from '@/shared/parts'
 import type { SendCommand, WsCommand } from '@/shared/ws'
 import type { ModelRow, ProviderRow, SessionRow } from '../../db/schema'
 import { PartAccumulator } from '../llm/accumulator'
-import { buildModelMessages, buildProviderOptions, type ImageBytes } from '../llm/messages'
+import { buildModelMessages, buildProviderOptions, requiredAttachmentIds, type AttachmentInput } from '../llm/messages'
 import { toUsage } from '../llm/usage'
 import type { Hub, InflightJob } from './index'
 import {
-  createSession, finalizeMessage, getAttachment, getMessage, getModel, getProvider, getSession,
-  insertMessage, listMessages, maxSeq, toMessage, updateSession,
+  resolveEffectiveConfig,
+  type EffectiveConfig, type EffectiveModel, type ModelSource, type SessionConfigSource,
+} from './effective-config'
+import { persistGeneratedImage } from './generated-images'
+import { getProject } from './projects'
+import {
+  createSession, finalizeMessage, getMessage, getModel, getProvider, getSession,
+  insertMessage, lastGenerationModel, listMessages, maxSeq, toMessage, updateSession,
 } from './sessions'
+import { resolveAttachmentInputs } from './attachment-transport'
 import { pathToRoot, titleFromParts } from './tree'
 
 /** Payload of the `message/before-send` event: feature plugins may inspect or amend the prompt. */
@@ -26,34 +33,76 @@ interface Target {
   session: SessionRow
   provider: ProviderRow
   model: ModelRow
+  /**
+   * Snapshot taken once, at generation start; never re-read while the stream runs (spec §3.2).
+   * `resolveTarget` has already proved the model resolved, so consumers never re-check it.
+   */
+  config: EffectiveConfig & { model: EffectiveModel }
 }
 
-// ---- stage 1: resolve session + model
+/** The session-init draft carried by the first `send` of a new session (spec §5.2). */
+interface SessionDraft extends SessionConfigSource {
+  project_id: number | null
+}
 
-async function resolveTarget(
-  hub: Hub,
-  sessionId: number | null,
-  providerId: number | null,
-  modelId: string | null,
-  firstParts: Part[],
-): Promise<Target> {
-  let session = sessionId === null ? undefined : await getSession(hub.db, sessionId)
-  if (sessionId !== null && !session) throw new Error('session not found')
-  const pid = providerId ?? session?.provider_id ?? null
-  const mid = modelId ?? session?.model_id ?? null
-  if (pid === null || mid === null) throw new Error('no model selected')
-  const provider = await getProvider(hub.db, pid)
-  if (!provider || !provider.enabled) throw new Error('provider not found')
-  const model = await getModel(hub.db, pid, mid)
-  if (!model) throw new Error('model not found')
-  if (!session) {
-    session = await createSession(hub.db, { user_id: DEFAULT_USER_ID, title: titleFromParts(firstParts), provider_id: pid, model_id: mid })
-    hub.emitSessionCreated(session)
-  } else if (session.provider_id !== pid || session.model_id !== mid) {
-    session = await updateSession(hub.db, session.id, { provider_id: pid, model_id: mid })
-    hub.emitSessionUpdated(session)
-  }
-  return { session, provider, model }
+const EMPTY_DRAFT: SessionDraft = { project_id: null, system_prompt: null, provider_id: null, model_id: null, params: null }
+
+interface ResolveArgs {
+  sessionId: number | null
+  /** The client's current selection — the last layer of the precedence chain. */
+  fallbackModel?: { provider_id: number; model_id: string }
+  /**
+   * A deliberate one-shot choice for this generation alone (`regenerate` with a model). It beats
+   * both inheritance layers, and is never persisted onto the session.
+   */
+  explicitModel?: { provider_id: number; model_id: string }
+  /** Parts of the first user message, used to title a session created here. */
+  firstParts: Part[]
+  /** Only meaningful when `sessionId` is null. */
+  draft?: SessionDraft
+}
+
+function modelUnavailable(source: ModelSource): Error {
+  if (source === 'project') return new Error('模型不可用（来源：Project）')
+  if (source === 'session') return new Error('模型不可用（来源：会话）')
+  return new Error('模型不可用')
+}
+
+// ---- stage 1: resolve session + effective config + model
+
+async function resolveTarget(hub: Hub, args: ResolveArgs): Promise<Target> {
+  const existing = args.sessionId === null ? undefined : await getSession(hub.db, args.sessionId)
+  if (args.sessionId !== null && !existing) throw new Error('session not found')
+
+  // For a new session the draft stands in for the row that does not exist yet, so an unavailable
+  // inherited model is rejected before anything is persisted.
+  const draft: SessionDraft = existing ?? args.draft ?? EMPTY_DRAFT
+  const project = draft.project_id === null ? undefined : await getProject(hub.db, draft.project_id, DEFAULT_USER_ID)
+  if (draft.project_id !== null && !project) throw new Error('project not found')
+
+  const resolved = resolveEffectiveConfig({ session: draft, project, fallbackModel: args.fallbackModel })
+  // Only the model layer is overridden; the prompt and params keep inheriting as usual.
+  const effectiveModel = args.explicitModel ? { ...args.explicitModel, source: 'command' as const } : resolved.model
+  if (!effectiveModel) throw new Error('no model selected')
+  const config = { ...resolved, model: effectiveModel }
+
+  const provider = await getProvider(hub.db, effectiveModel.provider_id)
+  const model = provider ? await getModel(hub.db, provider.id, effectiveModel.model_id) : undefined
+  if (!provider || !provider.enabled || !model || !model.enabled) throw modelUnavailable(effectiveModel.source)
+
+  // The persisted override is the draft's, never this generation's model: copying the latter down
+  // would silently end the session's Project inheritance.
+  const session = existing ?? await createSession(hub.db, {
+    user_id: DEFAULT_USER_ID,
+    title: titleFromParts(args.firstParts),
+    project_id: draft.project_id,
+    system_prompt: draft.system_prompt,
+    params: draft.params,
+    provider_id: draft.provider_id,
+    model_id: draft.model_id,
+  })
+  if (!existing) hub.emitSessionCreated(session)
+  return { session, provider, model, config }
 }
 
 // ---- stage 2: persist a user message
@@ -89,22 +138,16 @@ async function openAssistantShell(hub: Hub, target: Target, parentId: number): P
 
 // ---- stage 4: context assembly
 
-async function assembleContext(hub: Hub, session: SessionRow, leafUserId: number): Promise<{ path: Message[]; images: Map<number, ImageBytes> }> {
-  const rows = await listMessages(hub.db, session.id)
+async function assembleContext(hub: Hub, target: Target, leafUserId: number): Promise<{ path: Message[]; attachments: Map<number, AttachmentInput> }> {
+  const rows = await listMessages(hub.db, target.session.id)
   const byId = new Map(rows.map((r) => [r.id, toMessage(r)]))
   const path = pathToRoot(byId, leafUserId)
-  const images = new Map<number, ImageBytes>()
-  for (const m of path) {
-    for (const p of m.parts) {
-      if (p.type !== 'image' || images.has(p.attachment_id)) continue
-      const att = await getAttachment(hub.db, p.attachment_id)
-      if (!att) throw new Error(`attachment ${p.attachment_id} missing`)
-      const stored = await hub.app.assets.getBytes(att.r2_key)
-      if (!stored) throw new Error(`attachment ${p.attachment_id} bytes missing`)
-      images.set(p.attachment_id, { bytes: stored.bytes, mime: att.mime })
-    }
-  }
-  return { path, images }
+  // Which ids the request needs is the message builder's own answer, not a second one kept in step
+  // by convention: a part it drops must never be resolved here.
+  const ids = requiredAttachmentIds(path)
+  // How those attachments travel is the transport's call, and it depends on the provider alone.
+  const deps = { db: hub.db, assets: hub.app.assets, llm: hub.app.llm }
+  return { path, attachments: await resolveAttachmentInputs(deps, target.provider, ids) }
 }
 
 // ---- stage 5/6: stream + finalize
@@ -122,12 +165,12 @@ async function generate(hub: Hub, target: Target, shell: Message, leafUserId: nu
   let usage: Usage | null = null
 
   try {
-    const { path, images } = await assembleContext(hub, target.session, leafUserId)
-    const payload: BeforeSendPayload = { sessionId: target.session.id, systemPrompt: target.session.system_prompt, path }
+    const { path, attachments } = await assembleContext(hub, target, leafUserId)
+    const payload: BeforeSendPayload = { sessionId: target.session.id, systemPrompt: target.config.systemPrompt, path }
     hub.app.emit('message/before-send', payload)
 
-    const messages = buildModelMessages({ protocol: target.provider.protocol, systemPrompt: payload.systemPrompt, path: payload.path, images })
-    const params: SessionParams = target.session.params ?? {}
+    const messages = buildModelMessages({ protocol: target.provider.protocol, systemPrompt: payload.systemPrompt, path: payload.path, attachments })
+    const params: SessionParams = target.config.params
     const model: LanguageModel = await hub.app.llm.createModel(target.provider, target.model)
 
     const result = streamText({
@@ -139,7 +182,7 @@ async function generate(hub: Hub, target: Target, shell: Message, leafUserId: nu
       temperature: params.temperature,
       topP: params.top_p,
       maxOutputTokens: params.max_tokens,
-      providerOptions: buildProviderOptions(target.provider.protocol, params, target.model.capabilities) as never,
+      providerOptions: buildProviderOptions(target.provider.protocol, params, target.model.capabilities),
     })
 
     let lastFlush = Date.now()
@@ -148,6 +191,15 @@ async function generate(hub: Hub, target: Target, shell: Message, leafUserId: nu
       // An aborted stream ends with `abort` and never emits `finish`, so usage stays null.
       if (part.type === 'abort') { status = 'aborted'; break }
       if (part.type === 'finish') { usage = toUsage(part.totalUsage); continue }
+      // Awaited before anything else sees the part: the accumulator, the inflight snapshot, D1 and
+      // every socket may only ever carry the attachment id it returns (spec §5.8).
+      if (part.type === 'file') {
+        const image = await persistGeneratedImage(hub, part.file)
+        const ev = acc.append(image)
+        hub.broadcast({ type: 'message.part', message_id: shell.id, part_index: ev.part_index, part: ev.part })
+        await hub.flushInflight(tracked)
+        continue
+      }
       for (const ev of acc.apply(part)) {
         if (ev.kind === 'delta') hub.broadcast({ type: 'message.delta', message_id: shell.id, part_index: ev.part_index, kind: ev.part_kind, delta: ev.delta })
         else hub.broadcast({ type: 'message.part', message_id: shell.id, part_index: ev.part_index, part: ev.part })
@@ -193,8 +245,26 @@ async function generate(hub: Hub, target: Target, shell: Message, leafUserId: nu
 
 // ---- entry points
 
+/** Fields that initialize a brand-new session and are therefore meaningless on an existing one. */
+const INIT_FIELDS = ['project_id', 'system_prompt', 'params', 'session_provider_id', 'session_model_id'] as const
+
 export async function runSend(hub: Hub, cmd: SendCommand): Promise<void> {
-  const target = await resolveTarget(hub, cmd.session_id, cmd.provider_id, cmd.model_id, cmd.parts)
+  // Dropping them silently would let a client believe it had changed a session's settings (spec §9).
+  if (cmd.session_id !== null && INIT_FIELDS.some((k) => cmd[k] !== undefined)) {
+    throw new Error('session init fields are only allowed when session_id is null')
+  }
+  const target = await resolveTarget(hub, {
+    sessionId: cmd.session_id,
+    fallbackModel: { provider_id: cmd.provider_id, model_id: cmd.model_id },
+    firstParts: cmd.parts,
+    draft: {
+      project_id: cmd.project_id ?? null,
+      system_prompt: cmd.system_prompt ?? null,
+      params: cmd.params ?? null,
+      provider_id: cmd.session_provider_id ?? null,
+      model_id: cmd.session_model_id ?? null,
+    },
+  })
   const parentId = cmd.session_id === null ? null : (cmd.parent_id ?? target.session.head_message_id)
   const user = await persistUserMessage(hub, target.session, parentId, cmd.parts)
   const shell = await openAssistantShell(hub, target, user.id)
@@ -204,7 +274,15 @@ export async function runSend(hub: Hub, cmd: SendCommand): Promise<void> {
 export async function runRegenerate(hub: Hub, cmd: Extract<WsCommand, { type: 'regenerate' }>): Promise<void> {
   const old = await getMessage(hub.db, cmd.message_id)
   if (!old || old.role !== 'assistant' || old.parent_id === null) throw new Error('not an assistant message')
-  const target = await resolveTarget(hub, old.session_id, cmd.provider_id ?? null, cmd.model_id ?? null, [])
+  // "Redo this reply with model X" is an explicit one-shot choice, so it outranks inheritance.
+  // Without one, regenerate reuses the model that produced the reply being replaced.
+  const explicitModel = cmd.provider_id !== undefined && cmd.model_id !== undefined
+    ? { provider_id: cmd.provider_id, model_id: cmd.model_id }
+    : undefined
+  const fallbackModel = old.provider_id !== null && old.model_id !== null
+    ? { provider_id: old.provider_id, model_id: old.model_id }
+    : undefined
+  const target = await resolveTarget(hub, { sessionId: old.session_id, explicitModel, fallbackModel, firstParts: [] })
   const shell = await openAssistantShell(hub, target, old.parent_id)
   await generate(hub, target, shell, old.parent_id)
 }
@@ -212,7 +290,9 @@ export async function runRegenerate(hub: Hub, cmd: Extract<WsCommand, { type: 'r
 export async function runEdit(hub: Hub, cmd: Extract<WsCommand, { type: 'edit' }>): Promise<void> {
   const old = await getMessage(hub.db, cmd.message_id)
   if (!old || old.role !== 'user') throw new Error('not a user message')
-  const target = await resolveTarget(hub, old.session_id, null, null, cmd.parts)
+  // `edit` carries no model, so the session's last generation stands in as the command layer.
+  const fallbackModel = await lastGenerationModel(hub.db, old.session_id)
+  const target = await resolveTarget(hub, { sessionId: old.session_id, fallbackModel, firstParts: cmd.parts })
   const user = await persistUserMessage(hub, target.session, old.parent_id, cmd.parts)
   const shell = await openAssistantShell(hub, target, user.id)
   await generate(hub, target, shell, user.id)

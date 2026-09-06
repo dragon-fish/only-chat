@@ -26,4 +26,63 @@ describe('ws protocol', () => {
     const cmd = parseCommand(JSON.stringify({ type: 'settings.update', settings: { plugins: { foo: true } } }))
     expect(cmd.type).toBe('settings.update')
   })
+
+  it('send carries nullable project_id, system_prompt, params and a session model override for first-message session init', () => {
+    const cmd = parseCommand(JSON.stringify({
+      type: 'send', session_id: null, parent_id: null, parts: [{ type: 'text', text: 'hi' }],
+      provider_id: 1, model_id: 'gpt-5.1', project_id: 3, system_prompt: 'be terse',
+      params: { reasoning_enabled: true, reasoning_effort: null },
+      session_provider_id: 2, session_model_id: 'gpt-5.1-mini',
+    }))
+    expect(cmd.type).toBe('send')
+    if (cmd.type === 'send') {
+      expect(cmd.project_id).toBe(3)
+      expect(cmd.system_prompt).toBe('be terse')
+      expect(cmd.params).toEqual({ reasoning_enabled: true, reasoning_effort: null })
+      expect(cmd.session_provider_id).toBe(2)
+      expect(cmd.session_model_id).toBe('gpt-5.1-mini')
+    }
+  })
+
+  it('send omits all session-init fields, including the session model override, when not provided', () => {
+    const cmd = parseCommand(JSON.stringify({
+      type: 'send', session_id: null, parent_id: null, parts: [{ type: 'text', text: 'hi' }],
+      provider_id: 1, model_id: 'gpt-5.1',
+    }))
+    expect(cmd.type).toBe('send')
+    if (cmd.type === 'send') {
+      expect(cmd.project_id).toBeUndefined()
+      expect(cmd.system_prompt).toBeUndefined()
+      expect(cmd.params).toBeUndefined()
+      expect(cmd.session_provider_id).toBeUndefined()
+      expect(cmd.session_model_id).toBeUndefined()
+    }
+  })
+
+  it('parses project.create/update/delete commands', () => {
+    const create = parseCommand(JSON.stringify({ type: 'project.create', name: 'Design' }))
+    expect(create.type).toBe('project.create')
+    const update = parseCommand(JSON.stringify({
+      type: 'project.update', project_id: 1, name: 'Design v2', system_prompt: null,
+    }))
+    expect(update.type).toBe('project.update')
+    const del = parseCommand(JSON.stringify({ type: 'project.delete', project_id: 1 }))
+    expect(del.type).toBe('project.delete')
+  })
+
+  it('session.update accepts a nullable project_id', () => {
+    const cmd = parseCommand(JSON.stringify({ type: 'session.update', session_id: 1, project_id: null }))
+    expect(cmd.type).toBe('session.update')
+    if (cmd.type === 'session.update') expect(cmd.project_id).toBeNull()
+  })
+
+  it('round-trips project.created/updated/deleted events', () => {
+    const project = {
+      id: 1, user_id: 1, name: 'Design', system_prompt: null, provider_id: null,
+      model_id: null, params: null, created_at: 1, updated_at: 1,
+    }
+    expect(WsEventSchema.parse({ type: 'project.created', project })).toEqual({ type: 'project.created', project })
+    expect(WsEventSchema.parse({ type: 'project.updated', project })).toEqual({ type: 'project.updated', project })
+    expect(WsEventSchema.parse({ type: 'project.deleted', project_id: 1 })).toEqual({ type: 'project.deleted', project_id: 1 })
+  })
 })

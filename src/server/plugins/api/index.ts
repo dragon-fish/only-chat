@@ -6,6 +6,7 @@ import { sessionRoutes } from './sessions'
 import { providerRoutes } from './providers'
 import { modelRoutes } from './models'
 import { attachmentRoutes } from './attachments'
+import { projectRoutes } from './projects'
 
 export type ApiApp = Hono<{ Bindings: Env }>
 
@@ -38,6 +39,7 @@ export const ApiPlugin = {
     app.route('/api', providerRoutes(ctx))
     app.route('/api', modelRoutes(ctx))
     app.route('/api', attachmentRoutes(ctx))
+    app.route('/api', projectRoutes(ctx))
     app.onError((err, c) => {
       console.error('api error', err)
       return c.json({ error: err.message }, 500)

@@ -14,22 +14,26 @@ const drawerOpen = ref(false)
 
 <template lang="pug">
 .flex.h-dvh.w-full.overflow-hidden.bg-background.text-foreground
-  aside.hidden.w-72.shrink-0.border-r.flex-col(class="md:flex")
+  //- Spec §8: the sidebar column is fixed-height; `SessionList` names its own scroller.
+  aside.hidden.w-72.shrink-0.overflow-hidden.border-r.flex-col(class="md:flex")
     SessionList
   Sheet(v-model:open="drawerOpen")
-    SheetContent(side="left" class="w-72 p-0")
-      SessionList(@navigate="drawerOpen = false")
+    //- Spec §7.1: the sheet's absolutely positioned close button lands on top of the sidebar
+    //- header's own controls, so it is turned off and 关闭 is rendered in the header's normal flow.
+    SheetContent(side="left" class="w-72 p-0" :show-close-button="false")
+      SessionList(:closable="true" @navigate="drawerOpen = false" @close="drawerOpen = false")
   .flex.min-w-0.flex-1.flex-col
-    header.flex.h-12.items-center.gap-2.border-b.px-3
+    header.flex.h-12.shrink-0.items-center.gap-2.border-b.px-3
       Button(variant="ghost" size="icon" class="md:hidden" @click="drawerOpen = true")
         Menu(class="size-5")
       span.text-sm.font-medium only-chat
       span.ml-auto.size-2.rounded-full(:class="sync.status === 'open' ? 'bg-emerald-500' : 'bg-zinc-400'" :title="sync.status")
-    p.border-b.px-3.py-2.text-xs(v-if="bootError" class="bg-destructive/10 text-destructive") 加载失败，请刷新重试：{{ bootError }}
+    p.shrink-0.border-b.px-3.py-2.text-xs(v-if="bootError" class="bg-destructive/10 text-destructive") 加载失败，请刷新重试：{{ bootError }}
     //- Spec §11: a rejected WS command must surface instead of silently doing nothing.
-    p.flex.items-center.gap-2.border-b.px-3.py-2.text-xs(v-if="sync.lastError" class="bg-destructive/10 text-destructive")
+    p.flex.shrink-0.items-center.gap-2.border-b.px-3.py-2.text-xs(v-if="sync.lastError" class="bg-destructive/10 text-destructive")
       span 操作失败：{{ sync.lastError }}
       button.ml-auto.underline(@click="sync.lastError = null") 关闭
-    .min-h-0.flex-1
+    //- Spec §8: the route region is fixed-height and clips; every page owns its own scroller.
+    .min-h-0.flex-1.overflow-hidden
       slot
 </template>
