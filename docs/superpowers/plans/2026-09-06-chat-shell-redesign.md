@@ -671,14 +671,21 @@ const model = computed(() => reasoningControlModel(stops.value, props.active))
 /** Spec §5.1: a control that cannot act says why; it never silently disappears. */
 const disabledReason = computed(() => {
   if (props.noModel) return '先选择模型'
-  if (model.value.unsupported) return '该模型不支持推理'
+  // A model that cannot reason yields NO stops at all. Do NOT test `model.unsupported` here:
+  // that flag means "a strength is stored that this model does not offer", and it is false for a
+  // non-reasoning model, so using it would leave the chip enabled on exactly the model it is
+  // meant to disable for.
+  if (stops.value.length === 0) return '该模型不支持推理'
   return null
 })
 
 const chipLabel = computed(() => {
   if (!model.value.enabled) return REASONING_LABELS.off
   if (model.value.auto) return REASONING_LABELS.auto
-  return REASONING_LABELS[model.value.strengths[model.value.index] ?? 'medium']
+  // Spec §5.5: a stored strength this model does not offer is shown as-is, never rewritten.
+  // Reading `props.active` rather than indexing `strengths` is what preserves that — `index` is
+  // -1 in that case, and a fallback like `?? 'medium'` would silently claim the wrong stop.
+  return REASONING_LABELS[props.active] ?? REASONING_LABELS.auto
 })
 
 function act(action: ReasoningAction) {
