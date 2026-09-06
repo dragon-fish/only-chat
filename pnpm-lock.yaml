@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  '@vitejs/plugin-vue@6.0.8': 0ac8c8ea778f8f34b3af3f1b9d5dd777bc2a0b549a80dd06ae959e620f24ce1a
+
 importers:
 
   .:
@@ -104,7 +107,7 @@ importers:
         version: 24.13.3
       '@vitejs/plugin-vue':
         specifier: ^6.0.8
-        version: 6.0.8(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(jiti@2.7.0)(sass-embedded@1.104.0)(sass@1.104.0)(stylus@0.57.0(supports-color@10.2.2))(tsx@4.23.13))(vue@3.5.42(typescript@6.0.3))
+        version: 6.0.8(patch_hash=0ac8c8ea778f8f34b3af3f1b9d5dd777bc2a0b549a80dd06ae959e620f24ce1a)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(jiti@2.7.0)(sass-embedded@1.104.0)(sass@1.104.0)(stylus@0.57.0(supports-color@10.2.2))(tsx@4.23.13))(vue@3.5.42(typescript@6.0.3))
       '@vitest/runner':
         specifier: 4.1.11
         version: 4.1.11
@@ -5640,7 +5643,7 @@ snapshots:
 
   '@vercel/oidc@3.2.0': {}
 
-  '@vitejs/plugin-vue@6.0.8(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(jiti@2.7.0)(sass-embedded@1.104.0)(sass@1.104.0)(stylus@0.57.0(supports-color@10.2.2))(tsx@4.23.13))(vue@3.5.42(typescript@6.0.3))':
+  '@vitejs/plugin-vue@6.0.8(patch_hash=0ac8c8ea778f8f34b3af3f1b9d5dd777bc2a0b549a80dd06ae959e620f24ce1a)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(jiti@2.7.0)(sass-embedded@1.104.0)(sass@1.104.0)(stylus@0.57.0(supports-color@10.2.2))(tsx@4.23.13))(vue@3.5.42(typescript@6.0.3))':
     dependencies:
       '@rolldown/pluginutils': 1.0.1
       vite: 8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(jiti@2.7.0)(sass-embedded@1.104.0)(sass@1.104.0)(stylus@0.57.0(supports-color@10.2.2))(tsx@4.23.13)

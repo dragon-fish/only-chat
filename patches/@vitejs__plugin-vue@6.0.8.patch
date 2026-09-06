@@ -1,0 +1,12 @@
+diff --git a/dist/index.mjs b/dist/index.mjs
+index e7ee6225b8a3817445d4b45bffe28c04d957ffc8..9b4488b40c6664734621f9770352a23291cd47b5 100644
+--- a/dist/index.mjs
++++ b/dist/index.mjs
+@@ -1664,6 +1664,7 @@ function vuePlugin(rawOptions = {}) {
+ 				event: "file-changed",
+ 				data: { file: normalizePath(ctx.file) }
+ 			});
++			if (!options.value.compiler) return;
+ 			if (options.value.compiler.invalidateTypeCache) options.value.compiler.invalidateTypeCache(ctx.file);
+ 			let typeDepModules;
+ 			const matchesFilter = filter.value(ctx.file);
