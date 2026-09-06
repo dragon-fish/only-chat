@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import { Brain } from '@lucide/vue'
 import { Button } from '@/client/ui/button'
+import type { ButtonVariants } from '@/client/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/client/ui/popover'
 import { Separator } from '@/client/ui/separator'
 import { Slider } from '@/client/ui/slider'
@@ -22,6 +23,9 @@ import type { ModelCapabilities, Protocol } from '@/shared/models'
  * with no default model constrains nothing, so its axis cannot be derived from a model at all.
  */
 const props = withDefaults(defineProps<{
+  /** The chip's Button variant. Ghost suits the Composer's toolbar; a bordered form needs
+   *  `outline`, and a fallthrough `class` cannot supply it because `Popover` is renderless. */
+  variant?: ButtonVariants['variant']
   capabilities?: ModelCapabilities | null
   protocol?: Protocol | null
   stops?: ReasoningStop[] | null
@@ -31,7 +35,7 @@ const props = withDefaults(defineProps<{
   overridden: boolean
   /** No model resolved yet — a different disabled reason from "this model cannot reason". */
   noModel: boolean
-}>(), { capabilities: null, protocol: null, stops: null })
+}>(), { variant: 'ghost', capabilities: null, protocol: null, stops: null })
 const emit = defineEmits<{ update: [choice: ReasoningChoice] }>()
 
 const stops = computed(() => props.stops ?? (props.capabilities && props.protocol
@@ -84,6 +88,17 @@ function act(action: ReasoningAction) {
  */
 const parked = computed(() => Math.floor((model.value.strengths.length - 1) / 2))
 
+/**
+ * Where stop `i`'s tick centre actually sits along the track. Not `i / (n - 1)` of the full width:
+ * reka insets the thumb, so its centre travels from `thumbW / 2` to `100% - thumbW / 2`. The thumb
+ * is `size-5`, hence 20px. Labels laid out with `justify-between` instead distribute by their own
+ * differing widths (极低 vs Max vs Ultra), which drifts the middle ones off their ticks.
+ */
+function stopOffset(i: number, count: number): string {
+  const p = count > 1 ? i / (count - 1) : 0.5
+  return `calc(10px + (100% - 20px) * ${p})`
+}
+
 /** reka-ui's Slider is multi-thumb, so it models its value as an array. */
 const sliderValue = computed({
   get: () => [model.value.index < 0 ? parked.value : model.value.index],
@@ -110,7 +125,7 @@ function onSliderPointerDown() {
     <PopoverTrigger as-child>
       <Button
         type="button"
-        variant="ghost"
+        :variant="variant"
         size="xs"
         class="gap-1.5 aria-disabled:opacity-50"
         :aria-disabled="disabledReason !== null"
@@ -160,10 +175,12 @@ function onSliderPointerDown() {
           )"
           @pointerdown="onSliderPointerDown"
         />
-        <div class="text-muted-foreground mt-2 flex justify-between text-[11px]">
+        <div class="text-muted-foreground relative mt-2 h-4 text-[11px]">
           <span
             v-for="(stop, i) in model.strengths"
             :key="stop"
+            class="absolute -translate-x-1/2 whitespace-nowrap"
+            :style="{ left: stopOffset(i, model.strengths.length) }"
             :class="cn(
               !model.enabled || model.auto ? 'opacity-40' : '',
               i === model.index && model.enabled && !model.auto ? 'text-foreground font-medium' : '',

@@ -175,6 +175,7 @@ onUnmounted(clearPending)
           Label 推理强度
           .mt-1
             ReasoningControl(
+              variant="outline"
               :stops="stops" :active="form.reasoning" :overridden="form.reasoning !== 'inherit'"
               :no-model="false" @update="form.reasoning = $event")
           p.mt-1.text-xs.text-muted-foreground(v-if="form.model") 只显示该默认模型声明支持的档位；「默认」表示项目不设置推理档位。
