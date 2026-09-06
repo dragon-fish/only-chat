@@ -53,6 +53,114 @@ export function reasoningStopsFor(capabilities: ModelCapabilities | undefined, p
   })
 }
 
+/** What the three reasoning widgets show, derived from one stop list (spec §5.5). */
+export interface ReasoningControlModel {
+  /** Whether the 思考 switch can be turned off at all. */
+  canDisable: boolean
+  /**
+   * Whether reasoning is currently on. Forced `true` when the axis cannot express `off`: the
+   * switch is then disabled *and locked on*, never disabled at a stored `off` (spec §5.5).
+   */
+  enabled: boolean
+  /** On means "enabled, with no strength pinned" — the provider decides. */
+  auto: boolean
+  /** The slider's axis. Never contains `off` or `auto`: neither is a strength. */
+  strengths: ReasoningStop[]
+  /** Index into `strengths`; -1 whenever no strength is pinned. */
+  index: number
+  /** A stored strength this model does not offer. Shown as-is, never silently rewritten. */
+  unsupported: boolean
+}
+
+export type ReasoningAction =
+  | { kind: 'enable'; on: boolean }
+  | { kind: 'auto'; on: boolean }
+  | { kind: 'strength'; stop: ReasoningStop }
+
+/**
+ * `active` is the value in force at this layer — the layer's own choice, or what it inherits.
+ * `inherit` reaching here means nothing is pinned anywhere, which is the same request as `auto`:
+ * reason, but send no effort.
+ */
+export function reasoningControlModel(stops: ReasoningStop[], active: ReasoningChoice): ReasoningControlModel {
+  const strengths = stops.filter((s): s is ReasoningStop => s !== 'off' && s !== 'auto')
+  const canDisable = stops.includes('off')
+  /**
+   * Spec §5.5: when the model does not declare `reasoning_can_disable`, or the protocol cannot
+   * express "off", the 总开关 is disabled and *locked on* — 不假装能关. A stored `off` can reach
+   * this model anyway (a Project sets it, then a session inherits it, then the session picks a
+   * model that cannot honour it). Showing the switch off there would strand the whole control set:
+   * the 思考 switch is disabled, and 自动 and the slider are gated on `enabled`, so nothing on the
+   * panel would be movable and the session could never reason again.
+   *
+   * What the server then sends is protocol-dependent, and the two do not currently agree for every
+   * one. `openai-responses` omits the disable value in this case, so the model reasons and the
+   * locked-on switch is accurate; `anthropic` returns `{}` with no thinking block, so that model
+   * does not reason while the panel says it does. The disagreement is not resolved here: it most
+   * likely lives in the capability data rather than in either branch, because omitting the thinking
+   * block IS how the anthropic protocol expresses "off", which means such a model can disable and
+   * should be declaring `reasoning_can_disable`. Tracked for the round that owns the server.
+   */
+  const lockedOn = active === 'off' && !canDisable
+  const enabled = active !== 'off' || lockedOn
+  // A locked-on `off` pins no strength, which is the same thing 自动 means: reason, send no effort.
+  const auto = enabled && (active === 'auto' || active === 'inherit' || lockedOn)
+  // Narrowed by literal comparison, not by the `auto`/`enabled` booleans above, so the compiler
+  // can see `active` is a real stop here without a cast: only `off`/`auto`/`inherit` are excluded.
+  const index = active === 'off' || active === 'auto' || active === 'inherit' ? -1 : strengths.indexOf(active)
+  return {
+    canDisable,
+    enabled,
+    auto,
+    strengths,
+    index,
+    unsupported: enabled && !auto && index < 0,
+  }
+}
+
+/**
+ * Spec §5.1/§6: a reasoning control that cannot act states why instead of rendering dead widgets.
+ * Shared by both hosts — the Composer's chip, which disables itself and shows this as its `title`,
+ * and the inline body, which renders it in place of the three controls — so the two cannot drift.
+ *
+ * A model that cannot reason yields NO stops at all. Do NOT derive this from
+ * `ReasoningControlModel.unsupported`: that flag means "a strength is stored that this model does
+ * not offer", and it is false for a non-reasoning model, so it would leave the control enabled on
+ * exactly the model it must disable for. The chip's own extra case — no model resolved yet — is
+ * not expressible from stops and stays with the chip.
+ */
+/**
+ * What the chip reads. Pure because it is the only user-visible output that the locked-on rule
+ * changes (a stored `off` on a model that cannot disable now reads 自动, not 立即), and a component
+ * cannot be tested in this repo.
+ *
+ * Spec §5.5: a stored strength this model does not offer is shown AS-IS, never rewritten — which is
+ * why this reads `active` rather than indexing `strengths`, where `index` would be -1 and any
+ * fallback would name a stop the user never chose.
+ */
+export function reasoningChipLabel(model: ReasoningControlModel, active: ReasoningChoice): string {
+  if (!model.enabled) return REASONING_LABELS.off
+  if (model.auto || active === 'inherit') return REASONING_LABELS.auto
+  return REASONING_LABELS[active]
+}
+
+export function reasoningDisabledReason(stops: ReasoningStop[]): string | null {
+  return stops.length === 0 ? '该模型不支持推理' : null
+}
+
+/**
+ * The choice each widget interaction writes. Leaving 自动 lands on the middle strength: the spec
+ * defines entering auto and picking a stop, but not leaving auto by the toggle, and the midpoint
+ * is the one answer that does not bias the user toward either end of the axis.
+ */
+export function reasoningChoiceFor(model: ReasoningControlModel, action: ReasoningAction): ReasoningChoice {
+  if (action.kind === 'strength') return action.stop
+  if (action.kind === 'enable') return action.on ? 'auto' : 'off'
+  if (action.on) return 'auto'
+  const middle = model.strengths[Math.floor((model.strengths.length - 1) / 2)]
+  return middle ?? 'auto'
+}
+
 /** The merged control writes the two independently stored keys (spec §3.3). */
 export function choiceToParams(choice: ReasoningChoice): SessionParams {
   if (choice === 'inherit') return {}
@@ -76,16 +184,36 @@ export function choiceFromParams(params: SessionParams | null | undefined): Reas
   return params.reasoning_effort ?? 'auto'
 }
 
-/** The generation parameters a Project and a session edit the same way. */
+/**
+ * The generation parameters a Project and a session edit the same way. Typed `string | number`,
+ * not `string`: the three numeric fields are edited by `NumberField`, which is `number | undefined`
+ * valued, so a filled box writes a real `number` here while blank stays `''` — the sentinel that
+ * makes `paramsFromFields` drop the key instead of writing a value the layer never chose. Two
+ * shapes, one field, and a `string`-only type would describe neither of them.
+ *
+ * (The union predates `NumberField`. It was introduced for the raw `<input type="number">` inside
+ * `Input`, whose DOM `v-model` cast the value unconditionally; Task 6 deleted that path, but the
+ * union is still exactly right for the reason above, so do not narrow it back to `string`.)
+ */
 export interface ParamFields {
-  temperature: string
-  top_p: string
-  max_tokens: string
+  temperature: string | number
+  top_p: string | number
+  max_tokens: string | number
   reasoning: ReasoningChoice
 }
 
-/** Blank stays blank: an unparseable or empty box contributes no key at all. */
-function optionalNumber(raw: string): number | undefined {
+/**
+ * Blank stays blank: an unparseable or empty box contributes no key at all. Accepts a number
+ * because a `ParamFields` slot holds either shape (see there) and a `.trim()` on the number branch
+ * would throw.
+ *
+ * Exported because the settings forms read the field back through it on every render: `NumberField`
+ * is `number | undefined` valued, so this converts the slot into exactly what the box should show —
+ * and `undefined`, not `0`, is what keeps a blank box blank. The forms also test it for blankness,
+ * which is what gates their steppers: blank means "inherit", and no stepper may fill it in.
+ */
+export function optionalNumber(raw: string | number): number | undefined {
+  if (typeof raw === 'number') return Number.isFinite(raw) ? raw : undefined
   const trimmed = raw.trim()
   if (trimmed === '') return undefined
   const n = Number(trimmed)
@@ -94,6 +222,27 @@ function optionalNumber(raw: string): number | undefined {
 
 function numberToField(value: number | undefined): string {
   return value === undefined ? '' : String(value)
+}
+
+/**
+ * Whether the box the user is looking at is empty, which is what decides if a stepper may fire.
+ *
+ * `raw` is the input element's live text, or `null` when the field is not being edited. The form
+ * model cannot answer this on its own: reka writes typed text back only on blur or Enter
+ * (`NumberFieldInput` binds `applyInputValue` to those two), so from the moment a filled box is
+ * cleared until it loses focus, the model still holds the old value while the box reads empty.
+ * Asking the model there is what let a stepper press on a visibly empty 最大 tokens commit `min`.
+ */
+export function fieldLooksBlank(raw: string | null, stored: string | number): boolean {
+  // Not `raw.trim() === ''`: reka gates the steppers on whether its parse yields NaN, not on
+  // whether the box has characters, and it accepts partial input on the way to a number. A lone
+  // `.` is the cheapest example — one keystroke, accepted, and unparseable — so treating it as
+  // filled re-opened the very defect this guard exists to close.
+  if (raw !== null) {
+    const text = raw.trim()
+    return text === '' || !Number.isFinite(Number(text))
+  }
+  return optionalNumber(stored) === undefined
 }
 
 /** `null` when the user filled nothing in, so the `params` column stays NULL. */

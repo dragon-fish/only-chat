@@ -2,12 +2,19 @@
 import { computed, onUnmounted, reactive, ref, watch, watchEffect } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { Button } from '@/client/ui/button'
+import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/client/ui/field'
 import { Input } from '@/client/ui/input'
-import { Label } from '@/client/ui/label'
+import {
+  NumberField,
+  NumberFieldContent,
+  NumberFieldDecrement,
+  NumberFieldIncrement,
+  NumberFieldInput,
+} from '@/client/ui/number-field'
 import { Textarea } from '@/client/ui/textarea'
 import ModelPicker from '@/client/components/model-picker.vue'
-import ReasoningSlider from '@/client/components/reasoning-slider.vue'
-import { DISCONNECTED_MESSAGE, projectFormFrom, projectUpdateCommand, reasoningStopsFor, REASONING_ORDER, useSyncStore, type ProjectFormState } from '@/client/stores/sync'
+import ReasoningControls from '@/client/components/reasoning-controls.vue'
+import { DISCONNECTED_MESSAGE, fieldLooksBlank, optionalNumber, projectFormFrom, projectUpdateCommand, reasoningStopsFor, REASONING_ORDER, useSyncStore, type ProjectFormState } from '@/client/stores/sync'
 import { useConfigStore } from '@/client/stores/config'
 
 const props = defineProps<{ projectId: number | null }>()
@@ -43,10 +50,16 @@ const defaultModel = computed(() => config.modelFor(form.model))
 const stops = computed(() => form.model
   ? reasoningStopsFor(defaultModel.value?.model.capabilities, defaultModel.value?.provider.protocol)
   : [...REASONING_ORDER])
-const modelName = computed(() => defaultModel.value
-  ? `${defaultModel.value.provider.name} · ${defaultModel.value.model.display_name}`
-  : '未设置默认模型')
 const chatCount = computed(() => (props.projectId === null ? 0 : sync.sessionsInProject(props.projectId).length))
+
+/**
+ * The live text of each box while it is being edited, `null` when it is not. reka only writes typed
+ * text back to the model on blur or Enter, so the model is the wrong thing to ask whether the box
+ * the user is looking at is empty — see `fieldLooksBlank`.
+ */
+const typing = reactive<Record<ParamKey, string | null>>({ temperature: null, top_p: null, max_tokens: null })
+// Declared above `initialize` on purpose: an immediate watcher calls that function synchronously
+// during setup, so a `const` declared further down would still be in its temporal dead zone.
 
 /**
  * Every piece of state here belongs to one `projectId`, and vue-router reuses this instance for a
@@ -59,6 +72,8 @@ async function initialize(): Promise<void> {
   const token = ++initToken
   clearPending()
   Object.assign(form, projectFormFrom(undefined))
+  // The form is being replaced, so any in-flight box text belongs to the previous Project.
+  Object.assign(typing, { temperature: null, top_p: null, max_tokens: null })
   loaded.value = false
   missing.value = false
   saving.value = false
@@ -129,6 +144,51 @@ function onDelete() {
   sync.send({ type: 'project.delete', project_id: p.id })
 }
 
+type ParamKey = 'temperature' | 'top_p' | 'max_tokens'
+
+/**
+ * Blank means "inherit", so no stepper may turn it into a value. reka's `handleChangingValue`
+ * writes `clampInputValue(min ?? 0)` whenever the input is empty and disables neither stepper
+ * there, so one press of + on a blank box silently filled it with the bound. The session form
+ * commits on the spot and made that immediate data loss; here it only waits for 保存, which is the
+ * same lie one click later. Same guard on both pages: the two buttons are disabled while blank,
+ * and this covers what has no button — reka routes ArrowUp/ArrowDown, PageUp/PageDown, Home/End
+ * and the wheel through the same handlers. Capture phase, so it runs before reka's listeners on
+ * the input; `stopPropagation` only, never `preventDefault`, so the caret and the page's own
+ * scrolling still behave normally.
+ */
+const STEP_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End'])
+
+/** Blank is `''` in the form and `undefined` through `optionalNumber` — never `0`. */
+function onType(field: ParamKey, event: Event) {
+  typing[field] = (event.target as HTMLInputElement).value
+}
+/** Blur is where reka reconciles text and model, so the model becomes authoritative again. */
+function onSettle(field: ParamKey) {
+  typing[field] = null
+}
+function blank(field: ParamKey): boolean {
+  return fieldLooksBlank(typing[field], form[field])
+}
+function guardStep(field: ParamKey, event: Event) {
+  if (!blank(field)) return
+  if (event instanceof KeyboardEvent && !STEP_KEYS.has(event.key)) return
+  event.stopPropagation()
+}
+/** The steppers are disabled while the box is blank; say why rather than leave two dead buttons. */
+function paramHint(field: ParamKey): string {
+  const base = '留空则继承，不写入项目参数。'
+  return blank(field) ? `${base}+/- 需先填入数值。` : base
+}
+
+/**
+ * `NumberField` clears to `undefined`; the field keeps holding `''` for blank so that
+ * `projectParamsFromForm` drops the key instead of saving a value the Project never chose.
+ */
+function setParam(field: ParamKey, value: number | undefined) {
+  form[field] = value ?? ''
+}
+
 function formatTime(ms: number): string {
   return new Date(ms).toLocaleString()
 }
@@ -139,46 +199,93 @@ onUnmounted(clearPending)
 <template lang="pug">
 //- Spec §8: the page root owns the height, the form body is the only vertical scroller.
 .flex.h-full.min-h-0.overflow-hidden
+  Teleport(to="#page-header")
+    RouterLink.shrink-0.text-muted-foreground(to="/" class="hover:text-foreground") ←
+    span.truncate.text-sm.font-medium {{ project?.name ?? '项目设置' }}
   nav.flex.w-32.shrink-0.flex-col.gap-1.border-r.p-2(class="sm:w-44 sm:p-3")
-    RouterLink.mb-2.text-xs.text-muted-foreground(to="/") ← 返回
     button.rounded-md.px-2.py-1.text-left.text-sm(
       v-for="s in sections" :key="s.key"
       :class="section === s.key ? 'bg-accent font-medium' : 'hover:bg-accent'"
       @click="section = s.key") {{ s.label }}
   .flex.min-h-0.min-w-0.flex-1.flex-col(v-if="project")
     .oc-scroll.flex.min-h-0.flex-1.flex-col.gap-4.overflow-y-auto.p-4
-      template(v-if="section === 'basic'")
-        div
-          Label 名称
-          Input(v-model="form.name" placeholder="项目名称")
-        .flex.min-h-0.flex-col
-          Label Project prompt
-          Textarea(v-model="form.system_prompt" class="min-h-40" placeholder="留空表示不附加项目提示词")
-          p.mt-1.text-xs.text-muted-foreground 会话开始生成时，项目提示词在前、会话提示词在后，中间固定两个换行。
-      template(v-else)
-        div
-          Label 默认模型
+      FieldGroup(v-if="section === 'basic'" class="max-w-2xl")
+        Field
+          FieldLabel(for="oc-project-name") 名称
+          Input(id="oc-project-name" v-model="form.name" placeholder="项目名称")
+        Field(class="min-h-0")
+          FieldLabel(for="oc-project-prompt") Project prompt
+          Textarea(
+            id="oc-project-prompt" v-model="form.system_prompt" class="min-h-40"
+            placeholder="留空表示不附加项目提示词")
+          FieldDescription 会话开始生成时，项目提示词在前、会话提示词在后，中间固定两个换行。
+      FieldGroup(v-else class="max-w-2xl")
+        Field
+          FieldLabel 默认模型
           .flex.items-center.gap-2
             ModelPicker(v-model="form.model")
             button.text-xs.text-muted-foreground(v-if="form.model" class="hover:text-foreground" @click="form.model = null") 清除
-          p.mt-1.text-xs.text-muted-foreground 留空表示不设置默认模型，由会话或发送时的选择决定。
-        .grid.grid-cols-3.gap-3
-          div
-            Label temperature
-            Input(v-model="form.temperature" type="number" min="0" max="2" step="0.1" placeholder="继承")
-          div
-            Label top_p
-            Input(v-model="form.top_p" type="number" min="0" max="1" step="0.05" placeholder="继承")
-          div
-            Label max tokens
-            Input(v-model="form.max_tokens" type="number" min="1" step="1" placeholder="继承")
-        div
-          Label 推理强度
-          ReasoningSlider(
-            v-model="form.reasoning" class="w-72" :stops="stops" :model-name="modelName"
-            :can-reset="form.reasoning !== 'inherit'")
-          p.mt-1.text-xs.text-muted-foreground(v-if="form.model") 只显示该默认模型声明支持的档位；「默认」表示项目不设置推理档位。
-          p.mt-1.text-xs.text-muted-foreground(v-else) 未设置默认模型时无法校验档位，实际可用范围由发送时的模型决定。
+          FieldDescription 留空表示不设置默认模型，由会话或发送时的选择决定。
+        Field
+          FieldLabel(for="oc-project-temperature") temperature
+          //- `step` sizes the +/- buttons only: `step-snapping` off is what lets a typed 0.77 stay
+          //- 0.77 instead of being rewritten to the nearest step, which is how the raw box behaved.
+          //- `maximumFractionDigits` is 20, not a guess at what people type: a double carries at most
+          //- 17 significant digits, so 20 fractional digits cannot lose one. reka round-trips every value
+          //- through `Intl.NumberFormat`, whose default of 3 rewrote a stored 0.6667 to 0.667.
+          NumberField(
+            id="oc-project-temperature" :model-value="optionalNumber(form.temperature)"
+            :min="0" :max="2" :step="0.1" :step-snapping="false" :disable-wheel-change="true"
+            :format-options="{ maximumFractionDigits: 20 }"
+            @update:model-value="setParam('temperature', $event)"
+            @keydown.capture="guardStep('temperature', $event)"
+            @wheel.capture="guardStep('temperature', $event)")
+            NumberFieldContent
+              NumberFieldDecrement(:disabled="blank('temperature')")
+              NumberFieldInput(@input="onType('temperature', $event)" @blur="onSettle('temperature')")
+              NumberFieldIncrement(:disabled="blank('temperature')")
+          FieldDescription {{ paramHint('temperature') }}
+        Field
+          FieldLabel(for="oc-project-top-p") top_p
+          NumberField(
+            id="oc-project-top-p" :model-value="optionalNumber(form.top_p)"
+            :min="0" :max="1" :step="0.05" :step-snapping="false" :disable-wheel-change="true"
+            :format-options="{ maximumFractionDigits: 20 }"
+            @update:model-value="setParam('top_p', $event)"
+            @keydown.capture="guardStep('top_p', $event)"
+            @wheel.capture="guardStep('top_p', $event)")
+            NumberFieldContent
+              NumberFieldDecrement(:disabled="blank('top_p')")
+              NumberFieldInput(@input="onType('top_p', $event)" @blur="onSettle('top_p')")
+              NumberFieldIncrement(:disabled="blank('top_p')")
+          FieldDescription {{ paramHint('top_p') }}
+        Field
+          FieldLabel(for="oc-project-max-tokens") max tokens
+          NumberField(
+            id="oc-project-max-tokens" :model-value="optionalNumber(form.max_tokens)"
+            :min="1" :step="1" :step-snapping="false" :disable-wheel-change="true" :format-options="{ useGrouping: false }"
+            @update:model-value="setParam('max_tokens', $event)"
+            @keydown.capture="guardStep('max_tokens', $event)"
+            @wheel.capture="guardStep('max_tokens', $event)")
+            NumberFieldContent
+              NumberFieldDecrement(:disabled="blank('max_tokens')")
+              NumberFieldInput(@input="onType('max_tokens', $event)" @blur="onSettle('max_tokens')")
+              NumberFieldIncrement(:disabled="blank('max_tokens')")
+          FieldDescription {{ paramHint('max_tokens') }}
+        Field
+          FieldLabel 推理强度
+          //- Rendered inline, not behind a chip and a popover. That shape belongs to the Composer's
+          //- toolbar, which is one row with no space for two switches and a slider; a settings page
+          //- has the room, and every field beside this one is laid out plainly.
+          ReasoningControls(
+            :stops="stops" :active="form.reasoning" :overridden="form.reasoning !== 'inherit'"
+            @update="form.reasoning = $event")
+          //- An empty axis is not a filter result: it means the default model declares no
+          //- reasoning at all, and saying 只显示…声明支持的档位 there reads as "this model
+          //- supports none of them" rather than "this model does not reason".
+          FieldDescription(v-if="!form.model") 未设置默认模型时无法校验档位，实际可用范围由发送时的模型决定。
+          FieldDescription(v-else-if="stops.length === 0") 该默认模型未声明推理能力，此处没有可设置的档位；改用其他默认模型才能设置。
+          FieldDescription(v-else) 只显示该默认模型声明支持的档位；「默认」表示项目不设置推理档位。
     .flex.items-center.gap-3.border-t.p-3
       p.min-w-0.truncate.text-xs.text-muted-foreground
         | {{ chatCount }} 个聊天 · 创建于 {{ formatTime(project.created_at) }} · 更新于 {{ formatTime(project.updated_at) }}

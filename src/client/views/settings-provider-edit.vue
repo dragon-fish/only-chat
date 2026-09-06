@@ -163,10 +163,11 @@ async function removeModel(m: Model) {
 //- Spec §8: the route root is fixed-height and clips; the body below is its only vertical scroll
 //- owner, so a provider with many models never hands a scrollbar back to the document.
 .h-full.min-h-0.overflow-hidden
+  Teleport(to="#page-header")
+    RouterLink.shrink-0.text-muted-foreground(to="/settings/providers" class="hover:text-foreground") ←
+    span.truncate.text-sm.font-medium 编辑供应商
   .oc-scroll.h-full.overflow-y-auto
-    .mx-auto.max-w-2xl.p-4.flex.flex-col.gap-4
-      RouterLink.text-xs.text-muted-foreground(to="/settings/providers") ← 返回供应商列表
-      h1.text-lg.font-semibold 编辑供应商
+    .max-w-2xl.p-4.flex.flex-col.gap-4
       .grid.gap-3
         div
           Label 名称

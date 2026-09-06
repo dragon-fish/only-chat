@@ -1,12 +1,36 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
-  assistantWaitState, choiceFromParams, choiceToParams, effectiveModelFor, modelOverrideAfterPick,
-  mergeRestoredText, moveSessionCommand, nextSendState, paramsFromFields, projectFormFrom,
-  projectParamsFromForm, projectUpdateCommand, reasoningStopsFor, REASONING_LABELS, REASONING_ORDER,
-  sendCommandFor, sessionFormFrom, sessionSettingSources, useSyncStore,
-  type OutstandingSend, type ParamFields, type ProjectFormState, type SendEvent,
+  REASONING_LABELS,
+  REASONING_ORDER,
+  assistantWaitState,
+  choiceFromParams,
+  choiceToParams,
+  effectiveModelFor,
+  fieldLooksBlank,
+  mergeRestoredText,
+  modelOverrideAfterPick,
+  moveSessionCommand,
+  nextSendState,
+  paramsFromFields,
+  projectFormFrom,
+  projectParamsFromForm,
+  projectUpdateCommand,
+  reasoningChipLabel,
+  reasoningChoiceFor,
+  reasoningControlModel,
+  reasoningDisabledReason,
+  reasoningStopsFor,
+  sendCommandFor,
+  sessionFormFrom,
+  sessionSettingSources,
+  type OutstandingSend,
+  type ParamFields,
+  type ProjectFormState,
+  type ReasoningStop,
+  type SendEvent,
   type SessionConfigSource,
+  useSyncStore,
 } from '@/client/stores/sync'
 import type { ModelRef } from '@/shared/api'
 import type { Message, ModelCapabilities, Project, Session } from '@/shared/models'
@@ -374,6 +398,20 @@ describe('session settings form', () => {
     expect(paramsFromFields({ ...fields, reasoning: 'off' })).toEqual({ reasoning_enabled: false })
   })
 
+  it('accepts a number, not just a string, for the numeric fields', () => {
+    // Regression: `Input` renders a native `<input type="number">`, and Vue's `v-model` casts to a
+    // `number` whenever the element's `type` is `"number"` — unconditionally, with no `.number`
+    // modifier needed. So the value that actually reaches `form.temperature` after a real keystroke
+    // is a `number`, never the `string` the old signature assumed; that call crashed with
+    // `raw.trim is not a function` and aborted the commit before it ever reached `send`, so the
+    // value silently never saved. `0` is deliberately included: it is falsy but not blank.
+    expect(paramsFromFields({ ...fields, temperature: 0.7, top_p: 0, max_tokens: 2048 }))
+      .toEqual({ temperature: 0.7, top_p: 0, max_tokens: 2048 })
+    // A non-finite number (never produced by the input itself, but not this function's job to trust
+    // the caller) contributes no key, same as an unparseable string.
+    expect(paramsFromFields({ ...fields, temperature: Number.NaN })).toBeNull()
+  })
+
   it('names the layer every field comes from', () => {
     const project: Project = {
       ...mkProject(3), system_prompt: 'P', provider_id: 1, model_id: 'm',
@@ -540,5 +578,226 @@ describe('rejected message recovery', () => {
     // An image-only message carries no text; a blank line on its own would be a bogus edit.
     expect(mergeRestoredText('', 'started typing')).toBe('started typing')
     expect(mergeRestoredText('rejected', '   ')).toBe('rejected')
+  })
+})
+
+describe('reasoningControlModel', () => {
+  const FULL: ReasoningStop[] = ['off', 'auto', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']
+
+  it('keeps off and auto off the strength axis', () => {
+    const m = reasoningControlModel(FULL, 'medium')
+    expect(m.strengths).toEqual(['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'])
+    expect(m.index).toBe(2)
+    expect(m.enabled).toBe(true)
+    expect(m.auto).toBe(false)
+  })
+
+  it('reports auto as enabled with no selected strength', () => {
+    const m = reasoningControlModel(FULL, 'auto')
+    expect(m.auto).toBe(true)
+    expect(m.enabled).toBe(true)
+    expect(m.index).toBe(-1)
+  })
+
+  it('treats a fully unset value as auto, because nothing is pinned anywhere', () => {
+    expect(reasoningControlModel(FULL, 'inherit').auto).toBe(true)
+  })
+
+  it('reports off', () => {
+    const m = reasoningControlModel(FULL, 'off')
+    expect(m.enabled).toBe(false)
+    expect(m.auto).toBe(false)
+    expect(m.index).toBe(-1)
+  })
+
+  it('only allows disabling when the stops say so', () => {
+    expect(reasoningControlModel(FULL, 'auto').canDisable).toBe(true)
+    expect(reasoningControlModel(['auto', 'low'], 'auto').canDisable).toBe(false)
+  })
+
+  // Spec §5.5: 总开关禁用并锁在「开」. The switch is disabled whenever `canDisable` is false, so if
+  // `enabled` also followed the stored value the panel would render 思考 off + disabled, 自动
+  // disabled and the slider disabled -- not one movable control, on a model that reasons anyway
+  // because `buildProviderOptions` omits the disable value it cannot express. Locking on is what
+  // keeps the rest of the panel live and stops the display contradicting the request.
+  it('locks 思考 on, not at the stored value, when the axis cannot express off', () => {
+    const m = reasoningControlModel(['auto', 'low', 'medium', 'high'], 'off')
+    expect(m.canDisable).toBe(false)
+    expect(m.enabled).toBe(true)
+    // Nothing is pinned, which is exactly what 自动 means: reason, send no effort.
+    expect(m.auto).toBe(true)
+    expect(m.index).toBe(-1)
+    // `off` is not a strength, so the lock must not be reported as an unsupported strength either.
+    expect(m.unsupported).toBe(false)
+  })
+
+  // The stranding path from the review, end to end: a Project stores 思考关, a session inherits it,
+  // and the session's model declares `reasoning` but not `reasoning_can_disable`.
+  it('leaves the slider reachable for a session that inherited off from a Project', () => {
+    const stops = reasoningStopsFor({ reasoning: true }, 'openai-responses')
+    const m = reasoningControlModel(stops, choiceFromParams({ reasoning_enabled: false }))
+    expect(m.canDisable).toBe(false)
+    expect(m.enabled).toBe(true)
+    expect(m.strengths.length).toBeGreaterThan(0)
+    // `enabled` is what gates 自动 and the slider in the component, so both stay usable.
+    expect(reasoningChoiceFor(m, { kind: 'strength', stop: 'high' })).toBe('high')
+  })
+
+  // A model that *can* disable still honours a stored off -- the lock is not a blanket override.
+  it('still reports off when the axis does contain off', () => {
+    expect(reasoningControlModel(FULL, 'off').enabled).toBe(false)
+    expect(reasoningControlModel(FULL, 'off').auto).toBe(false)
+  })
+
+  it('flags a stored strength this model does not offer instead of rewriting it', () => {
+    const m = reasoningControlModel(['auto', 'low', 'high'], 'ultra')
+    expect(m.unsupported).toBe(true)
+    expect(m.index).toBe(-1)
+    expect(m.enabled).toBe(true)
+  })
+
+  it('does not flag auto or off as unsupported', () => {
+    expect(reasoningControlModel(['auto', 'low'], 'auto').unsupported).toBe(false)
+    expect(reasoningControlModel(['auto', 'low'], 'off').unsupported).toBe(false)
+  })
+
+  // A model that cannot reason yields NO stops at all, and this is the shape the chip's disabled
+  // state is derived from. `unsupported` is deliberately false here -- there is no stored strength
+  // being contradicted, there is simply nothing to offer -- so a caller must decide "this model
+  // cannot reason" from an empty axis, never from `unsupported`.
+  it('reports an empty axis, not an unsupported strength, when the model cannot reason', () => {
+    const m = reasoningControlModel([], 'inherit')
+    expect(m.strengths).toEqual([])
+    expect(m.canDisable).toBe(false)
+    expect(m.index).toBe(-1)
+    expect(m.unsupported).toBe(false)
+  })
+
+  // Reasoning models that pin no strength: the axis is empty but `auto` is still meaningful.
+  it('treats an auto-only model as having no strengths to slide between', () => {
+    const m = reasoningControlModel(['auto'], 'auto')
+    expect(m.strengths).toEqual([])
+    expect(m.auto).toBe(true)
+    expect(m.index).toBe(-1)
+    expect(m.unsupported).toBe(false)
+  })
+})
+
+describe('reasoningChoiceFor', () => {
+  const FULL: ReasoningStop[] = ['off', 'auto', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']
+
+  it('turning 思考 off writes off', () => {
+    const m = reasoningControlModel(FULL, 'high')
+    expect(reasoningChoiceFor(m, { kind: 'enable', on: false })).toBe('off')
+  })
+
+  it('turning 思考 on lands on auto rather than guessing a strength', () => {
+    const m = reasoningControlModel(FULL, 'off')
+    expect(reasoningChoiceFor(m, { kind: 'enable', on: true })).toBe('auto')
+  })
+
+  it('turning 自动 on releases the pinned strength', () => {
+    const m = reasoningControlModel(FULL, 'high')
+    expect(reasoningChoiceFor(m, { kind: 'auto', on: true })).toBe('auto')
+  })
+
+  it('turning 自动 off lands on the middle strength', () => {
+    const m = reasoningControlModel(FULL, 'auto')
+    expect(reasoningChoiceFor(m, { kind: 'auto', on: false })).toBe('high')
+  })
+
+  it('picking a stop selects it and leaves auto', () => {
+    const m = reasoningControlModel(FULL, 'auto')
+    expect(reasoningChoiceFor(m, { kind: 'strength', stop: 'low' })).toBe('low')
+  })
+
+  it('turning 自動 off with a single strength picks that one', () => {
+    const m = reasoningControlModel(['auto', 'low'], 'auto')
+    expect(reasoningChoiceFor(m, { kind: 'auto', on: false })).toBe('low')
+  })
+})
+
+// Spec §5.1: the reason both hosts show. It lives here rather than in either component so the
+// Composer's chip and the Project page's inline body cannot state different things -- the split
+// that let the Project page render live-looking controls for a model that cannot reason at all.
+describe('reasoningDisabledReason', () => {
+  it('names the reason when the model declares no reasoning at all', () => {
+    expect(reasoningDisabledReason(reasoningStopsFor({}, 'openai-responses'))).toBe('该模型不支持推理')
+    expect(reasoningDisabledReason([])).toBe('该模型不支持推理')
+  })
+
+  it('stays silent whenever there is something to control', () => {
+    expect(reasoningDisabledReason(reasoningStopsFor({ reasoning: true }, 'openai-responses'))).toBeNull()
+    // Auto-only is still a working control: 思考 and 自动 both act, there is just no axis.
+    expect(reasoningDisabledReason(['auto'])).toBeNull()
+    expect(reasoningDisabledReason([...REASONING_ORDER])).toBeNull()
+  })
+
+  // The flag that must NOT be used for this: it is false exactly where the reason is needed.
+  it('does not fall for the unsupported flag, which is false for a non-reasoning model', () => {
+    expect(reasoningControlModel([], 'inherit').unsupported).toBe(false)
+    expect(reasoningDisabledReason([])).not.toBeNull()
+  })
+})
+
+describe('fieldLooksBlank', () => {
+  // reka writes typed text back to the model only on blur or Enter, so between clearing a filled
+  // box and leaving it, the model still holds the old value while the box reads empty. Asking the
+  // model there is what let a stepper press on a visibly empty 最大 tokens commit `min` = 1 and
+  // truncate every later reply to one token.
+  it('believes the box over the model while the box is being edited', () => {
+    expect(fieldLooksBlank('', 4096)).toBe(true)
+    expect(fieldLooksBlank('   ', 4096)).toBe(true)
+    expect(fieldLooksBlank('0.5', '')).toBe(false)
+  })
+
+  // reka gates its steppers on whether its parse yields NaN, and it accepts partial input on the
+  // way to a number. A lone `.` passes its `onBeforeinput` and parses to NaN, so text that is not
+  // yet a number must count as blank — treating it as filled is what re-opened the stepper defect.
+  it('counts unparseable partial input as blank', () => {
+    expect(fieldLooksBlank('.', '')).toBe(true)
+    expect(fieldLooksBlank('-', '')).toBe(true)
+    expect(fieldLooksBlank('1e', '')).toBe(true)
+    expect(fieldLooksBlank('0.5', '')).toBe(false)
+    expect(fieldLooksBlank('.5', '')).toBe(false)
+  })
+
+  it('falls back to the model when no edit is in flight', () => {
+    expect(fieldLooksBlank(null, '')).toBe(true)
+    expect(fieldLooksBlank(null, 4096)).toBe(false)
+  })
+
+  // Spec §7.3: blank means inherit, and 0 is a value someone chose.
+  it('does not mistake zero for blank', () => {
+    expect(fieldLooksBlank(null, 0)).toBe(false)
+    expect(fieldLooksBlank('0', 0)).toBe(false)
+  })
+})
+
+describe('reasoningChipLabel', () => {
+  const FULL: ReasoningStop[] = ['off', 'auto', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']
+  const NO_OFF: ReasoningStop[] = ['auto', 'low', 'medium', 'high']
+
+  it('reads 立即 only where off is actually honourable', () => {
+    expect(reasoningChipLabel(reasoningControlModel(FULL, 'off'), 'off')).toBe(REASONING_LABELS.off)
+  })
+
+  // The locked-on rule's only user-visible output: a model that cannot express off must not
+  // display 立即, because the switch is locked on and the request does not turn reasoning off.
+  it('reads 自动 for a stored off the model cannot honour', () => {
+    expect(reasoningChipLabel(reasoningControlModel(NO_OFF, 'off'), 'off')).toBe(REASONING_LABELS.auto)
+  })
+
+  it('reads 自动 for inherit', () => {
+    expect(reasoningChipLabel(reasoningControlModel(FULL, 'inherit'), 'inherit')).toBe(REASONING_LABELS.auto)
+  })
+
+  // Spec §5.5: shown as-is, never rewritten to a stop the user never chose.
+  it('shows a stored strength the model does not offer, unrewritten', () => {
+    expect(reasoningChipLabel(reasoningControlModel(NO_OFF, 'ultra'), 'ultra')).toBe(REASONING_LABELS.ultra)
+  })
+
+  it('names the selected strength', () => {
+    expect(reasoningChipLabel(reasoningControlModel(FULL, 'high'), 'high')).toBe(REASONING_LABELS.high)
   })
 })
