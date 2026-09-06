@@ -1,13 +1,17 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import 'vue-sonner/style.css'
 import AppShell from '@/client/components/app-shell.vue'
+import { useTheme } from '@/client/composables/use-theme'
 import { api } from '@/client/lib/api'
 import { useSyncStore } from '@/client/stores/sync'
 import { useConfigStore } from '@/client/stores/config'
+import { Toaster } from '@/client/ui/sonner'
 
 const sync = useSyncStore()
 const config = useConfigStore()
 const bootError = ref<string | null>(null)
+const { resolved: resolvedTheme } = useTheme()
 
 onMounted(async () => {
   sync.connect()
@@ -24,4 +28,5 @@ onMounted(async () => {
 <template lang="pug">
 AppShell(:boot-error="bootError")
   RouterView
+Toaster(:theme="resolvedTheme" position="top-right" close-button rich-colors)
 </template>

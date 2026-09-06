@@ -22,3 +22,22 @@ body,
 .oc-message-user {
   border-radius: 1rem 1rem 0.25rem 1rem;
 }
+
+.oc-mobile-nav {
+  padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+}
+
+.oc-mobile-nav-offset {
+  padding-bottom: calc(4rem + env(safe-area-inset-bottom));
+}
+
+.oc-mobile-composer-safe {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+@media (min-width: 48rem) {
+  .oc-mobile-nav-offset,
+  .oc-mobile-composer-safe {
+    padding-bottom: 0;
+  }
+}
