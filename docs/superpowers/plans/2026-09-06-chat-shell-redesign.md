@@ -12,6 +12,7 @@
 
 ## Global Constraints
 
+- **Invoke the `shadcn-vue` skill before writing any component, and the `pug-vue-pitfalls` skill before writing any Pug template.** Both are installed in this repo. The shadcn-vue skill carries binding rules this plan does not repeat: no sizing classes on icons nested inside components (they size their own), `data-icon="inline-start"/"inline-end"` for icons beside button text, `gap-*` never `space-y-*`, `cn()` rather than template-literal ternaries, `Separator` rather than a hand-made `h-px` div, `FieldGroup` + `Field` for form layout, and no manual `z-index` on overlays. Where a skill contradicts this plan, the skill wins — say so in the report.
 - **Use the vendored components; never hand-roll what the registry ships.** Commit `d5f8ed0` vendored the whole shadcn-vue reka-nova set into `src/client/ui`. Before writing a control, check whether one exists there. The ones this round needs: `input-group` (the Composer card), `attachment` (upload chips, with a per-item `state`), `slider` (reka-ui SliderRoot — already draggable, snapping and keyboard-operable), `field` and `number-field` (settings rows), `popover`, `switch`, `spinner`. Every defect this round has produced so far came from hand-rolling something the registry already solved.
 - **Any focusable text control must compute to 16px at mobile widths.** iOS Safari force-zooms a focused input under 16px, which is why the vendored `Input` and `Textarea` carry `text-base md:text-sm`. Do not override that with a bare `text-sm`.
 - Copy the references; do not invent. Cherry Studio 2.0 supplies the top-bar chips, the single-card Composer and the reasoning popover's structure; Codex supplies the slider itself.
@@ -622,7 +623,7 @@ Codex look is reached by enlarging its thumb through `class`, not by reimplement
 **Interfaces:**
 - Consumes: `reasoningControlModel`, `reasoningChoiceFor`, `ReasoningControlModel`,
   `ReasoningAction`, `REASONING_LABELS`, `reasoningStopsFor` from `@/client/stores/sync`;
-  `Popover`, `PopoverTrigger`, `PopoverContent` from `@/client/ui/popover`; `Switch` from
+  `Popover`, `PopoverTrigger`, `PopoverContent` from `@/client/ui/popover`; `Separator` from `@/client/ui/separator`; `cn` from `@/client/lib/utils`; `Switch` from
   `@/client/ui/switch`; `Slider` from `@/client/ui/slider`; `Button` from `@/client/ui/button`.
 - Produces: `<ReasoningControl :capabilities :protocol :active :overridden @update="choice => …" />`,
   rendered into the Composer's `controls` slot.
@@ -637,7 +638,9 @@ import { computed } from 'vue'
 import { Brain } from '@lucide/vue'
 import { Button } from '@/client/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/client/ui/popover'
+import { Separator } from '@/client/ui/separator'
 import { Slider } from '@/client/ui/slider'
+import { cn } from '@/client/lib/utils'
 import { Switch } from '@/client/ui/switch'
 import {
   REASONING_LABELS,
@@ -702,7 +705,7 @@ const sliderValue = computed({
         :disabled="disabledReason !== null"
         :title="disabledReason ?? '思考强度'"
       >
-        <Brain class="size-4" />
+        <Brain data-icon="inline-start" />
         <span class="text-xs">{{ chipLabel }}</span>
       </Button>
     </PopoverTrigger>
@@ -722,7 +725,7 @@ const sliderValue = computed({
         </Button>
       </div>
 
-      <div class="bg-border my-3 h-px" />
+      <Separator class="my-3" />
 
       <div class="flex items-center gap-3">
         <span class="text-sm">自动</span>
@@ -746,7 +749,7 @@ const sliderValue = computed({
           <span
             v-for="(stop, i) in model.strengths"
             :key="stop"
-            :class="!model.enabled || model.auto ? 'opacity-40' : i === model.index ? 'text-foreground font-medium' : ''"
+            :class="cn(!model.enabled || model.auto ? 'opacity-40' : '', i === model.index && model.enabled && !model.auto ? 'text-foreground font-medium' : '')"
           >{{ REASONING_LABELS[stop] }}</span>
         </div>
       </div>
@@ -835,7 +838,7 @@ sed -n '1,40p' src/client/ui/number-field/NumberField.vue
 
 - [ ] **Step 2: Convert `session-settings.vue`**
 
-Wrap each row in `Field` with a `FieldLabel`, and replace the three
+Wrap the whole form in a single `FieldGroup` and each row in a `Field` with a `FieldLabel` — the skill's forms rule forbids a raw `div` with `space-y-*` or `grid gap-*` for form layout, and replace the three
 `Input(v-model="form.x" type="number" …)` lines with `NumberField`, carrying the same `min`,
 `max` and `step` values that are on them today (temperature 0–2 step 0.1; top_p 0–1 step 0.05;
 max_tokens min 1 step 1). Keep every `@change="emit('commit')"` binding — `NumberField` emits
