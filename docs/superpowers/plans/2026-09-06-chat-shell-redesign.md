@@ -12,6 +12,8 @@
 
 ## Global Constraints
 
+- **Use the vendored components; never hand-roll what the registry ships.** Commit `d5f8ed0` vendored the whole shadcn-vue reka-nova set into `src/client/ui`. Before writing a control, check whether one exists there. The ones this round needs: `input-group` (the Composer card), `attachment` (upload chips, with a per-item `state`), `slider` (reka-ui SliderRoot — already draggable, snapping and keyboard-operable), `field` and `number-field` (settings rows), `popover`, `switch`, `spinner`. Every defect this round has produced so far came from hand-rolling something the registry already solved.
+- **Any focusable text control must compute to 16px at mobile widths.** iOS Safari force-zooms a focused input under 16px, which is why the vendored `Input` and `Textarea` carry `text-base md:text-sm`. Do not override that with a bare `text-sm`.
 - Copy the references; do not invent. Cherry Studio 2.0 supplies the top-bar chips, the single-card Composer and the reasoning popover's structure; Codex supplies the slider itself.
 - The top bar is a **normal, always-present bar**. Do not implement a transparent-then-materialising bar, and do not add scroll observers for it.
 - The strength slider is a **monotonic strength axis**. `关闭` and `自动` are never stops on it.
@@ -32,11 +34,12 @@
 - `src/client/components/session-list.vue` — sidebar header gains the app name and connection dot.
 - `src/client/views/settings-providers.vue`, `settings-plugins.vue`, `settings-provider-edit.vue`, `project-settings.vue` — each teleports its page title into the bar; the `h1`/back-link that duplicated it is removed from the scrolling body.
 - `src/client/views/chat.vue` — teleports the chat's own bar (project label, model chip, session settings) and stops passing those controls to the Composer.
-- `src/client/components/composer.vue` — one bordered card; toolbar row hosts the attachment button, a `controls` slot and the send button.
+- `src/client/components/composer.vue` — `InputGroup` + `InputGroupTextarea` + a block-end `InputGroupAddon` toolbar hosting the attachment button, the `controls` slot and the send button; previews use `AttachmentGroup`/`Attachment`. No hand-written card, border or focus ring.
 - `src/client/components/reasoning-control.vue` — **new.** The chip plus its popover: 思考 switch, 自动 toggle, strength slider. Replaces `reasoning-slider.vue`.
 - `src/client/components/reasoning-slider.vue` — **deleted** at the end of Task 5.
 - `src/client/stores/sync.ts` — gains `reasoningControlModel` and `reasoningChoiceFor`, the pure functions the new component is driven by.
 - `test/unit/client-sync-store.test.ts` — covers both new pure functions.
+- `src/client/components/session-settings.vue`, `src/client/views/project-settings.vue` — parameter rows move to `Field` + `NumberField` (Task 6).
 
 ---
 
@@ -222,68 +225,129 @@ git commit -m "feat(chat): move the model chip and session settings into the top
 
 ---
 
-### Task 3: Make the Composer one card
+### Task 3: Rebuild the Composer on `InputGroup` and `Attachment`
+
+The Composer's card, its focus ring, its attachment chips and its mobile font size are all
+solved by vendored components (commit `d5f8ed0`). This task deletes the hand-rolled versions
+rather than restyling them. **Do not write a bordered `div` and do not write `text-sm` on the
+textarea** — `InputGroup` owns the border and focus ring, and `Textarea` already carries
+`text-base md:text-sm`, which is what stops iOS Safari force-zooming a focused control under
+16px.
 
 **Files:**
 - Modify: `src/client/components/composer.vue`
 
 **Interfaces:**
-- Consumes: the `controls` slot contract, unchanged.
-- Produces: a Composer whose root is a single bordered card; `busy`, `hint` and connection messaging keep their current behaviour.
+- Consumes: `InputGroup`, `InputGroupTextarea`, `InputGroupAddon`, `InputGroupButton` from
+  `@/client/ui/input-group`; `Attachment`, `AttachmentGroup`, `AttachmentMedia`,
+  `AttachmentAction` from `@/client/ui/attachment`; `Spinner` from `@/client/ui/spinner`.
+- Produces: unchanged public surface — props `streaming`, `connected`, `canSend`, `hint`; emits
+  `send`, `stop`; exposes `confirmSend()` and `restoreSend()`; slot `controls`. Task 5 renders
+  the reasoning chip into that slot, so its name and position must not change.
 
-- [ ] **Step 1: Rebuild the template as one card**
+- [ ] **Step 1: Give each attachment its own upload state**
 
-In `src/client/components/composer.vue`, replace the whole `<template>` with:
+`Attachment` takes `state: 'idle' | 'uploading' | 'processing' | 'error' | 'done'` and styles
+each differently. Today the Composer has one global `上传中…` label and a per-item `failed`
+boolean, which cannot say *which* image is still uploading. Widen the item type and push the
+placeholder before the upload starts.
+
+In `<script setup>`, replace the `Attached` interface and `addFiles`:
+
+```ts
+interface Attached { attachment_id: number; preview: string; state: 'uploading' | 'error' | 'done' }
+```
+
+```ts
+/** Takes a materialised array: a live `FileList` empties out across the `await`s below. */
+async function addFiles(files: File[]) {
+  for (const f of files) {
+    if (!f.type.startsWith('image/')) continue
+    // Pushed before the await so the chip appears immediately and can show its own spinner.
+    const item = reactive<Attached>({ attachment_id: -1, preview: URL.createObjectURL(f), state: 'uploading' })
+    images.value.push(item)
+    pending.value++
+    try {
+      const done = await uploadImage(f)
+      item.attachment_id = done.attachment_id
+      // `uploadImage` returns its own object URL; drop ours rather than leaking it.
+      URL.revokeObjectURL(item.preview)
+      item.preview = done.preview
+      item.state = 'done'
+    }
+    catch (err) { console.error(err); item.state = 'error' }
+    finally { pending.value-- }
+  }
+}
+```
+
+Add `reactive` to the `vue` import. `pending` and `busy` stay exactly as they are — `busy`
+gates `submit()`, and a counter is still the only correct shape for concurrent uploads.
+
+Update the two places that read `failed`:
+
+```ts
+const parts: Part[] = images.value.filter((i) => i.state === 'done').map((i) => ({ type: 'image', attachment_id: i.attachment_id }))
+```
+
+`releasePreviews` is unchanged.
+
+- [ ] **Step 2: Replace the template**
 
 ```pug
 <template lang="pug">
 .p-3(@drop="onDrop" @dragover.prevent)
-  .mx-auto.flex.max-w-3xl.flex-col.gap-2.rounded-xl.border.p-2(class="bg-background focus-within:border-ring")
-    .flex.flex-wrap.gap-2(v-if="images.length")
-      .relative(v-for="(img, i) in images" :key="i")
-        img.h-16.w-16.rounded.object-cover(v-if="!img.failed" :src="img.preview")
-        .h-16.w-16.rounded.bg-destructive.text-xs.text-white.flex.items-center.justify-center(v-else) 失败
-        button.absolute.rounded-full.bg-background.border(class="-right-1 -top-1" @click="removeImage(i)")
+  InputGroup.mx-auto(class="max-w-3xl rounded-xl")
+    AttachmentGroup.px-2(v-if="images.length")
+      Attachment(
+        v-for="(img, i) in images" :key="i"
+        size="xs" orientation="vertical" :state="img.state")
+        AttachmentMedia(variant="image")
+          Spinner(v-if="img.state === 'uploading'")
+          img(v-else-if="img.state === 'done'" :src="img.preview" alt="")
+          X(v-else class="size-4")
+        AttachmentAction(title="移除" @click="removeImage(i)")
           X(class="size-3")
-    textarea.w-full.resize-none.bg-transparent.px-1.text-sm(
+    InputGroupTextarea(
       v-model="text" rows="2" placeholder="输入消息…"
-      class="oc-scroll max-h-[40vh] outline-none placeholder:text-muted-foreground"
+      class="max-h-[40vh]"
       @keydown="onKeydown" @paste="onPaste" @input="autoGrow")
-    //- Spec §7.3: the bottom row wraps on a narrow screen and nothing here needs hover to operate.
-    .flex.flex-wrap.items-center.gap-1
+    //- `align="block-end"` is what makes InputGroup lay out as a column with this row last.
+    InputGroupAddon(align="block-end")
       input.hidden(ref="fileInput" type="file" accept="image/*" multiple @change="onFileChange")
-      button.rounded-md.text-muted-foreground(
-        type="button" title="添加图片" :disabled="busy"
-        class="inline-flex size-8 items-center justify-center hover:bg-accent hover:text-foreground disabled:opacity-50"
-        @click="fileInput?.click()")
+      InputGroupButton(size="icon-xs" title="添加图片" :disabled="busy" @click="fileInput?.click()")
         ImagePlus(class="size-4")
       slot(name="controls")
       .ml-auto.flex.items-center.gap-2
-        span.text-xs.text-muted-foreground(v-if="busy") 上传中…
         span.text-xs.text-muted-foreground(v-if="!connected") 未连接
         span.text-xs(v-else-if="hint" class="text-destructive") {{ hint }}
-        button.rounded-full.bg-destructive.text-white(
-          v-if="streaming" type="button" title="停止"
-          class="inline-flex size-9 items-center justify-center" @click="emit('stop')")
+        InputGroupButton(
+          v-if="streaming" size="icon-sm" variant="destructive"
+          class="rounded-full" title="停止" @click="emit('stop')")
           Square(class="size-4")
-        button.rounded-full.bg-primary(
-          v-else type="button" title="发送" :disabled="!connected || !canSend || busy"
-          class="inline-flex size-9 items-center justify-center text-primary-foreground disabled:opacity-40"
-          @click="submit")
+        InputGroupButton(
+          v-else size="icon-sm" variant="default"
+          class="rounded-full" title="发送"
+          :disabled="!connected || !canSend || busy" @click="submit")
           Send(class="size-4")
 </template>
 ```
 
-The outer `border-t` is gone: the card's own border now separates the Composer from the message list.
+The global `上传中…` label is gone: each chip now shows its own spinner, which is both more
+informative and less text in a crowded row.
 
-- [ ] **Step 2: Make the textarea grow with its content**
+Update the imports: drop `Button` and `Textarea`, add the four `input-group` components, the
+four `attachment` components and `Spinner`.
 
-In the same file's `<script setup>`, add after `const fileInput = ...`:
+- [ ] **Step 3: Make the textarea grow with its content**
+
+`InputGroupTextarea` forwards to `Textarea`, which does not auto-grow. Add to `<script setup>`:
 
 ```ts
 const box = ref<HTMLTextAreaElement | null>(null)
 
-/** The card grows with the message until the textarea hits its own max height and scrolls. */
+/** Reset before measuring: `scrollHeight` never shrinks on its own. The cap lives in the
+ *  template's `max-h-[40vh]`, so past it the element scrolls and this stops changing height. */
 function autoGrow() {
   const el = box.value
   if (!el) return
@@ -292,39 +356,61 @@ function autoGrow() {
 }
 ```
 
-Bind that ref by adding `ref="box"` to the `textarea` in the template you just wrote.
-
-Reset the height when the box is cleared, inside `submit()`, immediately after `images.value = []`:
+`InputGroupTextarea` renders a component, not an element, so `ref="box"` would capture the
+component instance. Resolve the element in `autoGrow` instead:
 
 ```ts
-  if (box.value) box.value.style.height = 'auto'
+const box = ref<{ $el?: HTMLTextAreaElement } | HTMLTextAreaElement | null>(null)
+function element(): HTMLTextAreaElement | null {
+  const r = box.value as { $el?: HTMLTextAreaElement } | HTMLTextAreaElement | null
+  if (!r) return null
+  return '$el' in r ? (r.$el ?? null) : r
+}
 ```
 
-`restoreSend()` puts text back into an already-shrunk box, so add `autoGrow()` as its last line too.
+and have `autoGrow` call `element()`. Add `ref="box"` to the `InputGroupTextarea` line.
 
-Remove the now-unused `Textarea` and `Button` imports from this file. Keep `ImagePlus`, `Send`, `Square` and `X`.
+Call `autoGrow()` after every programmatic change to `text`: at the end of `submit()` (so the
+box collapses back to two rows after sending) and at the end of `restoreSend()` (so a restored
+message is fully visible). Both need `await nextTick()` first, because the value has not
+rendered yet; make both functions `async` — `submit` is only ever called from event handlers
+and `restoreSend` is called through `defineExpose`, so neither caller awaits a result today.
+Import `nextTick` from `vue`.
 
-- [ ] **Step 3: Verify**
+- [ ] **Step 4: Verify it compiles and renders**
 
-Run:
+Run: `pnpm typecheck && pnpm build`
+Expected: both exit 0.
 
-```powershell
-pnpm typecheck
-pnpm build
-pnpm exec vitest run --project unit test/unit/client-sync-store.test.ts
+Then confirm the template really produced the components rather than silently dropping them —
+Pug parse quirks fail this way. Compile the SFC and assert the render function references them:
+
+```bash
+node -e "const fs=require('fs');const p=require.resolve('@vue/compiler-sfc',{paths:[process.cwd()]});const {parse,compileTemplate}=require(p);const src=fs.readFileSync('src/client/components/composer.vue','utf8');const {descriptor,errors}=parse(src);console.log('parse errors:',errors);const r=compileTemplate({source:descriptor.template.content,filename:'composer.vue',id:'x',preprocessLang:'pug'});console.log('compile errors:',r.errors);for(const n of ['InputGroup','InputGroupTextarea','InputGroupAddon','AttachmentGroup'])console.log(n, r.code.includes(n)?'OK':'MISSING')"
 ```
 
-Expected: typecheck and build exit 0; the unit test file still passes untouched.
+Expected: both error arrays empty, all four `OK`.
 
-- [ ] **Step 4: Look at it**
+- [ ] **Step 5: Look at it in a browser**
 
-On a dev server you started, confirm by eye: the textarea and the toolbar sit inside one rounded border; the send button is a circle; typing several lines grows the card until it stops and the textarea scrolls internally; attaching an image still shows its thumbnail inside the card.
+On a dev server you started (**not 5173 or 5199**), at both a desktop width and a 390px-wide
+viewport:
 
-- [ ] **Step 5: Commit**
+- the Composer is one card — textarea and toolbar share a single border, and focusing the
+  textarea rings the whole card, not an inner box
+- typing past two lines grows the card; past ~40vh the textarea scrolls inside and the card
+  stops growing
+- attach two images: each chip appears immediately with a spinner, then becomes a thumbnail;
+  the remove button works and the previews scroll horizontally rather than wrapping
+- send: the box collapses back to two rows
+- at 390px, the textarea's computed `font-size` is **16px** (check in devtools — this is the
+  iOS force-zoom threshold, and it is the whole reason we use the vendored `Textarea`)
+
+- [ ] **Step 6: Commit**
 
 ```bash
 git add src/client/components/composer.vue
-git commit -m "feat(chat): collapse the composer into a single card"
+git commit -m "feat(chat): rebuild the Composer on InputGroup and Attachment"
 ```
 
 ---
@@ -522,16 +608,24 @@ git commit -m "feat(chat): derive the reasoning widgets from one pure model"
 
 ---
 
-### Task 5: Build the reasoning control
+### Task 5: Build the reasoning control on the vendored `Slider`
+
+**Do not write drag logic.** `@/client/ui/slider` wraps reka-ui's `SliderRoot`, which already
+drags, snaps to `step`, supports arrow keys and Home/End, and exposes a filled range. The spec's
+Codex look is reached by enlarging its thumb through `class`, not by reimplementing it.
 
 **Files:**
 - Create: `src/client/components/reasoning-control.vue`
-- Delete: `src/client/components/reasoning-slider.vue`
 - Modify: `src/client/views/chat.vue`
+- Delete: `src/client/components/reasoning-slider.vue`
 
 **Interfaces:**
-- Consumes: `reasoningControlModel`, `reasoningChoiceFor`, `ReasoningAction`, `REASONING_LABELS`, `reasoningStopsFor` — all from Task 4 and earlier.
-- Produces: `ReasoningControl` with props `modelValue: ReasoningChoice`, `stops: ReasoningStop[]`, `modelName?: string | null`, `inherited?: ReasoningChoice`, `canReset?: boolean`, and the single emit `update:modelValue`.
+- Consumes: `reasoningControlModel`, `reasoningChoiceFor`, `ReasoningControlModel`,
+  `ReasoningAction`, `REASONING_LABELS`, `reasoningStopsFor` from `@/client/stores/sync`;
+  `Popover`, `PopoverTrigger`, `PopoverContent` from `@/client/ui/popover`; `Switch` from
+  `@/client/ui/switch`; `Slider` from `@/client/ui/slider`; `Button` from `@/client/ui/button`.
+- Produces: `<ReasoningControl :capabilities :protocol :active :overridden @update="choice => …" />`,
+  rendered into the Composer's `controls` slot.
 
 - [ ] **Step 1: Write the component**
 
@@ -539,199 +633,241 @@ Create `src/client/components/reasoning-control.vue`:
 
 ```vue
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { Brain, RotateCcw } from '@lucide/vue'
+import { computed } from 'vue'
+import { Brain } from '@lucide/vue'
+import { Button } from '@/client/ui/button'
+import { Popover, PopoverContent, PopoverTrigger } from '@/client/ui/popover'
+import { Slider } from '@/client/ui/slider'
 import { Switch } from '@/client/ui/switch'
 import {
-  REASONING_LABELS, reasoningChoiceFor, reasoningControlModel,
-  type ReasoningAction, type ReasoningChoice, type ReasoningStop,
+  REASONING_LABELS,
+  reasoningChoiceFor,
+  reasoningControlModel,
+  reasoningStopsFor,
 } from '@/client/stores/sync'
+import type { ReasoningAction, ReasoningChoice } from '@/client/stores/sync'
+import type { ModelCapabilities, Protocol } from '@/shared/models'
 
-const props = withDefaults(defineProps<{
-  /** What this layer stores. `inherit` writes nothing and falls through to `inherited`. */
-  modelValue: ReasoningChoice
-  /** What this model's declared capabilities allow, weakest first (spec §5.5). */
-  stops: ReasoningStop[]
-  /** Named in the popover so it is always clear whose capabilities produced these stops. */
-  modelName?: string | null
-  /** What `inherit` resolves to below this layer. */
-  inherited?: ReasoningChoice
-  /** Whether restoring inheritance is meaningful here. */
-  canReset?: boolean
-}>(), { modelName: null, inherited: 'inherit', canReset: false })
+const props = defineProps<{
+  capabilities: ModelCapabilities | null
+  protocol: Protocol | null
+  /** The effective choice, already resolved through Project inheritance by the parent. */
+  active: ReasoningChoice
+  /** True when the session overrides its Project, which is what surfaces the 默认 button. */
+  overridden: boolean
+  /** No model resolved yet — a different disabled reason from "this model cannot reason". */
+  noModel: boolean
+}>()
+const emit = defineEmits<{ update: [choice: ReasoningChoice] }>()
 
-const emit = defineEmits<{ 'update:modelValue': [ReasoningChoice] }>()
+const stops = computed(() => (props.capabilities && props.protocol
+  ? reasoningStopsFor(props.capabilities, props.protocol)
+  : []))
+const model = computed(() => reasoningControlModel(stops.value, props.active))
 
-const open = ref(false)
-const track = ref<HTMLElement | null>(null)
-const dragging = ref(false)
+/** Spec §5.1: a control that cannot act says why; it never silently disappears. */
+const disabledReason = computed(() => {
+  if (props.noModel) return '先选择模型'
+  if (model.value.unsupported) return '该模型不支持推理'
+  return null
+})
 
-const active = computed<ReasoningChoice>(() => props.modelValue === 'inherit' ? props.inherited : props.modelValue)
-const model = computed(() => reasoningControlModel(props.stops, active.value))
-
-/** The chip is a status readout first; it says why it cannot act rather than disappearing. */
 const chipLabel = computed(() => {
-  if (!props.stops.length) return props.modelName ? '不支持推理' : '未选择模型'
-  if (!model.value.enabled) return '不思考'
-  if (model.value.auto) return '自动'
-  const current = model.value.strengths[model.value.index]
-  return current ? REASONING_LABELS[current] : `${labelOfChoice(active.value)}（不适用）`
-})
-const chipTitle = computed(() => {
-  if (props.stops.length) return '思考强度'
-  return props.modelName ? '该模型未声明推理能力' : '请先选择模型'
+  if (!model.value.enabled) return REASONING_LABELS.off
+  if (model.value.auto) return REASONING_LABELS.auto
+  return REASONING_LABELS[model.value.strengths[model.value.index] ?? 'medium']
 })
 
-function labelOfChoice(choice: ReasoningChoice): string {
-  return choice === 'inherit' ? '默认' : REASONING_LABELS[choice]
-}
-function labelOf(stop: ReasoningStop): string {
-  return REASONING_LABELS[stop]
-}
-function apply(action: ReasoningAction) {
-  emit('update:modelValue', reasoningChoiceFor(model.value, action))
+function act(action: ReasoningAction) {
+  emit('update', reasoningChoiceFor(model.value, action))
 }
 
-/** A lone stop sits mid-track: pinning it right would read as a maxed-out level. */
-function percent(i: number): string {
-  const n = model.value.strengths.length
-  return n < 2 ? '50%' : `${(i / (n - 1)) * 100}%`
-}
-const fill = computed(() => model.value.index < 0 ? '0%' : percent(model.value.index))
-const tone = computed(() => {
-  const n = model.value.strengths.length
-  if (model.value.index === n - 1 && n > 2) return 'bg-gradient-to-r from-blue-500 to-purple-500'
-  return 'bg-blue-500'
+/** reka-ui's Slider is multi-thumb, so it models its value as an array. */
+const sliderValue = computed({
+  get: () => [model.value.index],
+  set: ([i]) => {
+    const stop = model.value.strengths[i]
+    if (stop) act({ kind: 'strength', stop })
+  },
 })
-
-/** Pointer position → nearest stop. Dragging and clicking the track share one path. */
-function stopAt(clientX: number): ReasoningStop | undefined {
-  const el = track.value
-  const n = model.value.strengths.length
-  if (!el || n === 0) return undefined
-  const box = el.getBoundingClientRect()
-  if (box.width === 0) return model.value.strengths[0]
-  const ratio = Math.min(1, Math.max(0, (clientX - box.left) / box.width))
-  return model.value.strengths[Math.round(ratio * (n - 1))]
-}
-function onPointerDown(e: PointerEvent) {
-  if (!model.value.enabled) return
-  dragging.value = true
-  ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
-  const stop = stopAt(e.clientX)
-  if (stop) apply({ kind: 'strength', stop })
-}
-function onPointerMove(e: PointerEvent) {
-  if (!dragging.value) return
-  const stop = stopAt(e.clientX)
-  if (stop && stop !== model.value.strengths[model.value.index]) apply({ kind: 'strength', stop })
-}
-function onPointerUp(e: PointerEvent) {
-  dragging.value = false
-  ;(e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId)
-}
 </script>
 
-<template lang="pug">
-.relative(@click.stop)
-  button.inline-flex.items-center.gap-1.rounded-md.px-2.text-xs.text-muted-foreground(
-    type="button" :title="chipTitle" :disabled="!stops.length"
-    class="min-h-8 hover:bg-accent hover:text-foreground disabled:opacity-50"
-    @click="open = !open")
-    Brain(class="size-4")
-    span.truncate {{ chipLabel }}
-  //- Spec §6: the popover caps itself against the viewport and scrolls its own body.
-  .absolute.z-20.mb-2.flex.w-72.flex-col.gap-3.rounded-lg.border.bg-popover.p-3.shadow-lg(
-    v-if="open" class="bottom-full right-0 max-h-[60vh] max-w-[85vw] oc-scroll overflow-y-auto")
-    .flex.items-center.gap-2
-      span.text-sm.font-medium 思考
-      Switch(
-        :model-value="model.enabled" :disabled="!model.canDisable"
-        @update:model-value="apply({ kind: 'enable', on: $event })")
-      span.text-xs.text-muted-foreground(v-if="!model.canDisable") 该模型不支持关闭推理
-      button.ml-auto.text-xs.text-muted-foreground(
-        v-if="canReset" type="button" class="hover:text-foreground"
-        @click="emit('update:modelValue', 'inherit')") 默认
-    p.truncate.text-xs.text-muted-foreground(v-if="modelName") {{ modelName }}
-    .flex.items-center.gap-2
-      span.shrink-0.text-xs.text-muted-foreground 自动
-      Switch(
-        :model-value="model.auto" :disabled="!model.enabled"
-        @update:model-value="apply({ kind: 'auto', on: $event })")
-      span.ml-auto.truncate.text-xs.text-muted-foreground(v-if="!model.auto && model.enabled") {{ chipLabel }}
-    div(:class="!model.enabled || model.auto ? 'pointer-events-none opacity-40' : ''")
-      .relative.h-6.cursor-pointer(
-        ref="track" @pointerdown="onPointerDown" @pointermove="onPointerMove"
-        @pointerup="onPointerUp" @pointercancel="onPointerUp")
-        .absolute.h-1.rounded-full(class="left-0 right-0 top-2.5 bg-muted")
-        .absolute.h-1.rounded-full(class="left-0 top-2.5" :class="tone" :style="{ width: fill }")
-        span.absolute.rounded-full(
-          v-for="(s, i) in model.strengths" :key="s"
-          class="top-2.5 size-1.5 -translate-x-1/2 bg-muted-foreground/50" :style="{ left: percent(i) }")
-        span.absolute.rounded-full.bg-white.shadow(
-          v-if="model.index >= 0"
-          class="top-1 size-4 -translate-x-1/2 ring-1 ring-black/10" :style="{ left: fill }")
-      .flex.justify-between.pt-1
-        span.text-xs.text-muted-foreground(v-for="s in model.strengths" :key="s") {{ labelOf(s) }}
+<template>
+  <Popover>
+    <PopoverTrigger as-child>
+      <Button
+        variant="ghost"
+        size="xs"
+        class="gap-1.5"
+        :disabled="disabledReason !== null"
+        :title="disabledReason ?? '思考强度'"
+      >
+        <Brain class="size-4" />
+        <span class="text-xs">{{ chipLabel }}</span>
+      </Button>
+    </PopoverTrigger>
+    <PopoverContent align="start" class="w-80">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <span class="text-sm font-medium">思考</span>
+          <Switch
+            :model-value="model.enabled"
+            :disabled="!model.canDisable"
+            :title="model.canDisable ? undefined : '该模型无法关闭思考'"
+            @update:model-value="(on: boolean) => act({ kind: 'enable', on })"
+          />
+        </div>
+        <Button v-if="overridden" variant="ghost" size="xs" @click="emit('update', 'inherit')">
+          默认
+        </Button>
+      </div>
+
+      <div class="bg-border my-3 h-px" />
+
+      <div class="flex items-center gap-3">
+        <span class="text-sm">自动</span>
+        <Switch
+          :model-value="model.auto"
+          :disabled="!model.enabled"
+          @update:model-value="(on: boolean) => act({ kind: 'auto', on })"
+        />
+      </div>
+
+      <div class="mt-4">
+        <Slider
+          v-model="sliderValue"
+          :min="0"
+          :max="Math.max(model.strengths.length - 1, 0)"
+          :step="1"
+          :disabled="!model.enabled || model.auto"
+          class="[&_[data-slot=slider-thumb]]:size-5 [&_[data-slot=slider-track]]:h-1.5"
+        />
+        <div class="text-muted-foreground mt-2 flex justify-between text-[11px]">
+          <span
+            v-for="(stop, i) in model.strengths"
+            :key="stop"
+            :class="!model.enabled || model.auto ? 'opacity-40' : i === model.index ? 'text-foreground font-medium' : ''"
+          >{{ REASONING_LABELS[stop] }}</span>
+        </div>
+      </div>
+    </PopoverContent>
+  </Popover>
 </template>
 ```
 
-- [ ] **Step 2: Swap it into the chat page and delete the old component**
+This file is deliberately **not** Pug: it carries arbitrary-value Tailwind classes (`[&_[data-slot=…]]`)
+and inline TypeScript in handlers, both of which the Global Constraints forbid in Pug templates.
+Plain SFC syntax has neither restriction.
 
-In `src/client/views/chat.vue`, change the import:
+- [ ] **Step 2: Wire it into the chat page**
 
-```ts
-import ReasoningControl from '@/client/components/reasoning-control.vue'
-```
+In `src/client/views/chat.vue`, replace the `ReasoningSlider` import and its usage in the
+Composer's `controls` slot with `ReasoningControl`, passing the same capability and protocol
+values the old slider received, plus `:overridden` (already computable from whether the session's
+own params carry a reasoning key) and `:noModel` (true when no effective model resolves).
+Keep the `@update` handler wired to the same commit path the old `@update:model-value` used.
 
-and replace the `controls` slot body with:
-
-```pug
-    template(#controls)
-      ReasoningControl(
-        :model-value="form.reasoning" :stops="stops" :model-name="modelName"
-        :inherited="inheritedReasoning" :can-reset="form.reasoning !== 'inherit'"
-        @update:model-value="onReasoningChange")
-```
-
-Delete `src/client/components/reasoning-slider.vue`. Remove the now-unused `ReasoningSlider` import. `SOURCE_LABELS` is still used by `sources.system_prompt` inside `SessionSettings`; leave it.
-
-- [ ] **Step 3: Verify it compiles and nothing dangles**
-
-Run:
-
-```powershell
-pnpm typecheck
-pnpm build
-pnpm test
-```
-
-Expected: typecheck and build exit 0; the full suite passes. Then confirm the deleted component has no remaining references:
-
-```powershell
-git grep -n "reasoning-slider\|ReasoningSlider"
-```
-
-Expected: no output.
-
-- [ ] **Step 4: Look at it, and drive every state**
-
-On a dev server you started, confirm by eye and by clicking:
-
-- The chip shows the current level; with no model it reads 未选择模型 and is disabled with a tooltip.
-- Opening the popover shows 思考 on, the model's name, 自动, and the strength axis with every stop named.
-- Turning 思考 off greys both the 自动 toggle and the whole slider.
-- Turning 自动 on greys the slider and clears the thumb; turning it off lands on the middle stop.
-- **Dragging the white thumb** moves it and snaps to stops; clicking anywhere on the track jumps to the nearest stop.
-- `默认` appears only after an override and restores inheritance when clicked.
-- On a model whose capabilities do not allow disabling, the 思考 switch is disabled and explains why.
-
-Record what you observed. **Do not report this step as done without having actually done it** — this task's whole point is a control nobody has looked at.
-
-- [ ] **Step 5: Commit**
+- [ ] **Step 3: Delete the old slider**
 
 ```bash
-git add src/client/components/reasoning-control.vue src/client/views/chat.vue
 git rm src/client/components/reasoning-slider.vue
-git commit -m "feat(chat): rebuild the reasoning control as a switch, a toggle and a strength axis"
+```
+
+Then `grep -rn "reasoning-slider\|ReasoningSlider" src/` and expect no matches.
+
+- [ ] **Step 4: Verify it compiles**
+
+Run: `pnpm typecheck && pnpm build`
+Expected: both exit 0.
+
+- [ ] **Step 5: Look at it in a browser**
+
+On a dev server you started (**not 5173 or 5199**), at a desktop width and at 390px:
+
+- the chip sits in the Composer's toolbar row and reads the current stop by name
+- with no model selected, the chip is disabled and its tooltip says 先选择模型
+- on a non-reasoning model, disabled with 该模型不支持推理
+- **drag the thumb** — it follows the pointer and snaps to stops on release; arrow keys move it too
+- turning 思考 off greys both the 自动 switch and the slider
+- turning 自动 on greys the slider
+- moving the slider turns 自动 off
+- 默认 appears only when the session overrides its Project, and clicking it returns to inheritance
+- the popover opens without leaving the viewport at either width
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add -A src/client/components src/client/views/chat.vue
+git commit -m "feat(chat): build the reasoning control on the vendored slider"
+```
+
+---
+
+### Task 6: Move the settings forms onto `Field` and `NumberField`
+
+The session- and project-settings forms stack bare labels and inputs with no spacing scale,
+which is the "间距完全贴死" the user called out. `Field` supplies the label/description/error
+structure and the spacing; `NumberField` supplies a numeric control with real increment and
+decrement buttons instead of a raw `<input type="number">` — the same control whose implicit
+`v-model` number coercion caused the silent commit failure fixed in `3f015a2`.
+
+**Files:**
+- Modify: `src/client/components/session-settings.vue`
+- Modify: `src/client/views/project-settings.vue`
+
+**Interfaces:**
+- Consumes: `Field`, `FieldLabel`, `FieldDescription`, `FieldGroup` from `@/client/ui/field`;
+  `NumberField`, `NumberFieldContent`, `NumberFieldInput`, `NumberFieldDecrement`,
+  `NumberFieldIncrement` from `@/client/ui/number-field`.
+- Produces: no interface change. `ParamFields` keeps `string | number` for the three numeric
+  fields — `NumberField` is `number`-valued, so the union stays correct and `optionalNumber`
+  keeps handling both.
+
+- [ ] **Step 1: Read the two components' real props before writing anything**
+
+```bash
+cat src/client/ui/field/index.ts src/client/ui/number-field/index.ts
+sed -n '1,40p' src/client/ui/number-field/NumberField.vue
+```
+
+`NumberField` forwards reka-ui's `NumberFieldRoot`, so `min`, `max`, `step`, `disabled` and
+`v-model` are its props — do not invent names. Use what you read.
+
+- [ ] **Step 2: Convert `session-settings.vue`**
+
+Wrap each row in `Field` with a `FieldLabel`, and replace the three
+`Input(v-model="form.x" type="number" …)` lines with `NumberField`, carrying the same `min`,
+`max` and `step` values that are on them today (temperature 0–2 step 0.1; top_p 0–1 step 0.05;
+max_tokens min 1 step 1). Keep every `@change="emit('commit')"` binding — `NumberField` emits
+`update:modelValue`, so commit on that instead, and verify the commit still fires.
+
+`Field` also carries `FieldDescription`; use it for the "留空则继承" hints that are currently
+inline text, rather than leaving them as bare spans.
+
+- [ ] **Step 3: Convert `project-settings.vue` the same way**
+
+Its three numeric inputs are the same three fields with the same ranges. It uses `placeholder="继承"`
+today; that becomes a `FieldDescription`.
+
+- [ ] **Step 4: Verify**
+
+Run: `pnpm typecheck && pnpm build`
+Expected: both exit 0.
+
+- [ ] **Step 5: Look at it in a browser, and prove the values still persist**
+
+This is the exact path that silently lost data before `3f015a2`, so verify by *use*, not by diff:
+
+- set temperature, top_p and max_tokens in session settings, reload the page, confirm all three
+  came back
+- do the same in project settings
+- confirm the increment/decrement buttons respect the min/max bounds
+- confirm rows have breathing room at 390px as well as desktop
+
+- [ ] **Step 6: Run the full unit suite and commit**
+
+```bash
+pnpm test
+git add src/client/components/session-settings.vue src/client/views/project-settings.vue
+git commit -m "feat(settings): move the parameter forms onto Field and NumberField"
 ```
