@@ -303,19 +303,32 @@ describe('reasoning control', () => {
     expect(choiceFromParams({ reasoning_effort: 'low' })).toBe('low')
   })
 
-  it('offers only the stops the model actually declares', () => {
+  const ALL_STRENGTHS = ['auto', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']
+
+  it('treats an undeclared effort list as unrestricted, matching the server', () => {
     // A model that never declared reasoning gets no control at all.
     expect(reasoningStopsFor({}, 'anthropic')).toEqual([])
     expect(reasoningStopsFor(undefined, 'anthropic')).toEqual([])
-    // Auto is always available on a reasoning model, even with no declared efforts.
-    expect(reasoningStopsFor({ reasoning: true }, 'anthropic')).toEqual(['auto'])
-    // Off appears only where the model says it can be turned off...
-    expect(reasoningStopsFor({ reasoning: true, reasoning_can_disable: true }, 'anthropic')).toEqual(['off', 'auto'])
-    // ...and the declared efforts follow the canonical order, not the declaration order.
+    // Undeclared is not a restriction (spec §3.3): `buildProviderOptions` reads `!declared?.length`
+    // the same way, and a gateway that advertises no levels degrades on one it cannot honour.
+    expect(reasoningStopsFor({ reasoning: true }, 'anthropic')).toEqual(ALL_STRENGTHS)
+    // An empty array is the same "undeclared" state as an absent key, never "nothing allowed".
+    expect(reasoningStopsFor({ reasoning: true, reasoning_efforts: [] }, 'anthropic')).toEqual(ALL_STRENGTHS)
+    // 立即 is not part of the relaxation: it still needs an explicit `reasoning_can_disable`.
+    expect(reasoningStopsFor({ reasoning: true, reasoning_can_disable: true }, 'anthropic'))
+      .toEqual(['off', ...ALL_STRENGTHS])
+  })
+
+  it('lets a declared effort list restrict the strengths', () => {
+    // The declared efforts follow the canonical order, not the declaration order.
     expect(reasoningStopsFor({ reasoning: true, reasoning_efforts: ['ultra', 'low', 'medium'] }, 'vertex'))
       .toEqual(['auto', 'low', 'medium', 'ultra'])
-    // Nothing is inferred: an undeclared level is never offered.
+    // A declaration still excludes everything it leaves out.
     expect(reasoningStopsFor({ reasoning: true, reasoning_efforts: ['high'] }, 'openai-responses')).toEqual(['auto', 'high'])
+    // Declaring levels does not by itself unlock 立即.
+    expect(reasoningStopsFor({ reasoning: true, reasoning_efforts: ['low'] }, 'anthropic')).toEqual(['auto', 'low'])
+    expect(reasoningStopsFor({ reasoning: true, reasoning_efforts: ['low'], reasoning_can_disable: true }, 'anthropic'))
+      .toEqual(['off', 'auto', 'low'])
   })
 
   it('hides Off on a protocol that has no disable value to send', () => {

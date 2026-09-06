@@ -92,17 +92,43 @@ async function addModel() {
   } catch (err) { report(err) }
 }
 
-/** The one persistence path for a model row: send the patch, then re-read what the server stored. */
-async function applyModel(m: Model, patch: Partial<ModelInput>) {
-  try {
-    await api.updateModel(requireId(), m.id, patch)
-    models.value = await api.models(requireId())
-    await config.load()
-  } catch (err) { report(err) }
+/**
+ * Declaring capabilities is several clicks in a row, and the server replaces `capabilities`
+ * wholesale, so a patch computed from the row as it was at the last render would erase the click
+ * before it. Each handler therefore writes its intent into the row first — the switch and the
+ * chips move on the click, and the next click builds on the value already there — and this is the
+ * one path that carries it to the server.
+ *
+ * The writes are chained so they reach the server in click order, and only the newest one's
+ * re-read is applied: an older response landing later would repaint the table with a row the user
+ * has already moved past. A failed write re-reads too, because the optimistic row is then a lie.
+ */
+let writes: Promise<void> = Promise.resolve()
+let writeSeq = 0
+
+function applyModel(m: Model, patch: Partial<ModelInput>) {
+  const seq = ++writeSeq
+  writes = writes.then(async () => {
+    try {
+      await api.updateModel(requireId(), m.id, patch)
+    } catch (err) { report(err) }
+    if (seq !== writeSeq) return
+    try {
+      models.value = await api.models(requireId())
+      await config.load()
+    } catch (err) { report(err) }
+  })
 }
 
-async function toggleModel(m: Model, key: 'enabled' | BooleanCapability, value: boolean) {
-  await applyModel(m, key === 'enabled' ? { enabled: value } : { capabilities: { ...m.capabilities, [key]: value } })
+function toggleModel(m: Model, key: 'enabled' | BooleanCapability, value: boolean) {
+  if (key === 'enabled') {
+    m.enabled = value
+    applyModel(m, { enabled: value })
+    return
+  }
+  const capabilities: ModelCapabilities = { ...m.capabilities, [key]: value }
+  m.capabilities = capabilities
+  applyModel(m, { capabilities })
 }
 
 function hasEffort(m: Model, effort: ReasoningEffort): boolean {
@@ -115,12 +141,13 @@ function hasEffort(m: Model, effort: ReasoningEffort): boolean {
  * `buildProviderOptions` both read absent *and* empty as "undeclared", which downstream means no
  * restriction rather than nothing allowed, so the undeclared state keeps a single spelling.
  */
-async function toggleEffort(m: Model, effort: ReasoningEffort, on: boolean) {
+function toggleEffort(m: Model, effort: ReasoningEffort, on: boolean) {
   const next = REASONING_EFFORTS.filter((e) => (e === effort ? on : hasEffort(m, e)))
   const capabilities: ModelCapabilities = { ...m.capabilities }
   if (next.length) capabilities.reasoning_efforts = next
   else delete capabilities.reasoning_efforts
-  await applyModel(m, { capabilities })
+  m.capabilities = capabilities
+  applyModel(m, { capabilities })
 }
 
 async function removeModel(m: Model) {
@@ -187,48 +214,49 @@ async function removeModel(m: Model) {
       .flex.gap-2
         Input(v-model="newModelId" placeholder="model id，例如 gpt-5.1" @keydown.enter="addModel")
         Button(@click="addModel") 添加
-      //- Spec §8: the capability grid is wider than a phone, so it gets its own bounded vertical
-      //- box with a local horizontal scroller inside it. Neither axis may widen the page, and 保存
-      //- / 删除供应商 sit above the box where a long model list can never push them out of reach.
-      .oc-scroll.max-h-96.overflow-y-auto.rounded-md.border
-        .overflow-x-auto
-          table.w-full.text-sm
-            thead
-              tr.text-left.text-xs.text-muted-foreground
-                th.px-2.py-1.whitespace-nowrap 模型
-                th.px-2.whitespace-nowrap 启用
-                th.px-2.whitespace-nowrap 视觉
-                th.px-2.whitespace-nowrap 推理
-                th.px-2.whitespace-nowrap 工具
-                th.px-2.whitespace-nowrap 图片输出
-                th.px-2.whitespace-nowrap 可关闭推理
-                th.px-2.whitespace-nowrap 推理档位
-                th
-            tbody
-              tr.border-t.align-top(v-for="m in models" :key="m.id")
-                td.px-2.py-2
-                  span.whitespace-nowrap {{ m.display_name }}
-                  span.ml-1.whitespace-nowrap.text-xs.text-muted-foreground(v-if="m.display_name !== m.model_id") {{ m.model_id }}
-                td.px-2.py-2
-                  Switch(:model-value="m.enabled" @update:model-value="toggleModel(m, 'enabled', $event)")
-                td.px-2.py-2
-                  Switch(:model-value="!!m.capabilities.vision" @update:model-value="toggleModel(m, 'vision', $event)")
-                td.px-2.py-2
-                  Switch(:model-value="!!m.capabilities.reasoning" @update:model-value="toggleModel(m, 'reasoning', $event)")
-                td.px-2.py-2
-                  Switch(:model-value="!!m.capabilities.tools" @update:model-value="toggleModel(m, 'tools', $event)")
-                td.px-2.py-2
-                  Switch(:model-value="!!m.capabilities.image_output" @update:model-value="toggleModel(m, 'image_output', $event)")
-                td.px-2.py-2
-                  Switch(:model-value="!!m.capabilities.reasoning_can_disable" @update:model-value="toggleModel(m, 'reasoning_can_disable', $event)")
-                td.px-2.py-2
-                  .flex.w-52.flex-wrap.gap-1
-                    button(
-                      v-for="e in REASONING_EFFORTS" :key="e" type="button"
-                      class="rounded border px-1.5 py-0.5 text-xs"
-                      :class="hasEffort(m, e) ? 'border-primary bg-accent text-foreground' : 'border-transparent bg-muted text-muted-foreground'"
-                      :aria-pressed="hasEffort(m, e)"
-                      @click="toggleEffort(m, e, !hasEffort(m, e))") {{ REASONING_LABELS[e] }}
-                td.px-2.py-2.text-right
-                  button.whitespace-nowrap.text-xs.text-destructive(@click="removeModel(m)") 删除
+      //- Spec §8: the capability grid is wider than a phone, so one box owns both axes. It has to
+      //- be one box and not a vertical box wrapping a horizontal one: the inner scroller would be
+      //- as tall as the whole table, putting its horizontal scrollbar thousands of pixels below
+      //- the visible area on a provider with a hundred-odd models. Neither axis may widen the
+      //- page, and 保存 / 删除供应商 sit above the box where no model list can push them away.
+      .oc-scroll.max-h-96.overflow-auto.rounded-md.border
+        table.w-full.text-sm
+          thead
+            tr.text-left.text-xs.text-muted-foreground
+              th.px-2.py-1.whitespace-nowrap 模型
+              th.px-2.whitespace-nowrap 启用
+              th.px-2.whitespace-nowrap 视觉
+              th.px-2.whitespace-nowrap 推理
+              th.px-2.whitespace-nowrap 工具
+              th.px-2.whitespace-nowrap 图片输出
+              th.px-2.whitespace-nowrap 可关闭推理
+              th.px-2.whitespace-nowrap 推理档位
+              th
+          tbody
+            tr.border-t.align-top(v-for="m in models" :key="m.id")
+              td.px-2.py-2
+                span.whitespace-nowrap {{ m.display_name }}
+                span.ml-1.whitespace-nowrap.text-xs.text-muted-foreground(v-if="m.display_name !== m.model_id") {{ m.model_id }}
+              td.px-2.py-2
+                Switch(:model-value="m.enabled" @update:model-value="toggleModel(m, 'enabled', $event)")
+              td.px-2.py-2
+                Switch(:model-value="!!m.capabilities.vision" @update:model-value="toggleModel(m, 'vision', $event)")
+              td.px-2.py-2
+                Switch(:model-value="!!m.capabilities.reasoning" @update:model-value="toggleModel(m, 'reasoning', $event)")
+              td.px-2.py-2
+                Switch(:model-value="!!m.capabilities.tools" @update:model-value="toggleModel(m, 'tools', $event)")
+              td.px-2.py-2
+                Switch(:model-value="!!m.capabilities.image_output" @update:model-value="toggleModel(m, 'image_output', $event)")
+              td.px-2.py-2
+                Switch(:model-value="!!m.capabilities.reasoning_can_disable" @update:model-value="toggleModel(m, 'reasoning_can_disable', $event)")
+              td.px-2.py-2
+                .flex.w-52.flex-wrap.gap-1
+                  button(
+                    v-for="e in REASONING_EFFORTS" :key="e" type="button"
+                    class="rounded border px-1.5 py-0.5 text-xs"
+                    :class="hasEffort(m, e) ? 'border-primary bg-accent text-foreground' : 'border-transparent bg-muted text-muted-foreground'"
+                    :aria-pressed="hasEffort(m, e)"
+                    @click="toggleEffort(m, e, !hasEffort(m, e))") {{ REASONING_LABELS[e] }}
+              td.px-2.py-2.text-right
+                button.whitespace-nowrap.text-xs.text-destructive(@click="removeModel(m)") 删除
 </template>

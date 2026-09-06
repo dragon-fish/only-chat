@@ -71,8 +71,10 @@ Project 配置不复制到 session。每次开始生成时，服务端从最新�
 - “立即”表示显式关闭 reasoning；只在模型能力声明支持关闭时显示。
 - “自动”表示开启 reasoning，但不发送 effort，让模型或供应商自行决定；DeepSeek 等模型依赖此语义。
 - 其他档位开启 reasoning 并发送相应 effort。
-- 滑块只显示模型能力声明支持的档位，不能选择无效值。
-- reasoning 模型未声明档位时至少显示“自动”；为兼容已有 `reasoning: true` 模型，可显示基础的 Low / Medium / High，但不会仅凭模型名猜测 XHigh、Max 或 Ultra。
+- 滑块不显示当前模型不可用的档位，不能选择无效值。
+- `reasoning_efforts` 已声明时构成限制：滑块只显示其中列出的档位。未声明（缺失或空数组）表示「未声明」而非「不允许」，不构成限制，此时显示全部强度档位。服务端 `buildProviderOptions` 已以 `!declared?.length` 作同样解读，客户端与之保持一致。理由是不广告档位的网关（如 DeepSeek）会对不支持的取值优雅降级，要求逐模型手工声明是无谓的负担。这仍不是基于模型名的推断——不推断任何东西，而是在没有声明时不施加限制。
+- “立即”不参与这一放宽：它始终要求显式的 `reasoning_can_disable`。发送模型无法处理的显式关闭值比发送一个强度更危险。
+- 协议层枚举仍是兜底：Anthropic 的 `effort` 与 Gemini 的 `thinkingLevel` 只接受各自支持的取值，协议无法承载的档位不会被发送。
 - 模型即使未正确标记 reasoning 能力，只要供应商实际返回 reasoning，系统仍保存、同步和回传，不以能力标签过滤数据。
 
 配置中的 `reasoning_enabled` 为可选布尔值；缺失表示继承。`reasoning_effort` 为可选且可空：缺失表示继承，`null` 表示显式 Auto，字符串表示显式强度。

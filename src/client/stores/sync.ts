@@ -29,9 +29,17 @@ export const REASONING_LABELS: Record<ReasoningStop, string> = {
 const NO_DISABLE_VALUE: readonly Protocol[] = ['openai-completions']
 
 /**
- * The stops one model may be set to. Capabilities are the only source: nothing is inferred from a
- * model id, an undeclared effort is never offered, and a reasoning model that declared no efforts
- * still gets Auto (spec §3.3/§4.4).
+ * The stops one model may be set to (spec §3.3/§4.4). A declared `reasoning_efforts` restricts the
+ * strengths to exactly what it lists; an absent or empty list means "undeclared", which is *not* a
+ * restriction — every strength stays reachable. That is the same reading `buildProviderOptions`
+ * already applies server-side (`!declared?.length` there), and gateways that do not advertise
+ * levels degrade gracefully on one they cannot honour, so demanding a per-model declaration would
+ * be busywork. The per-protocol enums (Anthropic's `effort`, Gemini's `thinkingLevel`) remain the
+ * backstop for a strength the protocol cannot carry.
+ *
+ * `off` is deliberately excluded from that relaxation: sending an explicit disable value a model
+ * cannot honour is riskier than sending a strength, so 立即 still needs `reasoning_can_disable`.
+ * Nothing here is ever inferred from a model id.
  */
 export function reasoningStopsFor(capabilities: ModelCapabilities | undefined, protocol: Protocol | undefined): ReasoningStop[] {
   if (!capabilities?.reasoning) return []
@@ -41,7 +49,7 @@ export function reasoningStopsFor(capabilities: ModelCapabilities | undefined, p
   return REASONING_ORDER.filter((stop) => {
     if (stop === 'off') return canDisable
     if (stop === 'auto') return true
-    return declared.includes(stop)
+    return declared.length === 0 || declared.includes(stop)
   })
 }
 

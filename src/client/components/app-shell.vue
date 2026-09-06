@@ -21,7 +21,7 @@ const drawerOpen = ref(false)
     //- Spec §7.1: the sheet's absolutely positioned close button lands on top of the sidebar
     //- header's own controls, so it is turned off and 关闭 is rendered in the header's normal flow.
     SheetContent(side="left" class="w-72 p-0" :show-close-button="false")
-      SessionList(closable @navigate="drawerOpen = false" @close="drawerOpen = false")
+      SessionList(:closable="true" @navigate="drawerOpen = false" @close="drawerOpen = false")
   .flex.min-w-0.flex-1.flex-col
     header.flex.h-12.shrink-0.items-center.gap-2.border-b.px-3
       Button(variant="ghost" size="icon" class="md:hidden" @click="drawerOpen = true")
