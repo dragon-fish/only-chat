@@ -603,6 +603,27 @@ describe('reasoningControlModel', () => {
     expect(reasoningControlModel(['auto', 'low'], 'auto').unsupported).toBe(false)
     expect(reasoningControlModel(['auto', 'low'], 'off').unsupported).toBe(false)
   })
+
+  // A model that cannot reason yields NO stops at all, and this is the shape the chip's disabled
+  // state is derived from. `unsupported` is deliberately false here -- there is no stored strength
+  // being contradicted, there is simply nothing to offer -- so a caller must decide "this model
+  // cannot reason" from an empty axis, never from `unsupported`.
+  it('reports an empty axis, not an unsupported strength, when the model cannot reason', () => {
+    const m = reasoningControlModel([], 'inherit')
+    expect(m.strengths).toEqual([])
+    expect(m.canDisable).toBe(false)
+    expect(m.index).toBe(-1)
+    expect(m.unsupported).toBe(false)
+  })
+
+  // Reasoning models that pin no strength: the axis is empty but `auto` is still meaningful.
+  it('treats an auto-only model as having no strengths to slide between', () => {
+    const m = reasoningControlModel(['auto'], 'auto')
+    expect(m.strengths).toEqual([])
+    expect(m.auto).toBe(true)
+    expect(m.index).toBe(-1)
+    expect(m.unsupported).toBe(false)
+  })
 })
 
 describe('reasoningChoiceFor', () => {
