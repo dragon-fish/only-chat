@@ -136,7 +136,7 @@ Popover
         //- through `Intl.NumberFormat`, whose default of 3 rewrote a stored 0.6667 to 0.667.
         NumberField(
           id="oc-session-temperature" :model-value="optionalNumber(form.temperature)"
-          :min="0" :max="2" :step="0.1" :step-snapping="false"
+          :min="0" :max="2" :step="0.1" :step-snapping="false" :disable-wheel-change="true"
           :format-options="{ maximumFractionDigits: 10 }"
           @update:model-value="setParam('temperature', $event)"
           @keydown.capture="guardStep('temperature', $event)"
@@ -157,7 +157,7 @@ Popover
             RotateCcw(class="size-3.5")
         NumberField(
           id="oc-session-top-p" :model-value="optionalNumber(form.top_p)"
-          :min="0" :max="1" :step="0.05" :step-snapping="false"
+          :min="0" :max="1" :step="0.05" :step-snapping="false" :disable-wheel-change="true"
           :format-options="{ maximumFractionDigits: 10 }"
           @update:model-value="setParam('top_p', $event)"
           @keydown.capture="guardStep('top_p', $event)"
@@ -178,7 +178,7 @@ Popover
             RotateCcw(class="size-3.5")
         NumberField(
           id="oc-session-max-tokens" :model-value="optionalNumber(form.max_tokens)"
-          :min="1" :step="1" :step-snapping="false" :format-options="{ useGrouping: false }"
+          :min="1" :step="1" :step-snapping="false" :disable-wheel-change="true" :format-options="{ useGrouping: false }"
           @update:model-value="setParam('max_tokens', $event)"
           @keydown.capture="guardStep('max_tokens', $event)"
           @wheel.capture="guardStep('max_tokens', $event)")
