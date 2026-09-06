@@ -2,9 +2,74 @@ import { computed, reactive, ref, shallowRef } from 'vue'
 import { defineStore } from 'pinia'
 import { api } from '@/client/lib/api'
 import { WsClient, type WsStatus } from '@/client/lib/ws-client'
-import type { Message, Project, Session, UserSettings } from '@/shared/models'
+import type { ModelRef } from '@/shared/api'
+import type { Message, Project, ReasoningEffort, Session, SessionParams, UserSettings } from '@/shared/models'
 import type { Part } from '@/shared/parts'
 import type { WsCommand, WsEvent } from '@/shared/ws'
+
+/**
+ * `inherit` leaves both reasoning keys out of the params so the Project inherits from the
+ * provider/model default; `auto` turns reasoning on without sending an effort (spec §3.3).
+ */
+export type ProjectReasoningChoice = 'inherit' | 'off' | 'auto' | ReasoningEffort
+
+/** What the Project settings form holds. Only `name` is required (spec §3.1); every other field
+ *  may be blank, and blank must travel as `null`/absent rather than as a copied inherited value. */
+export interface ProjectFormState {
+  name: string
+  system_prompt: string
+  model: ModelRef | null
+  temperature: string
+  top_p: string
+  max_tokens: string
+  reasoning: ProjectReasoningChoice
+}
+
+/** Blank stays blank: an unparseable or empty box contributes no key at all. */
+function optionalNumber(raw: string): number | undefined {
+  const trimmed = raw.trim()
+  if (trimmed === '') return undefined
+  const n = Number(trimmed)
+  return Number.isFinite(n) ? n : undefined
+}
+
+function reasoningParams(choice: ProjectReasoningChoice): SessionParams {
+  if (choice === 'inherit') return {}
+  if (choice === 'off') return { reasoning_enabled: false }
+  return { reasoning_enabled: true, reasoning_effort: choice === 'auto' ? null : choice }
+}
+
+/** `null` when the user filled nothing in, so the Project's `params` column stays NULL. */
+export function projectParamsFromForm(form: ProjectFormState): SessionParams | null {
+  const temperature = optionalNumber(form.temperature)
+  const top_p = optionalNumber(form.top_p)
+  const max_tokens = optionalNumber(form.max_tokens)
+  const params: SessionParams = {
+    ...(temperature === undefined ? {} : { temperature }),
+    ...(top_p === undefined ? {} : { top_p }),
+    ...(max_tokens === undefined ? {} : { max_tokens }),
+    ...reasoningParams(form.reasoning),
+  }
+  return Object.keys(params).length === 0 ? null : params
+}
+
+/** The prompt is stored verbatim — trimming is only used to decide whether it is empty (spec §3.2). */
+export function projectUpdateCommand(projectId: number, form: ProjectFormState): WsCommand {
+  return {
+    type: 'project.update',
+    project_id: projectId,
+    name: form.name.trim(),
+    system_prompt: form.system_prompt.trim() === '' ? null : form.system_prompt,
+    provider_id: form.model?.provider_id ?? null,
+    model_id: form.model?.model_id ?? null,
+    params: projectParamsFromForm(form),
+  }
+}
+
+/** Moving a chat out of a Project sends an explicit `null`; an omitted field would be a no-op. */
+export function moveSessionCommand(sessionId: number, projectId: number | null): WsCommand {
+  return { type: 'session.update', session_id: sessionId, project_id: projectId }
+}
 
 function pathToRoot(byId: Map<number, Message>, headId: number | null): Message[] {
   const out: Message[] = []
@@ -30,6 +95,12 @@ export const useSyncStore = defineStore('sync', () => {
 
   const sessionList = computed(() => [...sessions.values()].sort((a, b) => b.updated_at - a.updated_at))
   const projectList = computed(() => [...projects.values()].sort((a, b) => b.updated_at - a.updated_at))
+
+  /** Sidebar grouping: pass `null` for the unprojected Chats section. Inherits `sessionList`'s
+   *  newest-first order, so a Project row's first entry is its latest chat. */
+  function sessionsInProject(projectId: number | null): Session[] {
+    return sessionList.value.filter((s) => s.project_id === projectId)
+  }
 
   function bucket(sessionId: number): Map<number, Message> {
     let b = messages.get(sessionId)
@@ -174,6 +245,6 @@ export const useSyncStore = defineStore('sync', () => {
 
   return {
     status, snapshotSeq, sessions, projects, messages, streamingIds, settings, lastError, sessionList, projectList,
-    applyEvent, ingestMessages, pathFor, siblingsOf, isStreaming, loadSessions, loadProjects, loadMessages, connect, send,
+    applyEvent, ingestMessages, sessionsInProject, pathFor, siblingsOf, isStreaming, loadSessions, loadProjects, loadMessages, connect, send,
   }
 })

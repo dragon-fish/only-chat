@@ -1,12 +1,17 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { useSyncStore } from '@/client/stores/sync'
+import { moveSessionCommand, projectParamsFromForm, projectUpdateCommand, useSyncStore, type ProjectFormState } from '@/client/stores/sync'
 import type { Message, Project, Session } from '@/shared/models'
+import { parseCommand } from '@/shared/ws'
 
 const session: Session = { id: 1, user_id: 1, project_id: null, title: 't', head_message_id: null, provider_id: null, model_id: null, system_prompt: null, params: null, created_at: 1, updated_at: 1, archived_at: null }
 const project: Project = { id: 1, user_id: 1, name: 'p', system_prompt: null, provider_id: null, model_id: null, params: null, created_at: 1, updated_at: 1 }
 const msg = (id: number, parent_id: number | null, role: 'user' | 'assistant', over: Partial<Message> = {}): Message =>
   ({ id, session_id: 1, parent_id, seq: id, role, parts: [], provider_id: null, model_id: null, usage: null, status: 'done', error: null, created_at: 0, ...over })
+const mkSession = (id: number, over: Partial<Session> = {}): Session => ({ ...session, id, title: `s${id}`, updated_at: id, ...over })
+const mkProject = (id: number, over: Partial<Project> = {}): Project => ({ ...project, id, name: `p${id}`, updated_at: id, ...over })
+/** Every optional field blank: this is what the settings form holds for a name-only Project. */
+const blankForm: ProjectFormState = { name: '  研究  ', system_prompt: '', model: null, temperature: '', top_p: '', max_tokens: '', reasoning: 'inherit' }
 
 describe('sync store', () => {
   beforeEach(() => setActivePinia(createPinia()))
@@ -108,5 +113,108 @@ describe('sync store', () => {
     s.applyEvent({ type: 'project.deleted', project_id: project.id })
     expect(s.projects.has(project.id)).toBe(false)
     expect(s.sessions.get(session.id)?.project_id).toBeNull()
+  })
+})
+
+describe('project navigation view-model', () => {
+  beforeEach(() => setActivePinia(createPinia()))
+
+  it('sorts projects by updated_at descending', () => {
+    const s = useSyncStore()
+    for (const p of [mkProject(1, { updated_at: 10 }), mkProject(2, { updated_at: 30 }), mkProject(3, { updated_at: 20 })]) {
+      s.applyEvent({ type: 'project.created', project: p })
+    }
+    expect(s.projectList.map((p) => p.id)).toEqual([2, 3, 1])
+  })
+
+  it('groups sessions under their project and keeps unprojected ones in Chats', () => {
+    const s = useSyncStore()
+    s.applyEvent({ type: 'project.created', project: mkProject(1) })
+    s.applyEvent({ type: 'project.created', project: mkProject(2) })
+    for (const row of [
+      mkSession(10, { project_id: 1, updated_at: 10 }),
+      mkSession(11, { project_id: 1, updated_at: 30 }),
+      mkSession(12, { project_id: 2, updated_at: 20 }),
+      mkSession(13, { project_id: null, updated_at: 40 }),
+      mkSession(14, { project_id: null, updated_at: 5 }),
+    ]) s.applyEvent({ type: 'session.created', session: row })
+
+    expect(s.sessionsInProject(1).map((x) => x.id)).toEqual([11, 10])
+    expect(s.sessionsInProject(2).map((x) => x.id)).toEqual([12])
+    expect(s.sessionsInProject(null).map((x) => x.id)).toEqual([13, 14])
+    // A Project with no chats renders the placeholder row, so the empty list must be reachable.
+    expect(s.sessionsInProject(3)).toEqual([])
+  })
+
+  it('moves a session into a project and back out to Chats', () => {
+    const s = useSyncStore()
+    s.applyEvent({ type: 'project.created', project: mkProject(1) })
+    s.applyEvent({ type: 'session.created', session: mkSession(10) })
+    expect(s.sessionsInProject(null).map((x) => x.id)).toEqual([10])
+
+    // Moving out must send an explicit `null`, never an omitted field: omitting it would leave
+    // the session in its Project (spec §7.1).
+    expect(moveSessionCommand(10, 1)).toEqual({ type: 'session.update', session_id: 10, project_id: 1 })
+    expect(moveSessionCommand(10, null)).toEqual({ type: 'session.update', session_id: 10, project_id: null })
+    expect(parseCommand(JSON.stringify(moveSessionCommand(10, null)))).toEqual({ type: 'session.update', session_id: 10, project_id: null })
+
+    s.applyEvent({ type: 'session.updated', session: mkSession(10, { project_id: 1 }) })
+    expect(s.sessionsInProject(1).map((x) => x.id)).toEqual([10])
+    expect(s.sessionsInProject(null)).toEqual([])
+
+    s.applyEvent({ type: 'session.updated', session: mkSession(10, { project_id: null }) })
+    expect(s.sessionsInProject(1)).toEqual([])
+    expect(s.sessionsInProject(null).map((x) => x.id)).toEqual([10])
+  })
+
+  it('returns a deleted project’s chats to the Chats section', () => {
+    const s = useSyncStore()
+    s.applyEvent({ type: 'project.created', project: mkProject(1) })
+    s.applyEvent({ type: 'session.created', session: mkSession(10, { project_id: 1 }) })
+    s.applyEvent({ type: 'session.created', session: mkSession(11, { project_id: 1 }) })
+    expect(s.sessionsInProject(null)).toEqual([])
+
+    s.applyEvent({ type: 'project.deleted', project_id: 1 })
+    expect(s.projectList).toEqual([])
+    expect(s.sessionsInProject(null).map((x) => x.id)).toEqual([11, 10])
+    expect(s.sessions.size).toBe(2)
+  })
+
+  it('sends null for every optional Project setting left empty', () => {
+    // Nothing may be copied from an inherited default just because the form rendered it (spec §3.1).
+    expect(projectParamsFromForm(blankForm)).toBeNull()
+    expect(projectUpdateCommand(7, blankForm)).toEqual({
+      type: 'project.update', project_id: 7, name: '研究',
+      system_prompt: null, provider_id: null, model_id: null, params: null,
+    })
+    expect(parseCommand(JSON.stringify(projectUpdateCommand(7, blankForm)))).toMatchObject({ params: null, model_id: null })
+  })
+
+  it('keeps only the parameters the user actually filled in', () => {
+    const params = projectParamsFromForm({ ...blankForm, temperature: '0.7' })
+    expect(params).toEqual({ temperature: 0.7 })
+    expect(Object.keys(params!)).toEqual(['temperature'])
+  })
+
+  it('maps the reasoning choice onto the enabled/effort pair', () => {
+    expect(projectParamsFromForm({ ...blankForm, reasoning: 'off' })).toEqual({ reasoning_enabled: false })
+    expect(projectParamsFromForm({ ...blankForm, reasoning: 'auto' })).toEqual({ reasoning_enabled: true, reasoning_effort: null })
+    expect(projectParamsFromForm({ ...blankForm, reasoning: 'xhigh' })).toEqual({ reasoning_enabled: true, reasoning_effort: 'xhigh' })
+    // `inherit` leaves both keys absent so the Project itself inherits from the provider default.
+    expect(projectParamsFromForm({ ...blankForm, reasoning: 'inherit', top_p: '0.9' })).toEqual({ top_p: 0.9 })
+  })
+
+  it('builds a complete update command without rewriting the prompt', () => {
+    const form: ProjectFormState = {
+      name: 'Weekly report', system_prompt: '  keep\n  the indent  ', model: { provider_id: 2, model_id: 'gpt-5.1' },
+      temperature: '0.7', top_p: '', max_tokens: '2048', reasoning: 'high',
+    }
+    const cmd = projectUpdateCommand(7, form)
+    expect(cmd).toEqual({
+      type: 'project.update', project_id: 7, name: 'Weekly report',
+      system_prompt: '  keep\n  the indent  ', provider_id: 2, model_id: 'gpt-5.1',
+      params: { temperature: 0.7, max_tokens: 2048, reasoning_enabled: true, reasoning_effort: 'high' },
+    })
+    expect(parseCommand(JSON.stringify(cmd))).toEqual(cmd)
   })
 })
