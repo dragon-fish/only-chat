@@ -11,12 +11,15 @@ function toggle(key: string, value: boolean) {
 </script>
 
 <template lang="pug">
-.mx-auto.max-w-2xl.p-4.flex.flex-col.gap-4
-  RouterLink.text-xs.text-muted-foreground(to="/settings/providers") ← 返回供应商列表
-  h1.text-lg.font-semibold 插件
-  p.text-sm.text-muted-foreground 功能插件会出现在这里，可以随时开关。当前版本尚未内置任何功能插件。
-  ul.divide-y.rounded-md.border(v-if="Object.keys(sync.settings.plugins).length")
-    li.flex.items-center.gap-3.p-3(v-for="(on, key) in sync.settings.plugins" :key="key")
-      span {{ key }}
-      Switch(class="ml-auto" :model-value="on" @update:model-value="toggle(String(key), $event)")
+//- Spec §8: the route root is fixed-height and clips; the body below is its only scroll owner.
+.h-full.min-h-0.overflow-hidden
+  .oc-scroll.h-full.overflow-y-auto
+    .mx-auto.max-w-2xl.p-4.flex.flex-col.gap-4
+      RouterLink.text-xs.text-muted-foreground(to="/settings/providers") ← 返回供应商列表
+      h1.text-lg.font-semibold 插件
+      p.text-sm.text-muted-foreground 功能插件会出现在这里，可以随时开关。当前版本尚未内置任何功能插件。
+      ul.divide-y.rounded-md.border(v-if="Object.keys(sync.settings.plugins).length")
+        li.flex.items-center.gap-3.p-3(v-for="(on, key) in sync.settings.plugins" :key="key")
+          span {{ key }}
+          Switch(class="ml-auto" :model-value="on" @update:model-value="toggle(String(key), $event)")
 </template>
