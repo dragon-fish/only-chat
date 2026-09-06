@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed } from 'vue'
 import { RotateCcw, Settings2 } from '@lucide/vue'
 import { Input } from '@/client/ui/input'
 import { Label } from '@/client/ui/label'
+import { Popover, PopoverContent, PopoverTrigger } from '@/client/ui/popover'
 import { Textarea } from '@/client/ui/textarea'
 import type { SessionSettingSources, SessionSettingsForm, SettingSource } from '@/client/stores/sync'
 import type { Project } from '@/shared/models'
@@ -22,7 +23,6 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{ commit: [] }>()
 
-const open = ref(false)
 const inherited = computed(() => props.project?.params)
 
 const BADGES: Record<SettingSource, string> = {
@@ -39,26 +39,20 @@ function restore(field: 'system_prompt' | 'temperature' | 'top_p' | 'max_tokens'
   props.form[field] = ''
   emit('commit')
 }
-function toggle() {
-  open.value = !open.value
-}
-function close() {
-  open.value = false
-}
-
-onMounted(() => window.addEventListener('click', close))
-onUnmounted(() => window.removeEventListener('click', close))
 </script>
 
 <template lang="pug">
-.relative(@click.stop)
-  button.inline-flex.items-center.gap-1.rounded-md.border.px-2.py-1.text-xs.text-muted-foreground(
-    type="button" title="会话设置" class="hover:bg-accent hover:text-foreground" @click="toggle")
+Popover
+  PopoverTrigger.inline-flex.items-center.gap-1.rounded-md.border.px-2.py-1.text-xs.text-muted-foreground(
+    title="会话设置" class="hover:bg-accent hover:text-foreground")
     Settings2(class="size-3.5")
     span 会话设置
-  //- Spec §8: the panel caps itself against the viewport and scrolls its own body.
-  .absolute.z-20.mb-2.flex.w-80.flex-col.gap-3.overflow-y-auto.rounded-lg.border.bg-popover.p-3.shadow-lg(
-    v-if="open" class="bottom-full left-0 max-h-[60vh] max-w-[85vw] oc-scroll")
+  //- Spec §8: the panel caps itself against the viewport and scrolls its own body. The primitive
+  //- (Popper-backed, like Select) owns positioning: it opens toward whichever side has room and
+  //- shifts to stay on-screen, so the trigger no longer needs to know it now lives in the top bar.
+  PopoverContent(
+    align="end" :side-offset="8"
+    class="w-80 max-w-[85vw] max-h-(--reka-popover-content-available-height) gap-3 p-3 overflow-y-auto oc-scroll")
     div(v-if="hasSession")
       Label(class="text-xs") 标题
       Input(v-model="form.title" class="h-8 text-sm" placeholder="对话标题" @change="emit('commit')")
