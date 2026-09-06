@@ -4,6 +4,7 @@ import { ImagePlus, Send, Square, X } from '@lucide/vue'
 import { Button } from '@/client/ui/button'
 import { Textarea } from '@/client/ui/textarea'
 import { uploadImage } from '@/client/lib/image-prep'
+import { mergeRestoredText } from '@/client/stores/sync'
 import type { Part } from '@/shared/parts'
 
 interface Attached { attachment_id: number; preview: string; failed?: boolean }
@@ -84,16 +85,17 @@ function confirmSend() {
   dropSent()
 }
 /**
- * The command was rejected: put the message back. Anything typed since the send wins — the user is
- * mid-sentence and must not have it overwritten — so in that case the rejected copy is dropped.
+ * The command was rejected: put the message back without losing anything. The rejected message is
+ * the earlier one, so it is merged in above whatever the user started typing during the wait
+ * (spec §9); an untouched Composer therefore gets it back verbatim. Its images are already stored
+ * server-side, so re-attaching their ids costs nothing.
  */
 function restoreSend() {
   const previous = sent.value
   sent.value = null
   if (!previous) return
-  if (text.value.trim() || images.value.length) { releasePreviews(previous.images); return }
-  text.value = previous.text
-  images.value = previous.images
+  text.value = mergeRestoredText(previous.text, text.value)
+  images.value = [...previous.images, ...images.value]
 }
 defineExpose({ confirmSend, restoreSend })
 

@@ -55,6 +55,11 @@ export function choiceToParams(choice: ReasoningChoice): SessionParams {
 /**
  * The inverse. Presence decides, never truthiness: a `null` `reasoning_effort` is explicit Auto and
  * must not collapse into `inherit`, which is what an `??` default would silently do.
+ *
+ * Lossy in one direction only: the two keys inherit independently in storage, but the merged
+ * control has one position, so a half-set pair (an effort with no `reasoning_enabled`) reads as
+ * that effort and is written back as a full pair. Nothing in this UI can produce a half-set pair —
+ * `choiceToParams` always writes both keys — so the round trip is stable for anything it stores.
  */
 export function choiceFromParams(params: SessionParams | null | undefined): ReasoningChoice {
   if (!params) return 'inherit'
@@ -300,6 +305,46 @@ export function sendCommandFor({ sessionId, parentId, parts, model, draft }: Sen
   }
 }
 
+/**
+ * A `send` is outstanding from the moment it leaves until its message shows up, the command is
+ * rejected, the wait times out, or the chat it belonged to is left behind.
+ */
+export type OutstandingSend = 'idle' | 'outstanding'
+export type SendEvent = 'send' | 'landed' | 'error' | 'timeout' | 'abandoned'
+/** What the Composer must do with the copy it kept of the submitted message. */
+export type SendEffect = 'none' | 'confirm' | 'restore'
+
+export interface SendStep {
+  state: OutstandingSend
+  effect: SendEffect
+}
+
+/**
+ * The whole rule as a pure reducer; the view only performs the effect. Only a rejection puts the
+ * message back (spec §9). Landing, giving up and leaving all end the wait and drop the copy, which
+ * is also what releases its object URLs — an outstanding send is never carried into another chat,
+ * where its text would otherwise be restored into a Composer it does not belong to.
+ */
+export function nextSendState(state: OutstandingSend, event: SendEvent): SendStep {
+  switch (event) {
+    // A second send supersedes the first: the Composer already replaced the copy it kept.
+    case 'send': return { state: 'outstanding', effect: 'none' }
+    case 'error': return state === 'outstanding' ? { state: 'idle', effect: 'restore' } : { state: 'idle', effect: 'none' }
+    case 'landed':
+    case 'timeout':
+    case 'abandoned': return state === 'outstanding' ? { state: 'idle', effect: 'confirm' } : { state: 'idle', effect: 'none' }
+  }
+}
+
+/**
+ * What the Composer shows after a rejection. Neither side may be lost: whatever the user started
+ * typing during the wait stays, and the rejected message comes back above it, blank line between.
+ * An empty box therefore restores the message exactly as it was written.
+ */
+export function mergeRestoredText(restored: string, current: string): string {
+  return [restored, current].filter((t) => t.trim() !== '').join('\n\n')
+}
+
 /** What the assistant bubble shows before its first visible token (spec §7.4). */
 export interface AssistantWaitState {
   /** Spinner plus 正在思考…: the reply is live but has produced no visible text yet. */
@@ -342,6 +387,9 @@ export const useSyncStore = defineStore('sync', () => {
   const streamingIds = reactive(new Set<number>())
   const settings = ref<UserSettings>({ plugins: {} })
   const lastError = ref<string | null>(null)
+  // Whether the Projects list has been fetched. Before it has, a Project id from a route cannot be
+  // judged missing — only absent — and must not be silently dropped.
+  const projectsLoaded = ref(false)
   const client = shallowRef<WsClient | null>(null)
 
   const sessionList = computed(() => [...sessions.values()].sort((a, b) => b.updated_at - a.updated_at))
@@ -475,6 +523,7 @@ export const useSyncStore = defineStore('sync', () => {
 
   async function loadProjects(): Promise<void> {
     for (const p of await api.projects()) projects.set(p.id, p)
+    projectsLoaded.value = true
   }
 
   async function loadMessages(sessionId: number): Promise<void> {
@@ -495,7 +544,7 @@ export const useSyncStore = defineStore('sync', () => {
   }
 
   return {
-    status, snapshotSeq, sessions, projects, messages, streamingIds, settings, lastError, sessionList, projectList,
+    status, snapshotSeq, sessions, projects, messages, streamingIds, settings, lastError, projectsLoaded, sessionList, projectList,
     applyEvent, ingestMessages, sessionsInProject, pathFor, siblingsOf, isStreaming, loadSessions, loadProjects, loadMessages, connect, send,
   }
 })

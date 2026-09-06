@@ -2,10 +2,11 @@ import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
   assistantWaitState, choiceFromParams, choiceToParams, effectiveModelFor, modelOverrideAfterPick,
-  moveSessionCommand, paramsFromFields, projectFormFrom, projectParamsFromForm, projectUpdateCommand,
-  reasoningStopsFor, REASONING_LABELS, REASONING_ORDER, sendCommandFor, sessionFormFrom,
-  sessionSettingSources, useSyncStore,
-  type ParamFields, type ProjectFormState, type SessionConfigSource,
+  mergeRestoredText, moveSessionCommand, nextSendState, paramsFromFields, projectFormFrom,
+  projectParamsFromForm, projectUpdateCommand, reasoningStopsFor, REASONING_LABELS, REASONING_ORDER,
+  sendCommandFor, sessionFormFrom, sessionSettingSources, useSyncStore,
+  type OutstandingSend, type ParamFields, type ProjectFormState, type SendEvent,
+  type SessionConfigSource,
 } from '@/client/stores/sync'
 import type { ModelRef } from '@/shared/api'
 import type { Message, ModelCapabilities, Project, Session } from '@/shared/models'
@@ -470,5 +471,54 @@ describe('assistant wait state', () => {
     // A finished reply never shows the spinner, even when it produced no text at all.
     expect(assistantWaitState(assistant({ status: 'error', parts: [] })).waiting).toBe(false)
     expect(assistantWaitState(msg(1, null, 'user', { status: 'streaming', parts: [] })).waiting).toBe(false)
+  })
+})
+
+describe('outstanding send lifecycle', () => {
+  const step = (state: OutstandingSend, event: SendEvent) => nextSendState(state, event)
+
+  it('waits only between a send and its outcome', () => {
+    expect(step('idle', 'send')).toEqual({ state: 'outstanding', effect: 'none' })
+    expect(step('outstanding', 'landed')).toEqual({ state: 'idle', effect: 'confirm' })
+    expect(step('outstanding', 'error')).toEqual({ state: 'idle', effect: 'restore' })
+    expect(step('outstanding', 'timeout')).toEqual({ state: 'idle', effect: 'confirm' })
+    expect(step('outstanding', 'abandoned')).toEqual({ state: 'idle', effect: 'confirm' })
+    // A second send supersedes the first; the Composer has already replaced the copy it kept.
+    expect(step('outstanding', 'send')).toEqual({ state: 'outstanding', effect: 'none' })
+  })
+
+  it('never touches the Composer when nothing is outstanding', () => {
+    // Messages arrive and commands fail for reasons that have nothing to do with a send of ours:
+    // opening a chat, another device's reply, a rejected session.update.
+    for (const event of ['landed', 'error', 'timeout', 'abandoned'] as const) {
+      expect(step('idle', event)).toEqual({ state: 'idle', effect: 'none' })
+    }
+  })
+
+  it('drops a send that outlived the chat it belonged to', () => {
+    // One component instance serves every /c/:id, so a switch has to end the wait: resolving it
+    // against the next chat would restore the previous chat's message into its Composer.
+    const afterSend = step('idle', 'send')
+    const afterSwitch = step(afterSend.state, 'abandoned')
+    expect(afterSwitch).toEqual({ state: 'idle', effect: 'confirm' })
+    expect(step(afterSwitch.state, 'error').effect).toBe('none')
+  })
+})
+
+describe('rejected message recovery', () => {
+  it('restores an untouched Composer verbatim', () => {
+    expect(mergeRestoredText('  keep\n  the indent  ', '')).toBe('  keep\n  the indent  ')
+    expect(mergeRestoredText('', '')).toBe('')
+  })
+
+  it('keeps both halves when the user typed during the wait', () => {
+    // Neither may be lost: the rejected message is the earlier one, so it comes back above.
+    expect(mergeRestoredText('rejected', 'started typing')).toBe('rejected\n\nstarted typing')
+  })
+
+  it('adds no separator when one side is empty', () => {
+    // An image-only message carries no text; a blank line on its own would be a bogus edit.
+    expect(mergeRestoredText('', 'started typing')).toBe('started typing')
+    expect(mergeRestoredText('rejected', '   ')).toBe('rejected')
   })
 })

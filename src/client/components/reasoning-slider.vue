@@ -46,8 +46,10 @@ const tone = computed(() => {
 
 const fill = computed(() => index.value < 0 ? '0%' : percent(index.value))
 
+/** A lone stop sits in the middle of the track: pinning it to the right edge would read as a
+ *  maxed-out level rather than as the only level this model offers. */
 function percent(i: number): string {
-  return props.stops.length < 2 ? '100%' : `${(i / (props.stops.length - 1)) * 100}%`
+  return props.stops.length < 2 ? '50%' : `${(i / (props.stops.length - 1)) * 100}%`
 }
 function labelOf(stop: ReasoningStop): string {
   return REASONING_LABELS[stop]

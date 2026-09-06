@@ -9,9 +9,10 @@ import ReasoningSlider from '@/client/components/reasoning-slider.vue'
 import SessionSettings from '@/client/components/session-settings.vue'
 import { routeParamToId } from '@/client/lib/route-params'
 import {
-  choiceFromParams, effectiveModelFor, modelOverrideAfterPick, paramsFromFields, reasoningStopsFor,
-  sendCommandFor, sessionFormFrom, sessionSettingSources, useSyncStore,
-  type ReasoningChoice, type SessionConfigSource, type SessionSettingsForm, type SettingSource,
+  choiceFromParams, effectiveModelFor, modelOverrideAfterPick, nextSendState, paramsFromFields,
+  reasoningStopsFor, sendCommandFor, sessionFormFrom, sessionSettingSources, useSyncStore,
+  type OutstandingSend, type ReasoningChoice, type SendEvent, type SessionConfigSource,
+  type SessionSettingsForm, type SettingSource,
 } from '@/client/stores/sync'
 import { useConfigStore } from '@/client/stores/config'
 import type { ModelRef } from '@/shared/api'
@@ -37,10 +38,17 @@ const composer = ref<InstanceType<typeof Composer> | null>(null)
 
 // ---- draft and session settings
 
-/** A new chat started from a Project row carries it in the query; no session is created yet (spec §5.2). */
+/**
+ * A new chat started from a Project row carries it in the query; no session is created yet
+ * (spec §5.2). A Project deleted between opening the page and sending is dropped rather than sent:
+ * the foreign key would reject the whole message over a container that no longer exists. Before the
+ * Projects list has loaded nothing is known to be missing, so the id is kept.
+ */
 const draftProjectId = computed(() => {
   const raw = route.query.project
-  return routeParamToId(typeof raw === 'string' ? raw : undefined)
+  const id = routeParamToId(typeof raw === 'string' ? raw : undefined)
+  if (id === null) return null
+  return !sync.projectsLoaded || sync.projects.has(id) ? id : null
 })
 /** The draft's session-level model override, mirroring `sessions.provider_id` before it exists. */
 const draftModel = ref<ModelRef | null>(null)
@@ -115,38 +123,40 @@ watch(() => sync.snapshotSeq, (seq) => { if (seq > 0 && sid.value !== null) void
 // ---- outstanding send
 
 /**
- * A `send` is outstanding until the message shows up or the command is rejected. Errors carry no
- * `request_id` back to the client, so `lastError` is cleared before every command and any error
- * that follows is treated as this one's: the worst case is restoring a message that did arrive,
- * which is still better than silently swallowing one (spec §9).
+ * Whether a `send` is still unaccounted for. `nextSendState` owns the rule; this only runs the
+ * effect and the give-up timer. Errors carry no `request_id` back to the client, so `lastError` is
+ * cleared before every command and any error that follows is treated as this one's: the worst case
+ * is restoring a message that did arrive, which is still better than swallowing one (spec §9).
  */
-const outstanding = ref(false)
+const outstanding = ref<OutstandingSend>('idle')
 let outstandingTimer: ReturnType<typeof setTimeout> | undefined
 
-function clearOutstanding() {
-  outstanding.value = false
+function dispatch(event: SendEvent) {
+  const step = nextSendState(outstanding.value, event)
+  outstanding.value = step.state
   clearTimeout(outstandingTimer)
-  outstandingTimer = undefined
-}
-function markOutstanding() {
-  outstanding.value = true
-  clearTimeout(outstandingTimer)
-  outstandingTimer = setTimeout(clearOutstanding, 10_000)
+  outstandingTimer = step.state === 'outstanding' ? setTimeout(() => dispatch('timeout'), 10_000) : undefined
+  if (step.effect === 'confirm') composer.value?.confirmSend()
+  else if (step.effect === 'restore') composer.value?.restoreSend()
 }
 
-// A `send` on a fresh page creates the session server-side; jump to it when it appears.
+// The route record is shared by every /c/:id, so this component instance is reused across a chat
+// switch and has to drop everything belonging to the previous chat: an outstanding send resolved
+// against the next chat would restore the previous chat's message into its Composer. Not
+// `immediate` — nothing is outstanding before the first send, and `outstanding` is declared here.
+watch(sid, () => dispatch('abandoned'))
+
+// A `send` on a fresh page creates the session server-side; jump to it when it appears. The route
+// change swaps in a different page component, so this Composer unmounts with nothing left to keep.
 watch(() => sync.sessionList[0]?.id, (newest) => {
-  if (outstanding.value && newest !== undefined && sid.value === null) { clearOutstanding(); void router.push(`/c/${newest}`) }
+  if (outstanding.value === 'outstanding' && newest !== undefined && sid.value === null) {
+    dispatch('abandoned')
+    void router.push(`/c/${newest}`)
+  }
 })
-watch(() => path.value.length, () => {
-  if (outstanding.value) { clearOutstanding(); composer.value?.confirmSend() }
-})
-watch(() => sync.lastError, (e) => {
-  if (e === null || !outstanding.value) return
-  clearOutstanding()
-  composer.value?.restoreSend()
-})
-onBeforeUnmount(clearOutstanding)
+watch(() => path.value.length, () => dispatch('landed'))
+watch(() => sync.lastError, (e) => { if (e !== null) dispatch('error') })
+onBeforeUnmount(() => clearTimeout(outstandingTimer))
 
 function readModel(): ModelRef | null {
   try {
@@ -168,7 +178,7 @@ function send(command: Parameters<typeof sync.send>[0]) {
 function onSend(parts: Part[]) {
   const model = effective.value.model
   if (!model) return
-  markOutstanding()
+  dispatch('send')
   send(sendCommandFor({
     sessionId: sid.value,
     parentId: session.value?.head_message_id ?? null,
