@@ -40,9 +40,10 @@ async function addFromPreset() {
 //- Spec §8: the route root is fixed-height and clips; the body below is its only scroll owner, so
 //- a long provider list scrolls here instead of handing a scrollbar back to the document.
 .h-full.min-h-0.overflow-hidden
+  Teleport(to="#page-header")
+    span.truncate.text-sm.font-medium 供应商
   .oc-scroll.h-full.overflow-y-auto
     .mx-auto.max-w-2xl.p-4.flex.flex-col.gap-4
-      h1.text-lg.font-semibold 供应商
       .flex.gap-2
         Select(:model-value="chosen" @update:model-value="onChoose")
           SelectTrigger(class="w-56")

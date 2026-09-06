@@ -139,8 +139,10 @@ onUnmounted(clearPending)
 <template lang="pug">
 //- Spec §8: the page root owns the height, the form body is the only vertical scroller.
 .flex.h-full.min-h-0.overflow-hidden
+  Teleport(to="#page-header")
+    RouterLink.shrink-0.text-muted-foreground(to="/" class="hover:text-foreground") ←
+    span.truncate.text-sm.font-medium {{ project?.name ?? '项目设置' }}
   nav.flex.w-32.shrink-0.flex-col.gap-1.border-r.p-2(class="sm:w-44 sm:p-3")
-    RouterLink.mb-2.text-xs.text-muted-foreground(to="/") ← 返回
     button.rounded-md.px-2.py-1.text-left.text-sm(
       v-for="s in sections" :key="s.key"
       :class="section === s.key ? 'bg-accent font-medium' : 'hover:bg-accent'"

@@ -26,8 +26,7 @@ const drawerOpen = ref(false)
     header.flex.h-12.shrink-0.items-center.gap-2.border-b.px-3
       Button(variant="ghost" size="icon" class="md:hidden" @click="drawerOpen = true")
         Menu(class="size-5")
-      span.text-sm.font-medium only-chat
-      span.ml-auto.size-2.rounded-full(:class="sync.status === 'open' ? 'bg-emerald-500' : 'bg-zinc-400'" :title="sync.status")
+      #page-header.flex.min-w-0.flex-1.items-center.gap-2
     p.shrink-0.border-b.px-3.py-2.text-xs(v-if="bootError" class="bg-destructive/10 text-destructive") 加载失败，请刷新重试：{{ bootError }}
     //- Spec §11: a rejected WS command must surface instead of silently doing nothing.
     p.flex.shrink-0.items-center.gap-2.border-b.px-3.py-2.text-xs(v-if="sync.lastError" class="bg-destructive/10 text-destructive")
