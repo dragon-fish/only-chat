@@ -9,8 +9,8 @@ import ReasoningSlider from '@/client/components/reasoning-slider.vue'
 import SessionSettings from '@/client/components/session-settings.vue'
 import { routeParamToId } from '@/client/lib/route-params'
 import {
-  choiceFromParams, effectiveModelFor, modelOverrideAfterPick, nextSendState, paramsFromFields,
-  reasoningStopsFor, sendCommandFor, sessionFormFrom, sessionSettingSources, useSyncStore,
+  choiceFromParams, DISCONNECTED_MESSAGE, effectiveModelFor, modelOverrideAfterPick, nextSendState,
+  paramsFromFields, reasoningStopsFor, sendCommandFor, sessionFormFrom, sessionSettingSources, useSyncStore,
   type OutstandingSend, type ReasoningChoice, type SendEvent, type SessionConfigSource,
   type SessionSettingsForm, type SettingSource,
 } from '@/client/stores/sync'
@@ -169,10 +169,19 @@ function readModel(): ModelRef | null {
   } catch { return null }
 }
 
-/** Every command clears the previous error first, so the next one belongs to this command. */
-function send(command: Parameters<typeof sync.send>[0]) {
+/**
+ * Every command clears the previous error first, so the next one belongs to this command. A socket
+ * that is not open is a refusal, not a delay: the Composer already hard-gates 发送 the same way, and
+ * a settings command that leaves no trace here is one a slider move or a model pick was silently
+ * lost to (spec §9). Returns whether the command actually left.
+ */
+function send(command: Parameters<typeof sync.send>[0]): boolean {
   sync.lastError = null
-  sync.send(command)
+  if (sync.status !== 'open' || !sync.send(command)) {
+    sync.lastError = DISCONNECTED_MESSAGE
+    return false
+  }
+  return true
 }
 
 function onSend(parts: Part[]) {
@@ -193,7 +202,7 @@ function onSend(parts: Part[]) {
   }))
 }
 function onStop() {
-  if (sid.value !== null) sync.send({ type: 'stop', session_id: sid.value })
+  if (sid.value !== null) send({ type: 'stop', session_id: sid.value })
 }
 
 /** The whole form is the session's own overrides, so a restored field simply stops being sent. */

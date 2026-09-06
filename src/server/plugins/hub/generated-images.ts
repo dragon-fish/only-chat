@@ -25,29 +25,49 @@ function baseMime(value: string): string {
   return value.split(';')[0]!.trim().toLowerCase()
 }
 
+/** One wording for the limit, wherever it is reached: a declared length or the bytes themselves. */
+function tooLarge(bytes: number): Error {
+  return new Error(`generated image too large: ${bytes} bytes`)
+}
+
 /**
  * The bytes a `file` stream part actually stands for. A provider that answers with a link puts the
  * URL verbatim into `base64` (ai@7 `DefaultGeneratedFile` stores `data.url.toString()` there), so
  * the string has to be inspected before `uint8Array` decodes it as if it were base64.
+ *
+ * Both branches refuse an oversized output before they materialise it.
  */
 async function readOutput(file: GeneratedFile): Promise<{ bytes: Uint8Array<ArrayBuffer>; mime: string }> {
   if (!file.base64.startsWith('https://')) {
+    const inline = file.uint8Array
+    // Decided from the length alone, before anything is duplicated: this runs inside the `UserHub`
+    // DO, where a needless second copy of an oversized buffer costs every socket on the isolate.
+    if (inline.byteLength > MAX_UPLOAD_BYTES) throw tooLarge(inline.byteLength)
     // Copied out of the SDK's buffer: `crypto.subtle` needs bytes backed by a plain ArrayBuffer.
-    return { bytes: new Uint8Array(file.uint8Array), mime: baseMime(file.mediaType) }
+    return { bytes: new Uint8Array(inline), mime: baseMime(file.mediaType) }
   }
   const response = await fetch(file.base64)
   if (!response.ok) throw new Error(`generated image download failed: ${response.status}`)
+  // An oversized body is refused before it is buffered at all. Buffering it first would not fail
+  // one generation, it would OOM the DO and drop every socket this user has. A missing or
+  // non-numeric header is not an error, it only means there is nothing to reject early on.
+  const declared = Number(response.headers.get('content-length'))
+  if (Number.isFinite(declared) && declared > MAX_UPLOAD_BYTES) throw tooLarge(declared)
   // What the download served decides the type: the URL itself is never persisted or trusted.
   const mime = response.headers.get('content-type') ?? file.mediaType
   return { bytes: new Uint8Array(await response.arrayBuffer()), mime: baseMime(mime) }
 }
 
-/** Type and size are settled before the digest is taken, so rejected output is never hashed. */
+/**
+ * Type and size are settled before the digest is taken, so rejected output is never hashed. The
+ * size limit is checked here against the bytes that actually arrived; `readOutput`'s own checks are
+ * early rejections on a declared length, and a body that under-declared itself still lands here.
+ */
 async function validate(file: GeneratedFile): Promise<ValidatedImage> {
   const { bytes, mime } = await readOutput(file)
   if (!ACCEPTED_MIME.has(mime)) throw new Error(`unsupported generated image type: ${mime || 'unknown'}`)
   if (bytes.byteLength === 0) throw new Error('generated image is empty')
-  if (bytes.byteLength > MAX_UPLOAD_BYTES) throw new Error(`generated image too large: ${bytes.byteLength} bytes`)
+  if (bytes.byteLength > MAX_UPLOAD_BYTES) throw tooLarge(bytes.byteLength)
   return { bytes, mime, sha256: hex(await crypto.subtle.digest('SHA-256', bytes)) }
 }
 

@@ -44,6 +44,13 @@ describe('sync store', () => {
     expect(s.pathFor(1).map((m) => m.id)).toEqual([1, 2])
   })
 
+  it('reports a command that no socket ever took', () => {
+    const s = useSyncStore()
+    // `connect()` has not run, so nothing takes the command and no `error` event will ever arrive to
+    // explain it. A caller that latches UI state on the round trip has to learn that here.
+    expect(s.send({ type: 'stop', session_id: 1 })).toBe(false)
+  })
+
   it('keeps streaming state when REST data arrives with a stale status', () => {
     const s = useSyncStore()
     s.applyEvent({ type: 'session.created', session })

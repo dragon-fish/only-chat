@@ -86,11 +86,31 @@ function assistantParts(parts: Part[]): { assistant: AssistantPart[]; tool: Tool
         tool.push({ type: 'tool-result', toolCallId: p.call_id, toolName: p.name, output: { type: 'json', value: p.content as never } })
         break
       case 'image':
-        // Generated images are not replayed to the model in MVP.
+        // Generated images are not replayed to the model in MVP. `requiredAttachmentIds` below is
+        // the other half of that decision: it must skip exactly what this branch drops.
         break
     }
   }
   return { assistant, tool }
+}
+
+/**
+ * Which attachments `buildModelMessages` will actually ask for, given the same path. Pure, and
+ * deliberately next to the builder: "which attachments does the request need?" and "which ones does
+ * it use?" have to be one answer, or the caller resolves bytes for parts that are never sent.
+ *
+ * Only user images qualify today, because `assistantParts` drops generated ones. Resolving those
+ * too would read them out of R2 on every later turn — the quadratic re-read spec §5.6 exists to
+ * remove — upload model output to the provider's Files API, and fail the whole turn on a missing R2
+ * object that nothing in the request needed.
+ */
+export function requiredAttachmentIds(path: readonly Message[]): Set<number> {
+  const ids = new Set<number>()
+  for (const m of path) {
+    if (m.role !== 'user') continue
+    for (const p of m.parts) if (p.type === 'image') ids.add(p.attachment_id)
+  }
+  return ids
 }
 
 /**

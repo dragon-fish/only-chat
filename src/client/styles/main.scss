@@ -1,10 +1,16 @@
 // Spec §8: the application root owns 100dvh and no region may hand a scrollbar back to the
 // document. Pinning the document chain here means a page that forgets its own scroll owner clips
 // instead of silently falling back to body scrolling, which is exactly the bug this contract bans.
+//
+// The unit is `dvh` and not `%` so that the whole chain is the same height as the `h-dvh` shell it
+// wraps. Against a percentage chain the two agree on every desktop viewport, but on mobile they
+// agree only if the UA resolves `height: 100%` against the large viewport; where it resolves
+// against the small one, the shell would be taller than `#app` and `overflow: hidden` would clip
+// the bottom of the Composer.
 html,
 body,
 #app {
-  height: 100%;
+  height: 100dvh;
   overflow: hidden;
 }
 

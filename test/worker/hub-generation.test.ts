@@ -2,7 +2,7 @@ import { env } from 'cloudflare:workers'
 import { runInDurableObject } from 'cloudflare:test'
 import type { Context } from 'cordis'
 import type { FilesV4, FilesV4UploadFileCallOptions } from '@ai-sdk/provider'
-import { DefaultGeneratedFile } from 'ai'
+import { DefaultGeneratedFile, type GeneratedFile } from 'ai'
 import { MockLanguageModelV4, simulateReadableStream } from 'ai/test'
 import { eq } from 'drizzle-orm'
 import { describe, expect, it, vi } from 'vitest'
@@ -804,6 +804,41 @@ describe('generated image output', () => {
     expect(await env.BUCKET.head(r2Key(DEFAULT_USER_ID, digest))).toBeNull()
   })
 
+  it('does not resolve a generated image on any later turn', async () => {
+    const bytes = uniqueImageBytes()
+    const providerId = await seedProvider('img-history', 'img-1', false, { image_output: true })
+    let turn = 0
+    const created = await installMock(() => new MockLanguageModelV4({
+      doStream: async () => ({
+        stream: simulateReadableStream({
+          chunks: turn++ === 0 ? [...textThenFiles([inlineChunk(bytes)])] : [...STREAM],
+          chunkDelayInMs: null, initialDelayInMs: null,
+        }),
+      }),
+    }))
+
+    const c = await connect()
+    c.ws.send(send(providerId, 'img-1'))
+    expect(await c.next('message.done')).toMatchObject({ status: 'done' })
+    const sessionId = sessionIdOf(c)
+    const generatedId = imageEventsOf(c)[0]!.part.attachment_id
+    const saved = (await createDb(env.DB).query.attachments.findFirst({ where: eq(attachments.id, generatedId) }))!
+
+    // `buildModelMessages` never replays a generated image, so the next turn has no reason to read
+    // it: with the object gone, an assembler that still resolved it would fail the whole turn with
+    // `attachment N bytes missing` over bytes nothing in the request wanted.
+    await env.BUCKET.delete(saved.r2_key)
+
+    c.events.length = 0
+    c.ws.send(JSON.stringify({
+      type: 'send', session_id: sessionId, parent_id: null, parts: [{ type: 'text', text: 'again' }],
+      provider_id: providerId, model_id: 'img-1',
+    }))
+    expect(await c.next('message.done')).toMatchObject({ status: 'done' })
+    // ...and the request it did send carries no file part at all.
+    expect(filePartsOf(created[1]!)).toEqual([])
+  })
+
   it('never writes file content into the DO inflight snapshot', async () => {
     const bytes = uniqueImageBytes()
     const providerId = await seedProvider('img-inflight', 'img-1', false, { image_output: true })
@@ -876,6 +911,51 @@ describe('persistGeneratedImage', () => {
     await expect(persistGeneratedImage(await hubLike(), png(bytes))).rejects.toThrow(/too large/)
     expect(await attachmentBySha(await sha256(bytes))).toBeUndefined()
     expect(await storedObject(bytes)).toBeNull()
+  })
+
+  it('rejects an oversized inline output from its length, before copying the buffer', async () => {
+    // A source that reports its length but holds no bytes: the guard has to run on the SDK buffer
+    // itself, because a copy taken first would peak at twice the size inside the DO — and would
+    // also read as empty here, failing with the wrong error.
+    const source = { byteLength: MAX_UPLOAD_BYTES + 1 } as unknown as Uint8Array<ArrayBuffer>
+    const file = { mediaType: 'image/png', base64: '', get uint8Array() { return source } } as unknown as GeneratedFile
+    await expect(persistGeneratedImage(await hubLike(), file))
+      .rejects.toThrow(`generated image too large: ${MAX_UPLOAD_BYTES + 1} bytes`)
+  })
+
+  it('rejects an oversized HTTPS output on content-length, without reading the body', async () => {
+    // Buffering first would not fail one generation, it would OOM the `UserHub` DO and drop every
+    // socket this user has, so the body must never be touched.
+    const arrayBuffer = vi.fn(async () => new ArrayBuffer(0))
+    const response = {
+      ok: true,
+      headers: new Headers({ 'content-type': 'image/png', 'content-length': String(MAX_UPLOAD_BYTES + 1) }),
+      arrayBuffer,
+    } as unknown as Response
+    vi.stubGlobal('fetch', async () => response)
+    try {
+      await expect(persistGeneratedImage(await hubLike(), new DefaultGeneratedFile({ data: 'https://provider.example/huge.png', mediaType: 'image/png' })))
+        .rejects.toThrow(`generated image too large: ${MAX_UPLOAD_BYTES + 1} bytes`)
+      expect(arrayBuffer).not.toHaveBeenCalled()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('accepts a download whose content-length is absent or unparseable', async () => {
+    const bytes = uniqueImageBytes()
+    // No early rejection is possible without a usable number, and that is not itself an error.
+    vi.stubGlobal('fetch', async () => ({
+      ok: true,
+      headers: new Headers({ 'content-type': 'image/png', 'content-length': 'chunked' }),
+      arrayBuffer: async () => bytes.buffer,
+    } as unknown as Response))
+    try {
+      const part = await persistGeneratedImage(await hubLike(), new DefaultGeneratedFile({ data: 'https://provider.example/ok.png', mediaType: 'image/png' }))
+      expect(part).toEqual({ type: 'image', attachment_id: (await attachmentBySha(await sha256(bytes)))!.id })
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   it('propagates an R2 write failure without leaving an attachment row', async () => {
@@ -1102,8 +1182,14 @@ describe('cross-feature integration', () => {
       expect(filePartsOf(created[2]!)).toEqual([reference(providerA, 1)])
 
       // The pointer is scoped to (attachment, provider) and to nothing else: no session, no model.
-      const uploadsForImage = uploads.filter((u) => u.options.filename === `attachment-${uploadId}.png`)
-      expect(uploadsForImage.map((u) => u.providerId)).toEqual([providerA, providerB])
+      // Asserted on the whole recorded list rather than a filtered slice: the generated image is
+      // never replayed to the model, so it must never be read out of R2 or shipped to a provider's
+      // Files API either, and only "exactly these uploads happened" can say so.
+      expect(uploads.map((u) => [u.providerId, u.options.filename])).toEqual([
+        [providerA, `attachment-${uploadId}.png`],
+        [providerB, `attachment-${uploadId}.png`],
+      ])
+      expect(await pointersOf(generatedId)).toEqual([])
       const pointers = await pointersOf(uploadId)
       expect(pointers.map((r) => r.provider_id).sort((x, y) => x - y)).toEqual([providerA, providerB].sort((x, y) => x - y))
       expect(Object.keys(pointers[0]!).sort())

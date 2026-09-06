@@ -5,7 +5,7 @@ import type { Part } from '@/shared/parts'
 import type { SendCommand, WsCommand } from '@/shared/ws'
 import type { ModelRow, ProviderRow, SessionRow } from '../../db/schema'
 import { PartAccumulator } from '../llm/accumulator'
-import { buildModelMessages, buildProviderOptions, type AttachmentInput } from '../llm/messages'
+import { buildModelMessages, buildProviderOptions, requiredAttachmentIds, type AttachmentInput } from '../llm/messages'
 import { toUsage } from '../llm/usage'
 import type { Hub, InflightJob } from './index'
 import {
@@ -142,10 +142,9 @@ async function assembleContext(hub: Hub, target: Target, leafUserId: number): Pr
   const rows = await listMessages(hub.db, target.session.id)
   const byId = new Map(rows.map((r) => [r.id, toMessage(r)]))
   const path = pathToRoot(byId, leafUserId)
-  const ids = new Set<number>()
-  for (const m of path) {
-    for (const p of m.parts) if (p.type === 'image') ids.add(p.attachment_id)
-  }
+  // Which ids the request needs is the message builder's own answer, not a second one kept in step
+  // by convention: a part it drops must never be resolved here.
+  const ids = requiredAttachmentIds(path)
   // How those attachments travel is the transport's call, and it depends on the provider alone.
   const deps = { db: hub.db, assets: hub.app.assets, llm: hub.app.llm }
   return { path, attachments: await resolveAttachmentInputs(deps, target.provider, ids) }

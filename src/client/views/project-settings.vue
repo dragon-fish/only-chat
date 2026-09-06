@@ -7,7 +7,7 @@ import { Label } from '@/client/ui/label'
 import { Textarea } from '@/client/ui/textarea'
 import ModelPicker from '@/client/components/model-picker.vue'
 import ReasoningSlider from '@/client/components/reasoning-slider.vue'
-import { projectFormFrom, projectUpdateCommand, reasoningStopsFor, REASONING_ORDER, useSyncStore, type ProjectFormState } from '@/client/stores/sync'
+import { DISCONNECTED_MESSAGE, projectFormFrom, projectUpdateCommand, reasoningStopsFor, REASONING_ORDER, useSyncStore, type ProjectFormState } from '@/client/stores/sync'
 import { useConfigStore } from '@/client/stores/config'
 
 const props = defineProps<{ projectId: number | null }>()
@@ -33,6 +33,8 @@ let pendingTimer: ReturnType<typeof setTimeout> | undefined
 let savedAgainst = 0
 
 const project = computed(() => (props.projectId === null ? undefined : sync.projects.get(props.projectId)))
+/** 保存 is gated on the socket exactly as the Composer gates 发送: no round trip, no wait to latch. */
+const connected = computed(() => sync.status === 'open')
 const defaultModel = computed(() => config.modelFor(form.model))
 /**
  * With a default model set, only the levels it declares may be saved (spec §3.3). With no default
@@ -100,7 +102,13 @@ function save() {
   savedAgainst = p.updated_at
   saving.value = true
   sync.lastError = null
-  sync.send(projectUpdateCommand(p.id, form))
+  // A command that never reaches an open socket is never answered by `project.updated`, and there
+  // is no `request_id` to time out against. Latching the wait anyway is what left 保存 dead until
+  // the page was navigated away from, so an undeliverable save ends here and says so (spec §9).
+  if (!connected.value || !sync.send(projectUpdateCommand(p.id, form))) {
+    saving.value = false
+    sync.lastError = DISCONNECTED_MESSAGE
+  }
 }
 
 function clearPending() {
@@ -176,7 +184,9 @@ onUnmounted(clearPending)
         | {{ chatCount }} 个聊天 · 创建于 {{ formatTime(project.created_at) }} · 更新于 {{ formatTime(project.updated_at) }}
       button.ml-auto.shrink-0.text-xs(class="text-destructive" @click="onDelete")
         | {{ pendingDelete ? '确认删除项目' : '删除项目' }}
-      Button(size="sm" :disabled="!form.name.trim() || saving" @click="save") {{ saving ? '保存中…' : '保存' }}
+      Button(
+        size="sm" :disabled="!form.name.trim() || saving || !connected"
+        :title="connected ? undefined : DISCONNECTED_MESSAGE" @click="save") {{ saving ? '保存中…' : '保存' }}
   .flex.min-h-0.flex-1.items-center.justify-center.p-4.text-sm.text-muted-foreground(v-else)
     | {{ missing ? '项目不存在或已被删除。' : '加载中…' }}
 </template>

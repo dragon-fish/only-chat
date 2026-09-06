@@ -314,6 +314,13 @@ export function sendCommandFor({ sessionId, parentId, parts, model, draft }: Sen
 }
 
 /**
+ * Shown when a command could not be handed to an open socket. It reads like a server rejection
+ * because it occupies the same slot (spec §9): the point is that something visible happens, rather
+ * than a button latching on a round trip that was never started.
+ */
+export const DISCONNECTED_MESSAGE = '连接已断开，请等待重新连接后重试'
+
+/**
  * A `send` is outstanding from the moment it leaves until its message shows up, the command is
  * rejected, the wait times out, or the chat it belonged to is left behind.
  */
@@ -547,8 +554,15 @@ export const useSyncStore = defineStore('sync', () => {
     client.value.connect()
   }
 
-  function send(cmd: WsCommand): void {
-    client.value?.send(cmd)
+  /**
+   * False means the command was not handed over at all — there is no client yet, so it was dropped
+   * on the floor and no `error` event will ever arrive to explain it. Callers that latch UI state
+   * on a round trip must unlatch it themselves (spec §9).
+   */
+  function send(cmd: WsCommand): boolean {
+    if (!client.value) return false
+    client.value.send(cmd)
+    return true
   }
 
   return {

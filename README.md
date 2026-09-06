@@ -44,6 +44,34 @@ Every route — the SPA, `/api/*`, `/ws` and attachment downloads — sits behin
 images are served by the same authenticated `/api/attachments/:id` route as everything else, and
 the model never receives a link back to this deployment.
 
+## Upgrading an existing deployment
+
+**Migrate first, deploy second. Always.**
+
+    pnpm db:migrate:remote            # 1. schema
+    pnpm deploy                       # 2. code
+
+Drizzle names every column it reads — there is no `SELECT *` anywhere in `src/server` — so a new
+Worker talking to an unmigrated database does not degrade, it fails outright: every `/api/*` call
+and every WebSocket command answers `no such column: project_id`. That is a full outage until the
+migration runs. Migrating first is safe; the schema simply carries columns the running Worker does
+not ask for yet.
+
+This release's migration (`migrations/0001_projects-media.sql`) adds the `projects` and
+`attachment_provider_files` tables plus two columns:
+
+- `sessions.project_id` — nullable with no default, so every existing chat lands `project_id = NULL`
+  and simply belongs to no Project.
+- `providers.native_files` — `NOT NULL DEFAULT false`, so every existing provider keeps inlining
+  image bytes until it is turned on by hand.
+
+Neither column is read by the previous Worker, and neither has to be written by it, so **a
+Worker-only rollback is safe**: an old Worker against the new schema ignores the extra columns, and
+its inserts still satisfy the schema because both columns are nullable or defaulted. The migration
+itself is not designed to be rolled back — leave the schema forward.
+
+Locally the same ordering applies: run `pnpm db:migrate:local` before `pnpm dev` after a pull.
+
 ## Providers
 
 ### Google: two separate protocols

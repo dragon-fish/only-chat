@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildModelMessages, buildProviderOptions, type AttachmentInput, type BuildInput } from '@/server/plugins/llm/messages'
+import { buildModelMessages, buildProviderOptions, requiredAttachmentIds, type AttachmentInput, type BuildInput } from '@/server/plugins/llm/messages'
 import type { Message, ModelCapabilities } from '@/shared/models'
 import type { Protocol } from '@/shared/models'
 
@@ -145,6 +145,38 @@ describe('buildModelMessages', () => {
 
   it('throws when an image is missing from the map', () => {
     expect(() => buildModelMessages({ ...input('anthropic'), attachments: new Map() })).toThrow(/attachment 9/)
+  })
+})
+
+describe('requiredAttachmentIds', () => {
+  const generated: Message[] = [
+    ...path,
+    msg({ id: 4, role: 'assistant', parts: [{ type: 'text', text: 'here' }, { type: 'image', attachment_id: 77 }] }),
+    msg({ id: 5, role: 'user', parts: [{ type: 'image', attachment_id: 9 }, { type: 'image', attachment_id: 10 }] }),
+  ]
+
+  it('names every user image once, in path order', () => {
+    expect([...requiredAttachmentIds(generated)]).toEqual([9, 10])
+  })
+
+  /**
+   * The invariant this function exists for: a generated image is dropped by `assistantParts`, so
+   * asking for its bytes would upload model output to the provider and fail the turn on an R2 read
+   * nothing needed. Asserted against the builder's own output rather than restated by hand.
+   */
+  it('matches exactly the ids the built request asks for', () => {
+    const ids = requiredAttachmentIds(generated)
+    expect(ids.has(77)).toBe(false)
+    // Both directions at once: an id the builder wants but was not given makes it throw, and every
+    // file part it does emit is tagged with the id it came from, so nothing wider can slip through.
+    const tagged = (id: number): AttachmentInput => ({ mime: 'image/png', data: { type: 'data', data: new Uint8Array([id]) } })
+    const out = buildModelMessages({
+      protocol: 'anthropic', systemPrompt: null, path: generated,
+      attachments: new Map([...ids].map((id) => [id, tagged(id)])),
+    })
+    const parts = out.flatMap((m) => (Array.isArray(m.content) ? (m.content as Array<{ type: string; data?: unknown }>) : []))
+    const emitted = parts.filter((p) => p.type === 'file').map((p) => (p.data as { data: Uint8Array }).data[0])
+    expect([...new Set(emitted)].sort((a, b) => a! - b!)).toEqual([...ids].sort((a, b) => a - b))
   })
 })
 
