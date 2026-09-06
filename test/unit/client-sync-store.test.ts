@@ -4,7 +4,7 @@ import {
   assistantWaitState, choiceFromParams, choiceToParams, effectiveModelFor, modelOverrideAfterPick,
   mergeRestoredText, moveSessionCommand, nextSendState, paramsFromFields, projectFormFrom,
   projectParamsFromForm, projectUpdateCommand, reasoningChoiceFor, reasoningControlModel,
-  reasoningStopsFor, REASONING_LABELS, REASONING_ORDER,
+  reasoningDisabledReason, reasoningStopsFor, REASONING_LABELS, REASONING_ORDER,
   sendCommandFor, sessionFormFrom, sessionSettingSources, useSyncStore,
   type OutstandingSend, type ParamFields, type ProjectFormState, type ReasoningStop, type SendEvent,
   type SessionConfigSource,
@@ -592,6 +592,40 @@ describe('reasoningControlModel', () => {
     expect(reasoningControlModel(['auto', 'low'], 'auto').canDisable).toBe(false)
   })
 
+  // Spec §5.5: 总开关禁用并锁在「开」. The switch is disabled whenever `canDisable` is false, so if
+  // `enabled` also followed the stored value the panel would render 思考 off + disabled, 自动
+  // disabled and the slider disabled -- not one movable control, on a model that reasons anyway
+  // because `buildProviderOptions` omits the disable value it cannot express. Locking on is what
+  // keeps the rest of the panel live and stops the display contradicting the request.
+  it('locks 思考 on, not at the stored value, when the axis cannot express off', () => {
+    const m = reasoningControlModel(['auto', 'low', 'medium', 'high'], 'off')
+    expect(m.canDisable).toBe(false)
+    expect(m.enabled).toBe(true)
+    // Nothing is pinned, which is exactly what 自动 means: reason, send no effort.
+    expect(m.auto).toBe(true)
+    expect(m.index).toBe(-1)
+    // `off` is not a strength, so the lock must not be reported as an unsupported strength either.
+    expect(m.unsupported).toBe(false)
+  })
+
+  // The stranding path from the review, end to end: a Project stores 思考关, a session inherits it,
+  // and the session's model declares `reasoning` but not `reasoning_can_disable`.
+  it('leaves the slider reachable for a session that inherited off from a Project', () => {
+    const stops = reasoningStopsFor({ reasoning: true }, 'openai-responses')
+    const m = reasoningControlModel(stops, choiceFromParams({ reasoning_enabled: false }))
+    expect(m.canDisable).toBe(false)
+    expect(m.enabled).toBe(true)
+    expect(m.strengths.length).toBeGreaterThan(0)
+    // `enabled` is what gates 自动 and the slider in the component, so both stay usable.
+    expect(reasoningChoiceFor(m, { kind: 'strength', stop: 'high' })).toBe('high')
+  })
+
+  // A model that *can* disable still honours a stored off -- the lock is not a blanket override.
+  it('still reports off when the axis does contain off', () => {
+    expect(reasoningControlModel(FULL, 'off').enabled).toBe(false)
+    expect(reasoningControlModel(FULL, 'off').auto).toBe(false)
+  })
+
   it('flags a stored strength this model does not offer instead of rewriting it', () => {
     const m = reasoningControlModel(['auto', 'low', 'high'], 'ultra')
     expect(m.unsupported).toBe(true)
@@ -657,5 +691,28 @@ describe('reasoningChoiceFor', () => {
   it('turning 自動 off with a single strength picks that one', () => {
     const m = reasoningControlModel(['auto', 'low'], 'auto')
     expect(reasoningChoiceFor(m, { kind: 'auto', on: false })).toBe('low')
+  })
+})
+
+// Spec §5.1: the reason both hosts show. It lives here rather than in either component so the
+// Composer's chip and the Project page's inline body cannot state different things -- the split
+// that let the Project page render live-looking controls for a model that cannot reason at all.
+describe('reasoningDisabledReason', () => {
+  it('names the reason when the model declares no reasoning at all', () => {
+    expect(reasoningDisabledReason(reasoningStopsFor({}, 'openai-responses'))).toBe('该模型不支持推理')
+    expect(reasoningDisabledReason([])).toBe('该模型不支持推理')
+  })
+
+  it('stays silent whenever there is something to control', () => {
+    expect(reasoningDisabledReason(reasoningStopsFor({ reasoning: true }, 'openai-responses'))).toBeNull()
+    // Auto-only is still a working control: 思考 and 自动 both act, there is just no axis.
+    expect(reasoningDisabledReason(['auto'])).toBeNull()
+    expect(reasoningDisabledReason([...REASONING_ORDER])).toBeNull()
+  })
+
+  // The flag that must NOT be used for this: it is false exactly where the reason is needed.
+  it('does not fall for the unsupported flag, which is false for a non-reasoning model', () => {
+    expect(reasoningControlModel([], 'inherit').unsupported).toBe(false)
+    expect(reasoningDisabledReason([])).not.toBeNull()
   })
 })

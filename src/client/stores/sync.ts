@@ -57,7 +57,10 @@ export function reasoningStopsFor(capabilities: ModelCapabilities | undefined, p
 export interface ReasoningControlModel {
   /** Whether the 思考 switch can be turned off at all. */
   canDisable: boolean
-  /** Whether reasoning is currently on. */
+  /**
+   * Whether reasoning is currently on. Forced `true` when the axis cannot express `off`: the
+   * switch is then disabled *and locked on*, never disabled at a stored `off` (spec §5.5).
+   */
   enabled: boolean
   /** On means "enabled, with no strength pinned" — the provider decides. */
   auto: boolean
@@ -81,19 +84,46 @@ export type ReasoningAction =
  */
 export function reasoningControlModel(stops: ReasoningStop[], active: ReasoningChoice): ReasoningControlModel {
   const strengths = stops.filter((s): s is ReasoningStop => s !== 'off' && s !== 'auto')
-  const enabled = active !== 'off'
-  const auto = enabled && (active === 'auto' || active === 'inherit')
+  const canDisable = stops.includes('off')
+  /**
+   * Spec §5.5: when the model does not declare `reasoning_can_disable`, or the protocol cannot
+   * express "off", the 总开关 is disabled and *locked on* — 不假装能关. A stored `off` can reach
+   * this model anyway (a Project sets it, then a session inherits it, then the session picks a
+   * model that cannot honour it), and `buildProviderOptions` omits the disable value in exactly
+   * that case, so the model reasons regardless. Showing the switch off would therefore display the
+   * opposite of what the request does, AND strand the control set: the 思考 switch is disabled, and
+   * 自动 and the slider are gated on `enabled`, so nothing on the panel would be movable.
+   */
+  const lockedOn = active === 'off' && !canDisable
+  const enabled = active !== 'off' || lockedOn
+  // A locked-on `off` pins no strength, which is the same thing 自动 means: reason, send no effort.
+  const auto = enabled && (active === 'auto' || active === 'inherit' || lockedOn)
   // Narrowed by literal comparison, not by the `auto`/`enabled` booleans above, so the compiler
   // can see `active` is a real stop here without a cast: only `off`/`auto`/`inherit` are excluded.
   const index = active === 'off' || active === 'auto' || active === 'inherit' ? -1 : strengths.indexOf(active)
   return {
-    canDisable: stops.includes('off'),
+    canDisable,
     enabled,
     auto,
     strengths,
     index,
     unsupported: enabled && !auto && index < 0,
   }
+}
+
+/**
+ * Spec §5.1/§6: a reasoning control that cannot act states why instead of rendering dead widgets.
+ * Shared by both hosts — the Composer's chip, which disables itself and shows this as its `title`,
+ * and the inline body, which renders it in place of the three controls — so the two cannot drift.
+ *
+ * A model that cannot reason yields NO stops at all. Do NOT derive this from
+ * `ReasoningControlModel.unsupported`: that flag means "a strength is stored that this model does
+ * not offer", and it is false for a non-reasoning model, so it would leave the control enabled on
+ * exactly the model it must disable for. The chip's own extra case — no model resolved yet — is
+ * not expressible from stops and stays with the chip.
+ */
+export function reasoningDisabledReason(stops: ReasoningStop[]): string | null {
+  return stops.length === 0 ? '该模型不支持推理' : null
 }
 
 /**
