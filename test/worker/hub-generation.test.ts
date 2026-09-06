@@ -18,6 +18,7 @@ import { persistGeneratedImage } from '@/server/plugins/hub/generated-images'
 import { createSession, getSession, insertMessage, listMessages, toMessage } from '@/server/plugins/hub/sessions'
 import { attachmentProviderFiles, attachments, models, projects, providers, users } from '@/server/db/schema'
 import type { ProviderRow } from '@/server/db/schema'
+import { sendCommandFor } from '@/client/stores/sync'
 import { DEFAULT_USER_ID } from '@/shared/constants'
 import type { Message, ModelCapabilities } from '@/shared/models'
 import type { Part } from '@/shared/parts'
@@ -364,6 +365,36 @@ describe('project inheritance', () => {
     expect((err as { message: string }).message).toContain('session init fields')
     // The rejected command must not have persisted anything.
     expect(await listMessages(createDb(env.DB), sessionId)).toHaveLength(2)
+  })
+
+  it('accepts the Composer’s own payloads: the draft creates the session, the follow-up omits every init field', async () => {
+    // The client builds these commands; a follow-up that nulled the init fields out instead of
+    // omitting them would be rejected by the check above, so the builder is exercised end to end.
+    const providerId = await seedProvider()
+    const projectId = await seedProject({ system_prompt: 'PROJECT' })
+    const created = await installMock(streamingMock)
+    const c = await connect()
+    const model = { provider_id: providerId, model_id: 'mock-1' }
+    c.ws.send(JSON.stringify(sendCommandFor({
+      sessionId: null, parentId: null, parts: [{ type: 'text', text: 'first' }], model,
+      draft: { project_id: projectId, system_prompt: 'DRAFT', model: null, params: { reasoning_enabled: true, reasoning_effort: null } },
+    })))
+    expect(await c.next('message.done')).toMatchObject({ status: 'done' })
+
+    const sessionId = (c.events.find((e) => e.type === 'session.created') as { session: { id: number } }).session.id
+    const row = (await getSession(createDb(env.DB), sessionId))!
+    expect(row).toMatchObject({ project_id: projectId, system_prompt: 'DRAFT', provider_id: null, model_id: null })
+    // Explicit Auto survives the round trip as `null`, not as an absent (inherited) key.
+    expect(row.params).toEqual({ reasoning_enabled: true, reasoning_effort: null })
+    expect(created[0]!.doStreamCalls[0]!.prompt[0]).toMatchObject({ role: 'system', content: 'PROJECT\n\nDRAFT' })
+
+    c.ws.send(JSON.stringify(sendCommandFor({
+      sessionId, parentId: row.head_message_id, parts: [{ type: 'text', text: 'second' }], model,
+      draft: { project_id: projectId, system_prompt: 'DRAFT', model: null, params: null },
+    })))
+    expect(await c.nextAfter('message.done', 2)).toMatchObject({ status: 'done' })
+    expect(c.events.some((e) => e.type === 'error')).toBe(false)
+    expect(await listMessages(createDb(env.DB), sessionId)).toHaveLength(4)
   })
 })
 

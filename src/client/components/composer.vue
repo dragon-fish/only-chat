@@ -3,15 +3,20 @@ import { computed, onBeforeUnmount, ref } from 'vue'
 import { ImagePlus, Send, Square, X } from '@lucide/vue'
 import { Button } from '@/client/ui/button'
 import { Textarea } from '@/client/ui/textarea'
-import ModelPicker from '@/client/components/model-picker.vue'
 import { uploadImage } from '@/client/lib/image-prep'
-import type { ModelRef } from '@/shared/api'
 import type { Part } from '@/shared/parts'
 
 interface Attached { attachment_id: number; preview: string; failed?: boolean }
 
-const props = defineProps<{ streaming: boolean; connected: boolean; model: ModelRef | null }>()
-const emit = defineEmits<{ send: [parts: Part[]]; stop: []; 'update:model': [ModelRef | null] }>()
+const props = defineProps<{
+  streaming: boolean
+  connected: boolean
+  /** The parent owns model resolution; the Composer only knows whether a send is possible. */
+  canSend: boolean
+  /** Why sending is blocked, e.g. an inherited model that is no longer available (spec §9). */
+  hint?: string | null
+}>()
+const emit = defineEmits<{ send: [parts: Part[]]; stop: [] }>()
 
 const text = ref('')
 const images = ref<Attached[]>([])
@@ -19,6 +24,12 @@ const images = ref<Attached[]>([])
 const pending = ref(0)
 const busy = computed(() => pending.value > 0)
 const fileInput = ref<HTMLInputElement | null>(null)
+/**
+ * What the last `send` carried. The input clears optimistically so the user can keep typing, but a
+ * rejected command must not swallow the message (spec §9), so it is kept here until the parent
+ * either sees the message land or sees an error.
+ */
+const sent = ref<{ text: string; images: Attached[] } | null>(null)
 
 /** Takes a materialised array: a live `FileList` empties out across the `await`s below. */
 async function addFiles(files: File[]) {
@@ -44,14 +55,19 @@ function onDrop(e: DragEvent) {
   e.preventDefault()
   void addFiles([...(e.dataTransfer?.files ?? [])])
 }
+function dropSent() {
+  if (sent.value) releasePreviews(sent.value.images)
+  sent.value = null
+}
 function submit() {
   if (busy.value) return
   const parts: Part[] = images.value.filter((i) => !i.failed).map((i) => ({ type: 'image', attachment_id: i.attachment_id }))
   if (text.value.trim()) parts.push({ type: 'text', text: text.value })
-  if (!parts.length || !props.model || !props.connected) return
+  if (!parts.length || !props.canSend || !props.connected) return
   emit('send', parts)
+  dropSent()
+  sent.value = { text: text.value, images: images.value }
   text.value = ''
-  releasePreviews(images.value)
   images.value = []
 }
 function onKeydown(e: KeyboardEvent) {
@@ -62,11 +78,26 @@ function onFileChange(e: Event) {
   void addFiles([...(input.files ?? [])])
   input.value = ''
 }
-function onModelChange(value: ModelRef | null) {
-  emit('update:model', value)
-}
 
-onBeforeUnmount(() => releasePreviews(images.value))
+/** The command landed: the optimistic clear stands. */
+function confirmSend() {
+  dropSent()
+}
+/**
+ * The command was rejected: put the message back. Anything typed since the send wins — the user is
+ * mid-sentence and must not have it overwritten — so in that case the rejected copy is dropped.
+ */
+function restoreSend() {
+  const previous = sent.value
+  sent.value = null
+  if (!previous) return
+  if (text.value.trim() || images.value.length) { releasePreviews(previous.images); return }
+  text.value = previous.text
+  images.value = previous.images
+}
+defineExpose({ confirmSend, restoreSend })
+
+onBeforeUnmount(() => { releasePreviews(images.value); dropSent() })
 </script>
 
 <template lang="pug">
@@ -79,18 +110,20 @@ onBeforeUnmount(() => releasePreviews(images.value))
         button.absolute.rounded-full.bg-background.border(class="-right-1 -top-1" @click="removeImage(i)")
           X(class="size-3")
     Textarea(v-model="text" rows="3" placeholder="输入消息，Enter 发送，Shift+Enter 换行，可粘贴图片" @keydown="onKeydown" @paste="onPaste")
-    .flex.items-center.gap-2
-      ModelPicker(:model-value="model" @update:model-value="onModelChange")
+    //- Spec §7.3: the bottom bar wraps on a narrow screen and nothing here needs hover to operate.
+    .flex.flex-wrap.items-center.gap-2
       input.hidden(ref="fileInput" type="file" accept="image/*" multiple @change="onFileChange")
-      Button(variant="ghost" size="icon" :disabled="busy" @click="fileInput?.click()")
+      Button(variant="ghost" size="icon" title="添加图片" :disabled="busy" @click="fileInput?.click()")
         ImagePlus(class="size-4")
+      slot(name="controls")
       .ml-auto.flex.items-center.gap-2
         span.text-xs.text-muted-foreground(v-if="busy") 上传中…
         span.text-xs.text-muted-foreground(v-if="!connected") 未连接
+        span.text-xs(v-else-if="hint" class="text-destructive") {{ hint }}
         Button(v-if="streaming" size="sm" variant="destructive" @click="emit('stop')")
           Square(class="size-4")
           span 停止
-        Button(v-else size="sm" :disabled="!connected || !model || busy" @click="submit")
+        Button(v-else size="sm" :disabled="!connected || !canSend || busy" @click="submit")
           Send(class="size-4")
           span 发送
 </template>

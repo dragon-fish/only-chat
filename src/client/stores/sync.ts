@@ -3,26 +3,72 @@ import { defineStore } from 'pinia'
 import { api } from '@/client/lib/api'
 import { WsClient, type WsStatus } from '@/client/lib/ws-client'
 import type { ModelRef } from '@/shared/api'
-import type { Message, Project, ReasoningEffort, Session, SessionParams, UserSettings } from '@/shared/models'
+import type {
+  Message, ModelCapabilities, Project, Protocol, Session, SessionParams, UserSettings,
+} from '@/shared/models'
 import type { Part } from '@/shared/parts'
-import type { WsCommand, WsEvent } from '@/shared/ws'
+import type { SendCommand, WsCommand, WsEvent } from '@/shared/ws'
 
 /**
- * `inherit` leaves both reasoning keys out of the params so the Project inherits from the
- * provider/model default; `auto` turns reasoning on without sending an effort (spec §3.3).
+ * The reasoning slider's stops, weakest first (spec §3.3). `off` and `auto` are states rather than
+ * strengths: `off` turns reasoning off explicitly, `auto` turns it on without sending an effort.
  */
-export type ProjectReasoningChoice = 'inherit' | 'off' | 'auto' | ReasoningEffort
+export const REASONING_ORDER = ['off', 'auto', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'] as const
+export type ReasoningStop = (typeof REASONING_ORDER)[number]
+/** `inherit` is not a stop: it writes nothing at all, leaving the field to the layer below. */
+export type ReasoningChoice = 'inherit' | ReasoningStop
 
-/** What the Project settings form holds. Only `name` is required (spec §3.1); every other field
- *  may be blank, and blank must travel as `null`/absent rather than as a copied inherited value. */
-export interface ProjectFormState {
-  name: string
-  system_prompt: string
-  model: ModelRef | null
+export const REASONING_LABELS: Record<ReasoningStop, string> = {
+  off: '立即', auto: '自动', minimal: '极低', low: '低', medium: '中', high: '高', xhigh: '超高', max: 'Max', ultra: 'Ultra',
+}
+
+/**
+ * Protocols with no way to express "off" (spec §5.4). `buildProviderOptions` sends nothing at all
+ * for them, so offering the stop would be a dead affordance no matter what the model declares.
+ */
+const NO_DISABLE_VALUE: readonly Protocol[] = ['openai-completions']
+
+/**
+ * The stops one model may be set to. Capabilities are the only source: nothing is inferred from a
+ * model id, an undeclared effort is never offered, and a reasoning model that declared no efforts
+ * still gets Auto (spec §3.3/§4.4).
+ */
+export function reasoningStopsFor(capabilities: ModelCapabilities | undefined, protocol: Protocol | undefined): ReasoningStop[] {
+  if (!capabilities?.reasoning) return []
+  const declared = capabilities.reasoning_efforts ?? []
+  const canDisable = capabilities.reasoning_can_disable === true
+    && !(protocol !== undefined && NO_DISABLE_VALUE.includes(protocol))
+  return REASONING_ORDER.filter((stop) => {
+    if (stop === 'off') return canDisable
+    if (stop === 'auto') return true
+    return declared.includes(stop)
+  })
+}
+
+/** The merged control writes the two independently stored keys (spec §3.3). */
+export function choiceToParams(choice: ReasoningChoice): SessionParams {
+  if (choice === 'inherit') return {}
+  if (choice === 'off') return { reasoning_enabled: false }
+  return { reasoning_enabled: true, reasoning_effort: choice === 'auto' ? null : choice }
+}
+
+/**
+ * The inverse. Presence decides, never truthiness: a `null` `reasoning_effort` is explicit Auto and
+ * must not collapse into `inherit`, which is what an `??` default would silently do.
+ */
+export function choiceFromParams(params: SessionParams | null | undefined): ReasoningChoice {
+  if (!params) return 'inherit'
+  if (params.reasoning_enabled === false) return 'off'
+  if (params.reasoning_enabled === undefined && params.reasoning_effort === undefined) return 'inherit'
+  return params.reasoning_effort ?? 'auto'
+}
+
+/** The generation parameters a Project and a session edit the same way. */
+export interface ParamFields {
   temperature: string
   top_p: string
   max_tokens: string
-  reasoning: ProjectReasoningChoice
+  reasoning: ReasoningChoice
 }
 
 /** Blank stays blank: an unparseable or empty box contributes no key at all. */
@@ -33,35 +79,44 @@ function optionalNumber(raw: string): number | undefined {
   return Number.isFinite(n) ? n : undefined
 }
 
-function reasoningParams(choice: ProjectReasoningChoice): SessionParams {
-  if (choice === 'inherit') return {}
-  if (choice === 'off') return { reasoning_enabled: false }
-  return { reasoning_enabled: true, reasoning_effort: choice === 'auto' ? null : choice }
-}
-
-/** `null` when the user filled nothing in, so the Project's `params` column stays NULL. */
-export function projectParamsFromForm(form: ProjectFormState): SessionParams | null {
-  const temperature = optionalNumber(form.temperature)
-  const top_p = optionalNumber(form.top_p)
-  const max_tokens = optionalNumber(form.max_tokens)
-  const params: SessionParams = {
-    ...(temperature === undefined ? {} : { temperature }),
-    ...(top_p === undefined ? {} : { top_p }),
-    ...(max_tokens === undefined ? {} : { max_tokens }),
-    ...reasoningParams(form.reasoning),
-  }
-  return Object.keys(params).length === 0 ? null : params
-}
-
 function numberToField(value: number | undefined): string {
   return value === undefined ? '' : String(value)
 }
 
-/** A merged control over two independently stored keys (spec §3.3). */
-function reasoningChoiceOf(params: SessionParams): ProjectReasoningChoice {
-  if (params.reasoning_enabled === false) return 'off'
-  if (params.reasoning_enabled === undefined && params.reasoning_effort === undefined) return 'inherit'
-  return params.reasoning_effort ?? 'auto'
+/** `null` when the user filled nothing in, so the `params` column stays NULL. */
+export function paramsFromFields(fields: ParamFields): SessionParams | null {
+  const temperature = optionalNumber(fields.temperature)
+  const top_p = optionalNumber(fields.top_p)
+  const max_tokens = optionalNumber(fields.max_tokens)
+  const params: SessionParams = {
+    ...(temperature === undefined ? {} : { temperature }),
+    ...(top_p === undefined ? {} : { top_p }),
+    ...(max_tokens === undefined ? {} : { max_tokens }),
+    ...choiceToParams(fields.reasoning),
+  }
+  return Object.keys(params).length === 0 ? null : params
+}
+
+/** Absent values render as blank fields, never as the inherited value they would resolve to. */
+export function fieldsFromParams(params: SessionParams | null | undefined): ParamFields {
+  return {
+    temperature: numberToField(params?.temperature),
+    top_p: numberToField(params?.top_p),
+    max_tokens: numberToField(params?.max_tokens),
+    reasoning: choiceFromParams(params),
+  }
+}
+
+/** What the Project settings form holds. Only `name` is required (spec §3.1); every other field
+ *  may be blank, and blank must travel as `null`/absent rather than as a copied inherited value. */
+export interface ProjectFormState extends ParamFields {
+  name: string
+  system_prompt: string
+  model: ModelRef | null
+}
+
+export function projectParamsFromForm(form: ProjectFormState): SessionParams | null {
+  return paramsFromFields(form)
 }
 
 /**
@@ -71,17 +126,13 @@ function reasoningChoiceOf(params: SessionParams): ProjectReasoningChoice {
  * instead of a hand-written list of fields that can drift as the form grows.
  */
 export function projectFormFrom(project: Project | undefined): ProjectFormState {
-  const params = project?.params ?? {}
   return {
     name: project?.name ?? '',
     system_prompt: project?.system_prompt ?? '',
     model: project && project.provider_id !== null && project.model_id !== null
       ? { provider_id: project.provider_id, model_id: project.model_id }
       : null,
-    temperature: numberToField(params.temperature),
-    top_p: numberToField(params.top_p),
-    max_tokens: numberToField(params.max_tokens),
-    reasoning: reasoningChoiceOf(params),
+    ...fieldsFromParams(project?.params),
   }
 }
 
@@ -91,11 +142,179 @@ export function projectUpdateCommand(projectId: number, form: ProjectFormState):
     type: 'project.update',
     project_id: projectId,
     name: form.name.trim(),
-    system_prompt: form.system_prompt.trim() === '' ? null : form.system_prompt,
+    system_prompt: blankToNull(form.system_prompt),
     provider_id: form.model?.provider_id ?? null,
     model_id: form.model?.model_id ?? null,
     params: projectParamsFromForm(form),
   }
+}
+
+/** Stored verbatim; the trim only decides whether the user left the box empty. */
+function blankToNull(value: string): string | null {
+  return value.trim() === '' ? null : value
+}
+
+/** What the Composer's settings popover holds for the open session, or for an unsent draft. */
+export interface SessionSettingsForm extends ParamFields {
+  title: string
+  system_prompt: string
+}
+
+/** Only the session's own overrides: an inherited value shown here would be copied down on save. */
+export function sessionFormFrom(session: Session | undefined): SessionSettingsForm {
+  return {
+    title: session?.title ?? '',
+    system_prompt: session?.system_prompt ?? '',
+    ...fieldsFromParams(session?.params),
+  }
+}
+
+/** The session-level fields inheritance reads; an unsent draft satisfies it as well as a `Session`. */
+export type SessionConfigSource = Pick<Session, 'system_prompt' | 'provider_id' | 'model_id' | 'params'>
+
+/** Which layer a field's current value comes from, for its 继承自 Project / 会话覆盖 badge (spec §7.3). */
+export type SettingSource = 'session' | 'project' | 'default'
+
+export interface SessionSettingSources {
+  system_prompt: SettingSource
+  model: SettingSource
+  temperature: SettingSource
+  top_p: SettingSource
+  max_tokens: SettingSource
+  reasoning: SettingSource
+}
+
+function sourceOf(inSession: boolean, inProject: boolean): SettingSource {
+  return inSession ? 'session' : inProject ? 'project' : 'default'
+}
+
+/**
+ * Presence decides every field: `temperature: 0` and an explicit-Auto `reasoning_effort: null` are
+ * real session overrides. Reasoning reports one source for the merged control even though the two
+ * keys inherit independently — either key present in a layer makes that layer the source.
+ */
+export function sessionSettingSources(session: SessionConfigSource, project: Project | undefined): SessionSettingSources {
+  const own = session.params
+  const inherited = project?.params
+  const param = (key: 'temperature' | 'top_p' | 'max_tokens'): SettingSource =>
+    sourceOf(own?.[key] !== undefined, inherited?.[key] !== undefined)
+  const hasReasoning = (p: SessionParams | null | undefined) =>
+    p?.reasoning_enabled !== undefined || p?.reasoning_effort !== undefined
+  return {
+    system_prompt: sourceOf(session.system_prompt !== null, (project?.system_prompt ?? null) !== null),
+    model: sourceOf(
+      session.provider_id !== null && session.model_id !== null,
+      project?.provider_id != null && project.model_id != null,
+    ),
+    temperature: param('temperature'),
+    top_p: param('top_p'),
+    max_tokens: param('max_tokens'),
+    reasoning: sourceOf(hasReasoning(own), hasReasoning(inherited)),
+  }
+}
+
+/** Which layer supplies the model the next generation will use (spec §5.3). */
+export type ModelSource = 'session' | 'project' | 'command'
+
+export interface EffectiveModel {
+  model: ModelRef | null
+  /** `null` only when no layer supplies a model at all. */
+  source: ModelSource | null
+}
+
+/**
+ * The client's mirror of the server's precedence: session override → Project default → the model
+ * this command carries. The Composer shows the result, so it never claims a model the generation
+ * would not actually use.
+ */
+export function effectiveModelFor(override: ModelRef | null, project: Project | undefined, picked: ModelRef | null): EffectiveModel {
+  if (override) return { model: override, source: 'session' }
+  if (project?.provider_id != null && project.model_id != null) {
+    return { model: { provider_id: project.provider_id, model_id: project.model_id }, source: 'project' }
+  }
+  return picked ? { model: picked, source: 'command' } : { model: null, source: null }
+}
+
+/**
+ * What a Composer model pick has to do to the session's persisted override.
+ *
+ * `undefined` means "leave the session alone": with no Project default and no existing override,
+ * the model `send` carries is the one that runs, so pinning it would copy a value down that nobody
+ * asked to fix. Otherwise the override has to move, because a stale override or a Project default
+ * outranks the command's model and would silently ignore the pick (spec §5.3).
+ */
+export function modelOverrideAfterPick(
+  pick: ModelRef | null,
+  project: Project | undefined,
+  current: ModelRef | null,
+): ModelRef | null | undefined {
+  const projectModel = project?.provider_id != null && project.model_id != null
+    ? { provider_id: project.provider_id, model_id: project.model_id }
+    : null
+  if (!pick) return projectModel || current ? null : undefined
+  if (projectModel && projectModel.provider_id === pick.provider_id && projectModel.model_id === pick.model_id) return null
+  if (projectModel || current) return pick
+  return undefined
+}
+
+/** The unsent configuration of a session that does not exist yet (spec §5.2). */
+export interface SessionDraft {
+  project_id: number | null
+  system_prompt: string
+  /** The session's persisted model override, not the model this turn will use. */
+  model: ModelRef | null
+  params: SessionParams | null
+}
+
+export interface SendInput {
+  sessionId: number | null
+  parentId: number | null
+  parts: Part[]
+  /** The model this generation will use, whichever layer it came from. */
+  model: ModelRef
+  draft: SessionDraft
+}
+
+/**
+ * The first message creates the session and writes the draft in one command (spec §5.2). Every
+ * init field is omitted once the session exists: the hub rejects the whole command when any of
+ * them is merely `!== undefined`, so nulling them out would break every follow-up send.
+ */
+export function sendCommandFor({ sessionId, parentId, parts, model, draft }: SendInput): SendCommand {
+  const command: SendCommand = {
+    type: 'send',
+    session_id: sessionId,
+    parent_id: parentId,
+    parts,
+    provider_id: model.provider_id,
+    model_id: model.model_id,
+  }
+  if (sessionId !== null) return command
+  return {
+    ...command,
+    project_id: draft.project_id,
+    system_prompt: blankToNull(draft.system_prompt),
+    params: draft.params,
+    session_provider_id: draft.model?.provider_id ?? null,
+    session_model_id: draft.model?.model_id ?? null,
+  }
+}
+
+/** What the assistant bubble shows before its first visible token (spec §7.4). */
+export interface AssistantWaitState {
+  /** Spinner plus 正在思考…: the reply is live but has produced no visible text yet. */
+  waiting: boolean
+  /** Only what the provider actually returned; nothing is synthesised or inferred. */
+  showReasoning: boolean
+  /** Expanded while waiting, collapsed into 思考过程 as soon as the text starts. */
+  reasoningOpen: boolean
+}
+
+export function assistantWaitState(message: Pick<Message, 'role' | 'status' | 'parts'>): AssistantWaitState {
+  const hasText = message.parts.some((p) => p.type === 'text' && p.text.trim() !== '')
+  const showReasoning = message.parts.some((p) => p.type === 'reasoning' && p.text.trim() !== '')
+  const waiting = message.role === 'assistant' && message.status === 'streaming' && !hasText
+  return { waiting, showReasoning, reasoningOpen: waiting && showReasoning }
 }
 
 /** Moving a chat out of a Project sends an explicit `null`; an omitted field would be a no-op. */

@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import MarkdownRender from 'markstream-vue'
-import { Pencil, RefreshCw } from '@lucide/vue'
+import { LoaderCircle, Pencil, RefreshCw } from '@lucide/vue'
 import { api } from '@/client/lib/api'
 import { Button } from '@/client/ui/button'
 import { Textarea } from '@/client/ui/textarea'
 import BranchSwitcher from '@/client/components/branch-switcher.vue'
-import { useSyncStore } from '@/client/stores/sync'
+import { assistantWaitState, useSyncStore } from '@/client/stores/sync'
 import type { Message } from '@/shared/models'
 
 const props = defineProps<{ message: Message }>()
@@ -19,6 +19,8 @@ const textParts = computed(() => props.message.parts.filter((p) => p.type === 't
 const reasoning = computed(() => props.message.parts.filter((p) => p.type === 'reasoning').map((p) => p.text).join('\n'))
 const images = computed(() => props.message.parts.filter((p) => p.type === 'image'))
 const markdown = computed(() => textParts.value.map((p) => p.text).join(''))
+/** Spec §7.4: the shell is visible the moment it arrives, and never claims reasoning it lacks. */
+const wait = computed(() => assistantWaitState(props.message))
 
 // Hover is unavailable on touch, and a failed/stopped message must expose 重试 without one, so the
 // row only fades on `md` and up, and never on a terminal-failure message.
@@ -55,9 +57,13 @@ function regenerate() {
           Button(size="sm" variant="secondary" @click="editing = false") 取消
           Button(size="sm" @click="submitEdit") 发送
     template(v-else)
-      details.mb-2.rounded.border.px-2.py-1.text-xs.text-muted-foreground(v-if="reasoning")
+      //- Expanded while it is the only thing to show, collapsed once the reply starts.
+      details.mb-2.rounded.border.px-2.py-1.text-xs.text-muted-foreground(v-if="wait.showReasoning" :open="wait.reasoningOpen")
         summary 思考过程
         pre.whitespace-pre-wrap.pt-1 {{ reasoning }}
+      p.mb-2.flex.items-center.gap-2.text-xs.text-muted-foreground(v-if="wait.waiting")
+        LoaderCircle(class="size-3.5 animate-spin")
+        span 正在思考…
       MarkdownRender(mode="chat" :content="markdown" :final="!streaming" smooth-streaming="auto" :fade="false")
       //- Generated images are served by the same authenticated attachment route as uploads.
       .flex.flex-wrap.gap-2.pt-2(v-if="images.length")

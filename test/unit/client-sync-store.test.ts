@@ -1,7 +1,15 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { moveSessionCommand, projectFormFrom, projectParamsFromForm, projectUpdateCommand, useSyncStore, type ProjectFormState } from '@/client/stores/sync'
-import type { Message, Project, Session } from '@/shared/models'
+import {
+  assistantWaitState, choiceFromParams, choiceToParams, effectiveModelFor, modelOverrideAfterPick,
+  moveSessionCommand, paramsFromFields, projectFormFrom, projectParamsFromForm, projectUpdateCommand,
+  reasoningStopsFor, REASONING_LABELS, REASONING_ORDER, sendCommandFor, sessionFormFrom,
+  sessionSettingSources, useSyncStore,
+  type ParamFields, type ProjectFormState, type SessionConfigSource,
+} from '@/client/stores/sync'
+import type { ModelRef } from '@/shared/api'
+import type { Message, ModelCapabilities, Project, Session } from '@/shared/models'
+import type { Part } from '@/shared/parts'
 import { parseCommand } from '@/shared/ws'
 
 const session: Session = { id: 1, user_id: 1, project_id: null, title: 't', head_message_id: null, provider_id: null, model_id: null, system_prompt: null, params: null, created_at: 1, updated_at: 1, archived_at: null }
@@ -256,5 +264,211 @@ describe('project settings form state', () => {
     expect(projectFormFrom(withParams({ reasoning_enabled: true, reasoning_effort: null })).reasoning).toBe('auto')
     expect(projectFormFrom(withParams({ reasoning_enabled: true, reasoning_effort: 'xhigh' })).reasoning).toBe('xhigh')
     expect(projectFormFrom(withParams({ temperature: 1 })).reasoning).toBe('inherit')
+  })
+})
+
+describe('reasoning control', () => {
+  it('maps every slider stop onto the independent enabled/effort pair', () => {
+    // `inherit` is the only choice that writes nothing at all: both keys stay absent so the layer
+    // below decides (spec §3.3).
+    expect(choiceToParams('inherit')).toEqual({})
+    expect(choiceToParams('off')).toEqual({ reasoning_enabled: false })
+    expect(choiceToParams('auto')).toEqual({ reasoning_enabled: true, reasoning_effort: null })
+    expect(choiceToParams('xhigh')).toEqual({ reasoning_enabled: true, reasoning_effort: 'xhigh' })
+    for (const stop of REASONING_ORDER) {
+      if (stop === 'off' || stop === 'auto') continue
+      expect(choiceToParams(stop)).toEqual({ reasoning_enabled: true, reasoning_effort: stop })
+    }
+  })
+
+  it('labels the stops in slider order', () => {
+    expect([...REASONING_ORDER]).toEqual(['off', 'auto', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'])
+    expect(REASONING_ORDER.map((s) => REASONING_LABELS[s])).toEqual(['立即', '自动', '极低', '低', '中', '高', '超高', 'Max', 'Ultra'])
+    // The labels the brief names, resolved back to the params they must produce.
+    const byLabel = (label: string) => REASONING_ORDER.find((s) => REASONING_LABELS[s] === label)!
+    expect(choiceToParams(byLabel('立即'))).toEqual({ reasoning_enabled: false })
+    expect(choiceToParams(byLabel('自动'))).toEqual({ reasoning_enabled: true, reasoning_effort: null })
+    expect(choiceToParams(byLabel('超高'))).toEqual({ reasoning_enabled: true, reasoning_effort: 'xhigh' })
+  })
+
+  it('reads the stored pair back as one choice, keeping explicit Auto distinct from inherit', () => {
+    expect(choiceFromParams(null)).toBe('inherit')
+    expect(choiceFromParams({})).toBe('inherit')
+    expect(choiceFromParams({ temperature: 1 })).toBe('inherit')
+    expect(choiceFromParams({ reasoning_enabled: false })).toBe('off')
+    expect(choiceFromParams({ reasoning_enabled: true, reasoning_effort: null })).toBe('auto')
+    expect(choiceFromParams({ reasoning_enabled: true, reasoning_effort: 'high' })).toBe('high')
+    // Enabled and effort inherit independently: an effort on its own is still an explicit strength.
+    expect(choiceFromParams({ reasoning_effort: 'low' })).toBe('low')
+  })
+
+  it('offers only the stops the model actually declares', () => {
+    // A model that never declared reasoning gets no control at all.
+    expect(reasoningStopsFor({}, 'anthropic')).toEqual([])
+    expect(reasoningStopsFor(undefined, 'anthropic')).toEqual([])
+    // Auto is always available on a reasoning model, even with no declared efforts.
+    expect(reasoningStopsFor({ reasoning: true }, 'anthropic')).toEqual(['auto'])
+    // Off appears only where the model says it can be turned off...
+    expect(reasoningStopsFor({ reasoning: true, reasoning_can_disable: true }, 'anthropic')).toEqual(['off', 'auto'])
+    // ...and the declared efforts follow the canonical order, not the declaration order.
+    expect(reasoningStopsFor({ reasoning: true, reasoning_efforts: ['ultra', 'low', 'medium'] }, 'vertex'))
+      .toEqual(['auto', 'low', 'medium', 'ultra'])
+    // Nothing is inferred: an undeclared level is never offered.
+    expect(reasoningStopsFor({ reasoning: true, reasoning_efforts: ['high'] }, 'openai-responses')).toEqual(['auto', 'high'])
+  })
+
+  it('hides Off on a protocol that has no disable value to send', () => {
+    // spec §5.4 defines no off value for openai-completions, and `buildProviderOptions` sends
+    // nothing for it, so the stop would be a dead affordance.
+    const caps: ModelCapabilities = { reasoning: true, reasoning_can_disable: true, reasoning_efforts: ['low'] }
+    expect(reasoningStopsFor(caps, 'openai-completions')).toEqual(['auto', 'low'])
+    expect(reasoningStopsFor(caps, 'openai-responses')).toEqual(['off', 'auto', 'low'])
+    expect(reasoningStopsFor(caps, 'vertex-compatible')).toEqual(['off', 'auto', 'low'])
+    // An unknown protocol (a provider registered by a plugin) keeps the declared capability.
+    expect(reasoningStopsFor(caps, undefined)).toEqual(['off', 'auto', 'low'])
+  })
+})
+
+describe('session settings form', () => {
+  const fields: ParamFields = { temperature: '', top_p: '', max_tokens: '', reasoning: 'inherit' }
+
+  it('holds only what the session itself overrides, never an inherited value', () => {
+    expect(sessionFormFrom(undefined)).toEqual({ title: '', system_prompt: '', ...fields })
+    expect(sessionFormFrom({ ...session, title: 'T', system_prompt: 'S', params: { temperature: 0.5 } }))
+      .toEqual({ title: 'T', system_prompt: 'S', ...fields, temperature: '0.5' })
+  })
+
+  it('keeps an explicit Auto through an unrelated edit', () => {
+    // Regression: reading the pair back with `??` collapsed explicit Auto into inherit, so editing
+    // the temperature silently deleted the user's Auto choice (spec §3.3).
+    const form = sessionFormFrom({ ...session, params: { reasoning_enabled: true, reasoning_effort: null } })
+    expect(form.reasoning).toBe('auto')
+    expect(paramsFromFields({ ...form, temperature: '0.5' }))
+      .toEqual({ temperature: 0.5, reasoning_enabled: true, reasoning_effort: null })
+  })
+
+  it('drops the params column entirely once every field is cleared', () => {
+    expect(paramsFromFields(fields)).toBeNull()
+    expect(paramsFromFields({ ...fields, max_tokens: '2048' })).toEqual({ max_tokens: 2048 })
+    expect(paramsFromFields({ ...fields, reasoning: 'off' })).toEqual({ reasoning_enabled: false })
+  })
+
+  it('names the layer every field comes from', () => {
+    const project: Project = {
+      ...mkProject(3), system_prompt: 'P', provider_id: 1, model_id: 'm',
+      params: { temperature: 0.2, top_p: 0.9, reasoning_enabled: true },
+    }
+    const bare: SessionConfigSource = { system_prompt: null, provider_id: null, model_id: null, params: null }
+    expect(sessionSettingSources(bare, project)).toEqual({
+      system_prompt: 'project', model: 'project', temperature: 'project', top_p: 'project',
+      max_tokens: 'default', reasoning: 'project',
+    })
+    expect(sessionSettingSources(bare, undefined)).toEqual({
+      system_prompt: 'default', model: 'default', temperature: 'default', top_p: 'default',
+      max_tokens: 'default', reasoning: 'default',
+    })
+    const overridden: SessionConfigSource = {
+      system_prompt: 'S', provider_id: 2, model_id: 'n',
+      params: { temperature: 0, max_tokens: 8, reasoning_effort: null },
+    }
+    expect(sessionSettingSources(overridden, project)).toEqual({
+      // `temperature: 0` and an explicit-Auto `reasoning_effort: null` are real overrides.
+      system_prompt: 'session', model: 'session', temperature: 'session', top_p: 'project',
+      max_tokens: 'session', reasoning: 'session',
+    })
+  })
+})
+
+describe('composer model precedence', () => {
+  const picked: ModelRef = { provider_id: 9, model_id: 'picked' }
+  const projectModel = mkProject(1, { provider_id: 1, model_id: 'project-model' })
+
+  it('shows the model the generation will actually use', () => {
+    expect(effectiveModelFor(null, undefined, null)).toEqual({ model: null, source: null })
+    expect(effectiveModelFor(null, undefined, picked)).toEqual({ model: picked, source: 'command' })
+    expect(effectiveModelFor(null, projectModel, picked))
+      .toEqual({ model: { provider_id: 1, model_id: 'project-model' }, source: 'project' })
+    expect(effectiveModelFor({ provider_id: 2, model_id: 'own' }, projectModel, picked))
+      .toEqual({ model: { provider_id: 2, model_id: 'own' }, source: 'session' })
+    // A Project with no default model contributes nothing.
+    expect(effectiveModelFor(null, mkProject(2), picked)).toEqual({ model: picked, source: 'command' })
+  })
+
+  it('persists a pick as a session override only when `send` would otherwise ignore it', () => {
+    // No Project default and no existing override: `send`'s own model is honoured (spec §5.3), so
+    // nothing has to be written to the session.
+    expect(modelOverrideAfterPick(picked, undefined, null)).toBeUndefined()
+    // A Project default outranks the command model, so the pick has to become an override...
+    expect(modelOverrideAfterPick(picked, projectModel, null)).toEqual(picked)
+    // ...unless the pick is the Project default itself, which needs no override at all.
+    expect(modelOverrideAfterPick({ provider_id: 1, model_id: 'project-model' }, projectModel, null)).toBeNull()
+    // An existing override outranks the command model too, so it has to follow the pick.
+    expect(modelOverrideAfterPick(picked, undefined, { provider_id: 3, model_id: 'old' })).toEqual(picked)
+    // Clearing the picker restores inheritance rather than pinning "nothing".
+    expect(modelOverrideAfterPick(null, projectModel, picked)).toBeNull()
+  })
+})
+
+describe('send payload', () => {
+  const parts: Part[] = [{ type: 'text', text: 'hi' }]
+  const model: ModelRef = { provider_id: 4, model_id: 'gpt' }
+  const draft = { project_id: 7, system_prompt: '  keep  ', model: { provider_id: 5, model_id: 'pinned' }, params: { temperature: 0.3 } }
+
+  it('creates the session atomically from the draft on the first message', () => {
+    const cmd = sendCommandFor({ sessionId: null, parentId: null, parts, model, draft })
+    expect(cmd).toEqual({
+      type: 'send', session_id: null, parent_id: null, parts,
+      provider_id: 4, model_id: 'gpt',
+      project_id: 7, system_prompt: '  keep  ', params: { temperature: 0.3 },
+      session_provider_id: 5, session_model_id: 'pinned',
+    })
+    expect(parseCommand(JSON.stringify(cmd))).toEqual(cmd)
+  })
+
+  it('sends an empty draft as explicit nulls rather than inherited values', () => {
+    const cmd = sendCommandFor({
+      sessionId: null, parentId: null, parts, model,
+      draft: { project_id: null, system_prompt: '   ', model: null, params: null },
+    })
+    expect(cmd).toMatchObject({ project_id: null, system_prompt: null, params: null, session_provider_id: null, session_model_id: null })
+  })
+
+  it('omits every session-init field on a follow-up message', () => {
+    // The hub rejects the whole command when any init field is present and `session_id` is not
+    // null, so nulling them out would break every follow-up send.
+    const cmd = sendCommandFor({ sessionId: 12, parentId: 34, parts, model, draft })
+    expect(Object.keys(cmd).sort()).toEqual(['model_id', 'parent_id', 'parts', 'provider_id', 'session_id', 'type'])
+    expect(cmd).toEqual({ type: 'send', session_id: 12, parent_id: 34, parts, provider_id: 4, model_id: 'gpt' })
+    expect(parseCommand(JSON.stringify(cmd))).toEqual(cmd)
+  })
+})
+
+describe('assistant wait state', () => {
+  const assistant = (over: Partial<Message>): Message => msg(2, 1, 'assistant', over)
+
+  it('waits on an empty streaming shell', () => {
+    expect(assistantWaitState(assistant({ status: 'streaming', parts: [] })))
+      .toEqual({ waiting: true, showReasoning: false, reasoningOpen: false })
+  })
+
+  it('keeps waiting while only a reasoning summary is streaming, and expands it', () => {
+    expect(assistantWaitState(assistant({ status: 'streaming', parts: [{ type: 'reasoning', text: 'weighing' }] })))
+      .toEqual({ waiting: true, showReasoning: true, reasoningOpen: true })
+  })
+
+  it('stops waiting and collapses the summary on the first text token', () => {
+    const parts: Part[] = [{ type: 'reasoning', text: 'weighing' }, { type: 'text', text: 'H' }]
+    expect(assistantWaitState(assistant({ status: 'streaming', parts })))
+      .toEqual({ waiting: false, showReasoning: true, reasoningOpen: false })
+    // An empty text part is not yet visible output, so the wait continues.
+    expect(assistantWaitState(assistant({ status: 'streaming', parts: [{ type: 'text', text: '' }] })).waiting).toBe(true)
+  })
+
+  it('leaves no reasoning container behind when the summary stayed empty', () => {
+    expect(assistantWaitState(assistant({ status: 'done', parts: [{ type: 'reasoning', text: '' }, { type: 'text', text: 'Hi' }] })))
+      .toEqual({ waiting: false, showReasoning: false, reasoningOpen: false })
+    // A finished reply never shows the spinner, even when it produced no text at all.
+    expect(assistantWaitState(assistant({ status: 'error', parts: [] })).waiting).toBe(false)
+    expect(assistantWaitState(msg(1, null, 'user', { status: 'streaming', parts: [] })).waiting).toBe(false)
   })
 })

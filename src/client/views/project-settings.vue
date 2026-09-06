@@ -5,9 +5,9 @@ import { Button } from '@/client/ui/button'
 import { Input } from '@/client/ui/input'
 import { Label } from '@/client/ui/label'
 import { Textarea } from '@/client/ui/textarea'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/client/ui/select'
 import ModelPicker from '@/client/components/model-picker.vue'
-import { projectFormFrom, projectUpdateCommand, useSyncStore, type ProjectFormState, type ProjectReasoningChoice } from '@/client/stores/sync'
+import ReasoningSlider from '@/client/components/reasoning-slider.vue'
+import { projectFormFrom, projectUpdateCommand, reasoningStopsFor, REASONING_ORDER, useSyncStore, type ProjectFormState } from '@/client/stores/sync'
 import { useConfigStore } from '@/client/stores/config'
 
 const props = defineProps<{ projectId: number | null }>()
@@ -22,19 +22,6 @@ const sections = [
 ] as const
 type SectionKey = (typeof sections)[number]['key']
 
-const reasoningOptions: Array<{ value: ProjectReasoningChoice; label: string }> = [
-  { value: 'inherit', label: '继承（不设置）' },
-  { value: 'off', label: '立即（关闭推理）' },
-  { value: 'auto', label: '自动（开启，不指定强度）' },
-  { value: 'minimal', label: '极低' },
-  { value: 'low', label: '低' },
-  { value: 'medium', label: '中' },
-  { value: 'high', label: '高' },
-  { value: 'xhigh', label: '超高' },
-  { value: 'max', label: 'Max' },
-  { value: 'ultra', label: 'Ultra' },
-]
-
 const section = ref<SectionKey>('basic')
 const form = reactive<ProjectFormState>(projectFormFrom(undefined))
 const loaded = ref(false)
@@ -46,6 +33,17 @@ let pendingTimer: ReturnType<typeof setTimeout> | undefined
 let savedAgainst = 0
 
 const project = computed(() => (props.projectId === null ? undefined : sync.projects.get(props.projectId)))
+const defaultModel = computed(() => config.modelFor(form.model))
+/**
+ * With a default model set, only the levels it declares may be saved (spec §3.3). With no default
+ * model there is nothing to validate against, so every level stays reachable and the note says so.
+ */
+const stops = computed(() => form.model
+  ? reasoningStopsFor(defaultModel.value?.model.capabilities, defaultModel.value?.provider.protocol)
+  : [...REASONING_ORDER])
+const modelName = computed(() => defaultModel.value
+  ? `${defaultModel.value.provider.name} · ${defaultModel.value.model.display_name}`
+  : '未设置默认模型')
 const chatCount = computed(() => (props.projectId === null ? 0 : sync.sessionsInProject(props.projectId).length))
 
 /**
@@ -95,11 +93,6 @@ watchEffect(() => {
 // Errors are broadcast without a `request_id`, so any rejection ends the wait; the form keeps
 // everything the user typed and the shell shows the message (spec §9).
 watch(() => sync.lastError, (err) => { if (err !== null) saving.value = false })
-
-function onReasoningChange(value: unknown) {
-  const option = reasoningOptions.find((o) => o.value === value)
-  if (option) form.reasoning = option.value
-}
 
 function save() {
   const p = project.value
@@ -173,12 +166,11 @@ onUnmounted(clearPending)
             Input(v-model="form.max_tokens" type="number" min="1" step="1" placeholder="继承")
         div
           Label 推理强度
-          Select(:model-value="form.reasoning" @update:model-value="onReasoningChange")
-            SelectTrigger(class="w-56")
-              SelectValue
-            SelectContent
-              SelectItem(v-for="o in reasoningOptions" :key="o.value" :value="o.value") {{ o.label }}
-          p.mt-1.text-xs.text-muted-foreground 继承表示项目不设置推理档位，由会话或模型默认决定。
+          ReasoningSlider(
+            v-model="form.reasoning" class="w-72" :stops="stops" :model-name="modelName"
+            :can-reset="form.reasoning !== 'inherit'")
+          p.mt-1.text-xs.text-muted-foreground(v-if="form.model") 只显示该默认模型声明支持的档位；「默认」表示项目不设置推理档位。
+          p.mt-1.text-xs.text-muted-foreground(v-else) 未设置默认模型时无法校验档位，实际可用范围由发送时的模型决定。
     .flex.items-center.gap-3.border-t.p-3
       p.min-w-0.truncate.text-xs.text-muted-foreground
         | {{ chatCount }} 个聊天 · 创建于 {{ formatTime(project.created_at) }} · 更新于 {{ formatTime(project.updated_at) }}
