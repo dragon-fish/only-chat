@@ -254,6 +254,18 @@ function onReasoningChange(choice: ReasoningChoice) {
 
 <template lang="pug">
 .flex.h-full.flex-col
+  Teleport(to="#page-header")
+    span.shrink-0.truncate.text-sm.text-muted-foreground(v-if="project") {{ project.name }}
+    span.shrink-0.text-muted-foreground(v-if="project") ›
+    ModelPicker(:model-value="effective.model" @update:model-value="onModelChange")
+    button.shrink-0.text-muted-foreground(
+      v-if="sources.model === 'session'" type="button" title="恢复继承"
+      class="hover:text-foreground" @click="setOverride(null)")
+      RotateCcw(class="size-3.5")
+    .ml-auto.shrink-0
+      SessionSettings(
+        :form="form" :sources="sources" :project="project" :has-session="sid !== null"
+        @commit="commitSettings")
   .min-h-0.flex-1
     MessageList(v-if="path.length" :messages="path")
     .flex.h-full.items-center.justify-center.text-muted-foreground(v-else) 开始一段新对话
@@ -261,16 +273,6 @@ function onReasoningChange(choice: ReasoningChoice) {
     ref="composer" :streaming="streaming" :connected="sync.status === 'open'"
     :can-send="canSend" :hint="sendHint" @send="onSend" @stop="onStop")
     template(#controls)
-      SessionSettings(
-        :form="form" :sources="sources" :project="project" :has-session="sid !== null"
-        @commit="commitSettings")
-      .flex.items-center.gap-1
-        ModelPicker(:model-value="effective.model" @update:model-value="onModelChange")
-        span.text-xs.text-muted-foreground {{ SOURCE_LABELS[sources.model] }}
-        button.text-muted-foreground(
-          v-if="sources.model === 'session'" type="button" title="恢复继承"
-          class="hover:text-foreground" @click="setOverride(null)")
-          RotateCcw(class="size-3.5")
       ReasoningSlider(
         class="w-56" :model-value="form.reasoning" :stops="stops" :model-name="modelName"
         :inherited="inheritedReasoning" :source-label="SOURCE_LABELS[sources.reasoning]"
