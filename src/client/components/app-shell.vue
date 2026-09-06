@@ -50,6 +50,7 @@ const routeRegionClass = computed(() => cn(
             <Button
               variant="ghost"
               size="icon-xs"
+              class="size-10"
               aria-label="关闭加载错误"
               @click="bootErrorDismissed = true"
             >
@@ -66,6 +67,7 @@ const routeRegionClass = computed(() => cn(
             <Button
               variant="ghost"
               size="icon-xs"
+              class="size-10"
               aria-label="关闭操作错误"
               @click="sync.lastError = null"
             >

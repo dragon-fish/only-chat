@@ -9,18 +9,18 @@ import { Button } from '@/client/ui/button'
     aria-label="主要导航"
     class="oc-mobile-nav absolute inset-x-0 bottom-0 flex items-center justify-around border-t bg-background px-4 pt-2 md:hidden"
   >
-    <Button as-child variant="ghost" class="h-auto min-w-16 flex-col gap-1 py-1">
+    <Button as-child variant="ghost" class="h-auto min-h-10 min-w-16 flex-col gap-1 py-1">
       <RouterLink to="/chats" active-class="bg-accent text-accent-foreground">
         <MessageCircleIcon />
         <span class="text-xs">聊天</span>
       </RouterLink>
     </Button>
-    <Button as-child size="icon-lg" class="rounded-full">
+    <Button as-child size="icon-lg" class="size-10 rounded-full">
       <RouterLink :to="{ path: '/' }" aria-label="开始随心聊">
         <PlusIcon />
       </RouterLink>
     </Button>
-    <Button as-child variant="ghost" class="h-auto min-w-16 flex-col gap-1 py-1">
+    <Button as-child variant="ghost" class="h-auto min-h-10 min-w-16 flex-col gap-1 py-1">
       <RouterLink to="/settings" active-class="bg-accent text-accent-foreground">
         <SettingsIcon />
         <span class="text-xs">设置</span>
