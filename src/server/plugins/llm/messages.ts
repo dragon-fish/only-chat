@@ -150,6 +150,15 @@ type AnthropicEffort = NonNullable<AnthropicProviderOptions['effort']>
 const ANTHROPIC_EFFORTS: readonly AnthropicEffort[] = ['low', 'medium', 'high', 'xhigh', 'max']
 const GEMINI_THINKING_LEVELS: readonly GeminiThinkingLevel[] = ['minimal', 'low', 'medium', 'high']
 
+/**
+ * Gemini's image output modality. This is the one option literal here the installed SDK's types
+ * cannot check: `GoogleVertexImageModelOptions` is `Omit<GoogleLanguageModelOptions,
+ * 'responseModalities'>` (@ai-sdk/google-vertex@5.0.75 dist/index.d.ts:37), and `@ai-sdk/google` —
+ * which declares it as `("TEXT" | "IMAGE")[]` (@ai-sdk/google@4.0.63 dist/index.d.ts:19) — is not a
+ * direct dependency of this repo.
+ */
+const GEMINI_IMAGE_MODALITIES = { responseModalities: ['TEXT', 'IMAGE'] }
+
 /** A level the protocol cannot express is simply not sent; the request stays a reasoning request. */
 function accept<T extends ReasoningEffort>(levels: readonly T[], effort: ReasoningEffort | undefined): T | undefined {
   return levels.find((level) => level === effort)
@@ -198,15 +207,19 @@ export function buildProviderOptions(
     // Both Gemini protocols share the same reasoning mapping; only auth and URLs differ (spec §5.5).
     case 'vertex':
     case 'vertex-compatible': {
+      // Image output is asked for only from a model that declares the capability (spec §4.4/§5.8);
+      // it is never inferred from a model id, and it is independent of the reasoning settings.
+      const image = caps.image_output ? GEMINI_IMAGE_MODALITIES : {}
       if (!enabled) {
-        return disable
-          ? { googleVertex: { thinkingConfig: { thinkingBudget: 0, includeThoughts: false } } satisfies GeminiThinkingOptions }
-          : {}
+        if (!disable) return caps.image_output ? { googleVertex: { ...image } } : {}
+        const off = { thinkingConfig: { thinkingBudget: 0, includeThoughts: false } } satisfies GeminiThinkingOptions
+        return { googleVertex: { ...image, ...off } }
       }
       const level = accept(GEMINI_THINKING_LEVELS, effort)
-      return { googleVertex: {
+      const thinking = {
         thinkingConfig: { includeThoughts: true, ...(level ? { thinkingLevel: level } : {}) },
-      } satisfies GeminiThinkingOptions }
+      } satisfies GeminiThinkingOptions
+      return { googleVertex: { ...image, ...thinking } }
     }
     // Protocols outside the built-ins (e.g. one registered by a test) get no provider options.
     default:

@@ -96,6 +96,21 @@ describe('PartAccumulator', () => {
     ])
   })
 
+  it('appends an already-persisted part without giving it a stream id', () => {
+    const acc = new PartAccumulator()
+    acc.apply({ type: 'text-start', id: 't1' })
+    acc.apply({ type: 'text-delta', id: 't1', text: 'here: ' })
+    // A generated image reaches the accumulator only after it is an attachment id (spec §5.8).
+    const ev = acc.append({ type: 'image', attachment_id: 7 })
+    expect(ev).toEqual({ kind: 'part', part_index: 1, part: { type: 'image', attachment_id: 7 } })
+    // The open text block keeps its own index; nothing can reopen the image part.
+    acc.apply({ type: 'text-delta', id: 't1', text: 'done' })
+    expect(acc.parts).toEqual([
+      { type: 'text', text: 'here: done' },
+      { type: 'image', attachment_id: 7 },
+    ])
+  })
+
   it('ignores lifecycle parts', () => {
     const acc = new PartAccumulator()
     expect(acc.apply({ type: 'start' })).toEqual([])

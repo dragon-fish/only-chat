@@ -59,6 +59,9 @@ function regenerate() {
         summary 思考过程
         pre.whitespace-pre-wrap.pt-1 {{ reasoning }}
       MarkdownRender(mode="chat" :content="markdown" :final="!streaming" smooth-streaming="auto" :fade="false")
+      //- Generated images are served by the same authenticated attachment route as uploads.
+      .flex.flex-wrap.gap-2.pt-2(v-if="images.length")
+        img.max-h-80.rounded.border(v-for="(img, i) in images" :key="i" :src="api.attachmentUrl(img.attachment_id)")
       p.text-xs.text-destructive(v-if="message.status === 'error'") 出错：{{ message.error }}
       p.text-xs.text-muted-foreground(v-else-if="message.status === 'aborted'") 已停止
   .flex.items-center.gap-2.text-xs.text-muted-foreground.transition-opacity(:class="actionsClass")

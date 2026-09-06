@@ -26,6 +26,11 @@ export class Assets extends Service {
     await this._bucket.put(key, bytes, { httpMetadata: { contentType: mime } })
   }
 
+  /** Undoes a write whose attachment row never landed, so no object is left without an owner. */
+  async delete(key: string): Promise<void> {
+    await this._bucket.delete(key)
+  }
+
   async exists(key: string): Promise<boolean> {
     return (await this._bucket.head(key)) !== null
   }

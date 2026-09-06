@@ -268,4 +268,33 @@ describe('buildProviderOptions', () => {
     expect(buildProviderOptions('anthropic', off, CAN_DISABLE))
       .toEqual({ anthropic: { thinking: { type: 'disabled' } } })
   })
+
+  it('asks Gemini for the image modality only when the model declares image output', () => {
+    const caps: ModelCapabilities = { image_output: true }
+    for (const protocol of ['vertex', 'vertex-compatible'] as const) {
+      expect(buildProviderOptions(protocol, null, caps))
+        .toEqual({ googleVertex: { responseModalities: ['TEXT', 'IMAGE'] } })
+    }
+    // Reasoning and image output are independent settings on the same options object.
+    expect(buildProviderOptions('vertex', { reasoning_effort: 'high' }, { ...caps, reasoning: true }))
+      .toEqual({ googleVertex: { thinkingConfig: { includeThoughts: true, thinkingLevel: 'high' }, responseModalities: ['TEXT', 'IMAGE'] } })
+  })
+
+  it('never asks for image output from a model that does not declare it', () => {
+    // The capability is configured, never inferred from a model id (spec §4.4).
+    for (const protocol of PROTOCOLS) {
+      for (const caps of [{}, REASONING, CAN_DISABLE] as ModelCapabilities[]) {
+        expect(JSON.stringify(buildProviderOptions(protocol, { reasoning_enabled: false }, caps))).not.toContain('IMAGE')
+        expect(JSON.stringify(buildProviderOptions(protocol, null, caps))).not.toContain('IMAGE')
+      }
+    }
+  })
+
+  it('leaves the non-Gemini protocols alone for image output', () => {
+    // Only the Google protocols carry a modality switch; the rest send nothing extra (spec §5.8).
+    const caps: ModelCapabilities = { image_output: true }
+    expect(buildProviderOptions('openai-responses', null, caps)).toEqual({ openai: { store: false } })
+    expect(buildProviderOptions('openai-completions', null, caps)).toEqual({})
+    expect(buildProviderOptions('anthropic', null, caps)).toEqual({})
+  })
 })

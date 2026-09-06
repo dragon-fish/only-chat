@@ -57,6 +57,24 @@ describe('REST api', () => {
     expect(new Uint8Array(await got.arrayBuffer())).toEqual(bytes)
   })
 
+  it('serves a generated attachment through the same authenticated route', async () => {
+    // Assistant images reuse the upload route's reader; no public or unauthenticated path exists.
+    const db = createDb(env.DB)
+    const bytes = new Uint8Array([137, 80, 78, 71, 71, 69, 78])
+    const sha = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map((b) => b.toString(16).padStart(2, '0')).join('')
+    const key = `${DEFAULT_USER_ID}/${sha.slice(0, 2)}/${sha}`
+    await env.BUCKET.put(key, bytes, { httpMetadata: { contentType: 'image/png' } })
+    const [row] = await db.insert(attachments).values({
+      user_id: DEFAULT_USER_ID, sha256: sha, mime: 'image/png', size: bytes.byteLength,
+      width: null, height: null, r2_key: key, origin: 'generated', created_at: 0,
+    }).onConflictDoUpdate({ target: [attachments.user_id, attachments.sha256], set: { r2_key: key } }).returning()
+
+    const got = await exports.default.fetch(new Request(`https://x/api/attachments/${row!.id}`))
+    expect(got.status).toBe(200)
+    expect(got.headers.get('content-type')).toBe('image/png')
+    expect(new Uint8Array(await got.arrayBuffer())).toEqual(bytes)
+  })
+
   it('rejects an upload whose hash does not match', async () => {
     const res = await exports.default.fetch(new Request(`https://x/api/attachments/${'0'.repeat(64)}`, { method: 'PUT', headers: { 'content-type': 'image/png' }, body: new Uint8Array([9]) }))
     expect(res.status).toBe(400)

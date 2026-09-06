@@ -5,6 +5,9 @@ export type AccEvent =
   | { kind: 'delta'; part_index: number; part_kind: 'text' | 'reasoning'; delta: string }
   | { kind: 'part'; part_index: number; part: Part }
 
+/** The half of `AccEvent` that carries a whole part, which is all `append` can ever produce. */
+export type AccPartEvent = Extract<AccEvent, { kind: 'part' }>
+
 /** The part kinds that carry provider metadata; images and tool results never do. */
 type MetaPart = TextPart | ReasoningPart | ToolCallPart
 
@@ -62,6 +65,15 @@ export class PartAccumulator {
       default:
         return []
     }
+  }
+
+  /**
+   * Adds a part that never arrived as a stream delta — a generated image, already persisted to R2
+   * and reduced to an `attachment_id`. It owns no stream id, so no later event can reopen it.
+   */
+  append(part: Part): AccPartEvent {
+    this.parts.push(part)
+    return { kind: 'part', part_index: this.parts.length - 1, part }
   }
 
   private _open(id: string, part: Part): number {

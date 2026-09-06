@@ -12,6 +12,7 @@ import {
   resolveEffectiveConfig,
   type EffectiveConfig, type EffectiveModel, type ModelSource, type SessionConfigSource,
 } from './effective-config'
+import { persistGeneratedImage } from './generated-images'
 import { getProject } from './projects'
 import {
   createSession, finalizeMessage, getMessage, getModel, getProvider, getSession,
@@ -191,6 +192,15 @@ async function generate(hub: Hub, target: Target, shell: Message, leafUserId: nu
       // An aborted stream ends with `abort` and never emits `finish`, so usage stays null.
       if (part.type === 'abort') { status = 'aborted'; break }
       if (part.type === 'finish') { usage = toUsage(part.totalUsage); continue }
+      // Awaited before anything else sees the part: the accumulator, the inflight snapshot, D1 and
+      // every socket may only ever carry the attachment id it returns (spec §5.8).
+      if (part.type === 'file') {
+        const image = await persistGeneratedImage(hub, part.file)
+        const ev = acc.append(image)
+        hub.broadcast({ type: 'message.part', message_id: shell.id, part_index: ev.part_index, part: ev.part })
+        await hub.flushInflight(tracked)
+        continue
+      }
       for (const ev of acc.apply(part)) {
         if (ev.kind === 'delta') hub.broadcast({ type: 'message.delta', message_id: shell.id, part_index: ev.part_index, kind: ev.part_kind, delta: ev.delta })
         else hub.broadcast({ type: 'message.part', message_id: shell.id, part_index: ev.part_index, part: ev.part })

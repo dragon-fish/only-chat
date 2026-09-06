@@ -1,21 +1,28 @@
 import { env } from 'cloudflare:workers'
 import { runInDurableObject } from 'cloudflare:test'
+import type { Context } from 'cordis'
 import type { FilesV4, FilesV4UploadFileCallOptions } from '@ai-sdk/provider'
+import { DefaultGeneratedFile } from 'ai'
 import { MockLanguageModelV4, simulateReadableStream } from 'ai/test'
 import { eq } from 'drizzle-orm'
 import { describe, expect, it, vi } from 'vitest'
-import { createDb } from '@/server/db/client'
+import { createApp } from '@/server/app'
+import { createDb, type DB } from '@/server/db/client'
 import { ensureDefaultUser } from '@/server/plugins/database'
+import type { Assets } from '@/server/plugins/assets'
 import { encryptSecret } from '@/server/plugins/llm/crypto'
 import { buildModelMessages } from '@/server/plugins/llm/messages'
+import { MAX_UPLOAD_BYTES, r2Key } from '@/server/plugins/api/attachments'
+import type { Hub } from '@/server/plugins/hub'
+import { persistGeneratedImage } from '@/server/plugins/hub/generated-images'
 import { createSession, getSession, insertMessage, listMessages, toMessage } from '@/server/plugins/hub/sessions'
 import { attachmentProviderFiles, attachments, models, projects, providers, users } from '@/server/db/schema'
 import type { ProviderRow } from '@/server/db/schema'
 import { DEFAULT_USER_ID } from '@/shared/constants'
-import type { Message } from '@/shared/models'
+import type { Message, ModelCapabilities } from '@/shared/models'
 import type { Part } from '@/shared/parts'
 import type { UserHub } from '@/server/index'
-import { connect } from './ws-helper'
+import { connect, type WsHarness } from './ws-helper'
 
 /** The provider-level chunk type, taken from the mock itself so no extra dependency is needed. */
 type StreamPart = Awaited<ReturnType<MockLanguageModelV4['doStream']>>['stream'] extends ReadableStream<infer P> ? P : never
@@ -41,7 +48,7 @@ const STREAM: StreamPart[] = [
   },
 ]
 
-async function seedProvider(name = 'mock', modelId = 'mock-1', nativeFiles = false): Promise<number> {
+async function seedProvider(name = 'mock', modelId = 'mock-1', nativeFiles = false, capabilities: ModelCapabilities = { reasoning: true }): Promise<number> {
   const db = createDb(env.DB)
   await ensureDefaultUser(db)
   const [p] = await db.insert(providers).values({
@@ -49,8 +56,25 @@ async function seedProvider(name = 'mock', modelId = 'mock-1', nativeFiles = fal
     api_key: await encryptSecret(env.KEY_ENCRYPTION_SECRET, 'k'), extra: null, enabled: true,
     native_files: nativeFiles, created_at: 0,
   }).returning()
-  await db.insert(models).values({ provider_id: p!.id, model_id: modelId, display_name: 'Mock', capabilities: { reasoning: true }, pricing: null, enabled: true, sort: 0 })
+  await db.insert(models).values({ provider_id: p!.id, model_id: modelId, display_name: 'Mock', capabilities, pricing: null, enabled: true, sort: 0 })
   return p!.id
+}
+
+const toBase64 = (bytes: Uint8Array<ArrayBuffer>) => btoa(String.fromCharCode(...bytes))
+
+const sha256 = async (bytes: Uint8Array<ArrayBuffer>) =>
+  [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map((b) => b.toString(16).padStart(2, '0')).join('')
+
+const attachmentBySha = (digest: string) =>
+  createDb(env.DB).query.attachments.findFirst({ where: eq(attachments.sha256, digest) })
+
+/**
+ * Distinct bytes on every call. D1 is shared across this project's tests and attachments dedupe by
+ * SHA-256, so reusing one image would let an unrelated test decide whether a row is new.
+ */
+let imageSeq = 0
+function uniqueImageBytes(): Uint8Array<ArrayBuffer> {
+  return new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, ...new TextEncoder().encode(`generated-${++imageSeq}`)])
 }
 
 async function seedProject(input: Partial<typeof projects.$inferInsert> = {}): Promise<number> {
@@ -584,6 +608,310 @@ describe('provider file transport', () => {
       // A failed upload is a failed turn: nothing was silently downgraded into inline bytes.
       expect(created).toHaveLength(0)
       expect(await pointersOf(attachmentId)).toHaveLength(0)
+    }
+  })
+})
+
+describe('generated image output', () => {
+  const FINISH = STREAM.at(-1)!
+
+  /** The stream every image test shares: some text first, then whatever the model emits as files. */
+  function textThenFiles(files: StreamPart[], trailing: StreamPart[] = []): StreamPart[] {
+    return [
+      { type: 'stream-start', warnings: [] },
+      { type: 'text-start', id: 't1' },
+      { type: 'text-delta', id: 't1', delta: 'here it is' },
+      { type: 'text-end', id: 't1' },
+      ...files,
+      ...trailing,
+      FINISH,
+    ]
+  }
+
+  const inlineChunk = (bytes: Uint8Array<ArrayBuffer>, mediaType = 'image/png'): StreamPart =>
+    ({ type: 'file', mediaType, data: { type: 'data', data: bytes } })
+  const base64Chunk = (bytes: Uint8Array<ArrayBuffer>, mediaType = 'image/png'): StreamPart =>
+    ({ type: 'file', mediaType, data: { type: 'data', data: toBase64(bytes) } })
+
+  const imageMock = (chunks: StreamPart[], chunkDelayInMs: number | null = null) => () => new MockLanguageModelV4({
+    doStream: async () => ({ stream: simulateReadableStream({ chunks: [...chunks], chunkDelayInMs, initialDelayInMs: null }) }),
+  })
+
+  function send(providerId: number, modelId: string): string {
+    return JSON.stringify({ type: 'send', session_id: null, parent_id: null, parts: [{ type: 'text', text: 'draw a cat' }], provider_id: providerId, model_id: modelId })
+  }
+
+  const sessionIdOf = (c: WsHarness) => (c.events.find((e) => e.type === 'session.created') as { session: { id: number } }).session.id
+  const imageEventsOf = (c: WsHarness) => c.events.filter((e) => e.type === 'message.part') as Array<{ part: { attachment_id: number } }>
+
+  /** Whatever the DO would replay to a client that reconnects mid-generation. */
+  async function inflightSnapshot(): Promise<string> {
+    const stub = env.USER_HUB.getByName(String(DEFAULT_USER_ID))
+    return runInDurableObject(stub, async (_instance: UserHub, state) => {
+      const stored = await state.storage.list({ prefix: 'inflight:' })
+      return JSON.stringify([...stored.values()])
+    })
+  }
+
+  it('persists inline image bytes to R2 and gives every device only an attachment id', async () => {
+    const bytes = uniqueImageBytes()
+    const providerId = await seedProvider('img-inline', 'img-1', false, { image_output: true })
+    await installMock(imageMock(textThenFiles([inlineChunk(bytes)])))
+
+    const a = await connect()
+    const b = await connect()
+    a.ws.send(send(providerId, 'img-1'))
+    expect(await a.next('message.done')).toMatchObject({ status: 'done' })
+    await b.next('message.done')
+
+    const imageEvent = a.events.find((e) => e.type === 'message.part')!
+    expect((imageEvent as { part: unknown }).part).toEqual({ type: 'image', attachment_id: expect.any(Number) })
+    expect(JSON.stringify(imageEvent)).not.toContain('base64')
+    expect(JSON.stringify(imageEvent)).not.toContain(toBase64(bytes))
+    // Multi-device: the second socket received the very same frame, id and all.
+    expect(b.events.find((e) => e.type === 'message.part')).toEqual(imageEvent)
+
+    const attachmentId = (imageEvent as { part: { attachment_id: number } }).part.attachment_id
+    const saved = (await createDb(env.DB).query.attachments.findFirst({ where: eq(attachments.id, attachmentId) }))!
+    expect(saved).toMatchObject({ origin: 'generated', mime: 'image/png', size: bytes.byteLength, sha256: await sha256(bytes) })
+    const object = await env.BUCKET.get(saved.r2_key)
+    expect(object).not.toBeNull()
+    expect(new Uint8Array(await object!.arrayBuffer())).toEqual(bytes)
+
+    const rows = await listMessages(createDb(env.DB), sessionIdOf(a))
+    expect(rows[1]!.parts).toEqual([
+      { type: 'text', text: 'here it is' },
+      { type: 'image', attachment_id: attachmentId },
+    ])
+    expect(JSON.stringify(rows[1]!.parts)).not.toContain('base64')
+    expect(JSON.stringify(rows[1]!.parts)).not.toContain(toBase64(bytes))
+  })
+
+  it('decodes a base64 output and stores the decoded bytes', async () => {
+    const bytes = uniqueImageBytes()
+    const providerId = await seedProvider('img-b64', 'img-1', false, { image_output: true })
+    await installMock(imageMock(textThenFiles([base64Chunk(bytes)])))
+
+    const c = await connect()
+    c.ws.send(send(providerId, 'img-1'))
+    expect(await c.next('message.done')).toMatchObject({ status: 'done' })
+
+    const saved = (await attachmentBySha(await sha256(bytes)))!
+    expect(saved.origin).toBe('generated')
+    expect(imageEventsOf(c).map((e) => e.part.attachment_id)).toEqual([saved.id])
+    const object = await env.BUCKET.get(saved.r2_key)
+    expect(new Uint8Array(await object!.arrayBuffer())).toEqual(bytes)
+  })
+
+  it('downloads an HTTPS output from the stream and never lets the URL through', async () => {
+    const bytes = uniqueImageBytes()
+    const url = 'https://provider.example/tmp/stream.png'
+    const providerId = await seedProvider('img-url', 'img-1', false, { image_output: true })
+    const chunk: StreamPart = { type: 'file', mediaType: 'image/png', data: { type: 'url', url: new URL(url) } }
+    await installMock(imageMock(textThenFiles([chunk])))
+    vi.stubGlobal('fetch', async () => new Response(bytes, { headers: { 'content-type': 'image/png' } }))
+
+    try {
+      const c = await connect()
+      c.ws.send(send(providerId, 'img-1'))
+      expect(await c.next('message.done')).toMatchObject({ status: 'done' })
+
+      const saved = (await attachmentBySha(await sha256(bytes)))!
+      expect(saved.origin).toBe('generated')
+      expect(imageEventsOf(c).map((e) => e.part.attachment_id)).toEqual([saved.id])
+      // The provider's temporary URL reaches neither the socket nor D1.
+      expect(JSON.stringify(c.events)).not.toContain('provider.example')
+      const rows = await listMessages(createDb(env.DB), sessionIdOf(c))
+      expect(rows[1]!.parts).toEqual([
+        { type: 'text', text: 'here it is' },
+        { type: 'image', attachment_id: saved.id },
+      ])
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('reuses the existing attachment when the same bytes are emitted twice', async () => {
+    const bytes = uniqueImageBytes()
+    const digest = await sha256(bytes)
+    const providerId = await seedProvider('img-dupe', 'img-1', false, { image_output: true })
+    await installMock(imageMock(textThenFiles([inlineChunk(bytes), inlineChunk(bytes)])))
+
+    const c = await connect()
+    c.ws.send(send(providerId, 'img-1'))
+    expect(await c.next('message.done')).toMatchObject({ status: 'done' })
+
+    const ids = imageEventsOf(c).map((e) => e.part.attachment_id)
+    expect(ids).toHaveLength(2)
+    expect(ids[0]).toBe(ids[1])
+    const rows = await createDb(env.DB).select().from(attachments).where(eq(attachments.sha256, digest))
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.origin).toBe('generated')
+    // Dedupe must never disturb the object the first write put there.
+    expect(await env.BUCKET.head(rows[0]!.r2_key)).not.toBeNull()
+  })
+
+  it('fails the reply on an unsupported image type, keeping the text and persisting nothing', async () => {
+    const bytes = uniqueImageBytes()
+    const digest = await sha256(bytes)
+    const providerId = await seedProvider('img-bad-mime', 'img-1', false, { image_output: true })
+    await installMock(imageMock(textThenFiles([inlineChunk(bytes, 'image/svg+xml')])))
+
+    const c = await connect()
+    c.ws.send(send(providerId, 'img-1'))
+    expect(await c.next('message.done')).toMatchObject({ status: 'error', error: expect.stringContaining('image/svg+xml') })
+
+    expect(imageEventsOf(c)).toHaveLength(0)
+    const rows = await listMessages(createDb(env.DB), sessionIdOf(c))
+    expect(rows[1]!.status).toBe('error')
+    // Spec §9: the text already received survives, and no trace of the file is written anywhere.
+    expect(rows[1]!.parts).toEqual([{ type: 'text', text: 'here it is' }])
+    expect(await attachmentBySha(digest)).toBeUndefined()
+    expect(await env.BUCKET.head(r2Key(DEFAULT_USER_ID, digest))).toBeNull()
+  })
+
+  it('never writes file content into the DO inflight snapshot', async () => {
+    const bytes = uniqueImageBytes()
+    const providerId = await seedProvider('img-inflight', 'img-1', false, { image_output: true })
+    const trailing: StreamPart[] = [
+      { type: 'text-start', id: 't2' },
+      { type: 'text-delta', id: 't2', delta: 'and more' },
+      { type: 'text-end', id: 't2' },
+    ]
+    await installMock(imageMock(textThenFiles([inlineChunk(bytes)], trailing), 100))
+
+    const c = await connect()
+    c.ws.send(send(providerId, 'img-1'))
+    // The image part is broadcast only after `flushInflight`, so storage already holds it here.
+    await c.next('message.part')
+    const snapshot = await inflightSnapshot()
+    expect(snapshot).toContain('"attachment_id"')
+    expect(snapshot).not.toContain('base64')
+    expect(snapshot).not.toContain(toBase64(bytes))
+    await c.next('message.done')
+  })
+})
+
+describe('persistGeneratedImage', () => {
+  let appPromise: Promise<Context> | undefined
+  /** A real cordis root, so the R2 service and D1 under test are the production ones. */
+  const app = () => (appPromise ??= createApp({ env, side: 'worker' }))
+
+  async function hubLike(overrides: { db?: DB; assets?: Assets } = {}): Promise<Hub> {
+    const ctx = await app()
+    return { db: overrides.db ?? ctx.db.orm, app: { assets: overrides.assets ?? ctx.assets } } as unknown as Hub
+  }
+
+  const png = (bytes: Uint8Array<ArrayBuffer>, mediaType = 'image/png') => new DefaultGeneratedFile({ data: bytes, mediaType })
+
+  /** Scoped to the one key those bytes would ever occupy: other test files share this bucket. */
+  const storedObject = async (bytes: Uint8Array<ArrayBuffer>) =>
+    env.BUCKET.head(r2Key(DEFAULT_USER_ID, await sha256(bytes)))
+
+  /**
+   * A DB whose only altered behaviour is that `insert(...).values(...).returning()` runs `onInsert`
+   * instead of writing — the shape a D1 failure takes at the drizzle boundary. Reads stay real, so
+   * the recovery path sees whatever `onInsert` actually left behind.
+   */
+  function withFailingInsert(db: DB, onInsert: () => Promise<unknown>): DB {
+    return new Proxy(db, {
+      get(target, prop) {
+        if (prop === 'insert') return () => ({ values: () => ({ returning: onInsert }) })
+        const value = Reflect.get(target, prop) as unknown
+        return typeof value === 'function' ? (value as (...a: unknown[]) => unknown).bind(target) : value
+      },
+    }) as DB
+  }
+
+  it('rejects an output that is not an accepted image type', async () => {
+    const bytes = uniqueImageBytes()
+    await expect(persistGeneratedImage(await hubLike(), png(bytes, 'application/pdf'))).rejects.toThrow(/application\/pdf/)
+    expect(await attachmentBySha(await sha256(bytes))).toBeUndefined()
+    expect(await storedObject(bytes)).toBeNull()
+  })
+
+  it('rejects a zero-byte output', async () => {
+    const empty = new Uint8Array()
+    await expect(persistGeneratedImage(await hubLike(), png(empty))).rejects.toThrow(/empty/)
+    expect(await attachmentBySha(await sha256(empty))).toBeUndefined()
+    expect(await storedObject(empty)).toBeNull()
+  })
+
+  it('rejects an output larger than the upload limit', async () => {
+    const bytes = new Uint8Array(MAX_UPLOAD_BYTES + 1)
+    await expect(persistGeneratedImage(await hubLike(), png(bytes))).rejects.toThrow(/too large/)
+    expect(await attachmentBySha(await sha256(bytes))).toBeUndefined()
+    expect(await storedObject(bytes)).toBeNull()
+  })
+
+  it('propagates an R2 write failure without leaving an attachment row', async () => {
+    const bytes = uniqueImageBytes()
+    const assets = { put: async () => { throw new Error('r2 unavailable') } } as unknown as Assets
+    await expect(persistGeneratedImage(await hubLike({ assets }), png(bytes))).rejects.toThrow('r2 unavailable')
+    expect(await attachmentBySha(await sha256(bytes))).toBeUndefined()
+    expect(await storedObject(bytes)).toBeNull()
+  })
+
+  it('deletes the R2 object it wrote when the D1 insert fails', async () => {
+    const bytes = uniqueImageBytes()
+    const digest = await sha256(bytes)
+    const ctx = await app()
+    const db = withFailingInsert(ctx.db.orm, async () => { throw new Error('d1 insert failed') })
+    await expect(persistGeneratedImage(await hubLike({ db }), png(bytes))).rejects.toThrow('d1 insert failed')
+    // No orphaned row, and no half-written R2 pointer either.
+    expect(await attachmentBySha(digest)).toBeUndefined()
+    expect(await env.BUCKET.head(r2Key(DEFAULT_USER_ID, digest))).toBeNull()
+  })
+
+  it('keeps the R2 object when a concurrent insert already claimed the same digest', async () => {
+    const bytes = uniqueImageBytes()
+    const digest = await sha256(bytes)
+    const key = r2Key(DEFAULT_USER_ID, digest)
+    const ctx = await app()
+    // Another writer wins the unique index while this insert is in flight: that row owns the key.
+    const db = withFailingInsert(ctx.db.orm, async () => {
+      await ctx.db.orm.insert(attachments).values({
+        user_id: DEFAULT_USER_ID, sha256: digest, mime: 'image/png', size: bytes.byteLength,
+        width: null, height: null, r2_key: key, origin: 'generated', created_at: 0,
+      })
+      throw new Error('UNIQUE constraint failed: attachments.sha256')
+    })
+    const part = await persistGeneratedImage(await hubLike({ db }), png(bytes))
+    const owner = (await attachmentBySha(digest))!
+    expect(part).toEqual({ type: 'image', attachment_id: owner.id })
+    expect(await env.BUCKET.head(key)).not.toBeNull()
+  })
+
+  it('downloads an HTTPS output and persists what the download served', async () => {
+    const bytes = uniqueImageBytes()
+    const url = 'https://provider.example/tmp/out.png'
+    const fetchSpy = vi.fn(async () => new Response(bytes, { headers: { 'content-type': 'image/png' } }))
+    vi.stubGlobal('fetch', fetchSpy)
+    try {
+      const part = await persistGeneratedImage(await hubLike(), new DefaultGeneratedFile({ data: url, mediaType: 'image/png' }))
+      const row = (await attachmentBySha(await sha256(bytes)))!
+      expect(part).toEqual({ type: 'image', attachment_id: row.id })
+      expect(row.origin).toBe('generated')
+      // The provider's temporary URL is never what gets stored.
+      expect(JSON.stringify(row)).not.toContain('provider.example')
+      const object = await env.BUCKET.get(row.r2_key)
+      expect(new Uint8Array(await object!.arrayBuffer())).toEqual(bytes)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects an HTTPS output that fails to download or is not an image', async () => {
+    vi.stubGlobal('fetch', async () => new Response('gone', { status: 404 }))
+    try {
+      await expect(persistGeneratedImage(await hubLike(), new DefaultGeneratedFile({ data: 'https://provider.example/gone.png', mediaType: 'image/png' })))
+        .rejects.toThrow(/404/)
+      vi.stubGlobal('fetch', async () => new Response('<html>', { headers: { 'content-type': 'text/html; charset=utf-8' } }))
+      await expect(persistGeneratedImage(await hubLike(), new DefaultGeneratedFile({ data: 'https://provider.example/page.html', mediaType: 'image/png' })))
+        .rejects.toThrow(/text\/html/)
+    } finally {
+      vi.unstubAllGlobals()
     }
   })
 })
