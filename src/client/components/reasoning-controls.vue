@@ -84,7 +84,9 @@ function onSliderPointerDown() {
 </script>
 
 <template>
-  <div>
+  <!-- One spacing scale for both hosts: a 320px popover and a settings form several hundred px
+       wide. `gap-3` on the column is what separates the rows, so no child carries its own margin. -->
+  <div class="flex flex-col gap-3">
     <div class="flex items-center justify-between">
       <div class="flex items-center gap-2">
         <span class="text-sm font-medium">思考</span>
@@ -111,7 +113,7 @@ function onSliderPointerDown() {
       />
     </div>
 
-    <div class="mt-1">
+    <div>
       <Slider
         v-model="sliderValue"
         :min="0"

@@ -13,7 +13,7 @@ import {
 } from '@/client/ui/number-field'
 import { Textarea } from '@/client/ui/textarea'
 import ModelPicker from '@/client/components/model-picker.vue'
-import ReasoningControl from '@/client/components/reasoning-control.vue'
+import ReasoningControls from '@/client/components/reasoning-controls.vue'
 import { DISCONNECTED_MESSAGE, optionalNumber, projectFormFrom, projectUpdateCommand, reasoningStopsFor, REASONING_ORDER, useSyncStore, type ProjectFormState } from '@/client/stores/sync'
 import { useConfigStore } from '@/client/stores/config'
 
@@ -206,7 +206,7 @@ onUnmounted(clearPending)
           FieldLabel(for="oc-project-max-tokens") max tokens
           NumberField(
             id="oc-project-max-tokens" :model-value="optionalNumber(form.max_tokens)"
-            :min="1" :step="1" :step-snapping="false"
+            :min="1" :step="1" :step-snapping="false" :format-options="{ useGrouping: false }"
             @update:model-value="setParam('max_tokens', $event)")
             NumberFieldContent
               NumberFieldDecrement
@@ -215,13 +215,12 @@ onUnmounted(clearPending)
           FieldDescription 留空则继承，不写入项目参数。
         Field
           FieldLabel 推理强度
-          //- The chip keeps its intrinsic width: `Field` stretches its own children to full width,
-          //- and a lone Button stretched across the form reads as a bar, not a chip.
-          .flex.items-center
-            ReasoningControl(
-              variant="outline"
-              :stops="stops" :active="form.reasoning" :overridden="form.reasoning !== 'inherit'"
-              :no-model="false" @update="form.reasoning = $event")
+          //- Rendered inline, not behind a chip and a popover. That shape belongs to the Composer's
+          //- toolbar, which is one row with no space for two switches and a slider; a settings page
+          //- has the room, and every field beside this one is laid out plainly.
+          ReasoningControls(
+            :stops="stops" :active="form.reasoning" :overridden="form.reasoning !== 'inherit'"
+            @update="form.reasoning = $event")
           FieldDescription(v-if="form.model") 只显示该默认模型声明支持的档位；「默认」表示项目不设置推理档位。
           FieldDescription(v-else) 未设置默认模型时无法校验档位，实际可用范围由发送时的模型决定。
     .flex.items-center.gap-3.border-t.p-3

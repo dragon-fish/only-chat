@@ -140,7 +140,7 @@ Popover
             RotateCcw(class="size-3.5")
         NumberField(
           id="oc-session-max-tokens" :model-value="optionalNumber(form.max_tokens)"
-          :min="1" :step="1" :step-snapping="false"
+          :min="1" :step="1" :step-snapping="false" :format-options="{ useGrouping: false }"
           @update:model-value="setParam('max_tokens', $event)")
           NumberFieldContent
             NumberFieldDecrement
