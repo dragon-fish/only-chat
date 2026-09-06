@@ -53,6 +53,15 @@ const stops = computed(() => form.model
 const chatCount = computed(() => (props.projectId === null ? 0 : sync.sessionsInProject(props.projectId).length))
 
 /**
+ * The live text of each box while it is being edited, `null` when it is not. reka only writes typed
+ * text back to the model on blur or Enter, so the model is the wrong thing to ask whether the box
+ * the user is looking at is empty — see `fieldLooksBlank`.
+ */
+const typing = reactive<Record<ParamKey, string | null>>({ temperature: null, top_p: null, max_tokens: null })
+// Declared above `initialize` on purpose: an immediate watcher calls that function synchronously
+// during setup, so a `const` declared further down would still be in its temporal dead zone.
+
+/**
  * Every piece of state here belongs to one `projectId`, and vue-router reuses this instance for a
  * param-only navigation, so re-initialising has to be driven by the prop rather than by mounting:
  * clicking a second Project's ✏️ used to keep the first Project's values in the form and then save
@@ -151,12 +160,6 @@ type ParamKey = 'temperature' | 'top_p' | 'max_tokens'
 const STEP_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End'])
 
 /** Blank is `''` in the form and `undefined` through `optionalNumber` — never `0`. */
-/**
- * The live text of each box while it is being edited, `null` when it is not. reka only writes typed
- * text back to the model on blur or Enter, so the model is the wrong thing to ask whether the box
- * the user is looking at is empty — see `fieldLooksBlank`.
- */
-const typing = reactive<Record<ParamKey, string | null>>({ temperature: null, top_p: null, max_tokens: null })
 function onType(field: ParamKey, event: Event) {
   typing[field] = (event.target as HTMLInputElement).value
 }
