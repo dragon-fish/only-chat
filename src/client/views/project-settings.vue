@@ -221,8 +221,12 @@ onUnmounted(clearPending)
           ReasoningControls(
             :stops="stops" :active="form.reasoning" :overridden="form.reasoning !== 'inherit'"
             @update="form.reasoning = $event")
-          FieldDescription(v-if="form.model") 只显示该默认模型声明支持的档位；「默认」表示项目不设置推理档位。
-          FieldDescription(v-else) 未设置默认模型时无法校验档位，实际可用范围由发送时的模型决定。
+          //- An empty axis is not a filter result: it means the default model declares no
+          //- reasoning at all, and saying 只显示…声明支持的档位 there reads as "this model
+          //- supports none of them" rather than "this model does not reason".
+          FieldDescription(v-if="!form.model") 未设置默认模型时无法校验档位，实际可用范围由发送时的模型决定。
+          FieldDescription(v-else-if="stops.length === 0") 该默认模型未声明推理能力，此处没有可设置的档位；改用其他默认模型才能设置。
+          FieldDescription(v-else) 只显示该默认模型声明支持的档位；「默认」表示项目不设置推理档位。
     .flex.items-center.gap-3.border-t.p-3
       p.min-w-0.truncate.text-xs.text-muted-foreground
         | {{ chatCount }} 个聊天 · 创建于 {{ formatTime(project.created_at) }} · 更新于 {{ formatTime(project.updated_at) }}

@@ -8,6 +8,7 @@ import ReasoningControls from '@/client/components/reasoning-controls.vue'
 import {
   REASONING_LABELS,
   reasoningControlModel,
+  reasoningDisabledReason,
   reasoningStopsFor,
 } from '@/client/stores/sync'
 import type { ReasoningChoice, ReasoningStop } from '@/client/stores/sync'
@@ -40,16 +41,15 @@ const stops = computed(() => props.stops ?? (props.capabilities && props.protoco
   : []))
 const model = computed(() => reasoningControlModel(stops.value, props.active))
 
-/** Spec §5.1: a control that cannot act says why; it never silently disappears. */
-const disabledReason = computed(() => {
-  if (props.noModel) return '先选择模型'
-  // A model that cannot reason yields NO stops at all. Do NOT test `model.unsupported` here:
-  // that flag means "a strength is stored that this model does not offer", and it is false for a
-  // non-reasoning model, so using it would leave the chip enabled on exactly the model it is
-  // meant to disable for.
-  if (stops.value.length === 0) return '该模型不支持推理'
-  return null
-})
+/**
+ * Spec §5.1: a control that cannot act says why; it never silently disappears. Only the first case
+ * is the chip's own — a session with no resolved model has no capabilities to derive stops from,
+ * which is a different statement from "this model cannot reason". The second comes from the shared
+ * `reasoningDisabledReason`, which the body also renders, so the two hosts cannot drift apart.
+ */
+const disabledReason = computed(() => (
+  props.noModel ? '先选择模型' : reasoningDisabledReason(stops.value)
+))
 
 const chipLabel = computed(() => {
   if (!model.value.enabled) return REASONING_LABELS.off

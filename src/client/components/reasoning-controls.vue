@@ -4,11 +4,13 @@ import { Button } from '@/client/ui/button'
 import { Separator } from '@/client/ui/separator'
 import { Slider } from '@/client/ui/slider'
 import { Switch } from '@/client/ui/switch'
+import { Toggle } from '@/client/ui/toggle'
 import { cn } from '@/client/lib/utils'
 import {
   REASONING_LABELS,
   reasoningChoiceFor,
   reasoningControlModel,
+  reasoningDisabledReason,
   reasoningStopsFor,
 } from '@/client/stores/sync'
 import type { ReasoningAction, ReasoningChoice, ReasoningStop } from '@/client/stores/sync'
@@ -39,17 +41,40 @@ const stops = computed(() => props.stops ?? (props.capabilities && props.protoco
   : []))
 const model = computed(() => reasoningControlModel(stops.value, props.active))
 
+/**
+ * Spec §5.1: a control that cannot act says why, here and not only in the chip. The chip guards
+ * the Composer, but this body is rendered directly by the Project settings page, and without the
+ * reason that page showed three live-looking widgets for a model that cannot reason at all.
+ * The chip adds its own extra case (no model resolved yet) on top of this one.
+ */
+const disabledReason = computed(() => reasoningDisabledReason(stops.value))
+
+/**
+ * Where the thumb parks when no strength is pinned (自动, 关闭, or a stored strength this model
+ * does not offer). It is the same midpoint `reasoningChoiceFor` lands on when 自动 is switched off,
+ * so the greyed thumb sits exactly where leaving 自动 would put it. The selected *state* is still
+ * not shown — no label is highlighted and the whole slider is dimmed — per spec §5.4.
+ */
+const parked = computed(() => Math.floor((model.value.strengths.length - 1) / 2))
+
+/**
+ * Spec §5.5: 一个存储的强度模型不提供时，按原样显示，绝不改写. The value is kept, and this is what
+ * says so — without it the slider parks its thumb on the midpoint and silently contradicts the
+ * chip, which shows the stored value. Named `（不适用）` after the control this one replaced.
+ */
+const unsupportedLabel = computed(() => {
+  const active = props.active
+  if (!model.value.unsupported) return null
+  if (active === 'inherit' || active === 'off' || active === 'auto') return null
+  return REASONING_LABELS[active]
+})
+
+/** A one-stop axis is a single option, not a scale; the slider is replaced by a toggle for it. */
+const loneStop = computed(() => (model.value.strengths.length === 1 ? model.value.strengths[0] : undefined))
+
 function act(action: ReasoningAction) {
   emit('update', reasoningChoiceFor(model.value, action))
 }
-
-/**
- * Where the thumb parks when no strength is pinned (自动 or 关闭). It is the same midpoint
- * `reasoningChoiceFor` lands on when 自动 is switched off, so the greyed thumb sits exactly where
- * leaving 自动 would put it. The selected *state* is still not shown — no label is highlighted and
- * the whole slider is dimmed — which is what spec §5.4 asks for.
- */
-const parked = computed(() => Math.floor((model.value.strengths.length - 1) / 2))
 
 /**
  * Where stop `i`'s tick centre actually sits along the track. Not `i / (n - 1)` of the full width:
@@ -75,11 +100,22 @@ const sliderValue = computed({
 /**
  * Spec §5.4 wants the slider greyed while 自动 is on but still live, because pressing a stop is how
  * you leave 自动. reka only emits when the value actually changes, so pressing the stop the parked
- * thumb already sits on would otherwise be a dead click; leaving 自动 here on the first press makes
- * every stop live, and reka's own slide handling then writes whichever stop the pointer landed on.
+ * thumb already sits on would otherwise be a dead click; committing the parked stop on the first
+ * press makes every stop live, and reka's own slide handling then writes whichever stop the
+ * pointer landed on. The same is true whenever nothing is pinned — 自动 *or* an unsupported stored
+ * strength — so the guard is `index < 0`, not `auto`.
  */
 function onSliderPointerDown() {
-  if (model.value.enabled && model.value.auto) act({ kind: 'auto', on: false })
+  if (!model.value.enabled || model.value.index >= 0) return
+  const stop = model.value.strengths[parked.value]
+  if (stop) act({ kind: 'strength', stop })
+}
+
+/** The lone-stop toggle: pressing it pins that stop, releasing it hands the choice back to 自动. */
+function onLoneStop(on: boolean) {
+  const stop = loneStop.value
+  if (on && stop) act({ kind: 'strength', stop })
+  else if (!on) act({ kind: 'auto', on: true })
 }
 </script>
 
@@ -87,57 +123,103 @@ function onSliderPointerDown() {
   <!-- One spacing scale for both hosts: a 320px popover and a settings form several hundred px
        wide. `gap-3` on the column is what separates the rows, so no child carries its own margin. -->
   <div class="flex flex-col gap-3">
-    <div class="flex items-center justify-between">
-      <div class="flex items-center gap-2">
-        <span class="text-sm font-medium">思考</span>
-        <Switch
-          :model-value="model.enabled"
-          :disabled="!model.canDisable"
-          :title="model.canDisable ? undefined : '该模型无法关闭思考'"
-          @update:model-value="(on: boolean) => act({ kind: 'enable', on })"
-        />
-      </div>
+    <!-- Nothing here can act, so the panel states why instead of rendering dead widgets (§5.1).
+         The 默认 button survives: clearing an override that can no longer be edited is the one
+         action still worth having. -->
+    <div v-if="disabledReason" class="flex items-center justify-between gap-2">
+      <p class="text-muted-foreground text-sm">
+        {{ disabledReason }}
+      </p>
       <Button v-if="overridden" variant="ghost" size="xs" type="button" @click="emit('update', 'inherit')">
         默认
       </Button>
     </div>
 
-    <Separator />
-
-    <div class="flex items-center gap-2">
-      <span class="text-sm">自动</span>
-      <Switch
-        :model-value="model.auto"
-        :disabled="!model.enabled"
-        @update:model-value="(on: boolean) => act({ kind: 'auto', on })"
-      />
-    </div>
-
-    <div>
-      <Slider
-        v-model="sliderValue"
-        :min="0"
-        :max="Math.max(model.strengths.length - 1, 0)"
-        :step="1"
-        :disabled="!model.enabled"
-        :class="cn(
-          '[&_[data-slot=slider-thumb]]:size-5 [&_[data-slot=slider-thumb]]:shadow [&_[data-slot=slider-track]]:h-1.5',
-          model.auto && model.enabled ? 'opacity-50' : '',
-        )"
-        @pointerdown="onSliderPointerDown"
-      />
-      <div class="text-muted-foreground relative mt-2 h-4 text-[11px]">
-        <span
-          v-for="(stop, i) in model.strengths"
-          :key="stop"
-          class="absolute -translate-x-1/2 whitespace-nowrap"
-          :style="{ left: stopOffset(i, model.strengths.length) }"
-          :class="cn(
-            !model.enabled || model.auto ? 'opacity-40' : '',
-            i === model.index && model.enabled && !model.auto ? 'text-foreground font-medium' : '',
-          )"
-        >{{ REASONING_LABELS[stop] }}</span>
+    <template v-else>
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <span class="text-sm font-medium">思考</span>
+          <Switch
+            :model-value="model.enabled"
+            :disabled="!model.canDisable"
+            @update:model-value="(on: boolean) => act({ kind: 'enable', on })"
+          />
+        </div>
+        <Button v-if="overridden" variant="ghost" size="xs" type="button" @click="emit('update', 'inherit')">
+          默认
+        </Button>
       </div>
-    </div>
+
+      <!-- The reason for the lock, as text. It used to be the Switch's `title`, which a disabled
+           button can never show: browsers suppress pointer events on disabled form controls, so
+           the tooltip never fires — the same trap ruling R7 fixed in the Composer. -->
+      <p v-if="!model.canDisable" class="text-muted-foreground text-xs">
+        该模型无法关闭思考，开关锁定在「开」。
+      </p>
+
+      <Separator />
+
+      <div class="flex items-center gap-2">
+        <span class="text-sm">自动</span>
+        <Switch
+          :model-value="model.auto"
+          :disabled="!model.enabled"
+          @update:model-value="(on: boolean) => act({ kind: 'auto', on })"
+        />
+      </div>
+
+      <div v-if="model.strengths.length > 1">
+        <Slider
+          v-model="sliderValue"
+          :min="0"
+          :max="model.strengths.length - 1"
+          :step="1"
+          :disabled="!model.enabled"
+          :class="cn(
+            '[&_[data-slot=slider-thumb]]:size-5 [&_[data-slot=slider-thumb]]:shadow [&_[data-slot=slider-track]]:h-1.5',
+            model.enabled && (model.auto || model.unsupported) ? 'opacity-50' : '',
+          )"
+          @pointerdown="onSliderPointerDown"
+        />
+        <div class="text-muted-foreground relative mt-2 h-4 text-[11px]">
+          <span
+            v-for="(stop, i) in model.strengths"
+            :key="stop"
+            class="absolute -translate-x-1/2 whitespace-nowrap"
+            :style="{ left: stopOffset(i, model.strengths.length) }"
+            :class="cn(
+              !model.enabled || model.auto || model.unsupported ? 'opacity-40' : '',
+              i === model.index && model.enabled && !model.auto ? 'text-foreground font-medium' : '',
+            )"
+          >{{ REASONING_LABELS[stop] }}</span>
+        </div>
+      </div>
+
+      <!-- A lone stop is not a scale. reka's `convertValueToPercentage` divides by `max - min`,
+           which is 0 here, so the thumb's `left` computes to `calc(NaN% + NaNpx)`; the browser
+           drops the invalid declaration and the thumb collapses onto the track's left edge while
+           its label centres at 50%. There is also nothing to slide between: the only choices are
+           "this level" and "let the provider decide", which is exactly a toggle. -->
+      <Toggle
+        v-else-if="loneStop"
+        :model-value="model.index === 0"
+        :disabled="!model.enabled"
+        variant="outline"
+        class="w-full"
+        @update:model-value="onLoneStop"
+      >
+        {{ REASONING_LABELS[loneStop] }}
+      </Toggle>
+
+      <!-- A reasoning model that declares no strengths at all: 思考 and 自动 still mean something,
+           there is simply no axis to draw. -->
+      <p v-else class="text-muted-foreground text-xs">
+        该模型未声明可选档位，强度由供应商决定。
+      </p>
+
+      <p v-if="unsupportedLabel" class="text-muted-foreground text-xs">
+        当前档位「{{ unsupportedLabel }}」（不适用）：该模型未声明这一档，值按原样保留，未被改写。
+      </p>
+    </template>
   </div>
 </template>
