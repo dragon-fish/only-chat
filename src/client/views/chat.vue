@@ -5,14 +5,14 @@ import { RotateCcw } from '@lucide/vue'
 import MessageList from '@/client/components/message-list.vue'
 import Composer from '@/client/components/composer.vue'
 import ModelPicker from '@/client/components/model-picker.vue'
-import ReasoningSlider from '@/client/components/reasoning-slider.vue'
+import ReasoningControl from '@/client/components/reasoning-control.vue'
 import SessionSettings from '@/client/components/session-settings.vue'
 import { routeParamToId } from '@/client/lib/route-params'
 import {
   choiceFromParams, DISCONNECTED_MESSAGE, effectiveModelFor, modelOverrideAfterPick, nextSendState,
-  paramsFromFields, reasoningStopsFor, sendCommandFor, sessionFormFrom, sessionSettingSources, useSyncStore,
+  paramsFromFields, sendCommandFor, sessionFormFrom, sessionSettingSources, useSyncStore,
   type OutstandingSend, type ReasoningChoice, type SendEvent, type SessionConfigSource,
-  type SessionSettingsForm, type SettingSource,
+  type SessionSettingsForm,
 } from '@/client/stores/sync'
 import { useConfigStore } from '@/client/stores/config'
 import type { ModelRef } from '@/shared/api'
@@ -23,12 +23,6 @@ const route = useRoute()
 const router = useRouter()
 const sync = useSyncStore()
 const config = useConfigStore()
-
-const SOURCE_LABELS: Record<SettingSource, string> = {
-  session: '会话覆盖',
-  project: '继承自 Project',
-  default: '默认',
-}
 
 const sid = computed(() => props.sessionId)
 const session = computed(() => (sid.value === null ? undefined : sync.sessions.get(sid.value)))
@@ -92,7 +86,6 @@ const sources = computed(() => sessionSettingSources(configSource.value, project
 const picked = ref<ModelRef | null>(readModel())
 const effective = computed(() => effectiveModelFor(override.value, project.value, picked.value))
 const entry = computed(() => config.modelFor(effective.value.model))
-const modelName = computed(() => entry.value ? `${entry.value.provider.name} · ${entry.value.model.display_name}` : null)
 // While the config is still loading nothing is known to be unavailable, so sending stays possible.
 const modelAvailable = computed(() => !config.loaded || config.isAvailable(effective.value.model))
 const canSend = computed(() => effective.value.model !== null && modelAvailable.value)
@@ -103,9 +96,18 @@ const sendHint = computed(() => {
   return `模型不可用（来源：${source === 'session' ? '会话' : source === 'project' ? 'Project' : '当前选择'}）`
 })
 
-const stops = computed(() => reasoningStopsFor(entry.value?.model.capabilities, entry.value?.provider.protocol))
+/**
+ * The reasoning control derives its own stops; it only needs the resolved model's declarations.
+ * Both are `null` until the config loads, which is also what `noModel` below reports.
+ */
+const capabilities = computed(() => entry.value?.model.capabilities ?? null)
+const protocol = computed(() => entry.value?.provider.protocol ?? null)
 /** What the session inherits when it sets nothing itself. */
 const inheritedReasoning = computed<ReasoningChoice>(() => choiceFromParams(project.value?.params))
+/** The three widgets always show the effective value, never the raw override (spec §5.6). */
+const activeReasoning = computed<ReasoningChoice>(() => (
+  form.reasoning === 'inherit' ? inheritedReasoning.value : form.reasoning
+))
 
 // A remembered model whose provider/model was since deleted or disabled would leave 发送 enabled
 // against a model the server will reject; drop it once the config is known.
@@ -273,8 +275,8 @@ function onReasoningChange(choice: ReasoningChoice) {
     ref="composer" :streaming="streaming" :connected="sync.status === 'open'"
     :can-send="canSend" :hint="sendHint" @send="onSend" @stop="onStop")
     template(#controls)
-      ReasoningSlider(
-        class="w-56" :model-value="form.reasoning" :stops="stops" :model-name="modelName"
-        :inherited="inheritedReasoning" :source-label="SOURCE_LABELS[sources.reasoning]"
-        :can-reset="form.reasoning !== 'inherit'" @update:model-value="onReasoningChange")
+      ReasoningControl(
+        :capabilities="capabilities" :protocol="protocol" :active="activeReasoning"
+        :overridden="form.reasoning !== 'inherit'" :no-model="entry === undefined"
+        @update="onReasoningChange")
 </template>

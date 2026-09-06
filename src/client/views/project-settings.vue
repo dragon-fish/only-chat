@@ -6,7 +6,7 @@ import { Input } from '@/client/ui/input'
 import { Label } from '@/client/ui/label'
 import { Textarea } from '@/client/ui/textarea'
 import ModelPicker from '@/client/components/model-picker.vue'
-import ReasoningSlider from '@/client/components/reasoning-slider.vue'
+import ReasoningControl from '@/client/components/reasoning-control.vue'
 import { DISCONNECTED_MESSAGE, projectFormFrom, projectUpdateCommand, reasoningStopsFor, REASONING_ORDER, useSyncStore, type ProjectFormState } from '@/client/stores/sync'
 import { useConfigStore } from '@/client/stores/config'
 
@@ -43,9 +43,6 @@ const defaultModel = computed(() => config.modelFor(form.model))
 const stops = computed(() => form.model
   ? reasoningStopsFor(defaultModel.value?.model.capabilities, defaultModel.value?.provider.protocol)
   : [...REASONING_ORDER])
-const modelName = computed(() => defaultModel.value
-  ? `${defaultModel.value.provider.name} · ${defaultModel.value.model.display_name}`
-  : '未设置默认模型')
 const chatCount = computed(() => (props.projectId === null ? 0 : sync.sessionsInProject(props.projectId).length))
 
 /**
@@ -176,9 +173,10 @@ onUnmounted(clearPending)
             Input(v-model="form.max_tokens" type="number" min="1" step="1" placeholder="继承")
         div
           Label 推理强度
-          ReasoningSlider(
-            v-model="form.reasoning" class="w-72" :stops="stops" :model-name="modelName"
-            :can-reset="form.reasoning !== 'inherit'")
+          .mt-1
+            ReasoningControl(
+              :stops="stops" :active="form.reasoning" :overridden="form.reasoning !== 'inherit'"
+              :no-model="false" @update="form.reasoning = $event")
           p.mt-1.text-xs.text-muted-foreground(v-if="form.model") 只显示该默认模型声明支持的档位；「默认」表示项目不设置推理档位。
           p.mt-1.text-xs.text-muted-foreground(v-else) 未设置默认模型时无法校验档位，实际可用范围由发送时的模型决定。
     .flex.items-center.gap-3.border-t.p-3
