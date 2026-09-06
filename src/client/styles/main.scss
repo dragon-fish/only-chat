@@ -35,6 +35,14 @@ body,
   padding-bottom: env(safe-area-inset-bottom);
 }
 
+// vue-sonner ships unlayered CSS with three attribute selectors and a fixed 20px close button.
+// This fourth selector wins without `!important`, preserving the 16px glyph while expanding the
+// interactive target to the mobile touch floor.
+[data-sonner-toaster] [data-sonner-toast][data-styled='true'] [data-close-button] {
+  width: 40px;
+  height: 40px;
+}
+
 @media (min-width: 48rem) {
   .oc-mobile-nav-offset,
   .oc-mobile-composer-safe {
