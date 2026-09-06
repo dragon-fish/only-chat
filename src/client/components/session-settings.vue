@@ -38,15 +38,45 @@ const BADGES: Record<SettingSource, string> = {
   default: '默认',
 }
 
+type ParamKey = 'temperature' | 'top_p' | 'max_tokens'
+
+/**
+ * Blank means "inherit", so no stepper may turn it into a value. reka's `handleChangingValue`
+ * writes `clampInputValue(min ?? 0)` whenever the input is empty and disables neither stepper
+ * there, so ONE press of + on a blank 最大 tokens committed `max_tokens: 1` — this form commits on
+ * `update:model-value` — truncating every later reply to a single token, with no undo beyond
+ * noticing the badge had flipped to 会话覆盖.
+ *
+ * The two buttons carry `:disabled="blank(...)"`. This guard covers the paths that have no button
+ * to disable: reka routes ArrowUp/ArrowDown, PageUp/PageDown, Home/End and the wheel through the
+ * same handlers. It runs in the capture phase on the field root, which is before reka's own
+ * listeners on the input, and it only calls `stopPropagation` — never `preventDefault`, because
+ * the caret and the popover's scrolling are the browser's business and only reka's listener has
+ * to be kept away from an empty box.
+ */
+const STEP_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End'])
+
+/** Blank is `''` in the form and `undefined` through `optionalNumber` — never `0` (spec §7.3). */
+function blank(field: ParamKey): boolean {
+  return optionalNumber(props.form[field]) === undefined
+}
+function guardStep(field: ParamKey, event: Event) {
+  if (!blank(field)) return
+  if (event instanceof KeyboardEvent && !STEP_KEYS.has(event.key)) return
+  event.stopPropagation()
+}
+
 /** What a blank box would resolve to — said, never filled in, so blank still travels as absent. */
-function inheritHint(value: number | undefined): string {
-  return value === undefined ? '留空则使用默认值。' : `留空则继承 ${value}。`
+function inheritHint(field: ParamKey, value: number | undefined): string {
+  const base = value === undefined ? '留空则使用默认值。' : `留空则继承 ${value}。`
+  // The steppers are disabled while the box is blank; say why rather than leave two dead buttons.
+  return blank(field) ? `${base}+/- 需先填入数值。` : base
 }
 /**
  * `NumberField` clears to `undefined`; the field keeps holding `''` for blank so that
  * `paramsFromFields` drops the key instead of writing a value the session never chose.
  */
-function setParam(field: 'temperature' | 'top_p' | 'max_tokens', value: number | undefined) {
+function setParam(field: ParamKey, value: number | undefined) {
   props.form[field] = value ?? ''
   emit('commit')
 }
@@ -102,15 +132,20 @@ Popover
             RotateCcw(class="size-3.5")
         //- `step` sizes the +/- buttons only: `step-snapping` off is what lets a typed 0.85 stay
         //- 0.85 instead of being rewritten to the nearest 0.1, which is how the raw box behaved.
+        //- `maximumFractionDigits` is explicit for the same reason: reka round-trips every value
+        //- through `Intl.NumberFormat`, whose default of 3 rewrote a stored 0.6667 to 0.667.
         NumberField(
           id="oc-session-temperature" :model-value="optionalNumber(form.temperature)"
           :min="0" :max="2" :step="0.1" :step-snapping="false"
-          @update:model-value="setParam('temperature', $event)")
+          :format-options="{ maximumFractionDigits: 10 }"
+          @update:model-value="setParam('temperature', $event)"
+          @keydown.capture="guardStep('temperature', $event)"
+          @wheel.capture="guardStep('temperature', $event)")
           NumberFieldContent
-            NumberFieldDecrement
+            NumberFieldDecrement(:disabled="blank('temperature')")
             NumberFieldInput(class="text-sm")
-            NumberFieldIncrement
-        FieldDescription(class="text-xs") {{ inheritHint(inherited?.temperature) }}
+            NumberFieldIncrement(:disabled="blank('temperature')")
+        FieldDescription(class="text-xs") {{ inheritHint('temperature', inherited?.temperature) }}
 
       Field
         .flex.items-center.gap-2
@@ -123,12 +158,15 @@ Popover
         NumberField(
           id="oc-session-top-p" :model-value="optionalNumber(form.top_p)"
           :min="0" :max="1" :step="0.05" :step-snapping="false"
-          @update:model-value="setParam('top_p', $event)")
+          :format-options="{ maximumFractionDigits: 10 }"
+          @update:model-value="setParam('top_p', $event)"
+          @keydown.capture="guardStep('top_p', $event)"
+          @wheel.capture="guardStep('top_p', $event)")
           NumberFieldContent
-            NumberFieldDecrement
+            NumberFieldDecrement(:disabled="blank('top_p')")
             NumberFieldInput(class="text-sm")
-            NumberFieldIncrement
-        FieldDescription(class="text-xs") {{ inheritHint(inherited?.top_p) }}
+            NumberFieldIncrement(:disabled="blank('top_p')")
+        FieldDescription(class="text-xs") {{ inheritHint('top_p', inherited?.top_p) }}
 
       Field
         .flex.items-center.gap-2
@@ -141,12 +179,14 @@ Popover
         NumberField(
           id="oc-session-max-tokens" :model-value="optionalNumber(form.max_tokens)"
           :min="1" :step="1" :step-snapping="false" :format-options="{ useGrouping: false }"
-          @update:model-value="setParam('max_tokens', $event)")
+          @update:model-value="setParam('max_tokens', $event)"
+          @keydown.capture="guardStep('max_tokens', $event)"
+          @wheel.capture="guardStep('max_tokens', $event)")
           NumberFieldContent
-            NumberFieldDecrement
+            NumberFieldDecrement(:disabled="blank('max_tokens')")
             NumberFieldInput(class="text-sm")
-            NumberFieldIncrement
-        FieldDescription(class="text-xs") {{ inheritHint(inherited?.max_tokens) }}
+            NumberFieldIncrement(:disabled="blank('max_tokens')")
+        FieldDescription(class="text-xs") {{ inheritHint('max_tokens', inherited?.max_tokens) }}
 
       FieldDescription(v-if="!hasSession" class="text-xs") 这些设置会随第一条消息一起创建会话。
 </template>

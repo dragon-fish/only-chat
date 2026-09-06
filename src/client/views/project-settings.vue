@@ -133,11 +133,41 @@ function onDelete() {
   sync.send({ type: 'project.delete', project_id: p.id })
 }
 
+type ParamKey = 'temperature' | 'top_p' | 'max_tokens'
+
+/**
+ * Blank means "inherit", so no stepper may turn it into a value. reka's `handleChangingValue`
+ * writes `clampInputValue(min ?? 0)` whenever the input is empty and disables neither stepper
+ * there, so one press of + on a blank box silently filled it with the bound. The session form
+ * commits on the spot and made that immediate data loss; here it only waits for 保存, which is the
+ * same lie one click later. Same guard on both pages: the two buttons are disabled while blank,
+ * and this covers what has no button — reka routes ArrowUp/ArrowDown, PageUp/PageDown, Home/End
+ * and the wheel through the same handlers. Capture phase, so it runs before reka's listeners on
+ * the input; `stopPropagation` only, never `preventDefault`, so the caret and the page's own
+ * scrolling still behave normally.
+ */
+const STEP_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End'])
+
+/** Blank is `''` in the form and `undefined` through `optionalNumber` — never `0`. */
+function blank(field: ParamKey): boolean {
+  return optionalNumber(form[field]) === undefined
+}
+function guardStep(field: ParamKey, event: Event) {
+  if (!blank(field)) return
+  if (event instanceof KeyboardEvent && !STEP_KEYS.has(event.key)) return
+  event.stopPropagation()
+}
+/** The steppers are disabled while the box is blank; say why rather than leave two dead buttons. */
+function paramHint(field: ParamKey): string {
+  const base = '留空则继承，不写入项目参数。'
+  return blank(field) ? `${base}+/- 需先填入数值。` : base
+}
+
 /**
  * `NumberField` clears to `undefined`; the field keeps holding `''` for blank so that
  * `projectParamsFromForm` drops the key instead of saving a value the Project never chose.
  */
-function setParam(field: 'temperature' | 'top_p' | 'max_tokens', value: number | undefined) {
+function setParam(field: ParamKey, value: number | undefined) {
   form[field] = value ?? ''
 }
 
@@ -182,37 +212,47 @@ onUnmounted(clearPending)
           FieldLabel(for="oc-project-temperature") temperature
           //- `step` sizes the +/- buttons only: `step-snapping` off is what lets a typed 0.77 stay
           //- 0.77 instead of being rewritten to the nearest step, which is how the raw box behaved.
+          //- `maximumFractionDigits` is explicit for the same reason: reka round-trips every value
+          //- through `Intl.NumberFormat`, whose default of 3 rewrote a stored 0.6667 to 0.667.
           NumberField(
             id="oc-project-temperature" :model-value="optionalNumber(form.temperature)"
             :min="0" :max="2" :step="0.1" :step-snapping="false"
-            @update:model-value="setParam('temperature', $event)")
+            :format-options="{ maximumFractionDigits: 10 }"
+            @update:model-value="setParam('temperature', $event)"
+            @keydown.capture="guardStep('temperature', $event)"
+            @wheel.capture="guardStep('temperature', $event)")
             NumberFieldContent
-              NumberFieldDecrement
+              NumberFieldDecrement(:disabled="blank('temperature')")
               NumberFieldInput
-              NumberFieldIncrement
-          FieldDescription 留空则继承，不写入项目参数。
+              NumberFieldIncrement(:disabled="blank('temperature')")
+          FieldDescription {{ paramHint('temperature') }}
         Field
           FieldLabel(for="oc-project-top-p") top_p
           NumberField(
             id="oc-project-top-p" :model-value="optionalNumber(form.top_p)"
             :min="0" :max="1" :step="0.05" :step-snapping="false"
-            @update:model-value="setParam('top_p', $event)")
+            :format-options="{ maximumFractionDigits: 10 }"
+            @update:model-value="setParam('top_p', $event)"
+            @keydown.capture="guardStep('top_p', $event)"
+            @wheel.capture="guardStep('top_p', $event)")
             NumberFieldContent
-              NumberFieldDecrement
+              NumberFieldDecrement(:disabled="blank('top_p')")
               NumberFieldInput
-              NumberFieldIncrement
-          FieldDescription 留空则继承，不写入项目参数。
+              NumberFieldIncrement(:disabled="blank('top_p')")
+          FieldDescription {{ paramHint('top_p') }}
         Field
           FieldLabel(for="oc-project-max-tokens") max tokens
           NumberField(
             id="oc-project-max-tokens" :model-value="optionalNumber(form.max_tokens)"
             :min="1" :step="1" :step-snapping="false" :format-options="{ useGrouping: false }"
-            @update:model-value="setParam('max_tokens', $event)")
+            @update:model-value="setParam('max_tokens', $event)"
+            @keydown.capture="guardStep('max_tokens', $event)"
+            @wheel.capture="guardStep('max_tokens', $event)")
             NumberFieldContent
-              NumberFieldDecrement
+              NumberFieldDecrement(:disabled="blank('max_tokens')")
               NumberFieldInput
-              NumberFieldIncrement
-          FieldDescription 留空则继承，不写入项目参数。
+              NumberFieldIncrement(:disabled="blank('max_tokens')")
+          FieldDescription {{ paramHint('max_tokens') }}
         Field
           FieldLabel 推理强度
           //- Rendered inline, not behind a chip and a popover. That shape belongs to the Composer's

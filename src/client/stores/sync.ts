@@ -164,10 +164,14 @@ export function choiceFromParams(params: SessionParams | null | undefined): Reas
 
 /**
  * The generation parameters a Project and a session edit the same way. Typed `string | number`,
- * not `string`: these fields round-trip through `Input`, whose native `<input type="number">`
- * makes Vue's `v-model` cast the value to a `number` at runtime (unconditionally, regardless of a
- * `.number` modifier) whenever the element's `type` is `"number"`. A `string`-only type here would
- * describe the value the box is meant to hold, not the value that actually arrives.
+ * not `string`: the three numeric fields are edited by `NumberField`, which is `number | undefined`
+ * valued, so a filled box writes a real `number` here while blank stays `''` — the sentinel that
+ * makes `paramsFromFields` drop the key instead of writing a value the layer never chose. Two
+ * shapes, one field, and a `string`-only type would describe neither of them.
+ *
+ * (The union predates `NumberField`. It was introduced for the raw `<input type="number">` inside
+ * `Input`, whose DOM `v-model` cast the value unconditionally; Task 6 deleted that path, but the
+ * union is still exactly right for the reason above, so do not narrow it back to `string`.)
  */
 export interface ParamFields {
   temperature: string | number
@@ -178,12 +182,13 @@ export interface ParamFields {
 
 /**
  * Blank stays blank: an unparseable or empty box contributes no key at all. Accepts a number
- * because `Input` passes one through untouched whenever the element is `type="number"` (see
- * `ParamFields`) — both shapes reach here, and a `.trim()` on the number branch would throw.
+ * because a `ParamFields` slot holds either shape (see there) and a `.trim()` on the number branch
+ * would throw.
  *
- * Exported because the settings forms need the same read: `NumberField` is `number | undefined`
- * valued, so what it shows for a field is exactly the number that field currently holds — and
- * `undefined`, not `0`, is what keeps a blank box blank.
+ * Exported because the settings forms read the field back through it on every render: `NumberField`
+ * is `number | undefined` valued, so this converts the slot into exactly what the box should show —
+ * and `undefined`, not `0`, is what keeps a blank box blank. The forms also test it for blankness,
+ * which is what gates their steppers: blank means "inherit", and no stepper may fill it in.
  */
 export function optionalNumber(raw: string | number): number | undefined {
   if (typeof raw === 'number') return Number.isFinite(raw) ? raw : undefined
