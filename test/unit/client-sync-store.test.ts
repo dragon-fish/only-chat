@@ -1,6 +1,6 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { moveSessionCommand, projectParamsFromForm, projectUpdateCommand, useSyncStore, type ProjectFormState } from '@/client/stores/sync'
+import { moveSessionCommand, projectFormFrom, projectParamsFromForm, projectUpdateCommand, useSyncStore, type ProjectFormState } from '@/client/stores/sync'
 import type { Message, Project, Session } from '@/shared/models'
 import { parseCommand } from '@/shared/ws'
 
@@ -216,5 +216,45 @@ describe('project navigation view-model', () => {
       params: { temperature: 0.7, max_tokens: 2048, reasoning_enabled: true, reasoning_effort: 'high' },
     })
     expect(parseCommand(JSON.stringify(cmd))).toEqual(cmd)
+  })
+})
+
+describe('project settings form state', () => {
+  const configured: Project = {
+    ...project, id: 1, name: 'A', system_prompt: 'A prompt', provider_id: 2, model_id: 'gpt-5.1',
+    params: { temperature: 0.7, top_p: 0.9, max_tokens: 2048, reasoning_enabled: true, reasoning_effort: 'high' },
+  }
+  const bare: Project = { ...project, id: 2, name: 'B' }
+
+  it('renders a name-only project as blank fields rather than inherited values', () => {
+    expect(projectFormFrom(bare)).toEqual({ name: 'B', system_prompt: '', model: null, temperature: '', top_p: '', max_tokens: '', reasoning: 'inherit' })
+    // `undefined` is the canonical empty form the view resets through.
+    expect(projectFormFrom(undefined)).toEqual({ name: '', system_prompt: '', model: null, temperature: '', top_p: '', max_tokens: '', reasoning: 'inherit' })
+  })
+
+  it('round-trips a configured project through the form without changing anything', () => {
+    expect(projectUpdateCommand(configured.id, projectFormFrom(configured))).toEqual({
+      type: 'project.update', project_id: 1, name: 'A', system_prompt: 'A prompt', provider_id: 2, model_id: 'gpt-5.1',
+      params: { temperature: 0.7, top_p: 0.9, max_tokens: 2048, reasoning_enabled: true, reasoning_effort: 'high' },
+    })
+  })
+
+  it('leaves nothing of the previous project behind when the form switches projects', () => {
+    // The settings page reuses one form object across Projects, so a partial refill would save the
+    // Project the user opened first onto the Project they opened second.
+    const form: ProjectFormState = projectFormFrom(configured)
+    Object.assign(form, projectFormFrom(bare))
+    expect(projectUpdateCommand(bare.id, form)).toEqual({
+      type: 'project.update', project_id: 2, name: 'B',
+      system_prompt: null, provider_id: null, model_id: null, params: null,
+    })
+  })
+
+  it('reads the merged reasoning control back out of the stored pair', () => {
+    const withParams = (params: Project['params']): Project => ({ ...bare, params })
+    expect(projectFormFrom(withParams({ reasoning_enabled: false })).reasoning).toBe('off')
+    expect(projectFormFrom(withParams({ reasoning_enabled: true, reasoning_effort: null })).reasoning).toBe('auto')
+    expect(projectFormFrom(withParams({ reasoning_enabled: true, reasoning_effort: 'xhigh' })).reasoning).toBe('xhigh')
+    expect(projectFormFrom(withParams({ temperature: 1 })).reasoning).toBe('inherit')
   })
 })

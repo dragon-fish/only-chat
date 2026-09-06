@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref, watch, watchEffect } from 'vue'
+import { computed, onUnmounted, reactive, ref, watch, watchEffect } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { Button } from '@/client/ui/button'
 import { Input } from '@/client/ui/input'
@@ -7,9 +7,8 @@ import { Label } from '@/client/ui/label'
 import { Textarea } from '@/client/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/client/ui/select'
 import ModelPicker from '@/client/components/model-picker.vue'
-import { projectUpdateCommand, useSyncStore, type ProjectFormState, type ProjectReasoningChoice } from '@/client/stores/sync'
+import { projectFormFrom, projectUpdateCommand, useSyncStore, type ProjectFormState, type ProjectReasoningChoice } from '@/client/stores/sync'
 import { useConfigStore } from '@/client/stores/config'
-import type { Project, SessionParams } from '@/shared/models'
 
 const props = defineProps<{ projectId: number | null }>()
 const router = useRouter()
@@ -37,7 +36,7 @@ const reasoningOptions: Array<{ value: ProjectReasoningChoice; label: string }> 
 ]
 
 const section = ref<SectionKey>('basic')
-const form = reactive<ProjectFormState>({ name: '', system_prompt: '', model: null, temperature: '', top_p: '', max_tokens: '', reasoning: 'inherit' })
+const form = reactive<ProjectFormState>(projectFormFrom(undefined))
 const loaded = ref(false)
 const missing = ref(false)
 const saving = ref(false)
@@ -49,42 +48,37 @@ let savedAgainst = 0
 const project = computed(() => (props.projectId === null ? undefined : sync.projects.get(props.projectId)))
 const chatCount = computed(() => (props.projectId === null ? 0 : sync.sessionsInProject(props.projectId).length))
 
-/** A merged control: `reasoning_enabled` and `reasoning_effort` are stored apart (spec §3.3). */
-function reasoningChoiceOf(params: SessionParams): ProjectReasoningChoice {
-  if (params.reasoning_enabled === false) return 'off'
-  if (params.reasoning_enabled === undefined && params.reasoning_effort === undefined) return 'inherit'
-  return params.reasoning_effort ?? 'auto'
-}
-
-function numberToField(value: number | undefined): string {
-  return value === undefined ? '' : String(value)
-}
-
-function fillForm(p: Project): void {
-  const params = p.params ?? {}
-  Object.assign(form, {
-    name: p.name,
-    system_prompt: p.system_prompt ?? '',
-    // A Project without a default model shows an empty picker — never the inherited fallback.
-    model: p.provider_id !== null && p.model_id !== null ? { provider_id: p.provider_id, model_id: p.model_id } : null,
-    temperature: numberToField(params.temperature),
-    top_p: numberToField(params.top_p),
-    max_tokens: numberToField(params.max_tokens),
-    reasoning: reasoningChoiceOf(params),
-  } satisfies ProjectFormState)
-}
-
-onMounted(async () => {
+/**
+ * Every piece of state here belongs to one `projectId`, and vue-router reuses this instance for a
+ * param-only navigation, so re-initialising has to be driven by the prop rather than by mounting:
+ * clicking a second Project's ✏️ used to keep the first Project's values in the form and then save
+ * them onto the second. The token makes a stale async continuation from the previous id a no-op.
+ */
+let initToken = 0
+async function initialize(): Promise<void> {
+  const token = ++initToken
+  clearPending()
+  Object.assign(form, projectFormFrom(undefined))
+  loaded.value = false
+  missing.value = false
+  saving.value = false
+  savedAgainst = 0
+  section.value = 'basic'
   if (!config.loaded) await config.load()
+  if (token !== initToken) return
   // Direct URL loads can beat the boot fetch, so make sure the row really is absent before giving up.
   if (!project.value) await sync.loadProjects()
+  if (token !== initToken) return
   if (!project.value) missing.value = true
-})
+}
 
-// Populated once: a concurrent update from another device must not overwrite what is being typed.
+watch(() => props.projectId, initialize, { immediate: true })
+
+// Populated once per Project: a concurrent update from another device must not overwrite what is
+// being typed. `initialize` clears `loaded` first, so the next Project refills the form.
 watchEffect(() => {
   const p = project.value
-  if (p && !loaded.value) { fillForm(p); loaded.value = true }
+  if (p && !loaded.value) { Object.assign(form, projectFormFrom(p)); loaded.value = true }
 })
 
 // Leaving is driven by the server: `project.deleted` (ours or another device's) removes the row.

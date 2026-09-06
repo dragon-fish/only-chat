@@ -53,6 +53,38 @@ export function projectParamsFromForm(form: ProjectFormState): SessionParams | n
   return Object.keys(params).length === 0 ? null : params
 }
 
+function numberToField(value: number | undefined): string {
+  return value === undefined ? '' : String(value)
+}
+
+/** A merged control over two independently stored keys (spec §3.3). */
+function reasoningChoiceOf(params: SessionParams): ProjectReasoningChoice {
+  if (params.reasoning_enabled === false) return 'off'
+  if (params.reasoning_enabled === undefined && params.reasoning_effort === undefined) return 'inherit'
+  return params.reasoning_effort ?? 'auto'
+}
+
+/**
+ * The inverse of `projectUpdateCommand`: what the settings form shows for a stored Project.
+ * Absent values render as blank fields, never as the inherited value they would resolve to.
+ * `undefined` yields the blank form, so switching Projects resets through one canonical shape
+ * instead of a hand-written list of fields that can drift as the form grows.
+ */
+export function projectFormFrom(project: Project | undefined): ProjectFormState {
+  const params = project?.params ?? {}
+  return {
+    name: project?.name ?? '',
+    system_prompt: project?.system_prompt ?? '',
+    model: project && project.provider_id !== null && project.model_id !== null
+      ? { provider_id: project.provider_id, model_id: project.model_id }
+      : null,
+    temperature: numberToField(params.temperature),
+    top_p: numberToField(params.top_p),
+    max_tokens: numberToField(params.max_tokens),
+    reasoning: reasoningChoiceOf(params),
+  }
+}
+
 /** The prompt is stored verbatim — trimming is only used to decide whether it is empty (spec §3.2). */
 export function projectUpdateCommand(projectId: number, form: ProjectFormState): WsCommand {
   return {

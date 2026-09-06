@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watchEffect } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch, watchEffect } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { ChevronDown, ChevronRight, Folder, FolderInput, Pencil, Plus, X } from '@lucide/vue'
 import { Input } from '@/client/ui/input'
@@ -25,28 +25,39 @@ const pendingProjectId = ref<number | null>(null)
 const movingId = ref<number | null>(null)
 const creating = ref(false)
 const newName = ref('')
-// The server never echoes our `request_id` back, so a create is matched by the name we sent:
-// until a Project with that name shows up the input keeps what the user typed (spec §9).
+// The server never echoes our `request_id` back, so a create is matched by the ids that existed
+// when we submitted plus the name we sent: only a Project that is *new* counts as confirmation,
+// so an identically named Project that already existed cannot fake the round trip. Until one
+// arrives the input keeps what the user typed (spec §9).
 const submittedName = ref<string | null>(null)
+const idsBeforeSubmit = ref<Set<number> | null>(null)
 
 const groups = computed<TreeGroup[]>(() => [
   ...sync.projectList.map((p) => ({ project: p, chats: sync.sessionsInProject(p.id) })),
   { project: null, chats: sync.sessionsInProject(null) },
 ])
 const openSessionId = computed(() => routeParamToId('sessionId' in route.params ? route.params.sessionId : undefined))
-
-// Keep the open chat reachable: its Project expands as soon as the session row is known, which
-// may be after the first paint because sessions load asynchronously.
-watchEffect(() => {
+const openProjectId = computed(() => {
   const id = openSessionId.value
-  const projectId = id === null ? null : sync.sessions.get(id)?.project_id ?? null
-  if (projectId !== null) expanded.value.add(projectId)
+  return id === null ? null : sync.sessions.get(id)?.project_id ?? null
 })
 
+// Keep the open chat reachable, but only when the answer actually changes: watching values rather
+// than running an effect means a `session.updated` bump (a title, or `updated_at` during a
+// generation) no longer re-expands a Project the user just collapsed. The Project id is watched
+// alongside the session id because sessions load after the first paint, so the route alone cannot
+// tell us where the open chat lives yet.
+watch([openSessionId, openProjectId], () => {
+  if (openProjectId.value !== null) expanded.value.add(openProjectId.value)
+}, { immediate: true })
+
 watchEffect(() => {
+  const before = idsBeforeSubmit.value
   const name = submittedName.value
-  if (name !== null && sync.projectList.some((p) => p.name === name)) {
+  if (before === null || name === null) return
+  if (sync.projectList.some((p) => !before.has(p.id) && p.name === name)) {
     submittedName.value = null
+    idsBeforeSubmit.value = null
     newName.value = ''
     creating.value = false
   }
@@ -75,6 +86,7 @@ function startCreate() {
 function createProject() {
   const name = newName.value.trim()
   if (!name) return
+  idsBeforeSubmit.value = new Set(sync.projects.keys())
   submittedName.value = name
   sync.send({ type: 'project.create', name })
 }
@@ -82,6 +94,7 @@ function createProject() {
 function cancelCreate() {
   creating.value = false
   submittedName.value = null
+  idsBeforeSubmit.value = null
   newName.value = ''
 }
 
