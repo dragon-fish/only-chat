@@ -1,4 +1,5 @@
 import type { ModelMessage, AssistantModelMessage, UserModelMessage, ToolModelMessage } from 'ai'
+import type { SharedV4ProviderReference } from '@ai-sdk/provider'
 import type { AnthropicProviderOptions } from '@ai-sdk/anthropic'
 import type { GoogleVertexImageModelOptions } from '@ai-sdk/google-vertex'
 import type { OpenAIResponsesProviderOptions } from '@ai-sdk/openai'
@@ -8,9 +9,15 @@ import type { Part, ProviderOptions } from '@/shared/parts'
 
 export const COMPAT_PROVIDER_NAME = 'compat'
 
-export interface ImageBytes {
-  bytes: Uint8Array
+/**
+ * How one attachment travels to the model: as the provider's own short-lived file pointer, or as
+ * raw bytes inlined into the request (spec §5.6). Both are the AI SDK's own tagged file-data shapes.
+ */
+export interface AttachmentInput {
   mime: string
+  data:
+    | { type: 'reference'; reference: SharedV4ProviderReference }
+    | { type: 'data'; data: Uint8Array }
 }
 
 export interface BuildInput {
@@ -18,7 +25,7 @@ export interface BuildInput {
   systemPrompt: string | null
   /** Root → leaf. The last element is the user message being answered. */
   path: Message[]
-  images: ReadonlyMap<number, ImageBytes>
+  attachments: ReadonlyMap<number, AttachmentInput>
 }
 
 const ANTHROPIC_CACHE = { anthropic: { cacheControl: { type: 'ephemeral' } } } as const
@@ -27,15 +34,15 @@ type UserPart = Extract<UserModelMessage['content'], unknown[]>[number]
 type AssistantPart = Extract<AssistantModelMessage['content'], unknown[]>[number]
 type ToolPart = ToolModelMessage['content'][number]
 
-function userParts(parts: Part[], images: ReadonlyMap<number, ImageBytes>): UserPart[] {
+function userParts(parts: Part[], attachments: ReadonlyMap<number, AttachmentInput>): UserPart[] {
   const out: UserPart[] = []
   for (const p of parts) {
     if (p.type === 'text') {
       out.push({ type: 'text', text: p.text })
     } else if (p.type === 'image') {
-      const img = images.get(p.attachment_id)
-      if (!img) throw new Error(`attachment ${p.attachment_id} bytes not provided`)
-      out.push({ type: 'file', mediaType: img.mime, data: { type: 'data', data: img.bytes } })
+      const att = attachments.get(p.attachment_id)
+      if (!att) throw new Error(`attachment ${p.attachment_id} input not provided`)
+      out.push({ type: 'file', mediaType: att.mime, data: att.data })
     }
     // reasoning / tool parts never appear on user messages
   }
@@ -95,7 +102,7 @@ function assistantParts(parts: Part[]): { assistant: AssistantPart[]; tool: Tool
  * which rejects a `role: 'system'` message inside `messages`.
  */
 export function buildModelMessages(input: BuildInput): ModelMessage[] {
-  const { protocol, systemPrompt, path, images } = input
+  const { protocol, systemPrompt, path, attachments } = input
   const out: ModelMessage[] = []
   const cache = protocol === 'anthropic'
 
@@ -109,7 +116,7 @@ export function buildModelMessages(input: BuildInput): ModelMessage[] {
 
   path.forEach((m, i) => {
     if (m.role === 'user') {
-      const content = userParts(m.parts, images)
+      const content = userParts(m.parts, attachments)
       out.push(cache && i === lastUserIndex
         ? { role: 'user', content, providerOptions: ANTHROPIC_CACHE }
         : { role: 'user', content })

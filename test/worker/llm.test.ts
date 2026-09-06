@@ -91,7 +91,7 @@ describe('Llm service', () => {
 
   it('lets a test register a custom protocol and disposes it with the caller', async () => {
     await inHub(async (ctx) => {
-      const fiber = await ctx.plugin({ name: 'mock-protocol', inject: ['llm'], apply(c) { c.llm.register('mock', () => ({ provider: 'mock' }) as never) } })
+      const fiber = await ctx.plugin({ name: 'mock-protocol', inject: ['llm'], apply(c) { c.llm.register('mock', { createModel: () => ({ provider: 'mock' }) as never }) } })
       expect(ctx.llm.has('mock')).toBe(true)
       await fiber.dispose()
       expect(ctx.llm.has('mock')).toBe(false)

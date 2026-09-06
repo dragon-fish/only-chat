@@ -24,5 +24,7 @@
       "migrations_dir": "migrations"
     }
   ],
-  "r2_buckets": [{ "binding": "BUCKET", "bucket_name": "only-chat-attachments" }]
+  "r2_buckets": [{ "binding": "BUCKET", "bucket_name": "only-chat-attachments" }],
+  // Daily sweep of expired provider file pointers (spec §5.7).
+  "triggers": { "crons": ["0 3 * * *"] }
 }

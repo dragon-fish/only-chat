@@ -1,7 +1,9 @@
-import { and, desc, eq, isNotNull, isNull, sql } from 'drizzle-orm'
+import { and, desc, eq, isNotNull, isNull, lte, sql } from 'drizzle-orm'
 import type { DB } from '../../db/client'
-import { attachments, messages, models, providers, sessions, users } from '../../db/schema'
-import type { AttachmentRow, MessageRow, ModelRow, ProviderRow, SessionRow, UserRow } from '../../db/schema'
+import { attachmentProviderFiles, attachments, messages, models, providers, sessions, users } from '../../db/schema'
+import type {
+  AttachmentProviderFileRow, AttachmentRow, MessageRow, ModelRow, ProviderRow, SessionRow, UserRow,
+} from '../../db/schema'
 import type { Message, MessageStatus, PersistedStatus, SessionParams, Usage, UserSettings } from '@/shared/models'
 import type { Part } from '@/shared/parts'
 
@@ -124,4 +126,32 @@ export async function getModel(db: DB, providerId: number, modelId: string): Pro
 
 export async function getAttachment(db: DB, id: number): Promise<AttachmentRow | undefined> {
   return db.query.attachments.findFirst({ where: eq(attachments.id, id) })
+}
+
+/**
+ * The provider-scoped file pointer for one attachment. Keyed by `(attachment_id, provider_id)` and
+ * nothing else, so the same R2 image keeps one pointer per provider across sessions and models
+ * (spec §4.6). Expiry is the caller's to check — an expired row is still a row.
+ */
+export async function getProviderFile(db: DB, attachmentId: number, providerId: number): Promise<AttachmentProviderFileRow | undefined> {
+  return db.query.attachmentProviderFiles.findFirst({
+    where: and(eq(attachmentProviderFiles.attachment_id, attachmentId), eq(attachmentProviderFiles.provider_id, providerId)),
+  })
+}
+
+/** Replaces the pointer for that pair, so a re-upload after expiry leaves exactly one row behind. */
+export async function upsertProviderFile(db: DB, row: Omit<AttachmentProviderFileRow, 'id'>): Promise<void> {
+  await db.insert(attachmentProviderFiles).values(row).onConflictDoUpdate({
+    target: [attachmentProviderFiles.attachment_id, attachmentProviderFiles.provider_id],
+    set: { provider_reference: row.provider_reference, expires_at: row.expires_at, created_at: row.created_at },
+  })
+}
+
+/**
+ * The whole of the daily cron job (spec §5.7): local pointers that have lapsed are dropped, and the
+ * remote copies are left for the provider to expire on the deadline the upload asked for. R2
+ * originals are untouched — the next turn that needs one re-uploads it.
+ */
+export async function cleanupExpiredProviderFiles(db: DB, now: number): Promise<void> {
+  await db.delete(attachmentProviderFiles).where(lte(attachmentProviderFiles.expires_at, now))
 }

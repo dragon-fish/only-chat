@@ -5,7 +5,7 @@ import type { Part } from '@/shared/parts'
 import type { SendCommand, WsCommand } from '@/shared/ws'
 import type { ModelRow, ProviderRow, SessionRow } from '../../db/schema'
 import { PartAccumulator } from '../llm/accumulator'
-import { buildModelMessages, buildProviderOptions, type ImageBytes } from '../llm/messages'
+import { buildModelMessages, buildProviderOptions, type AttachmentInput } from '../llm/messages'
 import { toUsage } from '../llm/usage'
 import type { Hub, InflightJob } from './index'
 import {
@@ -14,9 +14,10 @@ import {
 } from './effective-config'
 import { getProject } from './projects'
 import {
-  createSession, finalizeMessage, getAttachment, getMessage, getModel, getProvider, getSession,
+  createSession, finalizeMessage, getMessage, getModel, getProvider, getSession,
   insertMessage, lastGenerationModel, listMessages, maxSeq, toMessage, updateSession,
 } from './sessions'
+import { resolveAttachmentInputs } from './attachment-transport'
 import { pathToRoot, titleFromParts } from './tree'
 
 /** Payload of the `message/before-send` event: feature plugins may inspect or amend the prompt. */
@@ -136,22 +137,17 @@ async function openAssistantShell(hub: Hub, target: Target, parentId: number): P
 
 // ---- stage 4: context assembly
 
-async function assembleContext(hub: Hub, session: SessionRow, leafUserId: number): Promise<{ path: Message[]; images: Map<number, ImageBytes> }> {
-  const rows = await listMessages(hub.db, session.id)
+async function assembleContext(hub: Hub, target: Target, leafUserId: number): Promise<{ path: Message[]; attachments: Map<number, AttachmentInput> }> {
+  const rows = await listMessages(hub.db, target.session.id)
   const byId = new Map(rows.map((r) => [r.id, toMessage(r)]))
   const path = pathToRoot(byId, leafUserId)
-  const images = new Map<number, ImageBytes>()
+  const ids = new Set<number>()
   for (const m of path) {
-    for (const p of m.parts) {
-      if (p.type !== 'image' || images.has(p.attachment_id)) continue
-      const att = await getAttachment(hub.db, p.attachment_id)
-      if (!att) throw new Error(`attachment ${p.attachment_id} missing`)
-      const stored = await hub.app.assets.getBytes(att.r2_key)
-      if (!stored) throw new Error(`attachment ${p.attachment_id} bytes missing`)
-      images.set(p.attachment_id, { bytes: stored.bytes, mime: att.mime })
-    }
+    for (const p of m.parts) if (p.type === 'image') ids.add(p.attachment_id)
   }
-  return { path, images }
+  // How those attachments travel is the transport's call, and it depends on the provider alone.
+  const deps = { db: hub.db, assets: hub.app.assets, llm: hub.app.llm }
+  return { path, attachments: await resolveAttachmentInputs(deps, target.provider, ids) }
 }
 
 // ---- stage 5/6: stream + finalize
@@ -169,11 +165,11 @@ async function generate(hub: Hub, target: Target, shell: Message, leafUserId: nu
   let usage: Usage | null = null
 
   try {
-    const { path, images } = await assembleContext(hub, target.session, leafUserId)
+    const { path, attachments } = await assembleContext(hub, target, leafUserId)
     const payload: BeforeSendPayload = { sessionId: target.session.id, systemPrompt: target.config.systemPrompt, path }
     hub.app.emit('message/before-send', payload)
 
-    const messages = buildModelMessages({ protocol: target.provider.protocol, systemPrompt: payload.systemPrompt, path: payload.path, images })
+    const messages = buildModelMessages({ protocol: target.provider.protocol, systemPrompt: payload.systemPrompt, path: payload.path, attachments })
     const params: SessionParams = target.config.params
     const model: LanguageModel = await hub.app.llm.createModel(target.provider, target.model)
 

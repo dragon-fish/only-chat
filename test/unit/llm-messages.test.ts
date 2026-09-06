@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { buildModelMessages, buildProviderOptions, type BuildInput } from '@/server/plugins/llm/messages'
+import { buildModelMessages, buildProviderOptions, type AttachmentInput, type BuildInput } from '@/server/plugins/llm/messages'
 import type { Message, ModelCapabilities } from '@/shared/models'
 import type { Protocol } from '@/shared/models'
 
 const png = new Uint8Array([137, 80, 78, 71])
+const inlinePng: AttachmentInput = { mime: 'image/png', data: { type: 'data', data: png } }
 
 function msg(over: Partial<Message> & Pick<Message, 'id' | 'role' | 'parts'>): Message {
   return {
@@ -27,7 +28,7 @@ const path: Message[] = [
 ]
 
 function input(protocol: Protocol): BuildInput {
-  return { protocol, systemPrompt: 'be brief', path, images: new Map([[9, { bytes: png, mime: 'image/png' }]]) }
+  return { protocol, systemPrompt: 'be brief', path, attachments: new Map([[9, inlinePng]]) }
 }
 
 /** The assistant message of the fixture path, whichever index the protocol put it at. */
@@ -69,6 +70,16 @@ describe('buildModelMessages', () => {
     expect(user.content[1]).toEqual({ type: 'file', mediaType: 'image/png', data: { type: 'data', data: png } })
   })
 
+  it('sends a provider file pointer as a reference part instead of bytes', () => {
+    const reference = { openai: 'file-abc123' }
+    const out = buildModelMessages({
+      ...input('openai-responses'),
+      attachments: new Map([[9, { mime: 'image/png', data: { type: 'reference', reference } }]]),
+    })
+    const user = out[1] as { content: Array<{ type: string; mediaType?: string; data?: unknown }> }
+    expect(user.content[1]).toEqual({ type: 'file', mediaType: 'image/png', data: { type: 'reference', reference } })
+  })
+
   it('replays reasoning on every protocol, openai-completions included', () => {
     for (const p of PROTOCOLS) {
       const content = assistantContent(buildModelMessages(input(p)))
@@ -82,7 +93,7 @@ describe('buildModelMessages', () => {
       msg({ id: 1, role: 'user', parts: [{ type: 'text', text: 'q' }] }),
       msg({ id: 2, role: 'assistant', parts: [{ type: 'reasoning', text: 'analysis' }, { type: 'text', text: 'answer' }] }),
     ]
-    const out = buildModelMessages({ protocol: 'openai-completions', systemPrompt: null, path: plain, images: new Map() })
+    const out = buildModelMessages({ protocol: 'openai-completions', systemPrompt: null, path: plain, attachments: new Map() })
     expect(assistantContent(out)).toContainEqual({ type: 'reasoning', text: 'analysis' })
   })
 
@@ -104,7 +115,7 @@ describe('buildModelMessages', () => {
         { type: 'text', text: 'answer' },
       ] }),
     ]
-    const out = buildModelMessages({ protocol: 'openai-responses', systemPrompt: null, path: encrypted, images: new Map() })
+    const out = buildModelMessages({ protocol: 'openai-responses', systemPrompt: null, path: encrypted, attachments: new Map() })
     expect(assistantContent(out)[0]).toEqual({
       type: 'reasoning', text: '', providerOptions: { openai: { itemId: 'rs_1', reasoningEncryptedContent: 'ENC' } },
     })
@@ -119,7 +130,7 @@ describe('buildModelMessages', () => {
         { type: 'text', text: 'answer' },
       ] }),
     ]
-    const out = buildModelMessages({ protocol: 'anthropic', systemPrompt: null, path: empty, images: new Map() })
+    const out = buildModelMessages({ protocol: 'anthropic', systemPrompt: null, path: empty, attachments: new Map() })
     expect(assistantContent(out)).toEqual([{ type: 'text', text: 'answer' }])
   })
 
@@ -133,7 +144,7 @@ describe('buildModelMessages', () => {
   })
 
   it('throws when an image is missing from the map', () => {
-    expect(() => buildModelMessages({ ...input('anthropic'), images: new Map() })).toThrow(/attachment 9/)
+    expect(() => buildModelMessages({ ...input('anthropic'), attachments: new Map() })).toThrow(/attachment 9/)
   })
 })
 

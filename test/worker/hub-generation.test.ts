@@ -1,14 +1,16 @@
 import { env } from 'cloudflare:workers'
 import { runInDurableObject } from 'cloudflare:test'
+import type { FilesV4, FilesV4UploadFileCallOptions } from '@ai-sdk/provider'
 import { MockLanguageModelV4, simulateReadableStream } from 'ai/test'
 import { eq } from 'drizzle-orm'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { createDb } from '@/server/db/client'
 import { ensureDefaultUser } from '@/server/plugins/database'
 import { encryptSecret } from '@/server/plugins/llm/crypto'
 import { buildModelMessages } from '@/server/plugins/llm/messages'
 import { createSession, getSession, insertMessage, listMessages, toMessage } from '@/server/plugins/hub/sessions'
-import { models, projects, providers, users } from '@/server/db/schema'
+import { attachmentProviderFiles, attachments, models, projects, providers, users } from '@/server/db/schema'
+import type { ProviderRow } from '@/server/db/schema'
 import { DEFAULT_USER_ID } from '@/shared/constants'
 import type { Message } from '@/shared/models'
 import type { Part } from '@/shared/parts'
@@ -39,12 +41,13 @@ const STREAM: StreamPart[] = [
   },
 ]
 
-async function seedProvider(name = 'mock', modelId = 'mock-1'): Promise<number> {
+async function seedProvider(name = 'mock', modelId = 'mock-1', nativeFiles = false): Promise<number> {
   const db = createDb(env.DB)
   await ensureDefaultUser(db)
   const [p] = await db.insert(providers).values({
     user_id: DEFAULT_USER_ID, name, protocol: 'mock' as never, base_url: 'https://mock',
-    api_key: await encryptSecret(env.KEY_ENCRYPTION_SECRET, 'k'), extra: null, enabled: true, created_at: 0,
+    api_key: await encryptSecret(env.KEY_ENCRYPTION_SECRET, 'k'), extra: null, enabled: true,
+    native_files: nativeFiles, created_at: 0,
   }).returning()
   await db.insert(models).values({ provider_id: p!.id, model_id: modelId, display_name: 'Mock', capabilities: { reasoning: true }, pricing: null, enabled: true, sort: 0 })
   return p!.id
@@ -59,14 +62,22 @@ async function seedProject(input: Partial<typeof projects.$inferInsert> = {}): P
   return row!.id
 }
 
-async function installMock(mockFactory: () => MockLanguageModelV4): Promise<MockLanguageModelV4[]> {
+async function installMock(
+  mockFactory: () => MockLanguageModelV4,
+  createFiles?: (provider: ProviderRow, apiKey: string) => FilesV4,
+): Promise<MockLanguageModelV4[]> {
   const created: MockLanguageModelV4[] = []
   const stub = env.USER_HUB.getByName(String(DEFAULT_USER_ID))
   await runInDurableObject(stub, async (instance: UserHub) => {
     await instance.app.plugin({
       name: 'mock-protocol',
       inject: ['llm'],
-      apply(c) { c.llm.register('mock', () => { const m = mockFactory(); created.push(m); return m as never }) },
+      apply(c) {
+        c.llm.register('mock', {
+          createModel: () => { const m = mockFactory(); created.push(m); return m as never },
+          ...(createFiles ? { createFiles } : {}),
+        })
+      },
     })
   })
   return created
@@ -392,8 +403,187 @@ describe('provider metadata round trip', () => {
     const fromD1 = (await listMessages(db, session.id)).map((r) => toMessage(r))
     expect(fromD1).toEqual(inMemory)
     for (const protocol of ['openai-completions', 'openai-responses', 'anthropic', 'vertex'] as const) {
-      const args = { protocol, systemPrompt: null, images: new Map() }
+      const args = { protocol, systemPrompt: null, attachments: new Map() }
       expect(buildModelMessages({ ...args, path: fromD1 })).toEqual(buildModelMessages({ ...args, path: inMemory }))
+    }
+  })
+})
+
+describe('provider file transport', () => {
+  const streamingMock = () => new MockLanguageModelV4({
+    doStream: async () => ({ stream: simulateReadableStream({ chunks: [...STREAM], chunkDelayInMs: null, initialDelayInMs: null }) }),
+  })
+
+  const PNG = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])
+
+  // D1 is shared across the tests in this project, so every attachment needs its own hash.
+  let attachmentSeq = 0
+  async function seedAttachment(): Promise<number> {
+    const digest = String(++attachmentSeq).padStart(64, 'a')
+    const db = createDb(env.DB)
+    await ensureDefaultUser(db)
+    const key = `${DEFAULT_USER_ID}/${digest.slice(0, 2)}/${digest}`
+    await env.BUCKET.put(key, PNG, { httpMetadata: { contentType: 'image/png' } })
+    const [row] = await db.insert(attachments).values({
+      user_id: DEFAULT_USER_ID, sha256: digest, mime: 'image/png', size: PNG.byteLength,
+      width: 1, height: 1, r2_key: key, origin: 'upload', created_at: 0,
+    }).returning()
+    return row!.id
+  }
+
+  interface Upload { providerId: number; options: FilesV4UploadFileCallOptions }
+
+  /**
+   * A FilesV4 that hands out a distinct id per provider and per upload, so "which provider uploaded,
+   * and how many times" is readable straight off the recorded list.
+   */
+  function recordingFiles(uploads: Upload[], expiresAt?: Date) {
+    const counters = new Map<number, number>()
+    return (provider: ProviderRow): FilesV4 => ({
+      specificationVersion: 'v4',
+      provider: 'mock',
+      async uploadFile(options) {
+        uploads.push({ providerId: provider.id, options })
+        const n = (counters.get(provider.id) ?? 0) + 1
+        counters.set(provider.id, n)
+        return { warnings: [], providerReference: { mock: `file-${provider.id}-${n}` }, ...(expiresAt ? { expiresAt } : {}) }
+      },
+    })
+  }
+
+  /** Every file part the adapter actually received, across all roles of one call's prompt. */
+  function filePartsOf(model: MockLanguageModelV4): Array<{ type: string; mediaType: string; data: unknown }> {
+    const parts = model.doStreamCalls[0]!.prompt.flatMap((m) => (Array.isArray(m.content) ? (m.content as Array<{ type: string }>) : []))
+    return parts.filter((p) => p.type === 'file') as Array<{ type: string; mediaType: string; data: unknown }>
+  }
+
+  const pointersOf = (attachmentId: number) =>
+    createDb(env.DB).select().from(attachmentProviderFiles).where(eq(attachmentProviderFiles.attachment_id, attachmentId))
+
+  function send(body: Record<string, unknown>): string {
+    return JSON.stringify({ type: 'send', session_id: null, parent_id: null, ...body })
+  }
+
+  it('uploads once per provider and reuses the first pointer when the session switches back', async () => {
+    const a = await seedProvider('files-a', 'model-a', true)
+    const b = await seedProvider('files-b', 'model-b', true)
+    const attachmentId = await seedAttachment()
+    const uploads: Upload[] = []
+    const created = await installMock(streamingMock, recordingFiles(uploads))
+
+    const c = await connect()
+    c.ws.send(send({ parts: [{ type: 'text', text: 'look' }, { type: 'image', attachment_id: attachmentId }], provider_id: a, model_id: 'model-a' }))
+    await c.next('message.done')
+    const sessionId = (c.events.find((e) => e.type === 'session.created') as { session: { id: number } }).session.id
+
+    // Same image, now travelling to a different provider: A's id means nothing to B.
+    c.ws.send(send({ session_id: sessionId, parts: [{ type: 'text', text: 'again' }], provider_id: b, model_id: 'model-b' }))
+    await c.nextAfter('message.done', 2)
+
+    // ...and back to A, whose original pointer is still valid.
+    c.ws.send(send({ session_id: sessionId, parts: [{ type: 'text', text: 'once more' }], provider_id: a, model_id: 'model-a' }))
+    await c.nextAfter('message.done', 3)
+
+    expect(uploads.map((u) => u.providerId)).toEqual([a, b])
+    expect(uploads[0]!.options).toMatchObject({
+      mediaType: 'image/png',
+      data: { type: 'data', data: PNG },
+      providerOptions: { openai: { purpose: 'user_data', expiresAfter: 604800 } },
+    })
+
+    const reference = (id: number, n: number) => ({ type: 'file', mediaType: 'image/png', data: { type: 'reference', reference: { mock: `file-${id}-${n}` } } })
+    expect(filePartsOf(created[0]!)).toEqual([reference(a, 1)])
+    expect(filePartsOf(created[1]!)).toEqual([reference(b, 1)])
+    // The third leg must reuse A's *first* pointer rather than minting a second one.
+    expect(filePartsOf(created[2]!)).toEqual([reference(a, 1)])
+
+    const rows = await pointersOf(attachmentId)
+    expect(rows.map((r) => r.provider_id).sort()).toEqual([a, b].sort())
+    expect(rows.map((r) => r.provider_reference)).toContainEqual({ mock: `file-${a}-1` })
+  })
+
+  it('re-uploads when the stored pointer has expired, replacing the row', async () => {
+    const a = await seedProvider('files-a', 'model-a', true)
+    const attachmentId = await seedAttachment()
+    const uploads: Upload[] = []
+    const created = await installMock(streamingMock, recordingFiles(uploads))
+
+    const c = await connect()
+    c.ws.send(send({ parts: [{ type: 'text', text: 'look' }, { type: 'image', attachment_id: attachmentId }], provider_id: a, model_id: 'model-a' }))
+    await c.next('message.done')
+    const sessionId = (c.events.find((e) => e.type === 'session.created') as { session: { id: number } }).session.id
+
+    // An expired pointer must never take part in context assembly, cleanup job or not.
+    await createDb(env.DB).update(attachmentProviderFiles).set({ expires_at: Date.now() - 1 })
+      .where(eq(attachmentProviderFiles.attachment_id, attachmentId))
+
+    c.ws.send(send({ session_id: sessionId, parts: [{ type: 'text', text: 'again' }], provider_id: a, model_id: 'model-a' }))
+    await c.nextAfter('message.done', 2)
+
+    expect(uploads.map((u) => u.providerId)).toEqual([a, a])
+    expect(filePartsOf(created[1]!)).toEqual([
+      { type: 'file', mediaType: 'image/png', data: { type: 'reference', reference: { mock: `file-${a}-2` } } },
+    ])
+    const rows = await pointersOf(attachmentId)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.provider_reference).toEqual({ mock: `file-${a}-2` })
+    expect(rows[0]!.expires_at).toBeGreaterThan(Date.now())
+  })
+
+  it('persists the provider-reported expiry, and otherwise the requested seven days', async () => {
+    const reported = new Date(Date.now() + 3_600_000)
+    const a = await seedProvider('files-a', 'model-a', true)
+    const b = await seedProvider('files-b', 'model-b', true)
+    const attachmentId = await seedAttachment()
+    await installMock(streamingMock, (provider) => recordingFiles([], provider.id === a ? reported : undefined)(provider))
+
+    const c = await connect()
+    c.ws.send(send({ parts: [{ type: 'text', text: 'look' }, { type: 'image', attachment_id: attachmentId }], provider_id: a, model_id: 'model-a' }))
+    await c.next('message.done')
+    const sessionId = (c.events.find((e) => e.type === 'session.created') as { session: { id: number } }).session.id
+    const before = Date.now()
+    c.ws.send(send({ session_id: sessionId, parts: [{ type: 'text', text: 'again' }], provider_id: b, model_id: 'model-b' }))
+    await c.nextAfter('message.done', 2)
+
+    const rows = await pointersOf(attachmentId)
+    expect(rows.find((r) => r.provider_id === a)!.expires_at).toBe(reported.getTime())
+    // No reported expiry: the local pointer dies on the deadline the upload asked for.
+    const fallback = rows.find((r) => r.provider_id === b)!.expires_at
+    expect(fallback).toBeGreaterThanOrEqual(before + 604_800_000)
+    expect(fallback).toBeLessThanOrEqual(Date.now() + 604_800_000)
+  })
+
+  it('never touches the Files API when the provider has native files disabled', async () => {
+    const a = await seedProvider('inline', 'model-a', false)
+    const attachmentId = await seedAttachment()
+    const createFiles = vi.fn(recordingFiles([]))
+    const created = await installMock(streamingMock, createFiles)
+
+    const c = await connect()
+    c.ws.send(send({ parts: [{ type: 'text', text: 'look' }, { type: 'image', attachment_id: attachmentId }], provider_id: a, model_id: 'model-a' }))
+    expect(await c.next('message.done')).toMatchObject({ status: 'done' })
+
+    expect(createFiles).not.toHaveBeenCalled()
+    expect(filePartsOf(created[0]!)).toEqual([{ type: 'file', mediaType: 'image/png', data: { type: 'data', data: PNG } }])
+    expect(await pointersOf(attachmentId)).toHaveLength(0)
+  })
+
+  it('surfaces auth, rate-limit and server upload failures instead of falling back to inline bytes', async () => {
+    for (const message of ['401 invalid api key', '429 rate limit exceeded', '500 internal server error']) {
+      const a = await seedProvider(`files-${message}`, 'model-a', true)
+      const attachmentId = await seedAttachment()
+      const created = await installMock(streamingMock, () => ({
+        specificationVersion: 'v4',
+        provider: 'mock',
+        uploadFile: async () => { throw new Error(message) },
+      }))
+
+      const c = await connect()
+      c.ws.send(send({ parts: [{ type: 'text', text: 'look' }, { type: 'image', attachment_id: attachmentId }], provider_id: a, model_id: 'model-a' }))
+      expect(await c.next('message.done')).toMatchObject({ status: 'error', error: expect.stringContaining(message) })
+      // A failed upload is a failed turn: nothing was silently downgraded into inline bytes.
+      expect(created).toHaveLength(0)
+      expect(await pointersOf(attachmentId)).toHaveLength(0)
     }
   })
 })
