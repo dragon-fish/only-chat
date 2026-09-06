@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, reactive } from 'vue'
 import { RotateCcw, Settings2 } from '@lucide/vue'
 import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/client/ui/field'
 import { Input } from '@/client/ui/input'
@@ -12,7 +12,7 @@ import {
 } from '@/client/ui/number-field'
 import { Popover, PopoverContent, PopoverTrigger } from '@/client/ui/popover'
 import { Textarea } from '@/client/ui/textarea'
-import { optionalNumber, type SessionSettingSources, type SessionSettingsForm, type SettingSource } from '@/client/stores/sync'
+import { fieldLooksBlank, optionalNumber, type SessionSettingSources, type SessionSettingsForm, type SettingSource } from '@/client/stores/sync'
 import type { Project } from '@/shared/models'
 
 const props = defineProps<{
@@ -56,9 +56,22 @@ type ParamKey = 'temperature' | 'top_p' | 'max_tokens'
  */
 const STEP_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End'])
 
+/**
+ * The live text of each box while it is being edited, `null` when it is not. reka only writes typed
+ * text back to the model on blur or Enter, so the model is the wrong thing to ask whether the box
+ * the user is looking at is empty — see `fieldLooksBlank`.
+ */
+const typing = reactive<Record<ParamKey, string | null>>({ temperature: null, top_p: null, max_tokens: null })
+function onType(field: ParamKey, event: Event) {
+  typing[field] = (event.target as HTMLInputElement).value
+}
+/** Blur is where reka reconciles text and model, so the model becomes authoritative again. */
+function onSettle(field: ParamKey) {
+  typing[field] = null
+}
 /** Blank is `''` in the form and `undefined` through `optionalNumber` — never `0` (spec §7.3). */
 function blank(field: ParamKey): boolean {
-  return optionalNumber(props.form[field]) === undefined
+  return fieldLooksBlank(typing[field], props.form[field])
 }
 function guardStep(field: ParamKey, event: Event) {
   if (!blank(field)) return
@@ -132,18 +145,19 @@ Popover
             RotateCcw(class="size-3.5")
         //- `step` sizes the +/- buttons only: `step-snapping` off is what lets a typed 0.85 stay
         //- 0.85 instead of being rewritten to the nearest 0.1, which is how the raw box behaved.
-        //- `maximumFractionDigits` is explicit for the same reason: reka round-trips every value
+        //- `maximumFractionDigits` is 20, not a guess at what people type: a double carries at most
+          //- 17 significant digits, so 20 fractional digits cannot lose one. reka round-trips every value
         //- through `Intl.NumberFormat`, whose default of 3 rewrote a stored 0.6667 to 0.667.
         NumberField(
           id="oc-session-temperature" :model-value="optionalNumber(form.temperature)"
           :min="0" :max="2" :step="0.1" :step-snapping="false" :disable-wheel-change="true"
-          :format-options="{ maximumFractionDigits: 10 }"
+          :format-options="{ maximumFractionDigits: 20 }"
           @update:model-value="setParam('temperature', $event)"
           @keydown.capture="guardStep('temperature', $event)"
           @wheel.capture="guardStep('temperature', $event)")
           NumberFieldContent
             NumberFieldDecrement(:disabled="blank('temperature')")
-            NumberFieldInput(class="text-sm")
+            NumberFieldInput(class="text-sm" @input="onType('temperature', $event)" @blur="onSettle('temperature')")
             NumberFieldIncrement(:disabled="blank('temperature')")
         FieldDescription(class="text-xs") {{ inheritHint('temperature', inherited?.temperature) }}
 
@@ -158,13 +172,13 @@ Popover
         NumberField(
           id="oc-session-top-p" :model-value="optionalNumber(form.top_p)"
           :min="0" :max="1" :step="0.05" :step-snapping="false" :disable-wheel-change="true"
-          :format-options="{ maximumFractionDigits: 10 }"
+          :format-options="{ maximumFractionDigits: 20 }"
           @update:model-value="setParam('top_p', $event)"
           @keydown.capture="guardStep('top_p', $event)"
           @wheel.capture="guardStep('top_p', $event)")
           NumberFieldContent
             NumberFieldDecrement(:disabled="blank('top_p')")
-            NumberFieldInput(class="text-sm")
+            NumberFieldInput(class="text-sm" @input="onType('top_p', $event)" @blur="onSettle('top_p')")
             NumberFieldIncrement(:disabled="blank('top_p')")
         FieldDescription(class="text-xs") {{ inheritHint('top_p', inherited?.top_p) }}
 
@@ -184,7 +198,7 @@ Popover
           @wheel.capture="guardStep('max_tokens', $event)")
           NumberFieldContent
             NumberFieldDecrement(:disabled="blank('max_tokens')")
-            NumberFieldInput(class="text-sm")
+            NumberFieldInput(class="text-sm" @input="onType('max_tokens', $event)" @blur="onSettle('max_tokens')")
             NumberFieldIncrement(:disabled="blank('max_tokens')")
         FieldDescription(class="text-xs") {{ inheritHint('max_tokens', inherited?.max_tokens) }}
 

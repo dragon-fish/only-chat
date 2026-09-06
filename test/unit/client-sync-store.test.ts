@@ -1,13 +1,36 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
-  assistantWaitState, choiceFromParams, choiceToParams, effectiveModelFor, modelOverrideAfterPick,
-  mergeRestoredText, moveSessionCommand, nextSendState, paramsFromFields, projectFormFrom,
-  projectParamsFromForm, projectUpdateCommand, reasoningChoiceFor, reasoningControlModel,
-  reasoningDisabledReason, reasoningStopsFor, REASONING_LABELS, REASONING_ORDER,
-  sendCommandFor, sessionFormFrom, sessionSettingSources, useSyncStore,
-  type OutstandingSend, type ParamFields, type ProjectFormState, type ReasoningStop, type SendEvent,
+  REASONING_LABELS,
+  REASONING_ORDER,
+  assistantWaitState,
+  choiceFromParams,
+  choiceToParams,
+  effectiveModelFor,
+  fieldLooksBlank,
+  mergeRestoredText,
+  modelOverrideAfterPick,
+  moveSessionCommand,
+  nextSendState,
+  paramsFromFields,
+  projectFormFrom,
+  projectParamsFromForm,
+  projectUpdateCommand,
+  reasoningChipLabel,
+  reasoningChoiceFor,
+  reasoningControlModel,
+  reasoningDisabledReason,
+  reasoningStopsFor,
+  sendCommandFor,
+  sessionFormFrom,
+  sessionSettingSources,
+  type OutstandingSend,
+  type ParamFields,
+  type ProjectFormState,
+  type ReasoningStop,
+  type SendEvent,
   type SessionConfigSource,
+  useSyncStore,
 } from '@/client/stores/sync'
 import type { ModelRef } from '@/shared/api'
 import type { Message, ModelCapabilities, Project, Session } from '@/shared/models'
@@ -714,5 +737,56 @@ describe('reasoningDisabledReason', () => {
   it('does not fall for the unsupported flag, which is false for a non-reasoning model', () => {
     expect(reasoningControlModel([], 'inherit').unsupported).toBe(false)
     expect(reasoningDisabledReason([])).not.toBeNull()
+  })
+})
+
+describe('fieldLooksBlank', () => {
+  // reka writes typed text back to the model only on blur or Enter, so between clearing a filled
+  // box and leaving it, the model still holds the old value while the box reads empty. Asking the
+  // model there is what let a stepper press on a visibly empty 最大 tokens commit `min` = 1 and
+  // truncate every later reply to one token.
+  it('believes the box over the model while the box is being edited', () => {
+    expect(fieldLooksBlank('', 4096)).toBe(true)
+    expect(fieldLooksBlank('   ', 4096)).toBe(true)
+    expect(fieldLooksBlank('0.5', '')).toBe(false)
+  })
+
+  it('falls back to the model when no edit is in flight', () => {
+    expect(fieldLooksBlank(null, '')).toBe(true)
+    expect(fieldLooksBlank(null, 4096)).toBe(false)
+  })
+
+  // Spec §7.3: blank means inherit, and 0 is a value someone chose.
+  it('does not mistake zero for blank', () => {
+    expect(fieldLooksBlank(null, 0)).toBe(false)
+    expect(fieldLooksBlank('0', 0)).toBe(false)
+  })
+})
+
+describe('reasoningChipLabel', () => {
+  const FULL: ReasoningStop[] = ['off', 'auto', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']
+  const NO_OFF: ReasoningStop[] = ['auto', 'low', 'medium', 'high']
+
+  it('reads 立即 only where off is actually honourable', () => {
+    expect(reasoningChipLabel(reasoningControlModel(FULL, 'off'), 'off')).toBe(REASONING_LABELS.off)
+  })
+
+  // The locked-on rule's only user-visible output: a model that cannot express off must not
+  // display 立即, because the switch is locked on and the request does not turn reasoning off.
+  it('reads 自动 for a stored off the model cannot honour', () => {
+    expect(reasoningChipLabel(reasoningControlModel(NO_OFF, 'off'), 'off')).toBe(REASONING_LABELS.auto)
+  })
+
+  it('reads 自动 for inherit', () => {
+    expect(reasoningChipLabel(reasoningControlModel(FULL, 'inherit'), 'inherit')).toBe(REASONING_LABELS.auto)
+  })
+
+  // Spec §5.5: shown as-is, never rewritten to a stop the user never chose.
+  it('shows a stored strength the model does not offer, unrewritten', () => {
+    expect(reasoningChipLabel(reasoningControlModel(NO_OFF, 'ultra'), 'ultra')).toBe(REASONING_LABELS.ultra)
+  })
+
+  it('names the selected strength', () => {
+    expect(reasoningChipLabel(reasoningControlModel(FULL, 'high'), 'high')).toBe(REASONING_LABELS.high)
   })
 })

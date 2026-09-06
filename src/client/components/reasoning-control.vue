@@ -6,7 +6,7 @@ import type { ButtonVariants } from '@/client/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/client/ui/popover'
 import ReasoningControls from '@/client/components/reasoning-controls.vue'
 import {
-  REASONING_LABELS,
+  reasoningChipLabel,
   reasoningControlModel,
   reasoningDisabledReason,
   reasoningStopsFor,
@@ -51,16 +51,7 @@ const disabledReason = computed(() => (
   props.noModel ? '先选择模型' : reasoningDisabledReason(stops.value)
 ))
 
-const chipLabel = computed(() => {
-  if (!model.value.enabled) return REASONING_LABELS.off
-  // `inherit` reaching here is the same request as `auto` (see `reasoningControlModel`); testing it
-  // explicitly is also what narrows `props.active` to a real stop for the line below.
-  if (model.value.auto || props.active === 'inherit') return REASONING_LABELS.auto
-  // Spec §5.5: a stored strength this model does not offer is shown as-is, never rewritten.
-  // Reading `props.active` rather than indexing `strengths` is what preserves that — `index` is
-  // -1 in that case, and a fallback like `?? 'medium'` would silently claim the wrong stop.
-  return REASONING_LABELS[props.active]
-})
+const chipLabel = computed(() => reasoningChipLabel(model.value, props.active))
 
 /**
  * The chip is `aria-disabled`, never `disabled`: `InputGroup` carries `has-disabled:opacity-50`,

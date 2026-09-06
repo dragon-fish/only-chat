@@ -89,10 +89,17 @@ export function reasoningControlModel(stops: ReasoningStop[], active: ReasoningC
    * Spec §5.5: when the model does not declare `reasoning_can_disable`, or the protocol cannot
    * express "off", the 总开关 is disabled and *locked on* — 不假装能关. A stored `off` can reach
    * this model anyway (a Project sets it, then a session inherits it, then the session picks a
-   * model that cannot honour it), and `buildProviderOptions` omits the disable value in exactly
-   * that case, so the model reasons regardless. Showing the switch off would therefore display the
-   * opposite of what the request does, AND strand the control set: the 思考 switch is disabled, and
-   * 自动 and the slider are gated on `enabled`, so nothing on the panel would be movable.
+   * model that cannot honour it). Showing the switch off there would strand the whole control set:
+   * the 思考 switch is disabled, and 自动 and the slider are gated on `enabled`, so nothing on the
+   * panel would be movable and the session could never reason again.
+   *
+   * What the server then sends is protocol-dependent, and the two do not currently agree for every
+   * one. `openai-responses` omits the disable value in this case, so the model reasons and the
+   * locked-on switch is accurate; `anthropic` returns `{}` with no thinking block, so that model
+   * does not reason while the panel says it does. The disagreement is not resolved here: it most
+   * likely lives in the capability data rather than in either branch, because omitting the thinking
+   * block IS how the anthropic protocol expresses "off", which means such a model can disable and
+   * should be declaring `reasoning_can_disable`. Tracked for the round that owns the server.
    */
   const lockedOn = active === 'off' && !canDisable
   const enabled = active !== 'off' || lockedOn
@@ -122,6 +129,21 @@ export function reasoningControlModel(stops: ReasoningStop[], active: ReasoningC
  * exactly the model it must disable for. The chip's own extra case — no model resolved yet — is
  * not expressible from stops and stays with the chip.
  */
+/**
+ * What the chip reads. Pure because it is the only user-visible output that the locked-on rule
+ * changes (a stored `off` on a model that cannot disable now reads 自动, not 立即), and a component
+ * cannot be tested in this repo.
+ *
+ * Spec §5.5: a stored strength this model does not offer is shown AS-IS, never rewritten — which is
+ * why this reads `active` rather than indexing `strengths`, where `index` would be -1 and any
+ * fallback would name a stop the user never chose.
+ */
+export function reasoningChipLabel(model: ReasoningControlModel, active: ReasoningChoice): string {
+  if (!model.enabled) return REASONING_LABELS.off
+  if (model.auto || active === 'inherit') return REASONING_LABELS.auto
+  return REASONING_LABELS[active]
+}
+
 export function reasoningDisabledReason(stops: ReasoningStop[]): string | null {
   return stops.length === 0 ? '该模型不支持推理' : null
 }
@@ -200,6 +222,20 @@ export function optionalNumber(raw: string | number): number | undefined {
 
 function numberToField(value: number | undefined): string {
   return value === undefined ? '' : String(value)
+}
+
+/**
+ * Whether the box the user is looking at is empty, which is what decides if a stepper may fire.
+ *
+ * `raw` is the input element's live text, or `null` when the field is not being edited. The form
+ * model cannot answer this on its own: reka writes typed text back only on blur or Enter
+ * (`NumberFieldInput` binds `applyInputValue` to those two), so from the moment a filled box is
+ * cleared until it loses focus, the model still holds the old value while the box reads empty.
+ * Asking the model there is what let a stepper press on a visibly empty 最大 tokens commit `min`.
+ */
+export function fieldLooksBlank(raw: string | null, stored: string | number): boolean {
+  if (raw !== null) return raw.trim() === ''
+  return optionalNumber(stored) === undefined
 }
 
 /** `null` when the user filled nothing in, so the `params` column stays NULL. */
