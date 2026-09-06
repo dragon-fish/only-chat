@@ -201,8 +201,15 @@ function onSend(parts: Part[]) {
     },
   }))
 }
+/**
+ * Deliberately not routed through `send`: unlike a settings write, `stop` is idempotent and carries
+ * no stale state, so one queued by `WsClient` and delivered on reconnect still does exactly what was
+ * asked — the generation runs in the DO, not in the socket, and keeps costing tokens meanwhile. The
+ * 停止 button is also not gated on the connection the way 发送 is, so refusing here would turn a
+ * command that would have worked into a dead click.
+ */
 function onStop() {
-  if (sid.value !== null) send({ type: 'stop', session_id: sid.value })
+  if (sid.value !== null) sync.send({ type: 'stop', session_id: sid.value })
 }
 
 /** The whole form is the session's own overrides, so a restored field simply stops being sent. */
