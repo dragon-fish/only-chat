@@ -3,9 +3,10 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import {
   assistantWaitState, choiceFromParams, choiceToParams, effectiveModelFor, modelOverrideAfterPick,
   mergeRestoredText, moveSessionCommand, nextSendState, paramsFromFields, projectFormFrom,
-  projectParamsFromForm, projectUpdateCommand, reasoningStopsFor, REASONING_LABELS, REASONING_ORDER,
+  projectParamsFromForm, projectUpdateCommand, reasoningChoiceFor, reasoningControlModel,
+  reasoningStopsFor, REASONING_LABELS, REASONING_ORDER,
   sendCommandFor, sessionFormFrom, sessionSettingSources, useSyncStore,
-  type OutstandingSend, type ParamFields, type ProjectFormState, type SendEvent,
+  type OutstandingSend, type ParamFields, type ProjectFormState, type ReasoningStop, type SendEvent,
   type SessionConfigSource,
 } from '@/client/stores/sync'
 import type { ModelRef } from '@/shared/api'
@@ -554,5 +555,86 @@ describe('rejected message recovery', () => {
     // An image-only message carries no text; a blank line on its own would be a bogus edit.
     expect(mergeRestoredText('', 'started typing')).toBe('started typing')
     expect(mergeRestoredText('rejected', '   ')).toBe('rejected')
+  })
+})
+
+describe('reasoningControlModel', () => {
+  const FULL: ReasoningStop[] = ['off', 'auto', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']
+
+  it('keeps off and auto off the strength axis', () => {
+    const m = reasoningControlModel(FULL, 'medium')
+    expect(m.strengths).toEqual(['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'])
+    expect(m.index).toBe(2)
+    expect(m.enabled).toBe(true)
+    expect(m.auto).toBe(false)
+  })
+
+  it('reports auto as enabled with no selected strength', () => {
+    const m = reasoningControlModel(FULL, 'auto')
+    expect(m.auto).toBe(true)
+    expect(m.enabled).toBe(true)
+    expect(m.index).toBe(-1)
+  })
+
+  it('treats a fully unset value as auto, because nothing is pinned anywhere', () => {
+    expect(reasoningControlModel(FULL, 'inherit').auto).toBe(true)
+  })
+
+  it('reports off', () => {
+    const m = reasoningControlModel(FULL, 'off')
+    expect(m.enabled).toBe(false)
+    expect(m.auto).toBe(false)
+    expect(m.index).toBe(-1)
+  })
+
+  it('only allows disabling when the stops say so', () => {
+    expect(reasoningControlModel(FULL, 'auto').canDisable).toBe(true)
+    expect(reasoningControlModel(['auto', 'low'], 'auto').canDisable).toBe(false)
+  })
+
+  it('flags a stored strength this model does not offer instead of rewriting it', () => {
+    const m = reasoningControlModel(['auto', 'low', 'high'], 'ultra')
+    expect(m.unsupported).toBe(true)
+    expect(m.index).toBe(-1)
+    expect(m.enabled).toBe(true)
+  })
+
+  it('does not flag auto or off as unsupported', () => {
+    expect(reasoningControlModel(['auto', 'low'], 'auto').unsupported).toBe(false)
+    expect(reasoningControlModel(['auto', 'low'], 'off').unsupported).toBe(false)
+  })
+})
+
+describe('reasoningChoiceFor', () => {
+  const FULL: ReasoningStop[] = ['off', 'auto', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']
+
+  it('turning 思考 off writes off', () => {
+    const m = reasoningControlModel(FULL, 'high')
+    expect(reasoningChoiceFor(m, { kind: 'enable', on: false })).toBe('off')
+  })
+
+  it('turning 思考 on lands on auto rather than guessing a strength', () => {
+    const m = reasoningControlModel(FULL, 'off')
+    expect(reasoningChoiceFor(m, { kind: 'enable', on: true })).toBe('auto')
+  })
+
+  it('turning 自动 on releases the pinned strength', () => {
+    const m = reasoningControlModel(FULL, 'high')
+    expect(reasoningChoiceFor(m, { kind: 'auto', on: true })).toBe('auto')
+  })
+
+  it('turning 自动 off lands on the middle strength', () => {
+    const m = reasoningControlModel(FULL, 'auto')
+    expect(reasoningChoiceFor(m, { kind: 'auto', on: false })).toBe('high')
+  })
+
+  it('picking a stop selects it and leaves auto', () => {
+    const m = reasoningControlModel(FULL, 'auto')
+    expect(reasoningChoiceFor(m, { kind: 'strength', stop: 'low' })).toBe('low')
+  })
+
+  it('turning 自動 off with a single strength picks that one', () => {
+    const m = reasoningControlModel(['auto', 'low'], 'auto')
+    expect(reasoningChoiceFor(m, { kind: 'auto', on: false })).toBe('low')
   })
 })

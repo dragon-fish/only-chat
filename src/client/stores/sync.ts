@@ -53,6 +53,62 @@ export function reasoningStopsFor(capabilities: ModelCapabilities | undefined, p
   })
 }
 
+/** What the three reasoning widgets show, derived from one stop list (spec §5.5). */
+export interface ReasoningControlModel {
+  /** Whether the 思考 switch can be turned off at all. */
+  canDisable: boolean
+  /** Whether reasoning is currently on. */
+  enabled: boolean
+  /** On means "enabled, with no strength pinned" — the provider decides. */
+  auto: boolean
+  /** The slider's axis. Never contains `off` or `auto`: neither is a strength. */
+  strengths: ReasoningStop[]
+  /** Index into `strengths`; -1 whenever no strength is pinned. */
+  index: number
+  /** A stored strength this model does not offer. Shown as-is, never silently rewritten. */
+  unsupported: boolean
+}
+
+export type ReasoningAction =
+  | { kind: 'enable'; on: boolean }
+  | { kind: 'auto'; on: boolean }
+  | { kind: 'strength'; stop: ReasoningStop }
+
+/**
+ * `active` is the value in force at this layer — the layer's own choice, or what it inherits.
+ * `inherit` reaching here means nothing is pinned anywhere, which is the same request as `auto`:
+ * reason, but send no effort.
+ */
+export function reasoningControlModel(stops: ReasoningStop[], active: ReasoningChoice): ReasoningControlModel {
+  const strengths = stops.filter((s): s is ReasoningStop => s !== 'off' && s !== 'auto')
+  const enabled = active !== 'off'
+  const auto = enabled && (active === 'auto' || active === 'inherit')
+  // Narrowed by literal comparison, not by the `auto`/`enabled` booleans above, so the compiler
+  // can see `active` is a real stop here without a cast: only `off`/`auto`/`inherit` are excluded.
+  const index = active === 'off' || active === 'auto' || active === 'inherit' ? -1 : strengths.indexOf(active)
+  return {
+    canDisable: stops.includes('off'),
+    enabled,
+    auto,
+    strengths,
+    index,
+    unsupported: enabled && !auto && index < 0,
+  }
+}
+
+/**
+ * The choice each widget interaction writes. Leaving 自动 lands on the middle strength: the spec
+ * defines entering auto and picking a stop, but not leaving auto by the toggle, and the midpoint
+ * is the one answer that does not bias the user toward either end of the axis.
+ */
+export function reasoningChoiceFor(model: ReasoningControlModel, action: ReasoningAction): ReasoningChoice {
+  if (action.kind === 'strength') return action.stop
+  if (action.kind === 'enable') return action.on ? 'auto' : 'off'
+  if (action.on) return 'auto'
+  const middle = model.strengths[Math.floor((model.strengths.length - 1) / 2)]
+  return middle ?? 'auto'
+}
+
 /** The merged control writes the two independently stored keys (spec §3.3). */
 export function choiceToParams(choice: ReasoningChoice): SessionParams {
   if (choice === 'inherit') return {}
