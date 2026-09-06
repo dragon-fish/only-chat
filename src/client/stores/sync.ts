@@ -150,8 +150,12 @@ export interface ParamFields {
  * Blank stays blank: an unparseable or empty box contributes no key at all. Accepts a number
  * because `Input` passes one through untouched whenever the element is `type="number"` (see
  * `ParamFields`) — both shapes reach here, and a `.trim()` on the number branch would throw.
+ *
+ * Exported because the settings forms need the same read: `NumberField` is `number | undefined`
+ * valued, so what it shows for a field is exactly the number that field currently holds — and
+ * `undefined`, not `0`, is what keeps a blank box blank.
  */
-function optionalNumber(raw: string | number): number | undefined {
+export function optionalNumber(raw: string | number): number | undefined {
   if (typeof raw === 'number') return Number.isFinite(raw) ? raw : undefined
   const trimmed = raw.trim()
   if (trimmed === '') return undefined

@@ -2,12 +2,19 @@
 import { computed, onUnmounted, reactive, ref, watch, watchEffect } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { Button } from '@/client/ui/button'
+import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/client/ui/field'
 import { Input } from '@/client/ui/input'
-import { Label } from '@/client/ui/label'
+import {
+  NumberField,
+  NumberFieldContent,
+  NumberFieldDecrement,
+  NumberFieldIncrement,
+  NumberFieldInput,
+} from '@/client/ui/number-field'
 import { Textarea } from '@/client/ui/textarea'
 import ModelPicker from '@/client/components/model-picker.vue'
 import ReasoningControl from '@/client/components/reasoning-control.vue'
-import { DISCONNECTED_MESSAGE, projectFormFrom, projectUpdateCommand, reasoningStopsFor, REASONING_ORDER, useSyncStore, type ProjectFormState } from '@/client/stores/sync'
+import { DISCONNECTED_MESSAGE, optionalNumber, projectFormFrom, projectUpdateCommand, reasoningStopsFor, REASONING_ORDER, useSyncStore, type ProjectFormState } from '@/client/stores/sync'
 import { useConfigStore } from '@/client/stores/config'
 
 const props = defineProps<{ projectId: number | null }>()
@@ -126,6 +133,14 @@ function onDelete() {
   sync.send({ type: 'project.delete', project_id: p.id })
 }
 
+/**
+ * `NumberField` clears to `undefined`; the field keeps holding `''` for blank so that
+ * `projectParamsFromForm` drops the key instead of saving a value the Project never chose.
+ */
+function setParam(field: 'temperature' | 'top_p' | 'max_tokens', value: number | undefined) {
+  form[field] = value ?? ''
+}
+
 function formatTime(ms: number): string {
   return new Date(ms).toLocaleString()
 }
@@ -146,40 +161,69 @@ onUnmounted(clearPending)
       @click="section = s.key") {{ s.label }}
   .flex.min-h-0.min-w-0.flex-1.flex-col(v-if="project")
     .oc-scroll.flex.min-h-0.flex-1.flex-col.gap-4.overflow-y-auto.p-4
-      template(v-if="section === 'basic'")
-        div
-          Label 名称
-          Input(v-model="form.name" placeholder="项目名称")
-        .flex.min-h-0.flex-col
-          Label Project prompt
-          Textarea(v-model="form.system_prompt" class="min-h-40" placeholder="留空表示不附加项目提示词")
-          p.mt-1.text-xs.text-muted-foreground 会话开始生成时，项目提示词在前、会话提示词在后，中间固定两个换行。
-      template(v-else)
-        div
-          Label 默认模型
+      FieldGroup(v-if="section === 'basic'" class="max-w-2xl")
+        Field
+          FieldLabel(for="oc-project-name") 名称
+          Input(id="oc-project-name" v-model="form.name" placeholder="项目名称")
+        Field(class="min-h-0")
+          FieldLabel(for="oc-project-prompt") Project prompt
+          Textarea(
+            id="oc-project-prompt" v-model="form.system_prompt" class="min-h-40"
+            placeholder="留空表示不附加项目提示词")
+          FieldDescription 会话开始生成时，项目提示词在前、会话提示词在后，中间固定两个换行。
+      FieldGroup(v-else class="max-w-2xl")
+        Field
+          FieldLabel 默认模型
           .flex.items-center.gap-2
             ModelPicker(v-model="form.model")
             button.text-xs.text-muted-foreground(v-if="form.model" class="hover:text-foreground" @click="form.model = null") 清除
-          p.mt-1.text-xs.text-muted-foreground 留空表示不设置默认模型，由会话或发送时的选择决定。
-        .grid.grid-cols-3.gap-3
-          div
-            Label temperature
-            Input(v-model="form.temperature" type="number" min="0" max="2" step="0.1" placeholder="继承")
-          div
-            Label top_p
-            Input(v-model="form.top_p" type="number" min="0" max="1" step="0.05" placeholder="继承")
-          div
-            Label max tokens
-            Input(v-model="form.max_tokens" type="number" min="1" step="1" placeholder="继承")
-        div
-          Label 推理强度
-          .mt-1
+          FieldDescription 留空表示不设置默认模型，由会话或发送时的选择决定。
+        Field
+          FieldLabel(for="oc-project-temperature") temperature
+          //- `step` sizes the +/- buttons only: `step-snapping` off is what lets a typed 0.77 stay
+          //- 0.77 instead of being rewritten to the nearest step, which is how the raw box behaved.
+          NumberField(
+            id="oc-project-temperature" :model-value="optionalNumber(form.temperature)"
+            :min="0" :max="2" :step="0.1" :step-snapping="false"
+            @update:model-value="setParam('temperature', $event)")
+            NumberFieldContent
+              NumberFieldDecrement
+              NumberFieldInput
+              NumberFieldIncrement
+          FieldDescription 留空则继承，不写入项目参数。
+        Field
+          FieldLabel(for="oc-project-top-p") top_p
+          NumberField(
+            id="oc-project-top-p" :model-value="optionalNumber(form.top_p)"
+            :min="0" :max="1" :step="0.05" :step-snapping="false"
+            @update:model-value="setParam('top_p', $event)")
+            NumberFieldContent
+              NumberFieldDecrement
+              NumberFieldInput
+              NumberFieldIncrement
+          FieldDescription 留空则继承，不写入项目参数。
+        Field
+          FieldLabel(for="oc-project-max-tokens") max tokens
+          NumberField(
+            id="oc-project-max-tokens" :model-value="optionalNumber(form.max_tokens)"
+            :min="1" :step="1" :step-snapping="false"
+            @update:model-value="setParam('max_tokens', $event)")
+            NumberFieldContent
+              NumberFieldDecrement
+              NumberFieldInput
+              NumberFieldIncrement
+          FieldDescription 留空则继承，不写入项目参数。
+        Field
+          FieldLabel 推理强度
+          //- The chip keeps its intrinsic width: `Field` stretches its own children to full width,
+          //- and a lone Button stretched across the form reads as a bar, not a chip.
+          .flex.items-center
             ReasoningControl(
               variant="outline"
               :stops="stops" :active="form.reasoning" :overridden="form.reasoning !== 'inherit'"
               :no-model="false" @update="form.reasoning = $event")
-          p.mt-1.text-xs.text-muted-foreground(v-if="form.model") 只显示该默认模型声明支持的档位；「默认」表示项目不设置推理档位。
-          p.mt-1.text-xs.text-muted-foreground(v-else) 未设置默认模型时无法校验档位，实际可用范围由发送时的模型决定。
+          FieldDescription(v-if="form.model") 只显示该默认模型声明支持的档位；「默认」表示项目不设置推理档位。
+          FieldDescription(v-else) 未设置默认模型时无法校验档位，实际可用范围由发送时的模型决定。
     .flex.items-center.gap-3.border-t.p-3
       p.min-w-0.truncate.text-xs.text-muted-foreground
         | {{ chatCount }} 个聊天 · 创建于 {{ formatTime(project.created_at) }} · 更新于 {{ formatTime(project.updated_at) }}

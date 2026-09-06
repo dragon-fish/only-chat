@@ -1,11 +1,18 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { RotateCcw, Settings2 } from '@lucide/vue'
+import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/client/ui/field'
 import { Input } from '@/client/ui/input'
-import { Label } from '@/client/ui/label'
+import {
+  NumberField,
+  NumberFieldContent,
+  NumberFieldDecrement,
+  NumberFieldIncrement,
+  NumberFieldInput,
+} from '@/client/ui/number-field'
 import { Popover, PopoverContent, PopoverTrigger } from '@/client/ui/popover'
 import { Textarea } from '@/client/ui/textarea'
-import type { SessionSettingSources, SessionSettingsForm, SettingSource } from '@/client/stores/sync'
+import { optionalNumber, type SessionSettingSources, type SessionSettingsForm, type SettingSource } from '@/client/stores/sync'
 import type { Project } from '@/shared/models'
 
 const props = defineProps<{
@@ -31,8 +38,17 @@ const BADGES: Record<SettingSource, string> = {
   default: '默认',
 }
 
-function placeholder(value: number | undefined): string {
-  return value === undefined ? '默认' : `继承 ${value}`
+/** What a blank box would resolve to — said, never filled in, so blank still travels as absent. */
+function inheritHint(value: number | undefined): string {
+  return value === undefined ? '留空则使用默认值。' : `留空则继承 ${value}。`
+}
+/**
+ * `NumberField` clears to `undefined`; the field keeps holding `''` for blank so that
+ * `paramsFromFields` drops the key instead of writing a value the session never chose.
+ */
+function setParam(field: 'temperature' | 'top_p' | 'max_tokens', value: number | undefined) {
+  props.form[field] = value ?? ''
+  emit('commit')
 }
 /** Restoring inheritance clears this field only; every other override stays untouched (spec §7.3). */
 function restore(field: 'system_prompt' | 'temperature' | 'top_p' | 'max_tokens') {
@@ -52,60 +68,85 @@ Popover
   //- shifts to stay on-screen, so the trigger no longer needs to know it now lives in the top bar.
   PopoverContent(
     align="end" :side-offset="8"
-    class="w-80 max-w-[85vw] max-h-(--reka-popover-content-available-height) gap-3 p-3 overflow-y-auto oc-scroll")
-    div(v-if="hasSession")
-      Label(class="text-xs") 标题
-      Input(v-model="form.title" class="h-8 text-sm" placeholder="对话标题" @change="emit('commit')")
+    class="w-80 max-w-[85vw] max-h-(--reka-popover-content-available-height) p-3 overflow-y-auto oc-scroll")
+    FieldGroup(class="gap-4")
+      Field(v-if="hasSession")
+        FieldLabel(for="oc-session-title" class="text-xs") 标题
+        Input(
+          id="oc-session-title" v-model="form.title" class="h-8 text-sm" placeholder="对话标题"
+          @change="emit('commit')")
 
-    .flex.flex-col.gap-1
-      .flex.items-center.gap-2
-        Label(class="text-xs") 会话提示词
-        span.ml-auto.text-xs.text-muted-foreground {{ BADGES[sources.system_prompt] }}
-        button.text-muted-foreground(
-          v-if="sources.system_prompt === 'session'" type="button" title="恢复继承"
-          class="hover:text-foreground" @click="restore('system_prompt')")
-          RotateCcw(class="size-3.5")
-      Textarea(
-        v-model="form.system_prompt" rows="4" class="text-sm"
-        placeholder="留空则只使用项目提示词" @change="emit('commit')")
-      p.text-xs.text-muted-foreground 项目提示词在前、会话提示词在后，中间固定两个换行。
-      details.text-xs.text-muted-foreground(v-if="project?.system_prompt")
-        summary.cursor-pointer 项目提示词
-        pre.whitespace-pre-wrap.pt-1 {{ project.system_prompt }}
+      Field
+        .flex.items-center.gap-2
+          FieldLabel(for="oc-session-prompt" class="text-xs") 会话提示词
+          span.ml-auto.text-xs.text-muted-foreground {{ BADGES[sources.system_prompt] }}
+          button.text-muted-foreground(
+            v-if="sources.system_prompt === 'session'" type="button" title="恢复继承"
+            class="hover:text-foreground" @click="restore('system_prompt')")
+            RotateCcw(class="size-3.5")
+        Textarea(
+          id="oc-session-prompt" v-model="form.system_prompt" rows="4" class="text-sm"
+          placeholder="留空则只使用项目提示词" @change="emit('commit')")
+        FieldDescription(class="text-xs") 项目提示词在前、会话提示词在后，中间固定两个换行。
+        details.text-xs.text-muted-foreground(v-if="project?.system_prompt")
+          summary.cursor-pointer 项目提示词
+          pre.whitespace-pre-wrap.pt-1 {{ project.system_prompt }}
 
-    .flex.flex-col.gap-2
-      .flex.items-center.gap-2
-        Label(class="text-xs") temperature
-        span.ml-auto.text-xs.text-muted-foreground {{ BADGES[sources.temperature] }}
-        button.text-muted-foreground(
-          v-if="sources.temperature === 'session'" type="button" title="恢复继承"
-          class="hover:text-foreground" @click="restore('temperature')")
-          RotateCcw(class="size-3.5")
-      Input(
-        v-model="form.temperature" type="number" min="0" max="2" step="0.1" class="h-8 text-sm"
-        :placeholder="placeholder(inherited?.temperature)" @change="emit('commit')")
+      Field
+        .flex.items-center.gap-2
+          FieldLabel(for="oc-session-temperature" class="text-xs") temperature
+          span.ml-auto.text-xs.text-muted-foreground {{ BADGES[sources.temperature] }}
+          button.text-muted-foreground(
+            v-if="sources.temperature === 'session'" type="button" title="恢复继承"
+            class="hover:text-foreground" @click="restore('temperature')")
+            RotateCcw(class="size-3.5")
+        //- `step` sizes the +/- buttons only: `step-snapping` off is what lets a typed 0.85 stay
+        //- 0.85 instead of being rewritten to the nearest 0.1, which is how the raw box behaved.
+        NumberField(
+          id="oc-session-temperature" :model-value="optionalNumber(form.temperature)"
+          :min="0" :max="2" :step="0.1" :step-snapping="false"
+          @update:model-value="setParam('temperature', $event)")
+          NumberFieldContent
+            NumberFieldDecrement
+            NumberFieldInput(class="text-sm")
+            NumberFieldIncrement
+        FieldDescription(class="text-xs") {{ inheritHint(inherited?.temperature) }}
 
-      .flex.items-center.gap-2
-        Label(class="text-xs") top_p
-        span.ml-auto.text-xs.text-muted-foreground {{ BADGES[sources.top_p] }}
-        button.text-muted-foreground(
-          v-if="sources.top_p === 'session'" type="button" title="恢复继承"
-          class="hover:text-foreground" @click="restore('top_p')")
-          RotateCcw(class="size-3.5")
-      Input(
-        v-model="form.top_p" type="number" min="0" max="1" step="0.05" class="h-8 text-sm"
-        :placeholder="placeholder(inherited?.top_p)" @change="emit('commit')")
+      Field
+        .flex.items-center.gap-2
+          FieldLabel(for="oc-session-top-p" class="text-xs") top_p
+          span.ml-auto.text-xs.text-muted-foreground {{ BADGES[sources.top_p] }}
+          button.text-muted-foreground(
+            v-if="sources.top_p === 'session'" type="button" title="恢复继承"
+            class="hover:text-foreground" @click="restore('top_p')")
+            RotateCcw(class="size-3.5")
+        NumberField(
+          id="oc-session-top-p" :model-value="optionalNumber(form.top_p)"
+          :min="0" :max="1" :step="0.05" :step-snapping="false"
+          @update:model-value="setParam('top_p', $event)")
+          NumberFieldContent
+            NumberFieldDecrement
+            NumberFieldInput(class="text-sm")
+            NumberFieldIncrement
+        FieldDescription(class="text-xs") {{ inheritHint(inherited?.top_p) }}
 
-      .flex.items-center.gap-2
-        Label(class="text-xs") 最大 tokens
-        span.ml-auto.text-xs.text-muted-foreground {{ BADGES[sources.max_tokens] }}
-        button.text-muted-foreground(
-          v-if="sources.max_tokens === 'session'" type="button" title="恢复继承"
-          class="hover:text-foreground" @click="restore('max_tokens')")
-          RotateCcw(class="size-3.5")
-      Input(
-        v-model="form.max_tokens" type="number" min="1" step="1" class="h-8 text-sm"
-        :placeholder="placeholder(inherited?.max_tokens)" @change="emit('commit')")
+      Field
+        .flex.items-center.gap-2
+          FieldLabel(for="oc-session-max-tokens" class="text-xs") 最大 tokens
+          span.ml-auto.text-xs.text-muted-foreground {{ BADGES[sources.max_tokens] }}
+          button.text-muted-foreground(
+            v-if="sources.max_tokens === 'session'" type="button" title="恢复继承"
+            class="hover:text-foreground" @click="restore('max_tokens')")
+            RotateCcw(class="size-3.5")
+        NumberField(
+          id="oc-session-max-tokens" :model-value="optionalNumber(form.max_tokens)"
+          :min="1" :step="1" :step-snapping="false"
+          @update:model-value="setParam('max_tokens', $event)")
+          NumberFieldContent
+            NumberFieldDecrement
+            NumberFieldInput(class="text-sm")
+            NumberFieldIncrement
+        FieldDescription(class="text-xs") {{ inheritHint(inherited?.max_tokens) }}
 
-    p.text-xs.text-muted-foreground(v-if="!hasSession") 这些设置会随第一条消息一起创建会话。
+      FieldDescription(v-if="!hasSession" class="text-xs") 这些设置会随第一条消息一起创建会话。
 </template>
