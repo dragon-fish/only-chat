@@ -23,7 +23,7 @@ const drawerOpen = ref(false)
     SheetContent(side="left" class="w-72 p-0" :show-close-button="false")
       SessionList(:closable="true" @navigate="drawerOpen = false" @close="drawerOpen = false")
   .flex.min-w-0.flex-1.flex-col
-    header.flex.h-12.shrink-0.items-center.gap-2.border-b.px-3
+    header.flex.h-12.shrink-0.items-center.gap-2.border-b.px-4
       Button(variant="ghost" size="icon" class="md:hidden" @click="drawerOpen = true")
         Menu(class="size-5")
       #page-header.flex.min-w-0.flex-1.items-center.gap-2

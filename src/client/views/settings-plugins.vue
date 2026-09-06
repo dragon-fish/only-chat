@@ -17,7 +17,7 @@ function toggle(key: string, value: boolean) {
     RouterLink.shrink-0.text-muted-foreground(to="/settings/providers" class="hover:text-foreground") ←
     span.truncate.text-sm.font-medium 插件
   .oc-scroll.h-full.overflow-y-auto
-    .mx-auto.max-w-2xl.p-4.flex.flex-col.gap-4
+    .max-w-2xl.p-4.flex.flex-col.gap-4
       p.text-sm.text-muted-foreground 功能插件会出现在这里，可以随时开关。当前版本尚未内置任何功能插件。
       ul.divide-y.rounded-md.border(v-if="Object.keys(sync.settings.plugins).length")
         li.flex.items-center.gap-3.p-3(v-for="(on, key) in sync.settings.plugins" :key="key")

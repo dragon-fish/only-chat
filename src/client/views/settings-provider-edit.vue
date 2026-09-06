@@ -167,7 +167,7 @@ async function removeModel(m: Model) {
     RouterLink.shrink-0.text-muted-foreground(to="/settings/providers" class="hover:text-foreground") ←
     span.truncate.text-sm.font-medium 编辑供应商
   .oc-scroll.h-full.overflow-y-auto
-    .mx-auto.max-w-2xl.p-4.flex.flex-col.gap-4
+    .max-w-2xl.p-4.flex.flex-col.gap-4
       .grid.gap-3
         div
           Label 名称

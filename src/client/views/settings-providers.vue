@@ -43,7 +43,7 @@ async function addFromPreset() {
   Teleport(to="#page-header")
     span.truncate.text-sm.font-medium 供应商
   .oc-scroll.h-full.overflow-y-auto
-    .mx-auto.max-w-2xl.p-4.flex.flex-col.gap-4
+    .max-w-2xl.p-4.flex.flex-col.gap-4
       .flex.gap-2
         Select(:model-value="chosen" @update:model-value="onChoose")
           SelectTrigger(class="w-56")

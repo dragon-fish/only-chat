@@ -23,7 +23,7 @@ const sync = useSyncStore()
   //- Spec §7.1: 设置 and 关闭 sit next to each other in normal flow, so neither can cover the
   //- other; both are 40×40 CSS px, which is the touch floor this header has to clear.
   .flex.shrink-0.items-center.gap-1.p-2
-    RouterLink.min-w-0.flex-1.rounded-md.px-2.text-sm.font-semibold(
+    RouterLink.min-w-0.flex-1.rounded-md.px-2.text-sm(
       to="/" class="inline-flex min-h-10 items-center hover:bg-accent" @click="emit('navigate')") 新对话
     RouterLink.shrink-0.rounded-md.text-muted-foreground(
       to="/settings/providers" title="设置" aria-label="设置"
