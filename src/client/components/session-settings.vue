@@ -69,6 +69,16 @@ function onType(field: ParamKey, event: Event) {
 function onSettle(field: ParamKey) {
   typing[field] = null
 }
+/**
+ * Escape closes this panel without ever firing `blur` — `PopoverContent` is `Presence`-gated, so the
+ * focused input is detached rather than blurred, and Chrome fires nothing for a removed element.
+ * Without this the tracker would outlive the box it describes: text typed and then escaped away
+ * would still report the field as filled next time the panel opened, re-enabling the steppers over
+ * an empty box.
+ */
+function resetTyping() {
+  Object.assign(typing, { temperature: null, top_p: null, max_tokens: null })
+}
 /** Blank is `''` in the form and `undefined` through `optionalNumber` — never `0` (spec §7.3). */
 function blank(field: ParamKey): boolean {
   return fieldLooksBlank(typing[field], props.form[field])
@@ -101,7 +111,7 @@ function restore(field: 'system_prompt' | 'temperature' | 'top_p' | 'max_tokens'
 </script>
 
 <template lang="pug">
-Popover
+Popover(@update:open="resetTyping")
   PopoverTrigger.inline-flex.items-center.gap-1.rounded-md.border.px-2.py-1.text-xs.text-muted-foreground(
     title="会话设置" class="hover:bg-accent hover:text-foreground")
     Settings2(class="size-3.5")

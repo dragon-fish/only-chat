@@ -751,6 +751,17 @@ describe('fieldLooksBlank', () => {
     expect(fieldLooksBlank('0.5', '')).toBe(false)
   })
 
+  // reka gates its steppers on whether its parse yields NaN, and it accepts partial input on the
+  // way to a number. A lone `.` passes its `onBeforeinput` and parses to NaN, so text that is not
+  // yet a number must count as blank — treating it as filled is what re-opened the stepper defect.
+  it('counts unparseable partial input as blank', () => {
+    expect(fieldLooksBlank('.', '')).toBe(true)
+    expect(fieldLooksBlank('-', '')).toBe(true)
+    expect(fieldLooksBlank('1e', '')).toBe(true)
+    expect(fieldLooksBlank('0.5', '')).toBe(false)
+    expect(fieldLooksBlank('.5', '')).toBe(false)
+  })
+
   it('falls back to the model when no edit is in flight', () => {
     expect(fieldLooksBlank(null, '')).toBe(true)
     expect(fieldLooksBlank(null, 4096)).toBe(false)

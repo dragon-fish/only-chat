@@ -63,6 +63,8 @@ async function initialize(): Promise<void> {
   const token = ++initToken
   clearPending()
   Object.assign(form, projectFormFrom(undefined))
+  // The form is being replaced, so any in-flight box text belongs to the previous Project.
+  Object.assign(typing, { temperature: null, top_p: null, max_tokens: null })
   loaded.value = false
   missing.value = false
   saving.value = false

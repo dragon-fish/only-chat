@@ -234,7 +234,14 @@ function numberToField(value: number | undefined): string {
  * Asking the model there is what let a stepper press on a visibly empty 最大 tokens commit `min`.
  */
 export function fieldLooksBlank(raw: string | null, stored: string | number): boolean {
-  if (raw !== null) return raw.trim() === ''
+  // Not `raw.trim() === ''`: reka gates the steppers on whether its parse yields NaN, not on
+  // whether the box has characters, and it accepts partial input on the way to a number. A lone
+  // `.` is the cheapest example — one keystroke, accepted, and unparseable — so treating it as
+  // filled re-opened the very defect this guard exists to close.
+  if (raw !== null) {
+    const text = raw.trim()
+    return text === '' || !Number.isFinite(Number(text))
+  }
   return optionalNumber(stored) === undefined
 }
 
