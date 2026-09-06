@@ -15,12 +15,14 @@ import { buildModelMessages } from '@/server/plugins/llm/messages'
 import { MAX_UPLOAD_BYTES, r2Key } from '@/server/plugins/api/attachments'
 import type { Hub } from '@/server/plugins/hub'
 import { persistGeneratedImage } from '@/server/plugins/hub/generated-images'
+import { resolveEffectiveConfig } from '@/server/plugins/hub/effective-config'
+import { getProject } from '@/server/plugins/hub/projects'
 import { createSession, getSession, insertMessage, listMessages, toMessage } from '@/server/plugins/hub/sessions'
 import { attachmentProviderFiles, attachments, models, projects, providers, users } from '@/server/db/schema'
 import type { ProviderRow } from '@/server/db/schema'
 import { sendCommandFor } from '@/client/stores/sync'
 import { DEFAULT_USER_ID } from '@/shared/constants'
-import type { Message, ModelCapabilities } from '@/shared/models'
+import type { Message, ModelCapabilities, SessionParams } from '@/shared/models'
 import type { Part } from '@/shared/parts'
 import type { UserHub } from '@/server/index'
 import { connect, type WsHarness } from './ws-helper'
@@ -85,6 +87,46 @@ async function seedProject(input: Partial<typeof projects.$inferInsert> = {}): P
     params: null, created_at: 0, updated_at: 0, ...input,
   }).returning()
   return row!.id
+}
+
+/** Whatever the DO would replay to a client that reconnects mid-generation. */
+async function inflightSnapshot(): Promise<string> {
+  const stub = env.USER_HUB.getByName(String(DEFAULT_USER_ID))
+  return runInDurableObject(stub, async (_instance: UserHub, state) => {
+    const stored = await state.storage.list({ prefix: 'inflight:' })
+    return JSON.stringify([...stored.values()])
+  })
+}
+
+/** Every file part the adapter actually received, across all roles of one call's prompt. */
+function filePartsOf(model: MockLanguageModelV4): Array<{ type: string; mediaType: string; data: unknown }> {
+  const parts = model.doStreamCalls[0]!.prompt.flatMap((m) => (Array.isArray(m.content) ? (m.content as Array<{ type: string }>) : []))
+  return parts.filter((p) => p.type === 'file') as Array<{ type: string; mediaType: string; data: unknown }>
+}
+
+const pointersOf = (attachmentId: number) =>
+  createDb(env.DB).select().from(attachmentProviderFiles).where(eq(attachmentProviderFiles.attachment_id, attachmentId))
+
+const sessionIdOf = (c: WsHarness) => (c.events.find((e) => e.type === 'session.created') as { session: { id: number } }).session.id
+
+interface Upload { providerId: number; options: FilesV4UploadFileCallOptions }
+
+/**
+ * A FilesV4 that hands out a distinct id per provider and per upload, so "which provider uploaded,
+ * and how many times" is readable straight off the recorded list.
+ */
+function recordingFiles(uploads: Upload[], expiresAt?: Date) {
+  const counters = new Map<number, number>()
+  return (provider: ProviderRow): FilesV4 => ({
+    specificationVersion: 'v4',
+    provider: 'mock',
+    async uploadFile(options) {
+      uploads.push({ providerId: provider.id, options })
+      const n = (counters.get(provider.id) ?? 0) + 1
+      counters.set(provider.id, n)
+      return { warnings: [], providerReference: { mock: `file-${provider.id}-${n}` }, ...(expiresAt ? { expiresAt } : {}) }
+    },
+  })
 }
 
 async function installMock(
@@ -486,35 +528,6 @@ describe('provider file transport', () => {
     return row!.id
   }
 
-  interface Upload { providerId: number; options: FilesV4UploadFileCallOptions }
-
-  /**
-   * A FilesV4 that hands out a distinct id per provider and per upload, so "which provider uploaded,
-   * and how many times" is readable straight off the recorded list.
-   */
-  function recordingFiles(uploads: Upload[], expiresAt?: Date) {
-    const counters = new Map<number, number>()
-    return (provider: ProviderRow): FilesV4 => ({
-      specificationVersion: 'v4',
-      provider: 'mock',
-      async uploadFile(options) {
-        uploads.push({ providerId: provider.id, options })
-        const n = (counters.get(provider.id) ?? 0) + 1
-        counters.set(provider.id, n)
-        return { warnings: [], providerReference: { mock: `file-${provider.id}-${n}` }, ...(expiresAt ? { expiresAt } : {}) }
-      },
-    })
-  }
-
-  /** Every file part the adapter actually received, across all roles of one call's prompt. */
-  function filePartsOf(model: MockLanguageModelV4): Array<{ type: string; mediaType: string; data: unknown }> {
-    const parts = model.doStreamCalls[0]!.prompt.flatMap((m) => (Array.isArray(m.content) ? (m.content as Array<{ type: string }>) : []))
-    return parts.filter((p) => p.type === 'file') as Array<{ type: string; mediaType: string; data: unknown }>
-  }
-
-  const pointersOf = (attachmentId: number) =>
-    createDb(env.DB).select().from(attachmentProviderFiles).where(eq(attachmentProviderFiles.attachment_id, attachmentId))
-
   function send(body: Record<string, unknown>): string {
     return JSON.stringify({ type: 'send', session_id: null, parent_id: null, ...body })
   }
@@ -672,17 +685,7 @@ describe('generated image output', () => {
     return JSON.stringify({ type: 'send', session_id: null, parent_id: null, parts: [{ type: 'text', text: 'draw a cat' }], provider_id: providerId, model_id: modelId })
   }
 
-  const sessionIdOf = (c: WsHarness) => (c.events.find((e) => e.type === 'session.created') as { session: { id: number } }).session.id
   const imageEventsOf = (c: WsHarness) => c.events.filter((e) => e.type === 'message.part') as Array<{ part: { attachment_id: number } }>
-
-  /** Whatever the DO would replay to a client that reconnects mid-generation. */
-  async function inflightSnapshot(): Promise<string> {
-    const stub = env.USER_HUB.getByName(String(DEFAULT_USER_ID))
-    return runInDurableObject(stub, async (_instance: UserHub, state) => {
-      const stored = await state.storage.list({ prefix: 'inflight:' })
-      return JSON.stringify([...stored.values()])
-    })
-  }
 
   it('persists inline image bytes to R2 and gives every device only an attachment id', async () => {
     const bytes = uniqueImageBytes()
@@ -943,6 +946,215 @@ describe('persistGeneratedImage', () => {
         .rejects.toThrow(/text\/html/)
     } finally {
       vi.unstubAllGlobals()
+    }
+  })
+})
+
+/**
+ * One chat exercised across every feature this round added at once. The unit and per-feature suites
+ * already prove each mechanism on its own; what is only observable here is how they compose —
+ * inheritance choosing the provider that a file pointer then gets scoped to, a generated image
+ * reaching a reconnecting device as an id, and a Project disappearing underneath a live chat.
+ */
+describe('cross-feature integration', () => {
+  /** Distinct bytes per call: D1 and R2 are shared across this project's tests and dedupe by digest. */
+  let uploadSeq = 0
+  const uniqueUploadBytes = (): Uint8Array<ArrayBuffer> =>
+    new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, ...new TextEncoder().encode(`uploaded-${++uploadSeq}`)])
+
+  /** A user upload as the REST route would leave it: bytes in R2 under the key its own digest dictates. */
+  async function seedUpload(bytes: Uint8Array<ArrayBuffer>): Promise<number> {
+    const db = createDb(env.DB)
+    await ensureDefaultUser(db)
+    const digest = await sha256(bytes)
+    const key = r2Key(DEFAULT_USER_ID, digest)
+    await env.BUCKET.put(key, bytes, { httpMetadata: { contentType: 'image/png' } })
+    const [row] = await db.insert(attachments).values({
+      user_id: DEFAULT_USER_ID, sha256: digest, mime: 'image/png', size: bytes.byteLength,
+      width: 1, height: 1, r2_key: key, origin: 'upload', created_at: 0,
+    }).returning()
+    return row!.id
+  }
+
+  it('carries one Project chat through Auto reasoning, an uploaded image, an A → B → A switch, a generated image, a reconnect and Project deletion', async () => {
+    const db = createDb(env.DB)
+    const providerA = await seedProvider('int-a', 'int-a-1', true, { reasoning: true, image_output: true })
+    const providerB = await seedProvider('int-b', 'int-b-1', true, { reasoning: true })
+    const commandProvider = await seedProvider('int-cmd', 'int-cmd-1', true, { reasoning: true })
+    const projectId = await seedProject({
+      system_prompt: 'PROJECT', provider_id: providerA, model_id: 'int-a-1',
+      params: { temperature: 0.25, max_tokens: 32, reasoning_effort: 'high' },
+    })
+    const uploadBytes = uniqueUploadBytes()
+    const uploadId = await seedUpload(uploadBytes)
+    const generatedBytes = uniqueImageBytes()
+    const generatedUrl = 'https://provider.example/tmp/integration.png'
+
+    // The first turn draws; the later two only talk, so the image travels as history from then on.
+    const drawing: StreamPart[] = [
+      { type: 'stream-start', warnings: [] },
+      { type: 'text-start', id: 't1' },
+      { type: 'text-delta', id: 't1', delta: 'here it is' },
+      { type: 'text-end', id: 't1' },
+      { type: 'file', mediaType: 'image/png', data: { type: 'url', url: new URL(generatedUrl) } },
+      { type: 'text-start', id: 't2' },
+      { type: 'text-delta', id: 't2', delta: ' and more' },
+      { type: 'text-end', id: 't2' },
+      STREAM.at(-1)!,
+    ]
+    const uploads: Upload[] = []
+    let turn = 0
+    const created = await installMock(() => {
+      const first = turn++ === 0
+      return new MockLanguageModelV4({
+        // Only the drawing turn is slowed, so a device can rejoin while it is still streaming.
+        doStream: async () => ({
+          stream: simulateReadableStream({ chunks: [...(first ? drawing : STREAM)], chunkDelayInMs: first ? 150 : null, initialDelayInMs: null }),
+        }),
+      })
+    }, recordingFiles(uploads))
+
+    // The provider only ever answers with a link; the bytes exist nowhere but behind it and in R2.
+    vi.stubGlobal('fetch', async () => new Response(generatedBytes, { headers: { 'content-type': 'image/png' } }))
+    try {
+      // ---- turn 1: the draft creates the session, the Project supplies prompt, model and params
+      const c = await connect()
+      c.ws.send(JSON.stringify(sendCommandFor({
+        sessionId: null, parentId: null,
+        parts: [{ type: 'text', text: 'draw from this' }, { type: 'image', attachment_id: uploadId }],
+        // The Composer's own selection is the last fallback, so the Project default must outrank it.
+        model: { provider_id: commandProvider, model_id: 'int-cmd-1' },
+        draft: { project_id: projectId, system_prompt: 'SESSION', model: null, params: { reasoning_enabled: true, reasoning_effort: null } },
+      })))
+
+      const imageEvent = await c.next('message.part')
+      const generatedId = (imageEvent as { part: { attachment_id: number } }).part.attachment_id
+      expect((imageEvent as { part: unknown }).part).toEqual({ type: 'image', attachment_id: generatedId })
+
+      // A device joining mid-generation is handed the same reduced part, never the provider's link.
+      const rejoin = await connect()
+      const snapshot = await rejoin.next('snapshot')
+      const inflight = (snapshot as { inflight: Array<{ parts: Part[] }> }).inflight
+      const live = inflight.find((m) => m.parts.some((p) => p.type === 'image' && p.attachment_id === generatedId))
+      expect(live).toBeDefined()
+      expect(JSON.stringify(inflight)).not.toContain('provider.example')
+      expect(JSON.stringify(inflight)).not.toContain(toBase64(generatedBytes))
+
+      // ...and so is the DO storage that snapshot was rebuilt from.
+      const stored = await inflightSnapshot()
+      expect(stored).toContain(`"attachment_id":${generatedId}`)
+      expect(stored).not.toContain('provider.example')
+      expect(stored).not.toContain(toBase64(generatedBytes))
+
+      expect(await c.next('message.done')).toMatchObject({ status: 'done' })
+      const sessionId = sessionIdOf(c)
+
+      const session = (await getSession(db, sessionId))!
+      expect(session).toMatchObject({ project_id: projectId, system_prompt: 'SESSION', provider_id: null, model_id: null })
+      // Explicit Auto is a present key holding `null`, not an absent (inherited) one — through D1.
+      expect(session.params).toEqual({ reasoning_enabled: true, reasoning_effort: null })
+      expect('reasoning_effort' in session.params!).toBe(true)
+
+      const firstCall = created[0]!.doStreamCalls[0]!
+      expect(firstCall.prompt[0]).toMatchObject({ role: 'system', content: 'PROJECT\n\nSESSION' })
+      expect(firstCall).toMatchObject({ temperature: 0.25, maxOutputTokens: 32 })
+      const reference = (providerId: number, n: number) =>
+        ({ type: 'file', mediaType: 'image/png', data: { type: 'reference', reference: { mock: `file-${providerId}-${n}` } } })
+      expect(filePartsOf(created[0]!)).toEqual([reference(providerA, 1)])
+
+      const turn1 = await listMessages(db, sessionId)
+      // The Project default won over the command model, and was recorded on the reply.
+      expect(turn1[1]).toMatchObject({ provider_id: providerA, model_id: 'int-a-1' })
+      expect(turn1[1]!.parts).toEqual([
+        { type: 'text', text: 'here it is' },
+        { type: 'image', attachment_id: generatedId },
+        { type: 'text', text: ' and more' },
+      ])
+
+      const generated = (await db.query.attachments.findFirst({ where: eq(attachments.id, generatedId) }))!
+      expect(generated).toMatchObject({ origin: 'generated', mime: 'image/png', sha256: await sha256(generatedBytes) })
+      const object = await env.BUCKET.get(generated.r2_key)
+      expect(new Uint8Array(await object!.arrayBuffer())).toEqual(generatedBytes)
+
+      // ---- turn 2: the user pins this chat to provider B, which knows nothing of A's file id
+      c.events.length = 0
+      c.ws.send(JSON.stringify({ type: 'session.update', session_id: sessionId, provider_id: providerB, model_id: 'int-b-1' }))
+      expect(await c.next('session.updated')).toMatchObject({ session: { id: sessionId, provider_id: providerB, model_id: 'int-b-1' } })
+
+      c.events.length = 0
+      c.ws.send(JSON.stringify({
+        type: 'send', session_id: sessionId, parent_id: null, parts: [{ type: 'text', text: 'again' }],
+        provider_id: commandProvider, model_id: 'int-cmd-1',
+      }))
+      expect(await c.next('message.done')).toMatchObject({ status: 'done' })
+      expect(filePartsOf(created[1]!)).toEqual([reference(providerB, 1)])
+
+      // ---- turn 3: back to A, whose original pointer is still valid
+      c.events.length = 0
+      c.ws.send(JSON.stringify({ type: 'session.update', session_id: sessionId, provider_id: providerA, model_id: 'int-a-1' }))
+      await c.next('session.updated')
+      c.events.length = 0
+      c.ws.send(JSON.stringify({
+        type: 'send', session_id: sessionId, parent_id: null, parts: [{ type: 'text', text: 'once more' }],
+        provider_id: commandProvider, model_id: 'int-cmd-1',
+      }))
+      expect(await c.next('message.done')).toMatchObject({ status: 'done' })
+      expect(filePartsOf(created[2]!)).toEqual([reference(providerA, 1)])
+
+      // The pointer is scoped to (attachment, provider) and to nothing else: no session, no model.
+      const uploadsForImage = uploads.filter((u) => u.options.filename === `attachment-${uploadId}.png`)
+      expect(uploadsForImage.map((u) => u.providerId)).toEqual([providerA, providerB])
+      const pointers = await pointersOf(uploadId)
+      expect(pointers.map((r) => r.provider_id).sort((x, y) => x - y)).toEqual([providerA, providerB].sort((x, y) => x - y))
+      expect(Object.keys(pointers[0]!).sort())
+        .toEqual(['attachment_id', 'created_at', 'expires_at', 'id', 'provider_id', 'provider_reference'])
+
+      // Nothing in this chat's persisted history is bytes, base64 or a provider URL.
+      const history = await listMessages(db, sessionId)
+      const json = JSON.stringify(history.map((r) => r.parts))
+      expect(json).not.toContain('provider.example')
+      expect(json).not.toContain('base64')
+      expect(json).not.toContain(toBase64(generatedBytes))
+      expect(json).not.toContain(toBase64(uploadBytes))
+
+      // ---- deleting the Project releases the chat instead of destroying it
+      c.events.length = 0
+      c.ws.send(JSON.stringify({ type: 'project.delete', project_id: projectId }))
+      expect(await c.next('project.deleted')).toEqual({ type: 'project.deleted', project_id: projectId })
+      expect(await c.next('session.updated')).toMatchObject({ session: { id: sessionId, project_id: null } })
+
+      const released = (await getSession(db, sessionId))!
+      expect(released.project_id).toBeNull()
+      // Its own override, its history and its media all outlive the Project that framed them.
+      expect(released).toMatchObject({ provider_id: providerA, model_id: 'int-a-1', system_prompt: 'SESSION' })
+      expect(await listMessages(db, sessionId)).toHaveLength(history.length)
+      expect(await env.BUCKET.head(generated.r2_key)).not.toBeNull()
+      expect(await db.query.attachments.findFirst({ where: eq(attachments.id, generatedId) })).toBeDefined()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('keeps the three reasoning states apart across a D1 round trip', async () => {
+    const db = createDb(env.DB)
+    await ensureDefaultUser(db)
+    const projectId = await seedProject({ params: { reasoning_enabled: true, reasoning_effort: 'medium' } })
+    const project = (await getProject(db, projectId, DEFAULT_USER_ID))!
+
+    // Absent means inherit, `null` means explicit Auto, a string means an explicit strength. The
+    // distinction lives in a JSON column, so only a real write and read back can prove it survives.
+    const cases: Array<{ params: SessionParams; key: boolean; effort: string | null }> = [
+      { params: { reasoning_effort: 'high' }, key: true, effort: 'high' },
+      { params: { reasoning_enabled: true, reasoning_effort: null }, key: true, effort: null },
+      { params: { temperature: 0.2 }, key: false, effort: 'medium' },
+    ]
+    for (const { params, key, effort } of cases) {
+      const created = await createSession(db, {
+        user_id: DEFAULT_USER_ID, title: 'r', project_id: projectId, provider_id: null, model_id: null, params,
+      })
+      const stored = (await getSession(db, created.id))!
+      expect('reasoning_effort' in (stored.params ?? {})).toBe(key)
+      expect(resolveEffectiveConfig({ session: stored, project }).params.reasoning_effort).toBe(effort)
     }
   })
 })
