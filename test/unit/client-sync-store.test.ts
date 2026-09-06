@@ -374,6 +374,20 @@ describe('session settings form', () => {
     expect(paramsFromFields({ ...fields, reasoning: 'off' })).toEqual({ reasoning_enabled: false })
   })
 
+  it('accepts a number, not just a string, for the numeric fields', () => {
+    // Regression: `Input` renders a native `<input type="number">`, and Vue's `v-model` casts to a
+    // `number` whenever the element's `type` is `"number"` — unconditionally, with no `.number`
+    // modifier needed. So the value that actually reaches `form.temperature` after a real keystroke
+    // is a `number`, never the `string` the old signature assumed; that call crashed with
+    // `raw.trim is not a function` and aborted the commit before it ever reached `send`, so the
+    // value silently never saved. `0` is deliberately included: it is falsy but not blank.
+    expect(paramsFromFields({ ...fields, temperature: 0.7, top_p: 0, max_tokens: 2048 }))
+      .toEqual({ temperature: 0.7, top_p: 0, max_tokens: 2048 })
+    // A non-finite number (never produced by the input itself, but not this function's job to trust
+    // the caller) contributes no key, same as an unparseable string.
+    expect(paramsFromFields({ ...fields, temperature: Number.NaN })).toBeNull()
+  })
+
   it('names the layer every field comes from', () => {
     const project: Project = {
       ...mkProject(3), system_prompt: 'P', provider_id: 1, model_id: 'm',

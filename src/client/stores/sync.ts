@@ -76,16 +76,27 @@ export function choiceFromParams(params: SessionParams | null | undefined): Reas
   return params.reasoning_effort ?? 'auto'
 }
 
-/** The generation parameters a Project and a session edit the same way. */
+/**
+ * The generation parameters a Project and a session edit the same way. Typed `string | number`,
+ * not `string`: these fields round-trip through `Input`, whose native `<input type="number">`
+ * makes Vue's `v-model` cast the value to a `number` at runtime (unconditionally, regardless of a
+ * `.number` modifier) whenever the element's `type` is `"number"`. A `string`-only type here would
+ * describe the value the box is meant to hold, not the value that actually arrives.
+ */
 export interface ParamFields {
-  temperature: string
-  top_p: string
-  max_tokens: string
+  temperature: string | number
+  top_p: string | number
+  max_tokens: string | number
   reasoning: ReasoningChoice
 }
 
-/** Blank stays blank: an unparseable or empty box contributes no key at all. */
-function optionalNumber(raw: string): number | undefined {
+/**
+ * Blank stays blank: an unparseable or empty box contributes no key at all. Accepts a number
+ * because `Input` passes one through untouched whenever the element is `type="number"` (see
+ * `ParamFields`) — both shapes reach here, and a `.trim()` on the number branch would throw.
+ */
+function optionalNumber(raw: string | number): number | undefined {
+  if (typeof raw === 'number') return Number.isFinite(raw) ? raw : undefined
   const trimmed = raw.trim()
   if (trimmed === '') return undefined
   const n = Number(trimmed)
