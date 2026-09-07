@@ -154,7 +154,10 @@ async function installMock(
       apply(c) {
         c.llm.register('responses', {
           createModel: () => { const m = mockFactory(); created.push(m); return m as never },
-          ...(createFiles ? { createFiles } : {}),
+          ...(createFiles ? { createFiles: (provider: ProviderRow, selected: ProviderInterfaceRow, apiKey: string) => ({
+            family: 'openai' as const, baseURL: selected.base_url.replace(/\/+$/, ''), credentialVersion: provider.credential_version,
+            files: createFiles(provider, selected, apiKey),
+          }) } : {}),
         })
       },
     })

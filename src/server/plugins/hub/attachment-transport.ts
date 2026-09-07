@@ -11,9 +11,8 @@ const PROVIDER_FILE_TTL_SECONDS = 604_800
 const PROVIDER_FILE_TTL_MS = PROVIDER_FILE_TTL_SECONDS * 1000
 
 /**
- * Namespaced for the only protocol that currently offers a Files API. `uploadFile` reads the entry
- * under its own provider name and ignores the rest, so an adapter that does not know these keys is
- * unaffected by them.
+ * Both OpenAI protocols share their Files family's option namespace. Anthropic's Files client
+ * sets its expiry independently and ignores these OpenAI-specific options.
  */
 const UPLOAD_OPTIONS = { openai: { purpose: 'user_data', expiresAfter: PROVIDER_FILE_TTL_SECONDS } } as const
 
@@ -79,7 +78,7 @@ export async function resolveAttachmentInputs(
       continue
     }
 
-    files ??= await deps.llm.createFiles(provider, providerInterface)
+    files ??= (await deps.llm.createFiles(provider, providerInterface)).files
     const result = await files.uploadFile({
       data: { type: 'data', data: stored.bytes },
       mediaType: attachment.mime,

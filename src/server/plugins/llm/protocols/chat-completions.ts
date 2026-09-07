@@ -1,6 +1,7 @@
 import type { Context } from 'cordis'
-import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
 import { COMPAT_PROVIDER_NAME } from '../messages'
+import { createOpenAIFiles } from '../files/openai'
+import { createFileAwareChatModel } from '../files/references'
 
 export const chatCompletionsProtocol = {
   name: 'llm-chat-completions',
@@ -8,13 +9,15 @@ export const chatCompletionsProtocol = {
   apply(ctx: Context) {
     ctx.llm.register('chat-completions', {
       createModel(_provider, providerInterface, model, apiKey) {
-        const p = createOpenAICompatible({
+        return createFileAwareChatModel({
           name: COMPAT_PROVIDER_NAME,
           baseURL: providerInterface.base_url,
           apiKey,
           includeUsage: true,
-        })
-        return p.chatModel(model.model_id)
+        }, model.model_id)
+      },
+      createFiles(provider, providerInterface, apiKey) {
+        return createOpenAIFiles({ baseURL: providerInterface.base_url, apiKey, credentialVersion: provider.credential_version })
       },
     })
   },

@@ -1,6 +1,6 @@
 import { Context, Service } from 'cordis'
-import type { FilesV4 } from '@ai-sdk/provider'
 import type { LanguageModel } from 'ai'
+import type { ScopedFilesClient } from './files/types'
 import type { ModelRow, ProviderInterfaceRow, ProviderRow } from '../../db/schema'
 import { decryptSecret } from './crypto'
 import { chatCompletionsProtocol } from './protocols/chat-completions'
@@ -14,7 +14,7 @@ import { vertexCompatibleProtocol } from './protocols/vertex-compatible'
  */
 export interface LlmProtocolAdapter {
   createModel(provider: ProviderRow, providerInterface: ProviderInterfaceRow, model: ModelRow, apiKey: string): LanguageModel
-  createFiles?: (provider: ProviderRow, providerInterface: ProviderInterfaceRow, apiKey: string) => FilesV4
+  createFiles?: (provider: ProviderRow, providerInterface: ProviderInterfaceRow, apiKey: string) => ScopedFilesClient
 }
 
 export class Llm extends Service {
@@ -63,7 +63,7 @@ export class Llm extends Service {
     return adapter.createModel(provider, providerInterface, model, key)
   }
 
-  async createFiles(provider: ProviderRow, providerInterface: ProviderInterfaceRow): Promise<FilesV4> {
+  async createFiles(provider: ProviderRow, providerInterface: ProviderInterfaceRow): Promise<ScopedFilesClient> {
     if (providerInterface.provider_id !== provider.id) throw new Error('interface must belong to the provider')
     const adapter = this._adapters.get(providerInterface.protocol)
     if (!adapter) throw new Error(`no adapter for protocol ${providerInterface.protocol}`)

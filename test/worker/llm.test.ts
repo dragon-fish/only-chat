@@ -7,6 +7,7 @@ import { encryptSecret } from '@/server/plugins/llm/crypto'
 import { splitVertexCompatibleModelId } from '@/server/plugins/llm/protocols/vertex-compatible'
 import type { ModelRow, ProviderInterfaceRow, ProviderRow } from '@/server/db/schema'
 import { streamText, type LanguageModel } from 'ai'
+import type { LanguageModelV4 } from '@ai-sdk/provider'
 import { PartAccumulator } from '@/server/plugins/llm/accumulator'
 import { buildModelMessages, buildProviderOptions } from '@/server/plugins/llm/messages'
 import type { Message } from '@/shared/models'
@@ -14,8 +15,9 @@ import type { Part } from '@/shared/parts'
 import { deepseekReasoningItem, deepseekResponsesBody, deepseekResponsesStream } from '../fixtures/deepseek-responses-stream'
 
 /** `LanguageModel` also admits a bare gateway model id; our factories never return one. */
-function built(m: LanguageModel): Exclude<LanguageModel, string> {
+function built(m: LanguageModel): LanguageModelV4 {
   if (typeof m === 'string') throw new Error(`expected a model object, got the model id ${m}`)
+  if (m.specificationVersion !== 'v4') throw new Error('expected a V4 model')
   return m
 }
 
@@ -71,6 +73,31 @@ async function captureStreamRequest(p: ProviderRow, selected: ProviderInterfaceR
 }
 
 describe('Llm service', () => {
+  it('shares OpenAI Files scope between both OpenAI interfaces and isolates Anthropic', async () => {
+    await inHub(async ctx => {
+      const p = { ...await provider('files-key'), credential_version: 9 }
+      for (const protocol of ['responses', 'chat-completions', 'anthropic'] as const) {
+        const selected = { ...providerInterface(protocol, 'https://gateway.example/api/v1///'), native_files: true }
+        expect(ctx.llm.hasFiles(selected)).toBe(true)
+        const scoped = await ctx.llm.createFiles(p, selected)
+        expect(scoped).toMatchObject({ family: protocol === 'anthropic' ? 'anthropic' : 'openai', baseURL: 'https://gateway.example/api/v1', credentialVersion: 9 })
+        expect(scoped.files.deleteFile).toBeTypeOf('function')
+      }
+    })
+  })
+
+  it('does not offer Files for Vertex, a disabled interface, or an interface from another provider', async () => {
+    await inHub(async ctx => {
+      const p = await provider('files-key')
+      const vertex = { ...providerInterface('vertex-compatible'), native_files: true }
+      expect(ctx.llm.hasFiles(vertex)).toBe(false)
+      await expect(ctx.llm.createFiles(p, vertex)).rejects.toThrow(/no Files API/)
+      expect(ctx.llm.hasFiles(providerInterface('responses'))).toBe(false)
+      await expect(ctx.llm.createFiles(p, providerInterface('responses'))).rejects.toThrow(/disabled/)
+      await expect(ctx.llm.createFiles(p, { ...providerInterface('responses'), native_files: true, provider_id: 2 })).rejects.toThrow(/provider/)
+    })
+  })
+
   it('builds all supported interfaces using their selected protocol instead of legacy provider fields', async () => {
     await inHub(async (ctx) => {
       for (const p of ['chat-completions', 'responses', 'anthropic', 'vertex-compatible'] as const) expect(ctx.llm.has(p)).toBe(true)
@@ -126,6 +153,60 @@ describe('Llm service', () => {
 })
 
 describe('responses protocol', () => {
+  it('sends native document and image IDs through the actual SDK while retaining full streamed reasoning', async () => {
+    await inHub(async ctx => {
+      const lm = await ctx.llm.createModel(await provider('k'), providerInterface('responses'), model)
+      let requestBody: unknown
+      vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+        requestBody = await new Request(input, init).json()
+        return deepseekResponsesStream()
+      })
+      try {
+        const acc = new PartAccumulator()
+        for await (const part of streamText({ model: lm, include: { rawChunks: true }, messages: [{ role: 'user', content: [
+          { type: 'text', text: 'read these' },
+          { type: 'file', mediaType: 'application/pdf', data: { type: 'reference', reference: { openai: 'file-doc' } } },
+          { type: 'file', mediaType: 'image/png', data: { type: 'reference', reference: { openai: 'file-image' } } },
+          { type: 'file', mediaType: 'image/png', data: { type: 'url', url: new URL('https://example.com/image.png?token=a%2Fb#keep') } },
+          { type: 'file', mediaType: 'image/png', data: { type: 'data', data: 'AQIDBA==' } },
+        ] }] }).stream) {
+          if (part.type === 'error') throw part.error
+          acc.apply(part)
+        }
+        expect(requestBody).toMatchObject({ input: [{ role: 'user', content: [
+          { type: 'input_text', text: 'read these' },
+          { type: 'input_file', file_id: 'file-doc' },
+          { type: 'input_image', file_id: 'file-image' },
+          { type: 'input_image', image_url: 'https://example.com/image.png?token=a%2Fb#keep' },
+          { type: 'input_image', image_url: 'data:image/png;base64,AQIDBA==' },
+        ] }] })
+        expect(acc.parts[0]).toMatchObject({ type: 'reasoning', text: 'complete reasoning', providerOptions: { responses: { itemId: 'rs_fixture', reasoningContent: deepseekReasoningItem.content } } })
+      } finally { vi.unstubAllGlobals() }
+    })
+  })
+
+  it('keeps native file maps local to concurrent non-stream SDK calls and leaves prompts unchanged', async () => {
+    await inHub(async ctx => {
+      const lm = built(await ctx.llm.createModel(await provider('k'), providerInterface('responses'), model))
+      const requests: unknown[] = []
+      vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+        requests.push(await new Request(input, init).json())
+        return Response.json(deepseekResponsesBody)
+      })
+      try {
+        const prompts = ['file-first', 'file-second'].map(id => [{ role: 'user' as const, content: [{ type: 'file' as const, mediaType: 'application/pdf', data: { type: 'reference' as const, reference: { openai: id } } }] }])
+        const before = JSON.stringify(prompts)
+        const results = await Promise.all(prompts.map(prompt => lm.doGenerate({ prompt })))
+        expect(requests).toEqual(expect.arrayContaining([
+          expect.objectContaining({ input: [{ type: 'message', role: 'user', content: [{ type: 'input_file', file_id: 'file-first' }] }] }),
+          expect.objectContaining({ input: [{ type: 'message', role: 'user', content: [{ type: 'input_file', file_id: 'file-second' }] }] }),
+        ]))
+        expect(results.map(result => result.content[0])).toEqual([expect.objectContaining({ type: 'reasoning', text: 'complete reasoning' }), expect.objectContaining({ type: 'reasoning', text: 'complete reasoning' })])
+        expect(JSON.stringify(prompts)).toBe(before)
+      } finally { vi.unstubAllGlobals() }
+    })
+  })
+
   it.each(['https://api.deepseek.com', 'https://api.deepseek.com///', 'https://gateway.example/api/v1/'])('posts to the exact configured Responses endpoint (%s)', async (base) => {
     const request = await captureStreamRequest(await provider('test-key'), providerInterface('responses', base), model)
     expect(request.url).toBe(`${base.replace(/\/+$/, '')}/responses`)
@@ -226,6 +307,50 @@ describe('responses protocol', () => {
         for await (const chunk of streamText({ model: lm, messages }).stream) if (chunk.type === 'error') throw chunk.error
         expect(requestBody).toMatchObject({ input: [{ type: 'reasoning', id: 'rs_fixture', summary, encrypted_content: 'fixture-encrypted-state' }] })
         expect((requestBody as { input: object[] }).input[0]).not.toHaveProperty('content')
+      } finally { vi.unstubAllGlobals() }
+    })
+  })
+})
+
+describe('chat-completions files', () => {
+  it.each(['generate', 'stream'] as const)('sends OpenAI file IDs through the actual %s SDK without changing other input content', async mode => {
+    await inHub(async ctx => {
+      const lm = built(await ctx.llm.createModel(await provider('k'), providerInterface('chat-completions'), model))
+      let requestBody: unknown
+      vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+        requestBody = await new Request(input, init).json()
+        const message = { role: 'assistant', reasoning_content: 'file reasoning', content: 'file answer' }
+        const response = { id: 'chat_fixture', object: mode === 'stream' ? 'chat.completion.chunk' : 'chat.completion', created: 1, model: 'test-model', choices: [{ index: 0, [mode === 'stream' ? 'delta' : 'message']: message, finish_reason: 'stop' }] }
+        return mode === 'stream'
+          ? new Response(`data: ${JSON.stringify(response)}\n\ndata: [DONE]\n\n`, { headers: { 'content-type': 'text/event-stream' } })
+          : Response.json(response)
+      })
+      try {
+        const prompt = [{ role: 'user' as const, content: [
+          { type: 'text' as const, text: 'read these' },
+          { type: 'file' as const, mediaType: 'application/pdf', data: { type: 'reference' as const, reference: { openai: 'file-chat-document' } } },
+          { type: 'file' as const, mediaType: 'image/png', data: { type: 'reference' as const, reference: { openai: 'file-chat-image' } } },
+          { type: 'file' as const, mediaType: 'image/png', data: { type: 'url' as const, url: new URL('https://example.com/image.png?token=a%2Fb#keep') } },
+          { type: 'file' as const, mediaType: 'application/pdf', filename: 'data.pdf', data: { type: 'data' as const, data: 'AQIDBA==' } },
+        ] }]
+        const before = JSON.stringify(prompt)
+        if (mode === 'stream') {
+          const result = await lm.doStream({ prompt })
+          const chunks = []
+          for await (const chunk of result.stream) chunks.push(chunk)
+          expect(chunks).toEqual(expect.arrayContaining([expect.objectContaining({ type: 'reasoning-delta', delta: 'file reasoning' })]))
+        } else {
+          const result = await lm.doGenerate({ prompt })
+          expect(result.content).toContainEqual(expect.objectContaining({ type: 'reasoning', text: 'file reasoning' }))
+        }
+        expect(requestBody).toMatchObject({ messages: [{ role: 'user', content: [
+          { type: 'text', text: 'read these' },
+          { type: 'file', file: { file_id: 'file-chat-document' } },
+          { type: 'file', file: { file_id: 'file-chat-image' } },
+          { type: 'image_url', image_url: { url: 'https://example.com/image.png?token=a%2Fb#keep' } },
+          { type: 'file', file: { filename: 'data.pdf', file_data: 'data:application/pdf;base64,AQIDBA==' } },
+        ] }] })
+        expect(JSON.stringify(prompt)).toBe(before)
       } finally { vi.unstubAllGlobals() }
     })
   })

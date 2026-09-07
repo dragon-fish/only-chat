@@ -1,6 +1,6 @@
 import type { Context } from 'cordis'
-import { createOpenResponses } from '@ai-sdk/open-responses'
-import { createOpenAI } from '@ai-sdk/openai'
+import { createOpenAIFiles } from '../files/openai'
+import { createFileAwareResponsesModel } from '../files/references'
 import { RESPONSES_PROVIDER_NAME } from '../responses-reasoning'
 
 export const responsesProtocol = {
@@ -10,10 +10,10 @@ export const responsesProtocol = {
     ctx.llm.register('responses', {
       createModel(_provider, providerInterface, model, apiKey) {
         const base = providerInterface.base_url.replace(/\/+$/, '')
-        return createOpenResponses({ name: RESPONSES_PROVIDER_NAME, url: `${base}/responses`, apiKey })(model.model_id)
+        return createFileAwareResponsesModel({ name: RESPONSES_PROVIDER_NAME, url: `${base}/responses`, apiKey }, model.model_id)
       },
-      createFiles(_provider, providerInterface, apiKey) {
-        return createOpenAI({ baseURL: providerInterface.base_url, apiKey }).files()
+      createFiles(provider, providerInterface, apiKey) {
+        return createOpenAIFiles({ baseURL: providerInterface.base_url, apiKey, credentialVersion: provider.credential_version })
       },
     })
   },
