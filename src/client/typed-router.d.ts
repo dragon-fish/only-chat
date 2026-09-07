@@ -73,6 +73,13 @@ declare module 'vue-router/auto-routes' {
       Record<never, never>,
       | never
     >,
+    '/settings/appearance': RouteRecordInfo<
+      '/settings/appearance',
+      '/settings/appearance',
+      Record<never, never>,
+      Record<never, never>,
+      | never
+    >,
     '/settings/plugins': RouteRecordInfo<
       '/settings/plugins',
       '/settings/plugins',
@@ -157,6 +164,14 @@ declare module 'vue-router/auto-routes' {
     'src/client/pages/settings/index.vue': {
       routes:
         | '/settings/'
+      views:
+        | never
+      pathParamNames:
+        | never
+    }
+    'src/client/pages/settings/appearance.vue': {
+      routes:
+        | '/settings/appearance'
       views:
         | never
       pathParamNames:

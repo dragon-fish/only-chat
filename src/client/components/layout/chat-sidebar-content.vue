@@ -6,6 +6,8 @@ import {
 } from '@lucide/vue'
 import { RouterLink, useRoute } from 'vue-router'
 import ProjectAvatar from '@/client/components/project-avatar.vue'
+import CollectionState from '@/client/components/collection-state.vue'
+import { Button } from '@/client/ui/button'
 import ProjectCreateDialog from '@/client/components/layout/project-create-dialog.vue'
 import ProjectNavRow from '@/client/components/layout/project-nav-row.vue'
 import SessionNavRow from '@/client/components/layout/session-nav-row.vue'
@@ -121,18 +123,21 @@ function clearSearch() {
         <SidebarGroup>
           <SidebarGroupLabel>对话 {{ projectSessions.length }}</SidebarGroupLabel>
           <SidebarGroupContent>
-            <SidebarMenu>
-              <SidebarMenuItem v-for="session in projectSessions" :key="session.id">
-                <SessionNavRow
-                  :session="session"
-                  :projects="sync.projectList"
-                  :active="openSessionId === session.id"
-                />
-              </SidebarMenuItem>
-              <SidebarMenuItem v-if="projectSessions.length === 0" class="px-2 py-6 text-center text-sm text-muted-foreground">
-                {{ query ? '没有匹配的对话' : '这个 Project 还没有对话' }}
-              </SidebarMenuItem>
-            </SidebarMenu>
+            <CollectionState :loaded="sync.sessionsLoaded" :error="sync.sessionsError" :retry="sync.loadSessions" :empty="projectSessions.length === 0" :empty-title="query ? '没有匹配的对话' : '这个 Project 还没有对话'">
+              <template #empty-action>
+                <Button v-if="query" variant="outline" class="min-h-10" @click="clearSearch">清除搜索</Button>
+                <Button v-else as-child variant="outline" class="min-h-10"><RouterLink :to="{ path: '/', query: { project: project.id } }">开始对话</RouterLink></Button>
+              </template>
+              <SidebarMenu>
+                <SidebarMenuItem v-for="session in projectSessions" :key="session.id">
+                  <SessionNavRow
+                    :session="session"
+                    :projects="sync.projectList"
+                    :active="openSessionId === session.id"
+                  />
+                </SidebarMenuItem>
+              </SidebarMenu>
+            </CollectionState>
           </SidebarGroupContent>
         </SidebarGroup>
       </ScrollArea>
@@ -173,13 +178,18 @@ function clearSearch() {
             <ProjectCreateDialog compact />
           </div>
           <SidebarGroupContent>
+            <CollectionState :loaded="sync.projectsLoaded" :error="sync.projectsError" :retry="sync.loadProjects" :empty="visibleProjects.length === 0" :empty-title="query ? '没有匹配的 Project' : '还没有 Project'">
+              <template #empty-action>
+                <Button v-if="query" variant="outline" class="min-h-10" @click="clearSearch">清除搜索</Button>
+                <ProjectCreateDialog v-else />
+              </template>
+              <SidebarMenu>
+                <SidebarMenuItem v-for="item in visibleProjects" :key="item.id">
+                  <ProjectNavRow :project="item" />
+                </SidebarMenuItem>
+              </SidebarMenu>
+            </CollectionState>
             <SidebarMenu>
-              <SidebarMenuItem v-for="item in visibleProjects" :key="item.id">
-                <ProjectNavRow :project="item" />
-              </SidebarMenuItem>
-              <SidebarMenuItem v-if="visibleProjects.length === 0" class="px-2 py-4 text-sm text-muted-foreground">
-                {{ query ? '没有匹配的 Project' : '还没有 Project' }}
-              </SidebarMenuItem>
               <SidebarMenuItem>
                 <SidebarMenuButton as-child class="min-h-10">
                   <RouterLink to="/projects">
@@ -199,18 +209,21 @@ function clearSearch() {
             </CollapsibleTrigger>
             <CollapsibleContent>
               <SidebarGroupContent>
-                <SidebarMenu>
-                  <SidebarMenuItem v-for="session in outerSessions" :key="session.id">
-                    <SessionNavRow
-                      :session="session"
-                      :projects="sync.projectList"
-                      :active="openSessionId === session.id"
-                    />
-                  </SidebarMenuItem>
-                  <SidebarMenuItem v-if="outerSessions.length === 0" class="px-2 py-4 text-sm text-muted-foreground">
-                    {{ query ? '没有匹配的对话' : '还没有随心聊' }}
-                  </SidebarMenuItem>
-                </SidebarMenu>
+                <CollectionState :loaded="sync.sessionsLoaded" :error="sync.sessionsError" :retry="sync.loadSessions" :empty="outerSessions.length === 0" :empty-title="query ? '没有匹配的对话' : '还没有随心聊'">
+                  <template #empty-action>
+                    <Button v-if="query" variant="outline" class="min-h-10" @click="clearSearch">清除搜索</Button>
+                    <Button v-else as-child variant="outline" class="min-h-10"><RouterLink to="/">开始对话</RouterLink></Button>
+                  </template>
+                  <SidebarMenu>
+                    <SidebarMenuItem v-for="session in outerSessions" :key="session.id">
+                      <SessionNavRow
+                        :session="session"
+                        :projects="sync.projectList"
+                        :active="openSessionId === session.id"
+                      />
+                    </SidebarMenuItem>
+                  </SidebarMenu>
+                </CollectionState>
               </SidebarGroupContent>
             </CollapsibleContent>
           </SidebarGroup>

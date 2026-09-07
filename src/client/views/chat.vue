@@ -8,6 +8,7 @@ import ModelPicker from '@/client/components/model-picker.vue'
 import ProjectAvatar from '@/client/components/project-avatar.vue'
 import ReasoningControl from '@/client/components/reasoning-control.vue'
 import SessionSettings from '@/client/components/session-settings.vue'
+import CollectionState from '@/client/components/collection-state.vue'
 import { routeParamToId } from '@/client/lib/route-params'
 import {
   choiceFromParams, DISCONNECTED_MESSAGE, effectiveModelFor, modelOverrideAfterPick, nextSendState,
@@ -17,7 +18,7 @@ import {
 } from '@/client/stores/sync'
 import { useConfigStore } from '@/client/stores/config'
 import { Button } from '@/client/ui/button'
-import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/client/ui/empty'
+import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from '@/client/ui/empty'
 import type { ModelRef } from '@/shared/api'
 import type { Part } from '@/shared/parts'
 
@@ -122,12 +123,30 @@ watch(() => [config.loaded, config.enabledModels().map((e) => `${e.provider.id}:
   if (config.loaded && picked.value && !config.isAvailable(picked.value)) picked.value = null
 }, { immediate: true })
 
-watch(sid, (id) => { if (id !== null) void sync.loadMessages(id) }, { immediate: true })
+const messageLoadError = ref<string | null>(null)
+let messageLoadToken = 0
+async function loadMessages() {
+  const id = sid.value
+  const token = ++messageLoadToken
+  messageLoadError.value = null
+  if (id === null) return
+  try { await sync.loadMessages(id) }
+  catch (error) {
+    if (token === messageLoadToken) messageLoadError.value = error instanceof Error ? error.message : String(error)
+  }
+}
+watch(sid, loadMessages, { immediate: true })
 // Reload on the snapshot itself, not on `status` flipping to `open`: `status` changes before the
 // snapshot event is applied, so a reload keyed on it can race ahead and miss messages that only
 // the snapshot's reconciliation reveals as finished. `snapshotSeq` starts at 0, so skip that
 // initial value — only a later increment means a snapshot actually landed.
-watch(() => sync.snapshotSeq, (seq) => { if (seq > 0 && sid.value !== null) void sync.loadMessages(sid.value) })
+watch(() => sync.snapshotSeq, (seq) => { if (seq > 0 && sid.value !== null) void loadMessages() })
+
+function focusComposer() { composer.value?.$el.querySelector('textarea')?.focus() }
+
+async function retryChat() {
+  await Promise.allSettled([sync.loadSessions(), loadMessages()])
+}
 
 // ---- outstanding send
 
@@ -294,11 +313,14 @@ function onReasoningChange(choice: ReasoningChoice) {
         :form="form" :sources="sources" :project="project" :has-session="sid !== null"
         @commit="commitSettings")
   .min-h-0.flex-1
-    MessageList(v-if="path.length" :messages="path" :project="project")
-    Empty(v-else class="h-full")
-      EmptyHeader
-        EmptyTitle 开始一段新对话
-        EmptyDescription 从下方输入消息，开启这次交流。
+    CollectionState(:loaded="sid === null || (sync.sessionsLoaded && sync.loadedMessageSessions.has(sid))" :error="messageLoadError || (sid !== null ? sync.sessionsError : null)" :retry="retryChat")
+      MessageList(v-if="path.length" :messages="path" :project="project")
+      Empty(v-else class="h-full")
+        EmptyHeader
+          EmptyTitle 开始一段新对话
+          EmptyDescription 从下方输入消息，开启这次交流。
+        EmptyContent
+          Button(variant="outline" class="min-h-10" @click="focusComposer") 输入消息
   Composer(
     ref="composer" :streaming="streaming" :connected="sync.status === 'open'"
     :can-send="canSend" :hint="sendHint" @send="onSend" @stop="onStop")

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { isChatHistoryRoute, modelCapabilitiesWithEfforts, createModelWriteQueue } from '@/client/lib/settings'
+import { isChatHistoryRoute, modelCapabilitiesWithEfforts, createModelWriteQueue, acknowledgedPlugins } from '@/client/lib/settings'
 import type { Model } from '@/shared/models'
 
 function deferred<T>() {
@@ -14,6 +14,15 @@ const model: Model = {
 }
 
 describe('settings navigation and model editing', () => {
+  it('acknowledges only plugin switches matching the authoritative server values', () => {
+    // One settings.updated may acknowledge one of several toggles; an unrelated broadcast must
+    // not clear the other pending switch or falsely announce success.
+    const pending = new Map([['search', true], ['tools', false]])
+    expect(acknowledgedPlugins(pending, { search: false, tools: true })).toEqual([])
+    expect(acknowledgedPlugins(pending, { search: true, tools: true })).toEqual(['search'])
+    expect(acknowledgedPlugins(pending, { search: true, tools: false })).toEqual(['search', 'tools'])
+    expect(acknowledgedPlugins(pending, {})).toEqual([])
+  })
   it('only returns through history for chat routes, including their query strings', () => {
     // A settings or external history entry must never be treated as the chat return destination.
     for (const path of ['/', '/?project=3', '/chats', '/c/12?foo=bar']) expect(isChatHistoryRoute(path)).toBe(true)

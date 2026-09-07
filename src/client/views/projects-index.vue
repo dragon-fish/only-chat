@@ -3,10 +3,10 @@ import { computed, ref } from 'vue'
 import { ArrowLeftIcon, SearchIcon } from '@lucide/vue'
 import ProjectCreateDialog from '@/client/components/layout/project-create-dialog.vue'
 import ProjectNavRow from '@/client/components/layout/project-nav-row.vue'
+import CollectionState from '@/client/components/collection-state.vue'
 import { recentProjects, searchProjects } from '@/client/lib/ui-models'
 import { useSyncStore } from '@/client/stores/sync'
 import { Button } from '@/client/ui/button'
-import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/client/ui/empty'
 import { Input } from '@/client/ui/input'
 import { ScrollArea } from '@/client/ui/scroll-area'
 
@@ -38,15 +38,13 @@ const projects = computed(() => searchProjects(
         <ProjectCreateDialog />
       </div>
 
-      <div class="flex flex-col gap-1">
+      <CollectionState :loaded="sync.projectsLoaded" :error="sync.projectsError" :retry="sync.loadProjects" :empty="projects.length === 0" :empty-title="query ? '没有匹配的 Project' : '还没有 Project'" empty-description="创建一个 Project 开始整理对话，或换个关键词再试。">
         <ProjectNavRow v-for="project in projects" :key="project.id" :project="project" />
-        <Empty v-if="projects.length === 0">
-          <EmptyHeader>
-            <EmptyTitle>{{ query ? '没有匹配的 Project' : '还没有 Project' }}</EmptyTitle>
-            <EmptyDescription>{{ query ? '换个关键词再试。' : '创建一个 Project 开始整理对话。' }}</EmptyDescription>
-          </EmptyHeader>
-        </Empty>
-      </div>
+        <template #empty-action>
+          <Button v-if="query" variant="outline" class="min-h-10" @click="query = ''">清除搜索</Button>
+          <ProjectCreateDialog v-else />
+        </template>
+      </CollectionState>
     </main>
   </ScrollArea>
 </template>

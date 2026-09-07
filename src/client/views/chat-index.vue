@@ -2,10 +2,12 @@
 import { computed, ref } from 'vue'
 import { FolderKanbanIcon, MessageCircleIcon, SearchIcon } from '@lucide/vue'
 import ProjectNavRow from '@/client/components/layout/project-nav-row.vue'
+import ProjectCreateDialog from '@/client/components/layout/project-create-dialog.vue'
+import CollectionState from '@/client/components/collection-state.vue'
+import { Button } from '@/client/ui/button'
 import SessionNavRow from '@/client/components/layout/session-nav-row.vue'
 import { recentProjects, searchProjects, searchSessions } from '@/client/lib/ui-models'
 import { useSyncStore } from '@/client/stores/sync'
-import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/client/ui/empty'
 import { Input } from '@/client/ui/input'
 import { ScrollArea } from '@/client/ui/scroll-area'
 
@@ -42,15 +44,13 @@ const sessions = computed(() => query.value.trim()
             查看全部
           </RouterLink>
         </div>
-        <div class="flex flex-col gap-1">
+        <CollectionState :loaded="sync.projectsLoaded" :error="sync.projectsError" :retry="sync.loadProjects" :empty="projects.length === 0" :empty-title="query ? '没有匹配的 Project' : '还没有 Project'">
           <ProjectNavRow v-for="project in projects" :key="project.id" :project="project" />
-          <Empty v-if="projects.length === 0">
-            <EmptyHeader>
-              <EmptyTitle>{{ query ? '没有匹配的 Project' : '还没有 Project' }}</EmptyTitle>
-              <EmptyDescription>{{ query ? '换个关键词再试。' : '创建 Project 后会显示在这里。' }}</EmptyDescription>
-            </EmptyHeader>
-          </Empty>
-        </div>
+          <template #empty-action>
+            <Button v-if="query" variant="outline" class="min-h-10" @click="query = ''">清除搜索</Button>
+            <ProjectCreateDialog v-else />
+          </template>
+        </CollectionState>
       </section>
 
       <section class="flex flex-col gap-2" aria-labelledby="oc-free-chats">
@@ -58,15 +58,13 @@ const sessions = computed(() => query.value.trim()
           <MessageCircleIcon />
           <h2 id="oc-free-chats" class="text-sm font-medium">{{ query.trim() ? '搜索结果' : '随心聊' }}</h2>
         </div>
-        <div class="flex flex-col gap-1">
+        <CollectionState :loaded="sync.sessionsLoaded" :error="sync.sessionsError" :retry="sync.loadSessions" :empty="sessions.length === 0" :empty-title="query ? '没有匹配的对话' : '还没有随心聊'">
           <SessionNavRow v-for="session in sessions" :key="session.id" :session="session" :projects="sync.projectList" />
-          <Empty v-if="sessions.length === 0">
-            <EmptyHeader>
-              <EmptyTitle>{{ query ? '没有匹配的对话' : '还没有随心聊' }}</EmptyTitle>
-              <EmptyDescription>{{ query ? '换个关键词再试。' : '点底部加号就能开始。' }}</EmptyDescription>
-            </EmptyHeader>
-          </Empty>
-        </div>
+          <template #empty-action>
+            <Button v-if="query" variant="outline" class="min-h-10" @click="query = ''">清除搜索</Button>
+            <Button v-else as-child variant="outline" class="min-h-10"><RouterLink to="/">开始对话</RouterLink></Button>
+          </template>
+        </CollectionState>
       </section>
     </main>
   </ScrollArea>

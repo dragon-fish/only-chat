@@ -43,3 +43,7 @@ export function createModelWriteQueue(options: {
     return operation
   }
 }
+/** Settings broadcasts contain the whole record and may acknowledge only part of local intent. */
+export function acknowledgedPlugins(pending: ReadonlyMap<string, boolean>, plugins: Record<string, boolean>): string[] {
+  return [...pending].filter(([key, value]) => plugins[key] === value).map(([key]) => key)
+}

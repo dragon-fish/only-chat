@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import ProviderAvatar from '@/client/components/provider-avatar.vue'
+import CollectionState from '@/client/components/collection-state.vue'
+import { Button } from '@/client/ui/button'
+import { RouterLink } from 'vue-router'
 import { filterModelEntries, type EnabledModelEntry, type ModelCapabilityFilter } from '@/client/lib/ui-models'
 import { useConfigStore } from '@/client/stores/config'
-import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/client/ui/command'
-import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/client/ui/empty'
+import { Command, CommandGroup, CommandInput, CommandItem, CommandList } from '@/client/ui/command'
 import { ToggleGroup, ToggleGroupItem } from '@/client/ui/toggle-group'
 import type { ModelRef } from '@/shared/api'
 import type { Provider } from '@/shared/models'
@@ -14,6 +16,7 @@ const emit = defineEmits<{ select: [ModelRef] }>()
 const config = useConfigStore()
 
 const query = ref('')
+const searchKey = ref(0)
 const capability = ref<ModelCapabilityFilter>('all')
 
 const CAPABILITY_FILTERS: ReadonlyArray<{ value: ModelCapabilityFilter, label: string }> = [
@@ -46,6 +49,12 @@ function onSearch(event: Event) {
   query.value = (event.target as HTMLInputElement).value
 }
 
+function clearFilters() {
+  query.value = ''
+  capability.value = 'all'
+  searchKey.value++
+}
+
 function onCapability(value: unknown) {
   const next = CAPABILITY_FILTERS.find(option => option.value === value)?.value
   capability.value = next ?? 'all'
@@ -61,7 +70,7 @@ function onSelect(value: unknown) {
 </script>
 
 <template lang="pug">
-Command(:model-value="currentKey" class="min-h-0" @update:model-value="onSelect")
+Command(:key="searchKey" :model-value="currentKey" class="min-h-0" @update:model-value="onSelect")
   CommandInput(placeholder="搜索提供商或模型…" @input="onSearch")
   .px-3.py-2
     ToggleGroup(
@@ -71,18 +80,18 @@ Command(:model-value="currentKey" class="min-h-0" @update:model-value="onSelect"
         v-for="option in CAPABILITY_FILTERS" :key="option.value" :value="option.value"
         :aria-label="option.label" class="min-h-10 min-w-10 md:min-h-7 md:min-w-0") {{ option.label }}
   CommandList(class="max-h-[min(20rem,55vh)]")
-    CommandEmpty 无匹配模型
-    Empty(v-if="entries.length === 0 && !query")
-      EmptyHeader
-        EmptyTitle 没有可用模型
-        EmptyDescription 当前筛选条件下没有已启用的模型。
-    CommandGroup(v-for="group in groups" :key="group.provider.id" :heading="group.provider.name")
-      CommandItem(
-        v-for="entry in group.entries" :key="keyFor(entry)" :value="keyFor(entry)"
-        class="min-h-10 md:min-h-0")
-        ProviderAvatar(:name="entry.provider.name" size="sm")
-        .min-w-0.flex-1
-          p.truncate {{ entry.model.display_name }}
-          p.truncate.text-xs.text-muted-foreground {{ entry.model.model_id }}
-        span.sr-only {{ entry.provider.name }}
+    CollectionState(:loaded="config.loaded" :error="config.loadError" :retry="config.load" :empty="entries.length === 0" empty-title="没有可用模型" empty-description="当前筛选条件下没有已启用的模型。")
+      template(#empty-action)
+        Button(v-if="query || capability !== 'all'" variant="outline" class="min-h-10" @click="clearFilters") 清除筛选
+        Button(v-else as-child variant="outline" class="min-h-10")
+          RouterLink(to="/settings/providers") 配置模型
+      CommandGroup(v-for="group in groups" :key="group.provider.id" :heading="group.provider.name")
+        CommandItem(
+          v-for="entry in group.entries" :key="keyFor(entry)" :value="keyFor(entry)"
+          class="min-h-10 md:min-h-0")
+          ProviderAvatar(:name="entry.provider.name" size="sm")
+          .min-w-0.flex-1
+            p.truncate {{ entry.model.display_name }}
+            p.truncate.text-xs.text-muted-foreground {{ entry.model.model_id }}
+          span.sr-only {{ entry.provider.name }}
 </template>

@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { PlusIcon } from '@lucide/vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
+import CollectionState from '@/client/components/collection-state.vue'
 import { api } from '@/client/lib/api'
 import { useConfigStore } from '@/client/stores/config'
 import { Badge } from '@/client/ui/badge'
@@ -12,8 +13,6 @@ import { Input } from '@/client/ui/input'
 import { Item, ItemContent, ItemDescription, ItemGroup, ItemTitle } from '@/client/ui/item'
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/client/ui/select'
 import { Separator } from '@/client/ui/separator'
-import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/client/ui/empty'
-import { Skeleton } from '@/client/ui/skeleton'
 import type { PresetProvider } from '@/server/plugins/llm/presets'
 
 defineProps<{ selectedProviderId?: number | null }>()
@@ -24,18 +23,22 @@ const presets = ref<PresetProvider[]>([])
 const chosen = ref('custom')
 const adding = ref(false)
 const loading = ref(true)
+const loadError = ref<string | null>(null)
 const visibleProviders = computed(() => {
   const search = query.value.trim().toLocaleLowerCase()
   return config.providers.filter(provider => [provider.name, provider.protocol].some(value => value.toLocaleLowerCase().includes(search)))
 })
 
-onMounted(async () => {
+async function load() {
+  loading.value = true
+  loadError.value = null
   try {
     presets.value = await api.presets()
     if (!config.loaded) await config.load()
-  } catch (error) { toast.error(error instanceof Error ? error.message : String(error)) }
+  } catch (error) { loadError.value = error instanceof Error ? error.message : String(error) }
   finally { loading.value = false }
-})
+}
+onMounted(load)
 
 function onChoose(value: unknown) {
   if (typeof value === 'string') chosen.value = value
@@ -80,19 +83,17 @@ nav.flex.h-full.min-h-0.flex-col(aria-label="供应商")
           | {{ adding ? '添加中…' : '添加供应商' }}
   Separator
   .oc-scroll.min-h-0.flex-1.overflow-y-auto.p-2
-    .flex.flex-col.gap-2(v-if="loading" aria-label="正在加载供应商")
-      Skeleton(v-for="index in 3" :key="index" class="h-20 w-full")
-    ItemGroup(v-else class="gap-1")
-      Item(v-for="provider in visibleProviders" :key="provider.id" as-child size="sm" :variant="selectedProviderId === provider.id ? 'muted' : 'default'")
-        RouterLink(:to="`/settings/providers/${provider.id}`" :aria-current="selectedProviderId === provider.id ? 'page' : undefined")
-          ItemContent
-            ItemTitle {{ provider.name }}
-            ItemDescription {{ provider.protocol }}
-            .flex.flex-wrap.gap-1
-              Badge(:variant="provider.enabled ? 'secondary' : 'outline'") {{ provider.enabled ? '启用' : '停用' }}
-              Badge(variant="outline") {{ provider.has_key ? '已配置密钥' : '无密钥' }}
-      Empty(v-if="!visibleProviders.length")
-        EmptyHeader
-          EmptyTitle {{ query ? '没有匹配的供应商' : '尚未添加供应商' }}
-          EmptyDescription {{ query ? '试试其他名称或协议。' : '从上方选择模板或添加自定义供应商。' }}
+    CollectionState(:loaded="!loading" :error="loadError" :retry="load" :empty="!visibleProviders.length" :empty-title="query ? '没有匹配的供应商' : '尚未添加供应商'" empty-description="选择模板或添加自定义供应商。")
+      template(#empty-action)
+        Button(v-if="query" variant="outline" class="min-h-10" @click="query = ''") 清除搜索
+        Button(v-else variant="outline" class="min-h-10" :disabled="adding" @click="addProvider") 添加供应商
+      ItemGroup(class="gap-1")
+        Item(v-for="provider in visibleProviders" :key="provider.id" as-child size="sm" :variant="selectedProviderId === provider.id ? 'muted' : 'default'")
+          RouterLink(:to="`/settings/providers/${provider.id}`" :aria-current="selectedProviderId === provider.id ? 'page' : undefined")
+            ItemContent
+              ItemTitle {{ provider.name }}
+              ItemDescription {{ provider.protocol }}
+              .flex.flex-wrap.gap-1
+                Badge(:variant="provider.enabled ? 'secondary' : 'outline'") {{ provider.enabled ? '启用' : '停用' }}
+                Badge(variant="outline") {{ provider.has_key ? '已配置密钥' : '无密钥' }}
 </template>

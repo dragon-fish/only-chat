@@ -548,12 +548,18 @@ export const useSyncStore = defineStore('sync', () => {
   const sessions = reactive(new Map<number, Session>())
   const projects = reactive(new Map<number, Project>())
   const messages = reactive(new Map<number, Map<number, Message>>())
+  const loadedMessageSessions = reactive(new Set<number>())
   const streamingIds = reactive(new Set<number>())
   const settings = ref<UserSettings>({ plugins: {} })
   const lastError = ref<string | null>(null)
   // Whether the Projects list has been fetched. Before it has, a Project id from a route cannot be
   // judged missing — only absent — and must not be silently dropped.
   const projectsLoaded = ref(false)
+  const sessionsLoaded = ref(false)
+  const settingsLoaded = ref(false)
+  const sessionsError = ref<string | null>(null)
+  const projectsError = ref<string | null>(null)
+  const settingsError = ref<string | null>(null)
   const client = shallowRef<WsClient | null>(null)
 
   const sessionList = computed(() => [...sessions.values()].sort((a, b) => b.updated_at - a.updated_at))
@@ -610,6 +616,7 @@ export const useSyncStore = defineStore('sync', () => {
         sessions.delete(e.session_id)
         for (const id of messages.get(e.session_id)?.keys() ?? []) streamingIds.delete(id)
         messages.delete(e.session_id)
+        loadedMessageSessions.delete(e.session_id)
         break
       }
       case 'message.created':
@@ -682,16 +689,41 @@ export const useSyncStore = defineStore('sync', () => {
   }
 
   async function loadSessions(): Promise<void> {
-    for (const s of await api.sessions()) sessions.set(s.id, s)
+    sessionsError.value = null
+    try {
+      for (const s of await api.sessions()) sessions.set(s.id, s)
+      sessionsLoaded.value = true
+    } catch (error) {
+      sessionsError.value = error instanceof Error ? error.message : String(error)
+      throw error
+    }
   }
 
   async function loadProjects(): Promise<void> {
-    for (const p of await api.projects()) projects.set(p.id, p)
-    projectsLoaded.value = true
+    projectsError.value = null
+    try {
+      for (const p of await api.projects()) projects.set(p.id, p)
+      projectsLoaded.value = true
+    } catch (error) {
+      projectsError.value = error instanceof Error ? error.message : String(error)
+      throw error
+    }
+  }
+
+  async function loadSettings(): Promise<void> {
+    settingsError.value = null
+    try {
+      settings.value = (await api.me()).settings
+      settingsLoaded.value = true
+    } catch (error) {
+      settingsError.value = error instanceof Error ? error.message : String(error)
+      throw error
+    }
   }
 
   async function loadMessages(sessionId: number): Promise<void> {
     ingestMessages(sessionId, await api.messages(sessionId))
+    loadedMessageSessions.add(sessionId)
   }
 
   function connect(): void {
@@ -715,7 +747,8 @@ export const useSyncStore = defineStore('sync', () => {
   }
 
   return {
-    status, snapshotSeq, sessions, projects, messages, streamingIds, settings, lastError, projectsLoaded, sessionList, projectList,
-    applyEvent, ingestMessages, sessionsInProject, pathFor, siblingsOf, isStreaming, loadSessions, loadProjects, loadMessages, connect, send,
+    status, snapshotSeq, sessions, projects, messages, streamingIds, settings, lastError, projectsLoaded, sessionsLoaded, settingsLoaded,
+    sessionsError, projectsError, settingsError, loadedMessageSessions, sessionList, projectList,
+    applyEvent, ingestMessages, sessionsInProject, pathFor, siblingsOf, isStreaming, loadSessions, loadProjects, loadSettings, loadMessages, connect, send,
   }
 })

@@ -4,6 +4,7 @@ import { ArrowLeftIcon, DownloadIcon, PlusIcon, Settings2Icon, Trash2Icon } from
 import { RouterLink, useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
 import ModelEditor from '@/client/components/model-editor.vue'
+import { Alert, AlertDescription, AlertTitle } from '@/client/ui/alert'
 import ProviderNavigation from '@/client/components/provider-navigation.vue'
 import ResponsiveOverlay from '@/client/components/layout/responsive-overlay.vue'
 import { api } from '@/client/lib/api'
@@ -35,8 +36,10 @@ const providerId = props.providerId
 const form = reactive({ name: '', protocol: 'openai-completions' as Protocol, base_url: '', api_key: '', enabled: true, native_files: false, project: '', location: '' })
 const models = ref<Model[]>([])
 const newModelId = ref('')
+function focusNewModel() { document.getElementById('new-model-id')?.focus() }
 const loading = ref(true)
 const ready = ref(false)
+const loadError = ref<string | null>(null)
 const saving = ref(false)
 const modelAction = ref(false)
 const pendingWrites = ref(0)
@@ -65,6 +68,7 @@ function report(error: unknown) {
 
 async function load() {
   loading.value = true
+  loadError.value = null
   try {
     if (!config.loaded) await config.load()
     const provider = config.providers.find(item => item.id === providerId)
@@ -76,7 +80,7 @@ async function load() {
     })
     models.value = await api.models(requireId())
     ready.value = true
-  } catch (error) { report(error) }
+  } catch (error) { loadError.value = error instanceof Error ? error.message : String(error) }
   finally { loading.value = false }
 }
 onMounted(load)
@@ -206,11 +210,10 @@ async function removeModel() {
       .flex.flex-col.gap-4(v-if="loading" aria-label="正在加载供应商")
         Skeleton(class="h-8 w-40")
         Skeleton(v-for="index in 5" :key="index" class="h-16 w-full")
-      Empty(v-else-if="!ready")
-        EmptyHeader
-          EmptyTitle 无法加载供应商
-          EmptyDescription 请重试以继续编辑。
-        EmptyContent
+      Alert(v-else-if="!ready || loadError" variant="destructive")
+        AlertTitle 无法加载供应商
+        AlertDescription
+          p {{ loadError }}
           Button(variant="outline" class="min-h-10" @click="load") 重试
       template(v-else)
         .flex.flex-wrap.items-start.justify-between.gap-3
@@ -308,6 +311,9 @@ async function removeModel() {
               EmptyHeader
                 EmptyTitle 尚未添加模型
                 EmptyDescription {{ canFetchModels ? '从供应商拉取模型，或输入模型 ID 手动添加。' : '输入模型 ID，添加此供应商支持的模型。' }}
+              EmptyContent
+                Button(v-if="canFetchModels" variant="outline" class="min-h-10" :disabled="busyModels || deletingProvider" @click="fetchModels") 拉取模型
+                Button(v-else variant="outline" class="min-h-10" @click="focusNewModel") 输入模型 ID
   ResponsiveOverlay(v-model:open="editorOpen" title="编辑模型")
     ModelEditor(v-if="editorOpen && editingModel && providerId !== null" :key="editingModel.id" :provider-id="providerId" :model="editingModel" @save="saveModel" @delete="confirmModelDelete")
   AlertDialog(v-model:open="modelDeleteOpen")

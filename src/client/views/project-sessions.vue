@@ -4,10 +4,10 @@ import { ArrowLeftIcon, PlusIcon, SettingsIcon } from '@lucide/vue'
 import { RouterLink, useRouter } from 'vue-router'
 import ProjectAvatar from '@/client/components/project-avatar.vue'
 import SessionNavRow from '@/client/components/layout/session-nav-row.vue'
+import CollectionState from '@/client/components/collection-state.vue'
 import { searchSessions } from '@/client/lib/ui-models'
 import { useSyncStore } from '@/client/stores/sync'
 import { Button } from '@/client/ui/button'
-import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from '@/client/ui/empty'
 import { ScrollArea } from '@/client/ui/scroll-area'
 
 const props = defineProps<{ projectId: number | null }>()
@@ -36,6 +36,7 @@ watch([() => sync.projectsLoaded, project], ([loaded, value]) => {
   </Teleport>
 
   <ScrollArea class="h-full">
+    <CollectionState v-if="!project" :loaded="sync.projectsLoaded" :error="sync.projectsError" :retry="sync.loadProjects" />
     <main v-if="project" class="mx-auto flex w-full max-w-3xl flex-col gap-5 px-4 py-5">
       <div class="flex items-center gap-2">
         <Button as-child class="min-h-10 flex-1">
@@ -54,20 +55,14 @@ watch([() => sync.projectsLoaded, project], ([loaded, value]) => {
 
       <section class="flex flex-col gap-2" aria-labelledby="oc-project-sessions">
         <h2 id="oc-project-sessions" class="min-h-10 px-2 py-2 text-sm font-medium">对话 {{ sessions.length }}</h2>
-        <div class="flex flex-col gap-1">
+        <CollectionState :loaded="sync.sessionsLoaded" :error="sync.sessionsError" :retry="sync.loadSessions" :empty="sessions.length === 0" empty-title="还没有对话" empty-description="在这个 Project 中开始一段新对话。">
           <SessionNavRow v-for="session in sessions" :key="session.id" :session="session" :projects="sync.projectList" />
-        </div>
-        <Empty v-if="sessions.length === 0">
-          <EmptyHeader>
-            <EmptyTitle>还没有对话</EmptyTitle>
-            <EmptyDescription>在这个 Project 中开始一段新对话。</EmptyDescription>
-          </EmptyHeader>
-          <EmptyContent>
+          <template #empty-action>
             <Button as-child class="min-h-10">
               <RouterLink :to="{ path: '/', query: { project: project.id } }">开始对话</RouterLink>
             </Button>
-          </EmptyContent>
-        </Empty>
+          </template>
+        </CollectionState>
       </section>
     </main>
   </ScrollArea>
