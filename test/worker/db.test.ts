@@ -126,6 +126,38 @@ describe('D1 schema', () => {
     expect(await db.select().from(attachmentProviderFiles).where(eq(attachmentProviderFiles.attachment_id, a!.id))).toHaveLength(4)
   })
 
+  it.each([
+    { family: 'openai' as const, original: 'https://FILES.test:443/api/../v1///', canonical: 'https://files.test/v1' },
+    { family: 'anthropic' as const, original: 'https://API.ANTHROPIC.COM:443/path/..///', canonical: 'https://api.anthropic.com/v1' },
+    { family: 'anthropic' as const, original: 'https://GATEWAY.test:443/api/./messages///', canonical: 'https://gateway.test/api/messages' },
+  ])('normalizes uploads and selects the newest valid pointer across URL spellings ($family, $original)', async ({ family, original, canonical }) => {
+    const db = createDb(env.DB)
+    await db.insert(users).values({ id: 1, name: 'owner', settings: { plugins: {} }, created_at: 0 }).onConflictDoNothing()
+    const [attachment] = await db.insert(attachments).values({ user_id: 1, sha256: crypto.randomUUID(), mime: 'text/plain', size: 1, r2_key: crypto.randomUUID(), origin: 'upload', created_at: 0 }).returning()
+    const [provider] = await db.insert(providers).values({ user_id: 1, name: 'canonical-files', created_at: 0 }).returning()
+    const pointer = { attachment_id: attachment!.id, provider_id: provider!.id, credential_version: 1, file_family: family, base_url: original, expires_at: 1000, cleanup_after: 1000, created_at: 0 }
+    await insertProviderFile(db, { ...pointer, provider_reference: { [family]: 'uploaded' } })
+    const [uploaded] = await db.select().from(attachmentProviderFiles).where(eq(attachmentProviderFiles.provider_id, provider!.id))
+    expect.soft(uploaded!.base_url).toBe(canonical)
+    await db.insert(attachmentProviderFiles).values([
+      { ...pointer, base_url: canonical, provider_reference: { [family]: 'older-canonical' }, created_at: 1 },
+      { ...pointer, provider_reference: { [family]: 'latest-legacy' }, created_at: 2 },
+      { ...pointer, provider_reference: { [family]: 'expired' }, created_at: 3, expires_at: 500 },
+      { ...pointer, base_url: 'https://unrelated.test/v1', provider_reference: { [family]: 'other-scope' }, created_at: 4 },
+      { ...pointer, base_url: 'invalid-url', provider_reference: { [family]: 'invalid' }, created_at: 5 },
+    ])
+    await env.DB.prepare(`WITH RECURSIVE ids(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM ids WHERE n < 55)
+      INSERT INTO attachment_provider_files (attachment_id, provider_id, credential_version, file_family, base_url, provider_reference, expires_at, cleanup_after, created_at)
+      SELECT ?, ?, 1, ?, 'https://unrelated.test/scope-' || n, '{}', 1000, 1000, n + 10 FROM ids`)
+      .bind(attachment!.id, provider!.id, family).run()
+    const scope = { providerId: provider!.id, credentialVersion: 1, family, baseURL: canonical }
+    const reused = await findReusableProviderFile(db, scope, attachment!.id, 500)
+    expect(reused).toMatchObject({ base_url: canonical, provider_reference: { [family]: 'latest-legacy' } })
+    expect((await db.query.attachmentProviderFiles.findFirst({ where: eq(attachmentProviderFiles.id, reused!.id) }))!.base_url).toBe(canonical)
+    expect(await findReusableProviderFile(db, { ...scope, baseURL: original }, attachment!.id, 500)).toMatchObject({ provider_reference: { [family]: 'latest-legacy' } })
+    expect(await findReusableProviderFile(db, scope, attachment!.id, 1000)).toBeUndefined()
+  })
+
   it('stores two interfaces and rejects duplicate protocols and dangling interface references', async () => {
     const db = createDb(env.DB)
     await db.insert(users).values({ id: 1, name: 'owner', settings: { plugins: {} }, created_at: 0 }).onConflictDoNothing()

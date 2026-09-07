@@ -1,5 +1,6 @@
 import { and, desc, eq, gt, isNotNull, isNull, sql } from 'drizzle-orm'
 import type { ScopedFilesClient } from '../llm/files/types'
+import { normalizeFilesBaseURL } from '../llm/files/shared'
 import type { DB } from '../../db/client'
 import { attachmentProviderFiles, attachments, messages, models, providerInterfaces, providers, sessions, users } from '../../db/schema'
 import type {
@@ -137,20 +138,36 @@ export type ProviderFileScope = Pick<ScopedFilesClient, 'family' | 'baseURL' | '
 
 /** Match the Files endpoint and credentials, retaining expired references for remote cleanup. */
 export async function findReusableProviderFile(db: DB, scope: ProviderFileScope, attachmentId: number, now: number): Promise<AttachmentProviderFileRow | undefined> {
-  return db.query.attachmentProviderFiles.findFirst({
-    where: and(
-      eq(attachmentProviderFiles.attachment_id, attachmentId),
-      eq(attachmentProviderFiles.provider_id, scope.providerId),
-      eq(attachmentProviderFiles.credential_version, scope.credentialVersion),
-      eq(attachmentProviderFiles.file_family, scope.family),
-      eq(attachmentProviderFiles.base_url, scope.baseURL),
-      gt(attachmentProviderFiles.expires_at, now),
-    ),
-    orderBy: [desc(attachmentProviderFiles.created_at), desc(attachmentProviderFiles.id)],
-  })
+  const baseURL = normalizeFilesBaseURL(scope.baseURL, scope.family)
+  const where = and(
+    eq(attachmentProviderFiles.attachment_id, attachmentId),
+    eq(attachmentProviderFiles.provider_id, scope.providerId),
+    eq(attachmentProviderFiles.credential_version, scope.credentialVersion),
+    eq(attachmentProviderFiles.file_family, scope.family),
+    gt(attachmentProviderFiles.expires_at, now),
+  )
+  // SQL migrations cannot parse URLs. Page within the reuse index's scope prefix so URL aliases
+  // compete in upload order without loading unrelated attachments or accepting expired rows.
+  let cursor: AttachmentProviderFileRow | undefined
+  for (;;) {
+    const rows = await db.select().from(attachmentProviderFiles).where(and(where, cursor
+      ? sql`(${attachmentProviderFiles.created_at}, ${attachmentProviderFiles.id}) < (${cursor.created_at}, ${cursor.id})` : undefined))
+      .orderBy(desc(attachmentProviderFiles.created_at), desc(attachmentProviderFiles.id)).limit(50)
+    if (!rows.length) return undefined
+    for (const row of rows) {
+      let normalized: string
+      try { normalized = normalizeFilesBaseURL(row.base_url, row.file_family) } catch { continue }
+      if (normalized !== baseURL) continue
+      if (row.base_url !== normalized) {
+        await db.update(attachmentProviderFiles).set({ base_url: normalized }).where(eq(attachmentProviderFiles.id, row.id))
+      }
+      return { ...row, base_url: normalized }
+    }
+    cursor = rows.at(-1)!
+  }
 }
 
 /** Append each upload so older remote references remain available for cleanup. */
 export async function insertProviderFile(db: DB, row: typeof attachmentProviderFiles.$inferInsert): Promise<void> {
-  await db.insert(attachmentProviderFiles).values(row)
+  await db.insert(attachmentProviderFiles).values({ ...row, base_url: normalizeFilesBaseURL(row.base_url, row.file_family) })
 }

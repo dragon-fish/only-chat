@@ -77,6 +77,28 @@ describe('provider file cleanup before configuration changes', () => {
     expect(remote).not.toHaveBeenCalled()
     expect(await ctx.db.orm.select().from(attachmentProviderFiles).where(eq(attachmentProviderFiles.provider_id, provider.id))).toHaveLength(1)
   })
+
+  it('retains legacy URL aliases across an equivalent endpoint edit beyond one normalization page', async () => {
+    const { ctx, request, createProvider } = await catalogApp()
+    const provider = await createProvider({ api_key: 'original-key', interfaces: [
+      { protocol: 'responses', base_url: 'https://GATEWAY.test:443/api/./v1///', native_files: true },
+    ] })
+    const [attachment] = await ctx.db.orm.insert(attachments).values({ user_id: 1, sha256: crypto.randomUUID(), mime: 'text/plain', size: 1, r2_key: crypto.randomUUID(), origin: 'upload', created_at: 0 }).returning()
+    await env.DB.prepare(`WITH RECURSIVE ids(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM ids WHERE n < 53)
+      INSERT INTO attachment_provider_files (attachment_id, provider_id, credential_version, file_family, base_url, provider_reference, expires_at, cleanup_after, created_at)
+      SELECT ?, ?, 1, 'openai', 'https://GATEWAY.test:443/api/./v1', json_object('openai', 'legacy-' || n), 1000, 1000, n FROM ids`)
+      .bind(attachment!.id, provider.id).run()
+    const remote = vi.fn()
+    vi.stubGlobal('fetch', remote)
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect((await request('PUT', `/providers/${provider.id}`, {
+      name: 'Same endpoint', default_protocol: 'responses', interfaces: [{ protocol: 'responses', base_url: 'https://gateway.test/api/v1', native_files: true }],
+    })).status).toBe(200)
+    expect.soft(remote).not.toHaveBeenCalled()
+    const rows = await ctx.db.orm.select().from(attachmentProviderFiles).where(eq(attachmentProviderFiles.provider_id, provider.id))
+    expect(rows).toHaveLength(53)
+    expect(rows.every(row => row.base_url === 'https://gateway.test/api/v1')).toBe(true)
+  })
 })
 
 describe('atomic provider interface API', () => {

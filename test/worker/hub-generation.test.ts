@@ -670,6 +670,7 @@ describe('provider file transport', () => {
     const c = await connect()
     c.ws.send(send({ parts: [{ type: 'image', attachment_id: attachmentId }, { type: 'image', attachment_id: attachmentId }], provider_id: providerId, model_id: 'responses-model' }))
     expect(await c.next('message.done')).toMatchObject({ status: 'done' })
+    await db.update(attachmentProviderFiles).set({ base_url: 'https://MOCK.example:443/old/../responses-api///' }).where(eq(attachmentProviderFiles.attachment_id, attachmentId))
     c.ws.send(send({ session_id: sessionIdOf(c), parts: [{ type: 'text', text: 'again' }], provider_id: providerId, model_id: 'chat-model' }))
     expect(await c.nextAfter('message.done', 2)).toMatchObject({ status: 'done' })
     expect(uploads).toHaveLength(1)

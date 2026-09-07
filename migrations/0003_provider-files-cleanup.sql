@@ -1,3 +1,20 @@
+-- OpenAI Responses emitted summaries as reasoning text. Keep that distinction when changing SDKs.
+UPDATE messages SET parts = (
+  SELECT json_group_array(json(CASE
+    WHEN json_type(part.value, '$.providerOptions.openai') = 'object' THEN
+      json_remove(json_set(part.value, '$.providerOptions.responses',
+        CASE WHEN json_extract(part.value, '$.type') = 'reasoning' THEN
+          json_set(json_extract(part.value, '$.providerOptions.openai'),
+            '$.reasoningContent', NULL,
+            '$.reasoningSummary', CASE WHEN length(json_extract(part.value, '$.text')) > 0
+              THEN json_array(json_object('type', 'summary_text', 'text', json_extract(part.value, '$.text')))
+              ELSE json('[]') END)
+        ELSE json_extract(part.value, '$.providerOptions.openai') END), '$.providerOptions.openai')
+    ELSE part.value END))
+  FROM json_each(messages.parts) AS part
+)
+WHERE EXISTS (SELECT 1 FROM json_each(messages.parts) AS part WHERE json_type(part.value, '$.providerOptions.openai') = 'object');
+--> statement-breakpoint
 -- Match the Anthropic Files client's versioned official HTTPS root without changing gateways.
 UPDATE attachment_provider_files SET base_url = 'https://api.anthropic.com/v1'
 WHERE file_family = 'anthropic' AND rtrim(base_url, '/') = 'https://api.anthropic.com';

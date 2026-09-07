@@ -7,6 +7,7 @@ import { createDb } from '@/server/db/client'
 import { attachmentProviderFiles, attachments, providerInterfaces, providers } from '@/server/db/schema'
 import { encryptSecret } from '@/server/plugins/llm/crypto'
 import { cleanupExpiredProviderFiles } from '@/server/plugins/files-cleanup'
+import { findReusableProviderFile } from '@/server/plugins/hub/sessions'
 
 const now = 1_800_000_000_000
 const day = 86_400_000
@@ -63,39 +64,53 @@ function remoteDelete(status: number, family: 'openai' | 'anthropic' = 'openai',
 }
 
 describe('remote file cleanup', () => {
-  it('deletes migrated Anthropic root and canonical scopes at their exact file endpoints', async () => {
+  it('reuses and remotely deletes migrated URL aliases with the current Files identity', async () => {
     const legacy = env.TEST_LEGACY_DB
     const cases = [
-      { id: 1, original: 'https://api.anthropic.com', scope: 'https://api.anthropic.com/v1', file: 'file-root' },
-      { id: 2, original: 'https://api.anthropic.com///', scope: 'https://api.anthropic.com/v1', file: 'file-root-slashes' },
-      { id: 3, original: 'https://api.anthropic.com/v1', scope: 'https://api.anthropic.com/v1', file: 'file-canonical' },
-      { id: 4, original: 'https://api.anthropic.com/v1///', scope: 'https://api.anthropic.com/v1', file: 'file-canonical-slashes' },
-      { id: 5, original: 'https://anthropic-gateway.test', scope: 'https://anthropic-gateway.test', file: 'file-gateway-root' },
-      { id: 6, original: 'https://anthropic-gateway.test/api///', scope: 'https://anthropic-gateway.test/api', file: 'file-gateway-path' },
-    ]
+      { id: 1, family: 'anthropic', original: 'https://api.anthropic.com', scope: 'https://api.anthropic.com/v1' },
+      { id: 2, family: 'anthropic', original: 'https://API.ANTHROPIC.COM:443///', scope: 'https://api.anthropic.com/v1' },
+      { id: 3, family: 'anthropic', original: 'https://api.anthropic.com/v1', scope: 'https://api.anthropic.com/v1' },
+      { id: 4, family: 'anthropic', original: 'https://API.ANTHROPIC.COM/a/../v1///', scope: 'https://api.anthropic.com/v1' },
+      { id: 5, family: 'anthropic', original: 'https://ANTHROPIC-GATEWAY.test:443', scope: 'https://anthropic-gateway.test' },
+      { id: 6, family: 'anthropic', original: 'https://anthropic-gateway.test/api/./messages///', scope: 'https://anthropic-gateway.test/api/messages' },
+      { id: 7, family: 'openai', original: 'https://API.OPENAI.COM/v1', scope: 'https://api.openai.com/v1' },
+      { id: 8, family: 'openai', original: 'https://api.openai.com:443/v1', scope: 'https://api.openai.com/v1' },
+      { id: 9, family: 'openai', original: 'https://api.openai.com/a/../v1', scope: 'https://api.openai.com/v1' },
+      { id: 10, family: 'openai', original: 'https://api.openai.com/v1///', scope: 'https://api.openai.com/v1' },
+      { id: 11, family: 'openai', original: 'https://GATEWAY.test:443/openai/./v1///', scope: 'https://gateway.test/openai/v1' },
+    ] as const
     await applyD1Migrations(legacy, env.TEST_MIGRATIONS.slice(0, 2))
     await legacy.prepare("INSERT INTO users (id, name, settings, created_at) VALUES (1, 'owner', '{}', 0)").run()
     await legacy.prepare("INSERT INTO attachments (id, user_id, sha256, mime, size, r2_key, origin, created_at) VALUES (1, 1, 'legacy-cleanup', 'text/plain', 1, 'legacy-cleanup', 'upload', 0)").run()
+    await legacy.prepare("INSERT INTO attachments (id, user_id, sha256, mime, size, r2_key, origin, created_at) VALUES (2, 1, 'legacy-reuse', 'text/plain', 1, 'legacy-reuse', 'upload', 0)").run()
     const key = await encryptSecret(env.KEY_ENCRYPTION_SECRET, 'migration-cleanup-secret')
     for (const entry of cases) {
-      await legacy.prepare("INSERT INTO providers (id, user_id, name, protocol, base_url, api_key, native_files, created_at) VALUES (?, 1, 'Anthropic', 'anthropic', ?, ?, 1, 0)")
-        .bind(entry.id, entry.original, key).run()
-      await legacy.prepare('INSERT INTO attachment_provider_files (attachment_id, provider_id, provider_reference, expires_at, created_at) VALUES (1, ?, ?, 1000, 0)')
-        .bind(entry.id, JSON.stringify({ anthropic: entry.file })).run()
+      await legacy.prepare("INSERT INTO providers (id, user_id, name, protocol, base_url, api_key, native_files, created_at) VALUES (?, 1, 'Files', ?, ?, ?, 1, 0)")
+        .bind(entry.id, entry.family === 'anthropic' ? 'anthropic' : 'openai-responses', entry.original, key).run()
+      for (const attachmentId of [1, 2]) {
+        await legacy.prepare('INSERT INTO attachment_provider_files (attachment_id, provider_id, provider_reference, expires_at, created_at) VALUES (?, ?, ?, 1000, 0)')
+          .bind(attachmentId, entry.id, JSON.stringify({ [entry.family]: `file-${entry.id}-${attachmentId}` })).run()
+      }
     }
     await applyD1Migrations(legacy, env.TEST_MIGRATIONS)
-    const migrated = await legacy.prepare('SELECT provider_id, base_url FROM attachment_provider_files ORDER BY provider_id').all()
+    const migratedDb = createDb(legacy)
+    const reused = []
+    for (const entry of cases) {
+      reused.push(await findReusableProviderFile(migratedDb, { providerId: entry.id, credentialVersion: 1, family: entry.family, baseURL: entry.scope }, 2, 500))
+    }
     const ctx = await createApp({ env: { ...env, DB: legacy }, side: 'worker' })
     const requests: Request[] = []
     vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
       const request = new Request(input, init)
       requests.push(request)
-      return Response.json({ id: new URL(request.url).pathname.split('/').at(-1), type: 'file_deleted' })
+      const id = new URL(request.url).pathname.split('/').at(-1)
+      return Response.json(request.headers.has('x-api-key') ? { id, type: 'file_deleted' } : { id, object: 'file', deleted: true })
     })
-    await cleanupExpiredProviderFiles(ctx, now)
-    expect(requests.map(request => request.url).sort()).toEqual(cases.map(entry => `${entry.scope}/files/${entry.file}`).sort())
-    expect(requests.every(request => request.method === 'DELETE' && request.headers.get('x-api-key') === 'migration-cleanup-secret')).toBe(true)
-    expect(migrated.results).toEqual(cases.map(entry => ({ provider_id: entry.id, base_url: entry.scope })))
+    const result = await cleanupExpiredProviderFiles(ctx, now)
+    expect.soft(reused).toMatchObject(cases.map(entry => ({ base_url: entry.scope, provider_reference: { [entry.family]: `file-${entry.id}-2` } })))
+    expect.soft(result).toEqual({ processed: 22, deleted: 22, pruned: 0, retried: 0 })
+    expect(requests.map(request => request.url).sort()).toEqual(cases.flatMap(entry => [1, 2].map(attachmentId => `${entry.scope}/files/file-${entry.id}-${attachmentId}`)).sort())
+    expect(requests.every(request => request.method === 'DELETE' && (request.headers.get('x-api-key') ?? request.headers.get('authorization'))?.endsWith('migration-cleanup-secret'))).toBe(true)
     expect((await legacy.prepare('SELECT id FROM attachment_provider_files').all()).results).toEqual([])
   })
 
@@ -174,11 +189,11 @@ describe('remote file cleanup', () => {
 
   it.each([401, 403, 408, 409, 429, 500, 503, 'network', 'unconfirmed'] as const)('retains and retries %s failures in the next daily window', async failure => {
     const f = await fixture()
-    await f.pointer()
+    await f.pointer({ openai: 'file-test' }, { base_url: 'https://FILES.test:443/old/../v1///' })
     if (failure === 'network') vi.stubGlobal('fetch', async () => { throw new Error('Authorization: Bearer cleanup-secret') })
     else remoteDelete(failure === 'unconfirmed' ? 200 : failure, 'openai', false)
     await cleanupExpiredProviderFiles(f.ctx, now)
-    expect(await f.rows()).toEqual([expect.objectContaining({ cleanup_attempts: 1, cleanup_after: now + day, expires_at: now })])
+    expect(await f.rows()).toEqual([expect.objectContaining({ base_url: 'https://files.test/v1', cleanup_attempts: 1, cleanup_after: now + day, expires_at: now })])
     const error = (await f.rows())[0]!.last_cleanup_error!
     expect(error.length).toBeGreaterThan(0)
     expect(error.length).toBeLessThanOrEqual(200)
@@ -208,6 +223,17 @@ describe('remote file cleanup', () => {
     await cleanupExpiredProviderFiles(f.ctx, now)
     expect(await f.rows()).toEqual([])
     expect(requests).toHaveLength(0)
+  })
+
+  it.each(['invalid-url', 'https://files.test/v1?key=cleanup-secret', 'https://cleanup-secret@files.test/v1'])('prunes an invalid stored URL without a request or credential disclosure (%s)', async base_url => {
+    const f = await fixture()
+    await f.pointer({ openai: 'file-test' }, { base_url })
+    const requests = remoteDelete(200)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect(await cleanupExpiredProviderFiles(f.ctx, now)).toEqual({ processed: 1, deleted: 0, pruned: 1, retried: 0 })
+    expect(await f.rows()).toEqual([])
+    expect(requests).toHaveLength(0)
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('cleanup-secret')
   })
 
   it.each(['missing-interface', 'changed-key', 'missing-key'] as const)('prunes an unreachable scope (%s) without disclosing data', async change => {

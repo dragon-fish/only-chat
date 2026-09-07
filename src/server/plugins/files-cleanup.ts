@@ -79,6 +79,7 @@ async function cleanupFiles(ctx: CleanupContext, now: number, where: SQL, option
     let disposition: 'deleted' | 'pruned' | 'retried' = 'deleted'
     let reason = ''
     try {
+      try { row.base_url = normalizeFilesBaseURL(row.base_url, row.file_family) } catch { throw new FilesReferenceError() }
       const client = await clientFor(row)
       if (!client?.files.deleteFile) {
         disposition = 'pruned'
@@ -97,7 +98,7 @@ async function cleanupFiles(ctx: CleanupContext, now: number, where: SQL, option
     }
     if (disposition === 'retried') {
       await db.update(pointers).set({
-        cleanup_attempts: sql`${pointers.cleanup_attempts} + 1`, cleanup_after: now + 86_400_000, last_cleanup_error: reason,
+        base_url: row.base_url, cleanup_attempts: sql`${pointers.cleanup_attempts} + 1`, cleanup_after: now + 86_400_000, last_cleanup_error: reason,
       }).where(eq(pointers.id, row.id))
     } else {
       if (disposition === 'pruned') logPruned(row, reason)
@@ -127,6 +128,24 @@ async function cleanupFiles(ctx: CleanupContext, now: number, where: SQL, option
 
 export function cleanupExpiredProviderFiles(ctx: CleanupContext, now: number, options: FileCleanupOptions = {}): Promise<FileCleanupResult> {
   return cleanupFiles(ctx, now, and(lte(pointers.cleanup_after, now), lte(pointers.expires_at, now))!, options)
+}
+
+/** Normalize stored identities before the configuration transaction compares them in SQL. */
+export async function normalizeProviderFileScopes(ctx: CleanupContext, provider: ProviderRow): Promise<void> {
+  const db = ctx.db.orm
+  let cursor = 0
+  for (;;) {
+    const rows = await db.select({ id: pointers.id, file_family: pointers.file_family, base_url: pointers.base_url }).from(pointers)
+      .where(and(eq(pointers.provider_id, provider.id), lte(pointers.credential_version, provider.credential_version), sql`${pointers.id} > ${cursor}`))
+      .orderBy(pointers.id).limit(50)
+    if (!rows.length) return
+    for (const row of rows) {
+      let baseURL: string
+      try { baseURL = normalizeFilesBaseURL(row.base_url, row.file_family) } catch { continue }
+      if (baseURL !== row.base_url) await db.update(pointers).set({ base_url: baseURL }).where(eq(pointers.id, row.id))
+    }
+    cursor = rows.at(-1)!.id
+  }
 }
 
 /** The SQL predicate is also applied inside the configuration transaction to discard failed old references. */

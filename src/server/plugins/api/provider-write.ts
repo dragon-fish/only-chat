@@ -7,7 +7,7 @@ import { ProviderWithInterfacesSchema } from '@/shared/models'
 import { attachmentProviderFiles, models, providerInterfaces, providers, type ProviderRow, type ProviderInterfaceRow } from '@/server/db/schema'
 import { decryptSecret, encryptSecret } from '../llm/crypto'
 import { matchProviderByEndpoints } from '../model-catalog/match'
-import { cleanupProviderFilesBeforeChange, invalidatedProviderFiles } from '../files-cleanup'
+import { cleanupProviderFilesBeforeChange, invalidatedProviderFiles, normalizeProviderFileScopes } from '../files-cleanup'
 import { catalogForModels, isModelSourceConflict, materializationUpdates, ModelSourceConflict, modelSourceColumns, providerSourceFence, retryModelSource } from './model-write'
 
 export class ProviderWriteError extends Error {
@@ -117,6 +117,7 @@ async function writeProviderAttempt(ctx: Context, input: ProviderWriteInput, id:
     }))
   }
   if (before) {
+    await normalizeProviderFileScopes(ctx, before)
     const invalidated = invalidatedProviderFiles(before, input.interfaces, keyChanged)
     await cleanupProviderFilesBeforeChange(ctx, before, existing, invalidated)
     // Prune invalidated pointers in the same transaction as the new configuration, including
