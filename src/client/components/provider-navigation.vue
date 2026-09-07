@@ -73,8 +73,8 @@ nav.flex.h-full.min-h-0.flex-col(aria-label="供应商")
             SelectValue(placeholder="选择供应商模板")
           SelectContent
             SelectGroup
-              SelectItem(value="custom") 自定义供应商
-              SelectItem(v-for="preset in presets" :key="preset.key" :value="preset.key") {{ preset.name }}
+              SelectItem(value="custom" class="min-h-10") 自定义供应商
+              SelectItem(v-for="preset in presets" :key="preset.key" :value="preset.key" class="min-h-10") {{ preset.name }}
         Button(variant="outline" class="min-h-10" :disabled="adding || loading" @click="addProvider")
           PlusIcon(data-icon="inline-start")
           | {{ adding ? '添加中…' : '添加供应商' }}

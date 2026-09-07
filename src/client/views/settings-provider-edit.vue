@@ -231,11 +231,11 @@ async function removeModel() {
                   SelectValue
                 SelectContent
                   SelectGroup
-                    SelectItem(value="openai-completions") OpenAI Chat Completions（含兼容中转）
-                    SelectItem(value="openai-responses") OpenAI Responses
-                    SelectItem(value="anthropic") Anthropic Messages
-                    SelectItem(value="vertex") Google Vertex AI
-                    SelectItem(value="vertex-compatible") Google Vertex 兼容
+                    SelectItem(value="openai-completions" class="min-h-10") OpenAI Chat Completions（含兼容中转）
+                    SelectItem(value="openai-responses" class="min-h-10") OpenAI Responses
+                    SelectItem(value="anthropic" class="min-h-10") Anthropic Messages
+                    SelectItem(value="vertex" class="min-h-10") Google Vertex AI
+                    SelectItem(value="vertex-compatible" class="min-h-10") Google Vertex 兼容
             Field
               FieldLabel(for="provider-url") Base URL
               Input#provider-url(v-model="form.base_url" type="url" required placeholder="https://api.example.com/v1" class="min-h-10")
