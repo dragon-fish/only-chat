@@ -1,15 +1,27 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import MarkdownRender from 'markstream-vue'
-import { LoaderCircle, Pencil, RefreshCw } from '@lucide/vue'
-import { api } from '@/client/lib/api'
-import { Button } from '@/client/ui/button'
-import { Textarea } from '@/client/ui/textarea'
+import { LoaderCircle, PencilIcon, RefreshCwIcon } from '@lucide/vue'
 import BranchSwitcher from '@/client/components/branch-switcher.vue'
+import ProjectAvatar from '@/client/components/project-avatar.vue'
+import ProviderAvatar from '@/client/components/provider-avatar.vue'
+import { api } from '@/client/lib/api'
+import { cn } from '@/client/lib/utils'
 import { assistantWaitState, useSyncStore } from '@/client/stores/sync'
-import type { Message } from '@/shared/models'
+import { Badge } from '@/client/ui/badge'
+import { Bubble, BubbleContent } from '@/client/ui/bubble'
+import { Button } from '@/client/ui/button'
+import { Message as MessageRoot, MessageAvatar, MessageContent, MessageFooter, MessageHeader } from '@/client/ui/message'
+import { Textarea } from '@/client/ui/textarea'
+import type { Message, Project } from '@/shared/models'
 
-const props = defineProps<{ message: Message }>()
+const props = defineProps<{
+  message: Message
+  project?: Project
+  assistantName?: string
+  assistantModelName?: string
+  assistantProviderName?: string
+}>()
 const sync = useSyncStore()
 const streaming = computed(() => props.message.status === 'streaming')
 const editing = ref(false)
@@ -25,9 +37,12 @@ const wait = computed(() => assistantWaitState(props.message))
 // Hover is unavailable on touch, and a failed/stopped message must expose 重试 without one, so the
 // row only fades on `md` and up, and never on a terminal-failure message.
 const terminal = computed(() => props.message.status === 'error' || props.message.status === 'aborted')
-const actionsClass = computed(() => terminal.value
-  ? 'opacity-100'
-  : 'opacity-100 md:opacity-0 md:group-hover:opacity-100 md:focus-within:opacity-100')
+const actionsClass = computed(() => cn(
+  'gap-1 transition-opacity',
+  terminal.value
+    ? 'opacity-100'
+    : 'opacity-100 md:opacity-0 md:group-hover/message:opacity-100 md:group-focus-within/message:opacity-100',
+))
 
 function startEdit() {
   draft.value = textParts.value.map((p) => p.text).join('\n')
@@ -44,39 +59,52 @@ function regenerate() {
 </script>
 
 <template lang="pug">
-.group.flex.flex-col.gap-1(:class="message.role === 'user' ? 'items-end' : 'items-start'")
-  .max-w-full(:class="message.role === 'user' ? 'oc-message-user bg-primary text-primary-foreground px-3 py-2' : 'w-full'")
-    template(v-if="message.role === 'user'")
-      .flex.flex-wrap.gap-2.pb-1(v-if="images.length")
-        img.max-h-40.rounded(v-for="img in images" :key="img.attachment_id" :src="api.attachmentUrl(img.attachment_id)")
-      template(v-if="!editing")
-        p.whitespace-pre-wrap.text-sm(v-for="(p, i) in textParts" :key="i") {{ p.text }}
-      .flex.flex-col.gap-2(v-else)
-        Textarea(v-model="draft" class="min-w-64 bg-background text-foreground")
-        .flex.gap-2.justify-end
-          Button(size="sm" variant="secondary" @click="editing = false") 取消
-          Button(size="sm" @click="submitEdit") 发送
-    template(v-else)
-      //- Expanded while it is the only thing to show, collapsed once the reply starts.
-      details.mb-2.rounded.border.px-2.py-1.text-xs.text-muted-foreground(v-if="wait.showReasoning" :open="wait.reasoningOpen")
-        summary 思考过程
-        pre.whitespace-pre-wrap.pt-1 {{ reasoning }}
-      p.mb-2.flex.items-center.gap-2.text-xs.text-muted-foreground(v-if="wait.waiting")
-        LoaderCircle(class="size-3.5 animate-spin")
-        span 正在思考…
-      MarkdownRender(mode="chat" :content="markdown" :final="!streaming" smooth-streaming="auto" :fade="false")
-      //- Generated images are served by the same authenticated attachment route as uploads.
-      .flex.flex-wrap.gap-2.pt-2(v-if="images.length")
-        img.max-h-80.rounded.border(v-for="(img, i) in images" :key="i" :src="api.attachmentUrl(img.attachment_id)")
-      p.text-xs.text-destructive(v-if="message.status === 'error'") 出错：{{ message.error }}
-      p.text-xs.text-muted-foreground(v-else-if="message.status === 'aborted'") 已停止
-  .flex.items-center.gap-2.text-xs.text-muted-foreground.transition-opacity(:class="actionsClass")
-    BranchSwitcher(:message="message")
-    button.inline-flex.items-center.gap-1(v-if="message.role === 'assistant' && !streaming" @click="regenerate")
-      RefreshCw(class="size-3")
-      span 重新生成
-    button.inline-flex.items-center.gap-1(v-if="message.role === 'user' && !editing" @click="startEdit")
-      Pencil(class="size-3")
-      span 编辑
-    span(v-if="message.usage") {{ message.usage.prompt ?? '?' }} / {{ message.usage.completion ?? '?' }} tokens
+MessageRoot(:align="message.role === 'user' ? 'end' : 'start'")
+  MessageAvatar(v-if="message.role === 'assistant'")
+    ProjectAvatar(v-if="project" :name="project.name")
+    ProviderAvatar(v-else :name="assistantProviderName ?? assistantName ?? '助手'")
+
+  MessageContent
+    MessageHeader(v-if="message.role === 'assistant'" class="gap-2")
+      span.truncate.text-foreground {{ assistantName ?? '助手' }}
+      Badge(v-if="assistantModelName" variant="outline") {{ assistantModelName }}
+
+    Bubble(:align="message.role === 'user' ? 'end' : 'start'" :variant="message.role === 'user' ? 'tinted' : 'ghost'" :class="cn(message.role === 'assistant' && 'w-full')")
+      BubbleContent(:class="cn(message.role === 'assistant' && 'w-full')")
+        template(v-if="message.role === 'user'")
+          .flex.flex-wrap.gap-2.pb-1(v-if="images.length")
+            img.max-h-40.rounded(v-for="img in images" :key="img.attachment_id" :src="api.attachmentUrl(img.attachment_id)")
+          template(v-if="!editing")
+            p.whitespace-pre-wrap.text-sm(v-for="(p, i) in textParts" :key="i") {{ p.text }}
+          .flex.flex-col.gap-2(v-else)
+            Textarea(v-model="draft" class="min-w-64")
+            .flex.justify-end.gap-2
+              Button(size="sm" variant="secondary" @click="editing = false") 取消
+              Button(size="sm" @click="submitEdit") 发送
+        template(v-else)
+          //- Expanded while it is the only thing to show, collapsed once the reply starts.
+          details.mb-2.rounded.border.px-2.py-1.text-xs.text-muted-foreground(v-if="wait.showReasoning" :open="wait.reasoningOpen")
+            summary 思考过程
+            pre.whitespace-pre-wrap.pt-1 {{ reasoning }}
+          p.mb-2.flex.items-center.gap-2.text-xs.text-muted-foreground(v-if="wait.waiting")
+            LoaderCircle(class="size-3.5 animate-spin")
+            span 正在思考…
+          MarkdownRender(mode="chat" :content="markdown" :final="!streaming" smooth-streaming="auto" :fade="false")
+          //- Generated images are served by the same authenticated attachment route as uploads.
+          .flex.flex-wrap.gap-2.pt-2(v-if="images.length")
+            img.max-h-80.rounded.border(v-for="(img, i) in images" :key="i" :src="api.attachmentUrl(img.attachment_id)")
+          p.text-xs.text-destructive(v-if="message.status === 'error'") 出错：{{ message.error }}
+          p.text-xs.text-muted-foreground(v-else-if="message.status === 'aborted'") 已停止
+
+    MessageFooter(:class="actionsClass")
+      BranchSwitcher(:message="message")
+      Button(
+        v-if="message.role === 'assistant' && !streaming" variant="ghost" size="icon-xs"
+        title="重新生成" aria-label="重新生成" @click="regenerate")
+        RefreshCwIcon
+      Button(
+        v-if="message.role === 'user' && !editing" variant="ghost" size="icon-xs"
+        title="编辑消息" aria-label="编辑消息" @click="startEdit")
+        PencilIcon
+      span.ml-1(v-if="message.usage") {{ message.usage.prompt ?? '?' }} / {{ message.usage.completion ?? '?' }} tokens
 </template>

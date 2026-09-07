@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, reactive, ref, watch, watchEffect } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
-import { RotateCcw } from '@lucide/vue'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
+import { ArrowLeftIcon, RotateCcwIcon } from '@lucide/vue'
 import MessageList from '@/client/components/message-list.vue'
 import Composer from '@/client/components/composer.vue'
 import ModelPicker from '@/client/components/model-picker.vue'
+import ProjectAvatar from '@/client/components/project-avatar.vue'
 import ReasoningControl from '@/client/components/reasoning-control.vue'
 import SessionSettings from '@/client/components/session-settings.vue'
 import { routeParamToId } from '@/client/lib/route-params'
@@ -15,6 +16,7 @@ import {
   type SessionSettingsForm,
 } from '@/client/stores/sync'
 import { useConfigStore } from '@/client/stores/config'
+import { Button } from '@/client/ui/button'
 import type { ModelRef } from '@/shared/api'
 import type { Part } from '@/shared/parts'
 
@@ -52,6 +54,10 @@ const formLoaded = ref(false)
 const project = computed(() => {
   const id = sid.value === null ? draftProjectId.value : session.value?.project_id ?? null
   return id === null ? undefined : sync.projects.get(id)
+})
+const backTarget = computed(() => {
+  const projectId = project.value?.id ?? draftProjectId.value
+  return projectId === null ? '/chats' : `/projects/${projectId}`
 })
 /** The session's own model override; for a draft it is the one held locally. */
 const override = computed<ModelRef | null>(() => {
@@ -257,19 +263,35 @@ function onReasoningChange(choice: ReasoningChoice) {
 <template lang="pug">
 .flex.h-full.flex-col
   Teleport(to="#page-header")
-    span.shrink-0.truncate.text-sm.text-muted-foreground(v-if="project") {{ project.name }}
-    span.shrink-0.text-muted-foreground(v-if="project") ›
-    ModelPicker(:model-value="effective.model" @update:model-value="onModelChange")
-    button.shrink-0.text-muted-foreground(
-      v-if="sources.model === 'session'" type="button" title="恢复继承"
-      class="hover:text-foreground" @click="setOverride(null)")
-      RotateCcw(class="size-3.5")
-    .ml-auto.shrink-0
+    .hidden.min-w-0.flex-1.items-center.gap-1(class="md:flex")
+      ModelPicker(:model-value="effective.model" @update:model-value="onModelChange")
+      Button(
+        v-if="sources.model === 'session'" variant="ghost" size="icon-xs"
+        title="恢复继承模型" aria-label="恢复继承模型" @click="setOverride(null)")
+        RotateCcwIcon
+      .ml-auto.shrink-0
+        SessionSettings(
+          :form="form" :sources="sources" :project="project" :has-session="sid !== null"
+          @commit="commitSettings")
+
+    .flex.min-w-0.flex-1.items-center.gap-1(class="md:hidden")
+      Button(as-child variant="ghost" size="icon-sm" class="size-10")
+        RouterLink(:to="backTarget" aria-label="返回聊天")
+          ArrowLeftIcon
+      template(v-if="project")
+        ProjectAvatar(:name="project.name" size="sm")
+        span.min-w-0.flex-1.truncate.text-sm.font-medium {{ project.name }}
+      span.min-w-0.flex-1.truncate.text-sm.font-medium(v-else) 随心聊
+      ModelPicker(compact :model-value="effective.model" @update:model-value="onModelChange")
+      Button(
+        v-if="sources.model === 'session'" variant="ghost" size="icon-xs"
+        title="恢复继承模型" aria-label="恢复继承模型" @click="setOverride(null)")
+        RotateCcwIcon
       SessionSettings(
         :form="form" :sources="sources" :project="project" :has-session="sid !== null"
         @commit="commitSettings")
   .min-h-0.flex-1
-    MessageList(v-if="path.length" :messages="path")
+    MessageList(v-if="path.length" :messages="path" :project="project")
     .flex.h-full.items-center.justify-center.text-muted-foreground(v-else) 开始一段新对话
   Composer(
     ref="composer" :streaming="streaming" :connected="sync.status === 'open'"
