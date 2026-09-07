@@ -91,6 +91,7 @@ async function cleanupFiles(ctx: CleanupContext, now: number, where: SQL, option
       const status = APICallError.isInstance(error) ? error.statusCode : undefined
       reason = fileCleanupError(error)
       if (status === 404 || status === 410) disposition = 'deleted'
+      else if (APICallError.isInstance(error) && error.isRetryable) disposition = 'retried'
       else if (error instanceof FilesReferenceError || (status !== undefined && status >= 400 && status < 500 && ![401, 403, 429].includes(status))) disposition = 'pruned'
       else disposition = 'retried'
     }

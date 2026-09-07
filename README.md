@@ -112,8 +112,9 @@ With it on:
   what gets stored; otherwise the local pointer dies on the deadline the upload asked for.
 - The daily cron (`0 3 * * *`) independently refreshes the catalog and deletes expired remote files.
   Cleanup reads indexed due pointers in pages, with bounded concurrency and a per-run limit.
-  Success and HTTP 404/410 remove the pointer. Network errors, HTTP 401/403/429 and server errors
-  defer it by a day; unrecoverable references are logged without sensitive data and removed locally.
+  Success and HTTP 404/410 remove the pointer. Network errors, SDK-retryable errors (including HTTP
+  408/409), HTTP 401/403/429 and server errors defer it by a day; unrecoverable references are logged
+  without sensitive data and removed locally.
 - Provider deletion, interface removal, key replacement and endpoint changes attempt affected
   remote deletes before changing the configuration. The operation proceeds despite remote failure;
   invalidated pointers are removed and old credentials are never retained for retries.

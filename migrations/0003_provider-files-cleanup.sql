@@ -1,3 +1,7 @@
+-- Match the Anthropic Files client's versioned official HTTPS root without changing gateways.
+UPDATE attachment_provider_files SET base_url = 'https://api.anthropic.com/v1'
+WHERE file_family = 'anthropic' AND rtrim(base_url, '/') = 'https://api.anthropic.com';
+--> statement-breakpoint
 -- Unscoped legacy uploads have no remotely addressable endpoint. Preserve all scoped history.
 CREATE TABLE `__new_attachment_provider_files` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,

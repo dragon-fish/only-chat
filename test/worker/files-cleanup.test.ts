@@ -1,4 +1,5 @@
 import { env } from 'cloudflare:workers'
+import { applyD1Migrations } from 'cloudflare:test'
 import { eq, inArray } from 'drizzle-orm'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createApp } from '@/server/app'
@@ -62,6 +63,42 @@ function remoteDelete(status: number, family: 'openai' | 'anthropic' = 'openai',
 }
 
 describe('remote file cleanup', () => {
+  it('deletes migrated Anthropic root and canonical scopes at their exact file endpoints', async () => {
+    const legacy = env.TEST_LEGACY_DB
+    const cases = [
+      { id: 1, original: 'https://api.anthropic.com', scope: 'https://api.anthropic.com/v1', file: 'file-root' },
+      { id: 2, original: 'https://api.anthropic.com///', scope: 'https://api.anthropic.com/v1', file: 'file-root-slashes' },
+      { id: 3, original: 'https://api.anthropic.com/v1', scope: 'https://api.anthropic.com/v1', file: 'file-canonical' },
+      { id: 4, original: 'https://api.anthropic.com/v1///', scope: 'https://api.anthropic.com/v1', file: 'file-canonical-slashes' },
+      { id: 5, original: 'https://anthropic-gateway.test', scope: 'https://anthropic-gateway.test', file: 'file-gateway-root' },
+      { id: 6, original: 'https://anthropic-gateway.test/api///', scope: 'https://anthropic-gateway.test/api', file: 'file-gateway-path' },
+    ]
+    await applyD1Migrations(legacy, env.TEST_MIGRATIONS.slice(0, 2))
+    await legacy.prepare("INSERT INTO users (id, name, settings, created_at) VALUES (1, 'owner', '{}', 0)").run()
+    await legacy.prepare("INSERT INTO attachments (id, user_id, sha256, mime, size, r2_key, origin, created_at) VALUES (1, 1, 'legacy-cleanup', 'text/plain', 1, 'legacy-cleanup', 'upload', 0)").run()
+    const key = await encryptSecret(env.KEY_ENCRYPTION_SECRET, 'migration-cleanup-secret')
+    for (const entry of cases) {
+      await legacy.prepare("INSERT INTO providers (id, user_id, name, protocol, base_url, api_key, native_files, created_at) VALUES (?, 1, 'Anthropic', 'anthropic', ?, ?, 1, 0)")
+        .bind(entry.id, entry.original, key).run()
+      await legacy.prepare('INSERT INTO attachment_provider_files (attachment_id, provider_id, provider_reference, expires_at, created_at) VALUES (1, ?, ?, 1000, 0)')
+        .bind(entry.id, JSON.stringify({ anthropic: entry.file })).run()
+    }
+    await applyD1Migrations(legacy, env.TEST_MIGRATIONS)
+    const migrated = await legacy.prepare('SELECT provider_id, base_url FROM attachment_provider_files ORDER BY provider_id').all()
+    const ctx = await createApp({ env: { ...env, DB: legacy }, side: 'worker' })
+    const requests: Request[] = []
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(input, init)
+      requests.push(request)
+      return Response.json({ id: new URL(request.url).pathname.split('/').at(-1), type: 'file_deleted' })
+    })
+    await cleanupExpiredProviderFiles(ctx, now)
+    expect(requests.map(request => request.url).sort()).toEqual(cases.map(entry => `${entry.scope}/files/${entry.file}`).sort())
+    expect(requests.every(request => request.method === 'DELETE' && request.headers.get('x-api-key') === 'migration-cleanup-secret')).toBe(true)
+    expect(migrated.results).toEqual(cases.map(entry => ({ provider_id: entry.id, base_url: entry.scope })))
+    expect((await legacy.prepare('SELECT id FROM attachment_provider_files').all()).results).toEqual([])
+  })
+
   it('uses indexed bounded reads for due pointers and provider configuration cleanup', async () => {
     const f = await fixture()
     await env.DB.prepare(`WITH RECURSIVE ids(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM ids WHERE n < 1000)
@@ -135,7 +172,7 @@ describe('remote file cleanup', () => {
     expect(await f.rows()).toEqual([])
   })
 
-  it.each([401, 403, 429, 500, 503, 'network', 'unconfirmed'] as const)('retains and retries %s failures in the next daily window', async failure => {
+  it.each([401, 403, 408, 409, 429, 500, 503, 'network', 'unconfirmed'] as const)('retains and retries %s failures in the next daily window', async failure => {
     const f = await fixture()
     await f.pointer()
     if (failure === 'network') vi.stubGlobal('fetch', async () => { throw new Error('Authorization: Bearer cleanup-secret') })
