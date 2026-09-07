@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { useMediaQuery } from '@vueuse/core'
 import { FolderKanbanIcon, MessageCircleIcon, SearchIcon } from '@lucide/vue'
 import ProjectNavRow from '@/client/components/layout/project-nav-row.vue'
 import ProjectCreateDialog from '@/client/components/layout/project-create-dialog.vue'
@@ -11,11 +10,10 @@ import { recentProjects, searchProjects, searchSessions } from '@/client/lib/ui-
 import { useSyncStore } from '@/client/stores/sync'
 import { Input } from '@/client/ui/input'
 import { ScrollArea } from '@/client/ui/scroll-area'
-import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from '@/client/ui/empty'
+import { SidebarMenu } from '@/client/ui/sidebar'
 
 const sync = useSyncStore()
 const query = ref('')
-const isDesktop = useMediaQuery('(min-width: 768px)')
 
 const allProjectsByActivity = computed(() => recentProjects(sync.projectList, sync.sessionList, Number.MAX_SAFE_INTEGER))
 const projects = computed(() => {
@@ -32,16 +30,7 @@ const sessions = computed(() => query.value.trim()
     <span class="truncate text-sm font-medium">聊天</span>
   </Teleport>
 
-  <Empty v-if="isDesktop" class="h-full">
-    <EmptyHeader>
-      <EmptyTitle>从一段对话开始</EmptyTitle>
-      <EmptyDescription>在侧栏选择已有对话或 Project，也可以开始新的随心聊。</EmptyDescription>
-    </EmptyHeader>
-    <EmptyContent>
-      <Button as-child><RouterLink to="/new">新建随心聊</RouterLink></Button>
-    </EmptyContent>
-  </Empty>
-  <ScrollArea v-else class="h-full">
+  <ScrollArea class="h-full">
     <main class="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-5">
       <div class="relative">
         <SearchIcon class="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -57,7 +46,9 @@ const sessions = computed(() => query.value.trim()
           </RouterLink>
         </div>
         <CollectionState :loaded="sync.projectsLoaded" :error="sync.projectsError" :retry="sync.loadProjects" :empty="projects.length === 0" :empty-title="query ? '没有匹配的 Project' : '还没有 Project'">
-          <ProjectNavRow v-for="project in projects" :key="project.id" :project="project" />
+          <SidebarMenu>
+            <ProjectNavRow v-for="project in projects" :key="project.id" :project="project" />
+          </SidebarMenu>
           <template #empty-action>
             <Button v-if="query" variant="outline" class="min-h-10" @click="query = ''">清除搜索</Button>
             <ProjectCreateDialog v-else />
@@ -71,7 +62,9 @@ const sessions = computed(() => query.value.trim()
           <h2 id="oc-free-chats" class="text-sm font-medium">{{ query.trim() ? '搜索结果' : '随心聊' }}</h2>
         </div>
         <CollectionState :loaded="sync.sessionsLoaded" :error="sync.sessionsError" :retry="sync.loadSessions" :empty="sessions.length === 0" :empty-title="query ? '没有匹配的对话' : '还没有随心聊'">
-          <SessionNavRow v-for="session in sessions" :key="session.id" :session="session" :projects="sync.projectList" />
+          <SidebarMenu>
+            <SessionNavRow v-for="session in sessions" :key="session.id" :session="session" :projects="sync.projectList" />
+          </SidebarMenu>
           <template #empty-action>
             <Button v-if="query" variant="outline" class="min-h-10" @click="query = ''">清除搜索</Button>
             <Button v-else as-child variant="outline" class="min-h-10"><RouterLink to="/new">开始对话</RouterLink></Button>

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import {
-  ArrowLeftIcon, ChevronsUpDownIcon, FolderKanbanIcon, MessageCircleIcon, PlusIcon,
+  ArrowLeftIcon, ChevronsUpDownIcon, MessageCircleIcon, PlusIcon,
   SearchIcon, SettingsIcon, SlidersHorizontalIcon,
 } from '@lucide/vue'
 import { RouterLink, useRoute } from 'vue-router'
@@ -62,7 +62,7 @@ function clearSearch() {
       <SidebarMenu>
         <SidebarMenuItem>
           <SidebarMenuButton as-child class="min-h-10">
-            <RouterLink to="/chats" @click="clearSearch">
+            <RouterLink to="/new" @click="clearSearch">
               <ArrowLeftIcon />
               <span>返回聊天</span>
             </RouterLink>
@@ -129,13 +129,12 @@ function clearSearch() {
                 <Button v-else as-child variant="outline" class="min-h-10"><RouterLink :to="`/project/${project.id}/new`">开始对话</RouterLink></Button>
               </template>
               <SidebarMenu>
-                <SidebarMenuItem v-for="session in projectSessions" :key="session.id">
-                  <SessionNavRow
-                    :session="session"
-                    :projects="sync.projectList"
-                    :active="openSessionId === session.id"
-                  />
-                </SidebarMenuItem>
+                <SessionNavRow
+                  v-for="session in projectSessions" :key="session.id"
+                  :session="session"
+                  :projects="sync.projectList"
+                  :active="openSessionId === session.id"
+                />
               </SidebarMenu>
             </CollectionState>
           </SidebarGroupContent>
@@ -149,7 +148,7 @@ function clearSearch() {
       <SidebarMenu>
         <SidebarMenuItem>
           <SidebarMenuButton as-child size="lg" class="min-h-12">
-            <RouterLink to="/chats">
+            <RouterLink to="/new">
               <MessageCircleIcon />
               <span class="font-semibold">only-chat</span>
             </RouterLink>
@@ -184,19 +183,14 @@ function clearSearch() {
                 <ProjectCreateDialog v-else />
               </template>
               <SidebarMenu>
-                <SidebarMenuItem v-for="item in visibleProjects" :key="item.id">
-                  <ProjectNavRow :project="item" />
-                </SidebarMenuItem>
+                <ProjectNavRow v-for="item in visibleProjects" :key="item.id" :project="item" />
               </SidebarMenu>
             </CollectionState>
             <SidebarMenu>
               <SidebarMenuItem>
-                <SidebarMenuButton as-child class="min-h-10">
-                  <RouterLink to="/projects">
-                    <FolderKanbanIcon />
-                    <span>查看全部 Projects</span>
-                  </RouterLink>
-                </SidebarMenuButton>
+                <RouterLink to="/projects" class="flex min-h-10 items-center px-2 text-xs font-normal text-muted-foreground underline-offset-4 hover:underline focus-visible:underline">
+                  查看全部 Projects
+                </RouterLink>
               </SidebarMenuItem>
             </SidebarMenu>
           </SidebarGroupContent>
@@ -215,13 +209,12 @@ function clearSearch() {
                     <Button v-else as-child variant="outline" class="min-h-10"><RouterLink to="/new">开始对话</RouterLink></Button>
                   </template>
                   <SidebarMenu>
-                    <SidebarMenuItem v-for="session in outerSessions" :key="session.id">
-                      <SessionNavRow
-                        :session="session"
-                        :projects="sync.projectList"
-                        :active="openSessionId === session.id"
-                      />
-                    </SidebarMenuItem>
+                    <SessionNavRow
+                      v-for="session in outerSessions" :key="session.id"
+                      :session="session"
+                      :projects="sync.projectList"
+                      :active="openSessionId === session.id"
+                    />
                   </SidebarMenu>
                 </CollectionState>
               </SidebarGroupContent>
@@ -231,17 +224,17 @@ function clearSearch() {
       </ScrollArea>
     </SidebarContent>
 
-    <SidebarFooter>
-      <SidebarMenu>
-        <SidebarMenuItem>
-          <SidebarMenuButton as-child class="min-h-10" :is-active="route.path.startsWith('/settings')">
-            <RouterLink to="/settings/providers">
-              <SettingsIcon />
-              <span>设置</span>
-            </RouterLink>
-          </SidebarMenuButton>
-        </SidebarMenuItem>
-      </SidebarMenu>
-    </SidebarFooter>
   </template>
+  <SidebarFooter>
+    <SidebarMenu>
+      <SidebarMenuItem>
+        <SidebarMenuButton as-child class="min-h-10" :is-active="route.path.startsWith('/settings')">
+          <RouterLink to="/settings/providers">
+            <SettingsIcon />
+            <span>设置</span>
+          </RouterLink>
+        </SidebarMenuButton>
+      </SidebarMenuItem>
+    </SidebarMenu>
+  </SidebarFooter>
 </template>

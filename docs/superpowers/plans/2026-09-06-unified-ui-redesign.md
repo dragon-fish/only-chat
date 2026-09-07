@@ -14,8 +14,8 @@
 
 - Do not change D1 schema, Worker APIs, WebSocket schemas, LLM protocol behavior, or server-side data semantics.
 - `project_id = null` is shown as “随心聊”; do not create a default Project record.
-- `/` statically redirects to `/chats`. The global `＋` opens `/new`; unprojected sessions use `/c/:sessionId`. `/project/:projectId` owns a nested RouterView with index, `settings`, `new`, and `c/:sessionId` children. Remove old Project/query routes without aliases or redirects based on session membership.
-- Model/session/reasoning editors use desktop `Sheet` and mobile `Drawer`. Project settings uses desktop `Dialog` and mobile full-screen `Dialog`, returning to its workspace on close/save. Destructive and unsaved-change confirmations use `AlertDialog`.
+- `/` redirects to `/new` at `md` and above and `/chats` below `md` through a functional `definePage` redirect. Desktop brand/home links and the global `＋` open `/new`; unprojected sessions use `/c/:sessionId`. `/project/:projectId` owns a nested RouterView with index, `settings`, `new`, and `c/:sessionId` children. Remove old Project/query routes without aliases or redirects based on session membership.
+- Model/session editors use desktop `Sheet` and mobile `Drawer`; model selection and reasoning use desktop `Popover` and mobile `Drawer`. Project settings uses desktop `Dialog` and mobile full-screen `Dialog`, returning to its workspace on close/save. Destructive and unsaved-change confirmations use `AlertDialog`.
 - Desktop chat header shows the full model selector. Mobile Project chat header shows Project identity plus an icon-only model selector; reasoning appears only in the Composer.
 - Project assistant messages use the Project placeholder avatar/name with the actual model as secondary text. 随心聊 assistant messages use the model identity.
 - Theme values are exactly `system | light | dark`, default to `system`, and use semantic CSS tokens only.
@@ -45,7 +45,7 @@
 - `src/client/components/model-editor.vue` — model form body shared by Sheet and Drawer.
 - `src/client/views/projects-index.vue` — all-Projects page.
 - `src/client/views/project-sessions.vue` — one Project’s mobile conversation list.
-- `src/client/views/chat-index.vue` — Project-first mobile chat home and desktop selection empty state.
+- `src/client/views/chat-index.vue` — Project-first chat/Project list for the mobile home route.
 - `src/client/views/settings-index.vue` — mobile settings-category page and desktop blank/default state.
 - `src/client/views/settings-appearance.vue` — theme selector.
 - `src/client/pages/projects/index.vue` — `/projects` route adapter.
@@ -357,7 +357,7 @@ git commit -m "feat(ui): rebuild the application chassis"
 - `ChatSidebarContent` accepts `projectId?: number | null`; `undefined` renders the outer Project-first navigation, a number renders that Project’s replacement navigation.
 - `ProjectAvatar` accepts `{ name: string; size?: 'sm' | 'default' }` and always renders `AvatarFallback`.
 - `/projects` renders all Projects; `/project/:projectId` renders the Project workspace with a nested RouterView. Its index lists scoped sessions and redirects a confirmed missing Project to `/projects`.
-- `/chats` renders the mobile Project-first chat home and desktop selection guidance; `/new` is the no-Project draft. `/` declares `definePage({ redirect: '/chats' })`.
+- `/chats` renders the chat/Project list; `/new` always renders the unprojected draft with Composer. `/` uses a functional `definePage` redirect to enter `/new` on desktop and `/chats` on mobile before rendering a page.
 
 - [ ] **Step 1: Implement the outer desktop navigation**
 
@@ -501,7 +501,7 @@ Retain upload concurrency, object URL cleanup, paste/drop, optimistic clear, rej
 
 - [ ] **Step 4: Move secondary forms into responsive overlays**
 
-Session settings uses side-mode `ResponsiveOverlay`; Project editing uses its Dialog mode. Both compose `FieldGroup`/`Field`. Reasoning keeps its current pure state model and slider semantics; the Composer remains its only chat-page trigger.
+Session settings uses side-mode `ResponsiveOverlay`; Project editing uses its Dialog mode. Both compose `FieldGroup`/`Field`. Reasoning uses one controlled Popover/Drawer selected by viewport; a breakpoint change closes it and restores its trigger without changing the choice. The existing state/slider semantics and Composer trigger remain.
 
 - [ ] **Step 5: Run focused verification**
 

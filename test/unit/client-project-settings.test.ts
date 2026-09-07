@@ -3,7 +3,7 @@ import { createApp, h, nextTick } from 'vue'
 import { createPinia } from 'pinia'
 import { createMemoryHistory, createRouter, RouterView } from 'vue-router'
 import { routes } from 'vue-router/auto-routes'
-import { TooltipProvider } from '@/client/ui/tooltip'
+import { SidebarProvider } from '@/client/ui/sidebar'
 import { useSyncStore } from '@/client/stores/sync'
 import { useConfigStore } from '@/client/stores/config'
 import { afterEach, expect, it, vi } from 'vitest'
@@ -21,7 +21,7 @@ async function mountSettings() {
   const router = createRouter({ history: createMemoryHistory(), routes })
   await router.push('/project/7/settings')
   document.body.innerHTML = '<header id="page-header"></header><main id="test-host"></main>'
-  const app = createApp({ render: () => h(TooltipProvider, null, () => h(RouterView)) }).use(pinia).use(router)
+  const app = createApp({ render: () => h(SidebarProvider, null, () => h(RouterView)) }).use(pinia).use(router)
   app.mount('#test-host')
   cleanup = () => app.unmount()
   await vi.waitFor(() => expect(document.querySelector('#oc-project-name')).not.toBeNull())

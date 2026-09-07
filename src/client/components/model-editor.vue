@@ -24,7 +24,12 @@ const form = reactive({
   capabilities: { ...props.model.capabilities } as ModelCapabilities,
 })
 const prefix = `model-${props.providerId}-${props.model.id}`
-const { dirty } = useFormChanges(() => form)
+const { dirty, capture, markSaved } = useFormChanges(() => form)
+function acknowledgeSave(snapshot: string): boolean {
+  markSaved(snapshot)
+  return capture() === snapshot
+}
+defineExpose({ captureSnapshot: capture, acknowledgeSave })
 const leaveGuard = ref<InstanceType<typeof UnsavedChangesGuard> | null>(null)
 async function setOpen(next: boolean) {
   if (next || await leaveGuard.value?.confirmLeave()) emit('update:open', next)

@@ -1,9 +1,10 @@
 // @vitest-environment happy-dom
-import { createApp, nextTick } from 'vue'
+import { createApp, h, nextTick } from 'vue'
 import { createPinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { afterEach, expect, it, vi } from 'vitest'
 import ProjectSessions from '@/client/views/project-sessions.vue'
+import { SidebarProvider } from '@/client/ui/sidebar'
 import { useSyncStore } from '@/client/stores/sync'
 import type { Project, Session } from '@/shared/models'
 
@@ -23,7 +24,7 @@ it('filters the current Project only and restores its full list when search is c
   const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/:pathMatch(.*)*', component: { template: '<div />' } }] })
   await router.push('/project/7')
   document.body.innerHTML = '<header id="page-header"></header><main id="test-host"></main>'
-  const app = createApp(ProjectSessions, { projectId: 7 }).use(pinia).use(router)
+  const app = createApp({ render: () => h(SidebarProvider, null, () => h(ProjectSessions, { projectId: 7 })) }).use(pinia).use(router)
   app.mount('#test-host')
   cleanup = () => app.unmount()
   const links = () => [...document.querySelectorAll<HTMLAnchorElement>('a[href*="/c/"]')].map(link => link.getAttribute('href'))

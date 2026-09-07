@@ -11,6 +11,7 @@ import { Button } from '@/client/ui/button'
 import { Field, FieldGroup, FieldLabel } from '@/client/ui/field'
 import { Input } from '@/client/ui/input'
 import { ScrollArea } from '@/client/ui/scroll-area'
+import { SidebarMenu } from '@/client/ui/sidebar'
 
 const props = defineProps<{ projectId: number | null }>()
 const sync = useSyncStore()
@@ -67,7 +68,9 @@ watch([() => sync.projectsLoaded, project], ([loaded, value]) => {
       <section class="flex flex-col gap-2" aria-labelledby="oc-project-sessions">
         <h2 id="oc-project-sessions" class="min-h-10 px-2 py-2 text-sm font-medium">对话 {{ sessions.length }}</h2>
         <CollectionState :loaded="sync.sessionsLoaded" :error="sync.sessionsError" :retry="sync.loadSessions" :empty="sessions.length === 0" :empty-title="query.trim() ? '没有匹配的对话' : '还没有对话'" :empty-description="query.trim() ? '试试其他关键词。' : '在这个 Project 中开始一段新对话。'">
-          <SessionNavRow v-for="session in sessions" :key="session.id" :session="session" :projects="sync.projectList" />
+          <SidebarMenu>
+            <SessionNavRow v-for="session in sessions" :key="session.id" :session="session" :projects="sync.projectList" />
+          </SidebarMenu>
           <template #empty-action>
             <Button v-if="query.trim()" variant="outline" class="min-h-10" @click="query = ''">清除搜索</Button>
             <Button v-else as-child class="min-h-10">

@@ -1,14 +1,17 @@
 <script setup lang="ts">
-import { Trash2Icon } from '@lucide/vue'
+import { nextTick, ref } from 'vue'
+import { EllipsisIcon, Trash2Icon } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 import ProjectAvatar from '@/client/components/project-avatar.vue'
-import { cn } from '@/client/lib/utils'
 import { DISCONNECTED_MESSAGE, useSyncStore } from '@/client/stores/sync'
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
-  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
+  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/client/ui/alert-dialog'
-import { Button } from '@/client/ui/button'
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuTrigger,
+} from '@/client/ui/dropdown-menu'
+import { SidebarMenuAction, SidebarMenuButton, SidebarMenuItem, useSidebar } from '@/client/ui/sidebar'
 import type { Project } from '@/shared/models'
 
 const props = defineProps<{
@@ -18,6 +21,17 @@ const props = defineProps<{
 
 const emit = defineEmits<{ navigate: [] }>()
 const sync = useSyncStore()
+const { isMobile } = useSidebar()
+const deleteOpen = ref(false)
+const action = ref<InstanceType<typeof SidebarMenuAction> | null>(null)
+
+function restoreActionFocus(event: Event) {
+  event.preventDefault()
+  void nextTick(() => {
+    const element = action.value?.$el
+    if (element instanceof HTMLElement && element.isConnected) element.focus({ preventScroll: true })
+  })
+}
 
 function remove() {
   sync.lastError = null
@@ -28,28 +42,30 @@ function remove() {
 </script>
 
 <template>
-  <div
-    :class="cn(
-      'group/project flex min-h-10 min-w-0 items-center rounded-md',
-      active ? 'bg-sidebar-accent text-sidebar-accent-foreground' : 'hover:bg-sidebar-accent',
-    )"
-  >
-    <RouterLink class="flex min-h-10 min-w-0 flex-1 items-center gap-2 px-2 text-sm" :to="`/project/${project.id}`" @click="emit('navigate')">
-      <ProjectAvatar :name="project.name" size="sm" />
-      <span class="truncate">{{ project.name }}</span>
-    </RouterLink>
-    <AlertDialog>
-      <AlertDialogTrigger as-child>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          class="size-10 shrink-0 text-muted-foreground md:opacity-0 md:group-hover/project:opacity-100 md:focus-visible:opacity-100"
-          aria-label="删除 Project"
-        >
-          <Trash2Icon />
-        </Button>
-      </AlertDialogTrigger>
-      <AlertDialogContent>
+  <SidebarMenuItem>
+    <SidebarMenuButton as-child size="lg" class="h-10" :is-active="active">
+      <RouterLink :to="`/project/${project.id}`" @click="emit('navigate')">
+        <ProjectAvatar :name="project.name" size="sm" />
+        <span>{{ project.name }}</span>
+      </RouterLink>
+    </SidebarMenuButton>
+    <DropdownMenu>
+      <DropdownMenuTrigger as-child>
+        <SidebarMenuAction ref="action" show-on-hover type="button" :aria-label="`Project 操作：${project.name}`">
+          <EllipsisIcon />
+        </SidebarMenuAction>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent :side="isMobile ? 'bottom' : 'right'" :align="isMobile ? 'end' : 'start'" @close-auto-focus="event => { if (deleteOpen) event.preventDefault() }">
+        <DropdownMenuGroup>
+          <DropdownMenuItem variant="destructive" class="min-h-10" @select="deleteOpen = true">
+            <Trash2Icon />
+            <span>删除 Project</span>
+          </DropdownMenuItem>
+        </DropdownMenuGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
+    <AlertDialog v-model:open="deleteOpen">
+      <AlertDialogContent @close-auto-focus="restoreActionFocus">
         <AlertDialogHeader>
           <AlertDialogTitle>删除这个 Project？</AlertDialogTitle>
           <AlertDialogDescription>“{{ project.name }}”将被删除，其中的对话会移到随心聊。</AlertDialogDescription>
@@ -63,5 +79,5 @@ function remove() {
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
-  </div>
+  </SidebarMenuItem>
 </template>

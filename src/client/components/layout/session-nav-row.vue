@@ -1,18 +1,17 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { FolderInputIcon, Trash2Icon } from '@lucide/vue'
+import { computed, nextTick, ref } from 'vue'
+import { EllipsisIcon, Trash2Icon } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 import { DISCONNECTED_MESSAGE, moveSessionCommand, useSyncStore } from '@/client/stores/sync'
-import { cn } from '@/client/lib/utils'
 import { sessionPath } from '@/client/lib/ui-models'
-import { Button } from '@/client/ui/button'
+import { SidebarMenuAction, SidebarMenuButton, SidebarMenuItem, useSidebar } from '@/client/ui/sidebar'
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
-  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
+  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/client/ui/alert-dialog'
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel,
-  DropdownMenuTrigger,
+  DropdownMenuSeparator, DropdownMenuTrigger,
 } from '@/client/ui/dropdown-menu'
 import type { Project, Session } from '@/shared/models'
 
@@ -24,6 +23,17 @@ const props = defineProps<{
 
 const emit = defineEmits<{ navigate: [] }>()
 const sync = useSyncStore()
+const { isMobile } = useSidebar()
+const deleteOpen = ref(false)
+const action = ref<InstanceType<typeof SidebarMenuAction> | null>(null)
+
+function restoreActionFocus(event: Event) {
+  event.preventDefault()
+  void nextTick(() => {
+    const element = action.value?.$el
+    if (element instanceof HTMLElement && element.isConnected) element.focus({ preventScroll: true })
+  })
+}
 
 const moveTargets = computed(() => [
   ...(props.session.project_id === null ? [] : [{ id: null, label: '移出 Project' }]),
@@ -49,50 +59,39 @@ function send(command: Parameters<typeof sync.send>[0]): boolean {
 </script>
 
 <template>
-  <div
-    :class="cn(
-      'group/session flex min-h-10 min-w-0 items-center rounded-md',
-      active ? 'bg-sidebar-accent text-sidebar-accent-foreground' : 'hover:bg-sidebar-accent',
-    )"
-  >
-    <RouterLink class="flex min-h-10 min-w-0 flex-1 items-center px-2 text-sm" :to="sessionPath(session)" @click="emit('navigate')">
-      <span class="truncate">{{ session.title }}</span>
-    </RouterLink>
+  <SidebarMenuItem>
+    <SidebarMenuButton as-child size="lg" class="h-10" :is-active="active">
+      <RouterLink :to="sessionPath(session)" @click="emit('navigate')">
+        <span>{{ session.title }}</span>
+      </RouterLink>
+    </SidebarMenuButton>
 
     <DropdownMenu>
       <DropdownMenuTrigger as-child>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          class="size-10 shrink-0 text-muted-foreground md:opacity-0 md:group-hover/session:opacity-100 md:focus-visible:opacity-100"
-          aria-label="移动对话"
-        >
-          <FolderInputIcon />
-        </Button>
+        <SidebarMenuAction ref="action" show-on-hover type="button" :aria-label="`对话操作：${session.title}`">
+          <EllipsisIcon />
+        </SidebarMenuAction>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" class="min-w-44">
-        <DropdownMenuLabel>移动到</DropdownMenuLabel>
+      <DropdownMenuContent :side="isMobile ? 'bottom' : 'right'" :align="isMobile ? 'end' : 'start'" class="min-w-44" @close-auto-focus="event => { if (deleteOpen) event.preventDefault() }">
         <DropdownMenuGroup>
+          <DropdownMenuLabel>移动到</DropdownMenuLabel>
           <DropdownMenuItem v-for="target in moveTargets" :key="target.id ?? 'none'" class="min-h-10" @select="move(target.id)">
             {{ target.label }}
           </DropdownMenuItem>
           <DropdownMenuItem v-if="moveTargets.length === 0" class="min-h-10" disabled>还没有其他 Project</DropdownMenuItem>
         </DropdownMenuGroup>
+        <DropdownMenuSeparator />
+        <DropdownMenuGroup>
+          <DropdownMenuItem variant="destructive" class="min-h-10" @select="deleteOpen = true">
+            <Trash2Icon />
+            <span>删除对话</span>
+          </DropdownMenuItem>
+        </DropdownMenuGroup>
       </DropdownMenuContent>
     </DropdownMenu>
 
-    <AlertDialog>
-      <AlertDialogTrigger as-child>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          class="size-10 shrink-0 text-muted-foreground md:opacity-0 md:group-hover/session:opacity-100 md:focus-visible:opacity-100"
-          aria-label="删除对话"
-        >
-          <Trash2Icon />
-        </Button>
-      </AlertDialogTrigger>
-      <AlertDialogContent>
+    <AlertDialog v-model:open="deleteOpen">
+      <AlertDialogContent @close-auto-focus="restoreActionFocus">
         <AlertDialogHeader>
           <AlertDialogTitle>删除这个对话？</AlertDialogTitle>
           <AlertDialogDescription>“{{ session.title }}”及其所有消息将被永久删除。</AlertDialogDescription>
@@ -103,5 +102,5 @@ function send(command: Parameters<typeof sync.send>[0]): boolean {
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
-  </div>
+  </SidebarMenuItem>
 </template>

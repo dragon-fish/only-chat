@@ -80,13 +80,13 @@
 - Project 页面另有“Project 内新对话”按钮，进入 `/project/:projectId/new`。
 - 进入具体聊天后隐藏底部导航，由 Composer 占据底部；返回来源列表后恢复导航。
 
-移动端聊天首页使用 `/chats`，中央 `＋` 进入 `/new` 无 Project 草稿；`/` 静态重定向到 `/chats`。桌面访问 `/chats` 时显示外层侧栏与引导选择/新建会话的空内容区。
+`/` 在桌面（至少 768px）重定向到 `/new`，在手机上重定向到 `/chats`，由路由记录的函数式 redirect 在页面渲染前完成。桌面品牌/首页入口使用 `/new`。`/chats` 只负责聊天与 Project 列表；`/new` 始终是带 Composer 的无 Project 草稿，手机中央 `＋` 也进入该路由。
 
 路由结构为 `/chats`、`/new`、`/c/:sessionId`、`/projects`，以及 `/project/:projectId` 下的首页、`settings`、`new`、`c/:sessionId`。Project 父布局通过嵌套 `RouterView` 向子页面传递 Project 上下文。移除 `/projects/:id`、`/settings/projects/:id` 和查询参数草稿，不保留兼容路由，也不根据会话所属 Project 重定向 `/c/:sessionId`。
 
 聊天首页依次显示 Projects 和随心聊。Project 会话列表为独立页面。设置区把桌面三栏摊平成“设置项 → 供应商列表 → 供应商详情”三级页面。
 
-模型编辑、会话设置和 reasoning 使用桌面右侧 `Sheet` / 手机底部 `Drawer`；模型选择使用桌面 `Popover` / 手机 `Drawer`。Project 设置使用桌面居中 `Dialog` / 手机全屏 `Dialog`，关闭或保存后返回 `/project/:projectId`。删除和放弃未保存更改使用居中的 `AlertDialog`。
+模型编辑和会话设置使用桌面右侧 `Sheet` / 手机底部 `Drawer`；模型选择和 reasoning 使用桌面 `Popover` / 手机 `Drawer`。Reasoning 在断点变化时关闭浮层并恢复触发器焦点，已选强度保持不变。Project 设置使用桌面居中 `Dialog` / 手机全屏 `Dialog`，关闭或保存后返回 `/project/:projectId`。删除和放弃未保存更改使用居中的 `AlertDialog`。
 
 ## 5. Projects 与随心聊
 

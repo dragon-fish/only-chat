@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
-import { ArrowLeftIcon, DownloadIcon, PlusIcon, Settings2Icon, Trash2Icon } from '@lucide/vue'
-import { RouterLink, useRouter } from 'vue-router'
+import { DownloadIcon, PlusIcon, Settings2Icon, Trash2Icon } from '@lucide/vue'
+import { useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
 import ModelEditor from '@/client/components/model-editor.vue'
 import UnsavedChangesGuard from '@/client/components/unsaved-changes-guard.vue'
+import SettingsBackButton from '@/client/components/layout/settings-back-button.vue'
 import { useFormChanges } from '@/client/composables/use-form-changes'
 import { Alert, AlertDescription, AlertTitle } from '@/client/ui/alert'
 import ProviderNavigation from '@/client/components/provider-navigation.vue'
@@ -20,6 +21,7 @@ import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemTitle }
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/client/ui/select'
 import { Separator } from '@/client/ui/separator'
 import { Skeleton } from '@/client/ui/skeleton'
+import { Spinner } from '@/client/ui/spinner'
 import { Switch } from '@/client/ui/switch'
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from '@/client/ui/empty'
 import {
@@ -53,6 +55,7 @@ const pendingWrites = reactive(new Map<number, number>())
 const deletingProvider = ref(false)
 const providerDeleteOpen = ref(false)
 const editingModel = ref<Model | null>(null)
+const modelEditor = ref<InstanceType<typeof ModelEditor> | null>(null)
 const editorOpen = ref(false)
 const modelToDelete = ref<Model | null>(null)
 const modelDeleteOpen = ref(false)
@@ -230,11 +233,16 @@ function openModel(model: Model) {
 }
 
 async function saveModel(patch: Partial<ModelInput>) {
-  if (!editingModel.value) return
+  const editor = modelEditor.value
+  if (!editingModel.value || !editor) return
   const current = models.value.find(model => model.id === editingModel.value?.id)
   if (!current) return
   const token = loadToken
-  if (await applyModel(current, patch) && token === loadToken && editingModel.value?.id === current.id) editorOpen.value = false
+  const snapshot = editor.captureSnapshot()
+  const saved = await applyModel(current, patch)
+  // Reopening the same model creates a new draft owner that an earlier save must not close.
+  if (!saved || token !== loadToken || modelEditor.value !== editor) return
+  if (editor.acknowledgeSave(snapshot)) editorOpen.value = false
 }
 
 function confirmModelDelete() {
@@ -264,16 +272,21 @@ async function removeModel() {
 <template lang="pug">
 .flex.h-full.min-h-0.overflow-hidden
   Teleport(to="#page-header")
-    Button(as-child variant="ghost" size="icon" class="size-10 md:hidden")
-      RouterLink(to="/settings/providers" aria-label="返回供应商列表")
-        ArrowLeftIcon
+    SettingsBackButton(to="/settings/providers" label="返回供应商列表")
     span.truncate.text-sm.font-medium {{ form.name || '供应商设置' }}
   ProviderNavigation(:selected-provider-id="providerId" class="hidden w-64 shrink-0 border-r md:flex")
   .oc-scroll.min-h-0.min-w-0.flex-1.overflow-y-auto
     .mx-auto.flex.w-full.max-w-3xl.flex-col.gap-6.p-4(class="md:p-6 lg:p-8")
-      .flex.items-center.justify-end.gap-2
-        UnsavedChangesGuard(:dirty="dirty")
-        span.text-xs.text-muted-foreground(v-if="refreshing && ready" role="status") 更新模型列表…
+      .flex.flex-col.gap-2
+        .flex.h-10.items-center.gap-3
+          .flex.min-w-0.flex-1.items-center.gap-2
+            h1.truncate.text-2xl.font-semibold(:title="form.name || '供应商设置'") {{ form.name || '供应商设置' }}
+            UnsavedChangesGuard(:dirty="dirty")
+            Spinner(v-if="refreshing && ready" class="shrink-0" aria-label="正在更新模型列表" title="正在更新模型列表")
+          Switch#provider-enabled(v-if="ready" v-model="form.enabled" aria-label="启用供应商" class="after:-inset-y-3")
+        .flex.flex-wrap.gap-1(v-if="ready")
+          Badge(:variant="form.enabled ? 'secondary' : 'outline'") {{ form.enabled ? '已启用' : '已停用' }}
+          Badge(variant="outline") {{ hasKey ? '已配置密钥' : '无密钥' }}
       .flex.flex-col.gap-4(v-if="loading" aria-label="正在加载供应商")
         Skeleton(class="h-8 w-40")
         Skeleton(v-for="index in 5" :key="index" class="h-16 w-full")
@@ -283,14 +296,6 @@ async function removeModel() {
           p {{ loadError }}
           Button(variant="outline" class="min-h-10" @click="load") 重试
       template(v-else)
-        .flex.flex-wrap.items-start.justify-between.gap-3
-          .flex.min-w-0.flex-col.gap-2
-            .flex.items-center.gap-3
-              h1.break-words.text-2xl.font-semibold {{ form.name }}
-              Switch#provider-enabled(v-model="form.enabled" aria-label="启用供应商" class="after:-inset-y-3")
-            .flex.flex-wrap.gap-1
-              Badge(:variant="form.enabled ? 'secondary' : 'outline'") {{ form.enabled ? '已启用' : '已停用' }}
-              Badge(variant="outline") {{ hasKey ? '已配置密钥' : '无密钥' }}
         form.flex.flex-col.gap-6(@submit.prevent="save")
           FieldGroup
             Field
@@ -383,7 +388,7 @@ async function removeModel() {
                 Button(v-if="modelQuery.trim()" variant="outline" class="min-h-10" @click="modelQuery = ''") 清除搜索
                 Button(v-else-if="canFetchModels" variant="outline" class="min-h-10" :disabled="busyModels || deletingProvider" @click="fetchModels") 拉取模型
                 Button(v-else variant="outline" class="min-h-10" @click="focusNewModel") 输入模型 ID
-  ModelEditor(v-if="editorOpen && editingModel && providerId !== null" v-model:open="editorOpen" :key="editingModel.id" :provider-id="providerId" :model="editingModel" :saving="busyModels" @save="saveModel" @delete="confirmModelDelete")
+  ModelEditor(v-if="editorOpen && editingModel && providerId !== null" ref="modelEditor" v-model:open="editorOpen" :key="editingModel.id" :provider-id="providerId" :model="editingModel" :saving="busyModels" @save="saveModel" @delete="confirmModelDelete")
   AlertDialog(v-model:open="modelDeleteOpen")
     AlertDialogContent
       AlertDialogHeader

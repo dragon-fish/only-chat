@@ -9,6 +9,7 @@ import { useSyncStore } from '@/client/stores/sync'
 import { Button } from '@/client/ui/button'
 import { Input } from '@/client/ui/input'
 import { ScrollArea } from '@/client/ui/scroll-area'
+import { SidebarMenu } from '@/client/ui/sidebar'
 
 const sync = useSyncStore()
 const query = ref('')
@@ -39,7 +40,9 @@ const projects = computed(() => searchProjects(
       </div>
 
       <CollectionState :loaded="sync.projectsLoaded" :error="sync.projectsError" :retry="sync.loadProjects" :empty="projects.length === 0" :empty-title="query ? '没有匹配的 Project' : '还没有 Project'" empty-description="创建一个 Project 开始整理对话，或换个关键词再试。">
-        <ProjectNavRow v-for="project in projects" :key="project.id" :project="project" />
+        <SidebarMenu>
+          <ProjectNavRow v-for="project in projects" :key="project.id" :project="project" />
+        </SidebarMenu>
         <template #empty-action>
           <Button v-if="query" variant="outline" class="min-h-10" @click="query = ''">清除搜索</Button>
           <ProjectCreateDialog v-else />

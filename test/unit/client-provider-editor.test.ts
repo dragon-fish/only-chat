@@ -56,7 +56,70 @@ async function type(input: HTMLInputElement, value: string) {
   await nextTick()
 }
 
+function delayModelSave() {
+  const persisted = structuredClone(models)
+  let acknowledge!: () => void
+  vi.mocked(api.models).mockImplementation(async () => structuredClone(persisted))
+  const write = vi.spyOn(api, 'updateModel').mockImplementation(async (_providerId, modelId, patch) => {
+    await new Promise<void>(resolve => { acknowledge = resolve })
+    const model = persisted.find(model => model.id === modelId)!
+    Object.assign(model, patch)
+    return structuredClone(model)
+  })
+  return { write, acknowledge: () => acknowledge() }
+}
+
+async function submitModelName() {
+  document.querySelector<HTMLButtonElement>('[aria-label="编辑 First model"]')!.click()
+  await vi.waitFor(() => expect(document.querySelector('#model-1-2-name')).not.toBeNull())
+  const name = document.querySelector<HTMLInputElement>('#model-1-2-name')!
+  await type(name, 'Submitted model')
+  name.closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+  await nextTick()
+}
+
 describe('provider model editor', () => {
+  it.each([false, true])('retains newer model edits after a delayed save (reopened=%s)', async (reopen) => {
+    // A saved model ID can match a different editor instance, or an instance with a newer draft.
+    // Neither acknowledgement may unmount that draft or mark its newer values as saved.
+    await mountEditor()
+    const save = delayModelSave()
+    await submitModelName()
+    await vi.waitFor(() => expect(save.write).toHaveBeenCalledWith(1, 2, {
+      model_id: 'first-model', display_name: 'Submitted model', enabled: true, capabilities: { vision: true },
+    }))
+    if (reopen) {
+      document.querySelector<HTMLInputElement>('#model-1-2-name')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      await vi.waitFor(() => expect(document.querySelector('[role="alertdialog"]')).not.toBeNull())
+      ;[...document.querySelectorAll('button')].find(button => button.textContent?.trim() === '放弃更改')!.click()
+      await vi.waitFor(() => expect(document.querySelector('#model-1-2-name')).toBeNull())
+      document.querySelector<HTMLButtonElement>('[aria-label="编辑 Submitted model"]')!.click()
+      await vi.waitFor(() => expect(document.querySelector('#model-1-2-name')).not.toBeNull())
+    }
+    await type(document.querySelector<HTMLInputElement>('#model-1-2-name')!, 'Newer model draft')
+    save.acknowledge()
+    await vi.waitFor(() => expect([...document.querySelectorAll('button')].some(button => button.textContent?.trim() === '保存中…')).toBe(false))
+    expect(document.querySelector<HTMLInputElement>('#model-1-2-name')?.value).toBe('Newer model draft')
+    expect(document.querySelector('[data-slot="sheet-content"] [role="status"]')?.textContent).toContain('未保存')
+    const unload = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(unload)
+    expect(unload.defaultPrevented).toBe(true)
+    await type(document.querySelector<HTMLInputElement>('#model-1-2-name')!, 'Submitted model')
+    const cleanUnload = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(cleanUnload)
+    expect(cleanUnload.defaultPrevented).toBe(false)
+  })
+
+  it('closes the same editor when the acknowledged submission still matches its draft', async () => {
+    await mountEditor()
+    const save = delayModelSave()
+    await submitModelName()
+    await vi.waitFor(() => expect(save.write).toHaveBeenCalledTimes(1))
+    save.acknowledge()
+    await vi.waitFor(() => expect(document.querySelector('#model-1-2-name')).toBeNull())
+    expect(document.querySelector('[aria-label="编辑 Submitted model"]')).not.toBeNull()
+  })
+
   it('does not clear edits made after the submitted provider snapshot', async () => {
     await mountEditor()
     let acknowledge!: (value: Provider) => void

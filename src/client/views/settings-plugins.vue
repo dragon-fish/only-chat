@@ -4,6 +4,7 @@ import { PlugIcon } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 import { toast } from 'vue-sonner'
 import CollectionState from '@/client/components/collection-state.vue'
+import SettingsBackButton from '@/client/components/layout/settings-back-button.vue'
 import { acknowledgedPlugins } from '@/client/lib/settings'
 import { Badge } from '@/client/ui/badge'
 import { Button } from '@/client/ui/button'
@@ -44,6 +45,7 @@ function toggle(key: string, value: boolean) {
 <template lang="pug">
 .h-full.min-h-0.overflow-hidden
   Teleport(to="#page-header")
+    SettingsBackButton
     span.truncate.text-sm.font-medium 插件
   .oc-scroll.h-full.overflow-y-auto
     .mx-auto.flex.w-full.max-w-3xl.flex-col.gap-6.p-4(class="md:p-6 lg:p-8")
