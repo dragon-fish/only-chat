@@ -16,5 +16,5 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/
       EmptyMedia(variant="icon")
         ServerIcon
       EmptyTitle 配置你的模型服务
-      EmptyDescription 选择一个供应商，管理连接与可用模型。
+      EmptyDescription 从 models.dev 选择供应商或配置自定义端点，管理接口与已添加模型。
 </template>

@@ -117,10 +117,15 @@ const activeReasoning = computed<ReasoningChoice>(() => (
   form.reasoning === 'inherit' ? inheritedReasoning.value : form.reasoning
 ))
 
-// A remembered model whose provider/model was since deleted or disabled would leave 发送 enabled
-// against a model the server will reject; drop it once the config is known.
-watch(() => [config.loaded, config.enabledModels().map((e) => `${e.provider.id}:${e.model.model_id}`).join('|')] as const, () => {
-  if (config.loaded && picked.value && !config.isAvailable(picked.value)) picked.value = null
+// An unloaded page does not prove a remembered model is unavailable. Wait for its explicit read.
+watch(() => {
+  const model = picked.value
+  return [config.loaded, model,
+    config.providerRecords.find(provider => provider.id === model?.provider_id)?.enabled,
+    model ? config.modelsByRef[`${model.provider_id}:${model.model_id}`]?.enabled : undefined,
+  ] as const
+}, ([loaded, model, providerEnabled, modelEnabled]) => {
+  if (loaded && model && (providerEnabled !== true || modelEnabled === false)) picked.value = null
 }, { immediate: true })
 
 const messageLoadError = ref<string | null>(null)

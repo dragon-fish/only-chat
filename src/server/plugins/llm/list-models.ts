@@ -1,14 +1,14 @@
-import type { ProviderRow } from '../../db/schema'
+import type { ProviderInterface } from '@/shared/models'
 
 /** GET {base_url}/models. The AI SDK has no listing API, so we call the endpoint directly. */
 export async function listRemoteModels(
-  provider: ProviderRow,
+  provider: Pick<ProviderInterface, 'protocol' | 'base_url'>,
   apiKey: string | null,
   fetchFn: typeof fetch = fetch,
 ): Promise<string[]> {
   // Neither Vertex shape exposes an OpenAI-style catalogue under its own Base URL; a compatible
   // gateway keeps its listing on a separate base that we must not guess at.
-  if (provider.protocol === 'vertex' || provider.protocol === 'vertex-compatible') {
+  if (provider.protocol === 'vertex-compatible') {
     throw new Error(`model listing is not supported for ${provider.protocol}`)
   }
   const url = `${provider.base_url.replace(/\/$/, '')}/models`

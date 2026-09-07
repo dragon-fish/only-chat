@@ -1,8 +1,8 @@
-import type { AttachmentCheckResponse, AttachmentUploadResponse, FetchModelsResponse, ModelInput, ProviderInput } from '@/shared/api'
-import type { Message, Model, Project, Provider, Session, User } from '@/shared/models'
+import type { AttachmentCheckResponse, AttachmentUploadResponse, CatalogProviderSummary, CatalogRefreshResponse, CatalogStatus, FetchModelsResponse, ModelRef, ModelWriteInput, ProviderWriteInput } from '@/shared/api'
+import type { Message, ModelPage, ModelQuery, ModelWithMetadata, Project, ProviderWithInterfaces, Session, User } from '@/shared/models'
 import type { PresetProvider } from '@/server/plugins/llm/presets'
 
-async function request<T>(method: string, path: string, body?: unknown, init: RequestInit = {}): Promise<T> {
+async function request<T>(method: string, path: string, body?: unknown, init: RequestInit = {}, onWarning?: (warning: string) => void): Promise<T> {
   const res = await fetch(path, {
     ...init,
     method,
@@ -15,7 +15,15 @@ async function request<T>(method: string, path: string, body?: unknown, init: Re
     try { detail = ((await res.json()) as { error?: string }).error ?? '' } catch { /* ignore */ }
     throw new Error(`${method} ${path} failed: ${res.status} ${detail}`.trim())
   }
+  const warning = res.headers.get('X-Provider-Association-Warning')
+  if (warning) onWarning?.(warning)
   return res.status === 204 ? (undefined as T) : ((await res.json()) as T)
+}
+
+function queryString(input: Record<string, unknown>): string {
+  const params = new URLSearchParams()
+  for (const [key, value] of Object.entries(input)) if (value !== undefined) params.set(key, String(value))
+  return params.size ? `?${params}` : ''
 }
 
 export const api = {
@@ -24,15 +32,20 @@ export const api = {
   sessions: () => request<Session[]>('GET', '/api/sessions'),
   projects: () => request<Project[]>('GET', '/api/projects'),
   messages: (sessionId: number) => request<Message[]>('GET', `/api/sessions/${sessionId}/messages`),
-  providers: () => request<Provider[]>('GET', '/api/providers'),
-  createProvider: (input: ProviderInput) => request<Provider>('POST', '/api/providers', input),
-  updateProvider: (id: number, input: Partial<ProviderInput>) => request<Provider>('PUT', `/api/providers/${id}`, input),
+  providers: () => request<ProviderWithInterfaces[]>('GET', '/api/providers'),
+  createProvider: (input: ProviderWriteInput, onWarning?: (warning: string) => void) => request<ProviderWithInterfaces>('POST', '/api/providers', input, {}, onWarning),
+  updateProvider: (id: number, input: ProviderWriteInput, onWarning?: (warning: string) => void) => request<ProviderWithInterfaces>('PUT', `/api/providers/${id}`, input, {}, onWarning),
   deleteProvider: (id: number) => request<void>('DELETE', `/api/providers/${id}`),
   fetchModels: (providerId: number) => request<FetchModelsResponse>('POST', `/api/providers/${providerId}/fetch-models`),
-  models: (providerId: number, signal?: AbortSignal) => request<Model[]>('GET', `/api/providers/${providerId}/models`, undefined, { signal }),
-  createModel: (providerId: number, input: ModelInput) => request<Model>('POST', `/api/providers/${providerId}/models`, input),
-  updateModel: (providerId: number, rowId: number, input: Partial<ModelInput>) => request<Model>('PUT', `/api/providers/${providerId}/models/${rowId}`, input),
+  models: (providerId: number, query: Partial<ModelQuery> = {}, signal?: AbortSignal) => request<ModelPage>('GET', `/api/providers/${providerId}/models${queryString(query)}`, undefined, { signal }),
+  queryModels: (query: Partial<ModelQuery> = {}, signal?: AbortSignal) => request<ModelPage>('GET', `/api/models${queryString(query)}`, undefined, { signal }),
+  modelByRef: (ref: ModelRef, signal?: AbortSignal) => request<ModelWithMetadata>('GET', `/api/providers/${ref.provider_id}/models/by-ref${queryString({ model_id: ref.model_id })}`, undefined, { signal }),
+  createModel: (providerId: number, input: ModelWriteInput) => request<ModelWithMetadata>('POST', `/api/providers/${providerId}/models`, input),
+  updateModel: (providerId: number, rowId: number, input: Partial<ModelWriteInput>) => request<ModelWithMetadata>('PUT', `/api/providers/${providerId}/models/${rowId}`, input),
   deleteModel: (providerId: number, rowId: number) => request<void>('DELETE', `/api/providers/${providerId}/models/${rowId}`),
+  catalogStatus: () => request<CatalogStatus>('GET', '/api/model-catalog/status'),
+  catalogProviders: (query = '', signal?: AbortSignal) => request<CatalogProviderSummary[]>('GET', `/api/model-catalog/providers${queryString({ q: query })}`, undefined, { signal }),
+  refreshCatalog: () => request<CatalogRefreshResponse>('POST', '/api/model-catalog/refresh'),
   checkAttachment: (sha256: string) => request<AttachmentCheckResponse>('POST', '/api/attachments/check', { sha256 }),
   uploadAttachment: (sha256: string, blob: Blob, w: number, h: number) =>
     request<AttachmentUploadResponse>('PUT', `/api/attachments/${sha256}?w=${w}&h=${h}`, blob, { headers: { 'content-type': blob.type } }),

@@ -5,9 +5,99 @@ import { createDb } from '@/server/db/client'
 import { attachmentProviderFiles, attachments } from '@/server/db/schema'
 import { createProject } from '@/server/plugins/hub/projects'
 import { DEFAULT_USER_ID } from '@/shared/constants'
+import { ProviderWithInterfacesSchema } from '@/shared/models'
+import { catalogApp } from './provider-catalog-fixture'
+import { decryptSecret } from '@/server/plugins/llm/crypto'
 
 const json = (method: string, path: string, body?: unknown) =>
   exports.default.fetch(new Request(`https://x${path}`, { method, headers: { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) }))
+
+describe('atomic provider interface API', () => {
+  it('uses the default endpoint first, then same-origin siblings, and reports conflicts without blocking save', async () => {
+    const { request, createProvider } = await catalogApp()
+    const sibling = await createProvider({ interfaces: [
+      { protocol: 'responses', base_url: 'https://gateway.test/responses' },
+      { protocol: 'chat-completions', base_url: 'https://gateway.test/v1' },
+      { protocol: 'anthropic', base_url: 'https://lab.test/v1' },
+    ] })
+    expect(sibling.models_dev_provider_id).toBe('gateway')
+    const conflict = await request('PUT', `/providers/${sibling.id}`, {
+      name: 'Conflict', default_protocol: 'responses', interfaces: [
+        { protocol: 'responses', base_url: 'https://gateway.test/responses' },
+        { protocol: 'chat-completions', base_url: 'https://gateway.test/v1' },
+        { protocol: 'anthropic', base_url: 'https://gateway.test/messages' },
+      ],
+    })
+    expect(conflict.status).toBe(200)
+    expect(conflict.headers.get('X-Provider-Association-Warning')).toContain('different catalog providers')
+    expect(await conflict.json()).toMatchObject({ name: 'Conflict', models_dev_provider_id: null, models_dev_provider_source: 'endpoint' })
+    const defaultWins = await createProvider({ interfaces: [
+      { protocol: 'responses', base_url: 'https://gateway.test/v1' },
+      { protocol: 'anthropic', base_url: 'https://gateway.test/messages' },
+    ] })
+    expect(defaultWins.models_dev_provider_id).toBe('gateway')
+  })
+
+  it('rolls back the provider and interface changes when an interface write fails', async () => {
+    const { request, createProvider } = await catalogApp()
+    const provider = await createProvider()
+    await env.DB.exec("CREATE TRIGGER test_interface_failure BEFORE UPDATE ON provider_interfaces WHEN new.base_url = 'https://reject.test/v1' BEGIN SELECT RAISE(ABORT, 'injected interface failure'); END")
+    try {
+      const response = await request('PUT', `/providers/${provider.id}`, { name: 'Must roll back', default_protocol: 'responses', interfaces: [{ protocol: 'responses', base_url: 'https://reject.test/v1' }] })
+      expect(response.status).toBe(500)
+      expect(await env.DB.prepare('SELECT name, default_interface_id FROM providers WHERE id = ?').bind(provider.id).first()).toEqual({ name: 'Gateway', default_interface_id: provider.default_interface_id })
+      expect(await env.DB.prepare('SELECT base_url FROM provider_interfaces WHERE id = ?').bind(provider.default_interface_id).first()).toEqual({ base_url: 'https://gateway.test/v1' })
+    } finally { await env.DB.exec('DROP TRIGGER test_interface_failure') }
+  })
+
+  it('stores one encrypted credential and an owned default interface, without leaking legacy fields', async () => {
+    const { createProvider } = await catalogApp()
+    const provider = ProviderWithInterfacesSchema.parse(await createProvider({ api_key: 'shared-secret', interfaces: [
+      { protocol: 'responses', base_url: 'https://gateway.test/v1', native_files: true },
+      { protocol: 'anthropic', base_url: 'https://gateway.test/anthropic' },
+    ] }))
+    expect(provider.interfaces).toHaveLength(2)
+    expect(provider.default_interface_id).toBe(provider.interfaces.find(item => item.protocol === 'responses')?.id)
+    expect(provider).toMatchObject({ has_key: true, credential_version: 1, models_dev_provider_id: 'gateway', models_dev_provider_source: 'endpoint' })
+    const row = await env.DB.prepare('SELECT api_key FROM providers WHERE id = ?').bind(provider.id).first<{ api_key: string }>()
+    expect(row?.api_key).not.toContain('shared-secret')
+    expect(await decryptSecret(env.KEY_ENCRYPTION_SECRET, row!.api_key)).toBe('shared-secret')
+  })
+
+  it('rematches endpoint associations while preserving manual choices and increments credentials only on changes', async () => {
+    const { request, createProvider } = await catalogApp()
+    const provider = await createProvider({ api_key: 'one' })
+    const write = (patch: Record<string, unknown> = {}) => request('PUT', `/providers/${provider.id}`, {
+      name: provider.name, interfaces: provider.interfaces.map(({ id, protocol, base_url, native_files }) => ({ id, protocol, base_url, native_files })),
+      default_protocol: 'responses', ...patch,
+    })
+    expect((await (await write({ api_key: 'one' })).json() as { credential_version: number }).credential_version).toBe(1)
+    expect((await (await write({ api_key: 'two' })).json() as { credential_version: number }).credential_version).toBe(2)
+    expect((await (await write({ api_key: '' })).json() as { credential_version: number }).credential_version).toBe(3)
+    expect((await (await write({ api_key: '' })).json() as { credential_version: number }).credential_version).toBe(3)
+    const changed = await write({ interfaces: [{ ...provider.interfaces[0], provider_id: undefined, created_at: undefined, base_url: 'https://lab.test/v1' }] })
+    expect(await changed.json()).toMatchObject({ models_dev_provider_id: 'lab', models_dev_provider_source: 'endpoint' })
+    expect(await (await write({ models_dev_provider: { source: 'manual', provider_id: 'lab' } })).json()).toMatchObject({ models_dev_provider_id: 'lab', models_dev_provider_source: 'manual' })
+    expect(await (await write()).json()).toMatchObject({ models_dev_provider_id: 'lab', models_dev_provider_source: 'manual' })
+  })
+
+  it('rejects invalid defaults, duplicate protocols, foreign IDs and Vertex Files before changing a provider', async () => {
+    const { request, createProvider } = await catalogApp()
+    const first = await createProvider()
+    const other = await createProvider()
+    const interfaceInput = { protocol: 'responses', base_url: 'https://gateway.test/v1' }
+    for (const patch of [
+      { default_protocol: 'anthropic' },
+      { interfaces: [interfaceInput, interfaceInput] },
+      { interfaces: [{ ...interfaceInput, id: other.interfaces[0]!.id }] },
+      { interfaces: [{ protocol: 'vertex-compatible', base_url: 'https://gateway.test/v1', native_files: true }], default_protocol: 'vertex-compatible' },
+    ]) {
+      expect((await request('PUT', `/providers/${first.id}`, { name: 'Must not save', interfaces: [interfaceInput], default_protocol: 'responses', ...patch })).status).toBe(400)
+    }
+    expect(await env.DB.prepare('SELECT name FROM providers WHERE id = ?').bind(first.id).first()).toEqual({ name: 'Gateway' })
+    expect((await env.DB.prepare('SELECT id FROM provider_interfaces WHERE provider_id = ?').bind(first.id).all()).results).toHaveLength(1)
+  })
+})
 
 describe('REST api', () => {
   it('returns the default user', async () => {
@@ -17,18 +107,19 @@ describe('REST api', () => {
   })
 
   it('creates a provider without leaking the key, lists models, deletes', async () => {
-    const created = await json('POST', '/api/providers', { name: 'A', protocol: 'anthropic', base_url: 'https://api.anthropic.com/v1', api_key: 'sk-secret' })
+    const input = { name: 'A', interfaces: [{ protocol: 'anthropic', base_url: 'https://api.anthropic.com/v1' }], default_protocol: 'anthropic', api_key: 'sk-secret' }
+    const created = await json('POST', '/api/providers', input)
     expect(created.status).toBe(201)
     const p = (await created.json()) as { id: number; has_key: boolean; api_key?: string }
     expect(p.has_key).toBe(true)
     expect(p.api_key).toBeUndefined()
 
-    const m = await json('POST', `/api/providers/${p.id}/models`, { model_id: 'claude-x', display_name: 'Claude X', capabilities: { vision: true } })
+    const m = await json('POST', `/api/providers/${p.id}/models`, { model_id: 'claude-x', metadata_override: { name: 'Claude X', modalities: { input: ['text', 'image'] } } })
     expect(m.status).toBe(201)
-    const list = await (await json('GET', `/api/providers/${p.id}/models`)).json() as Array<{ model_id: string }>
-    expect(list.map((x) => x.model_id)).toEqual(['claude-x'])
+    const list = await (await json('GET', `/api/providers/${p.id}/models`)).json() as { models: Array<{ model_id: string }> }
+    expect(list.models.map((x) => x.model_id)).toEqual(['claude-x'])
 
-    const upd = await json('PUT', `/api/providers/${p.id}`, { name: 'B' })
+    const upd = await json('PUT', `/api/providers/${p.id}`, { ...input, name: 'B', api_key: undefined })
     expect((await upd.json() as { name: string; has_key: boolean })).toMatchObject({ name: 'B', has_key: true })
 
     expect((await json('DELETE', `/api/providers/${p.id}`)).status).toBe(204)
@@ -96,48 +187,37 @@ describe('REST api', () => {
   })
 
   it('rejects a duplicate model_id with 409 and preserves the existing edit', async () => {
-    const created = await json('POST', '/api/providers', { name: 'C', protocol: 'anthropic', base_url: 'https://api.anthropic.com/v1' })
+    const created = await json('POST', '/api/providers', { name: 'C', interfaces: [{ protocol: 'anthropic', base_url: 'https://api.anthropic.com/v1' }], default_protocol: 'anthropic' })
     const p = (await created.json()) as { id: number }
-    const m = await json('POST', `/api/providers/${p.id}/models`, { model_id: 'dup-model', display_name: 'Dup' })
+    const m = await json('POST', `/api/providers/${p.id}/models`, { model_id: 'dup-model', metadata_override: { name: 'Dup' } })
     const createdModel = (await m.json()) as { id: number }
     await json('PUT', `/api/providers/${p.id}/models/${createdModel.id}`, { enabled: false })
-    const dup = await json('POST', `/api/providers/${p.id}/models`, { model_id: 'dup-model', display_name: 'Should not apply' })
+    const dup = await json('POST', `/api/providers/${p.id}/models`, { model_id: 'dup-model', metadata_override: { name: 'Should not apply' } })
     expect(dup.status).toBe(409)
     expect(await dup.json()).toEqual({ error: 'model already exists' })
-    const list = await (await json('GET', `/api/providers/${p.id}/models`)).json() as Array<{ model_id: string; enabled: boolean }>
-    expect(list.find((x) => x.model_id === 'dup-model')?.enabled).toBe(false)
+    const list = await (await json('GET', `/api/providers/${p.id}/models`)).json() as { models: Array<{ model_id: string; enabled: boolean }> }
+    expect(list.models.find((x) => x.model_id === 'dup-model')?.enabled).toBe(false)
   })
 
-  it('clears extra when protocol changes but leaves it alone otherwise', async () => {
-    const created = await json('POST', '/api/providers', { name: 'V', protocol: 'vertex', base_url: 'https://aiplatform.googleapis.com', extra: { project: 'p', location: 'l' } })
-    const p = (await created.json()) as { id: number; extra: unknown }
-    expect(p.extra).toEqual({ project: 'p', location: 'l' })
-
-    const untouched = await json('PUT', `/api/providers/${p.id}`, { name: 'x' })
-    expect((await untouched.json()) as { extra: unknown }).toMatchObject({ extra: { project: 'p', location: 'l' } })
-
-    const switched = await json('PUT', `/api/providers/${p.id}`, { protocol: 'anthropic' })
-    expect((await switched.json()) as { extra: unknown; protocol: string }).toMatchObject({ protocol: 'anthropic', extra: null })
+  it('rejects native Vertex and the retired single-protocol input', async () => {
+    expect((await json('POST', '/api/providers', { name: 'V', protocol: 'vertex', base_url: 'https://aiplatform.googleapis.com', extra: { project: 'p', location: 'l' } })).status).toBe(400)
+    expect((await json('POST', '/api/providers', { name: 'V', interfaces: [{ protocol: 'vertex', base_url: 'https://aiplatform.googleapis.com' }], default_protocol: 'vertex' })).status).toBe(400)
   })
 
   it('round-trips native_files on create and update, defaulting it off', async () => {
-    const off = (await (await json('POST', '/api/providers', { name: 'NF-off', protocol: 'openai-completions', base_url: 'https://api.example.com/v1' })).json()) as { id: number; native_files: boolean }
-    expect(off.native_files).toBe(false)
-
-    const on = (await (await json('POST', '/api/providers', { name: 'NF-on', protocol: 'openai-responses', base_url: 'https://api.openai.com/v1', native_files: true })).json()) as { id: number; native_files: boolean }
-    expect(on.native_files).toBe(true)
-    const listed = (await (await json('GET', '/api/providers')).json()) as Array<{ id: number; native_files: boolean }>
-    expect(listed.find((x) => x.id === on.id)?.native_files).toBe(true)
-
-    const patched = (await (await json('PUT', `/api/providers/${on.id}`, { native_files: false })).json()) as { native_files: boolean }
-    expect(patched.native_files).toBe(false)
-    const back = (await (await json('PUT', `/api/providers/${off.id}`, { native_files: true })).json()) as { native_files: boolean }
-    expect(back.native_files).toBe(true)
+    const input = { name: 'NF', interfaces: [{ protocol: 'responses', base_url: 'https://api.example.com/v1' }], default_protocol: 'responses' }
+    const off = ProviderWithInterfacesSchema.parse(await (await json('POST', '/api/providers', input)).json())
+    expect(off.interfaces[0]?.native_files).toBe(false)
+    const on = ProviderWithInterfacesSchema.parse(await (await json('PUT', `/api/providers/${off.id}`, { ...input, interfaces: [{ ...input.interfaces[0], native_files: true }] })).json())
+    expect(on.interfaces[0]?.native_files).toBe(true)
+    const back = ProviderWithInterfacesSchema.parse(await (await json('PUT', `/api/providers/${off.id}`, input)).json())
+    expect(back.interfaces[0]?.native_files).toBe(false)
   })
 
-  it('drops provider file pointers when the connection changes but keeps them on an unrelated edit', async () => {
+  it('retains historical file references for cleanup and versions new credentials', async () => {
     const db = createDb(env.DB)
-    const created = await json('POST', '/api/providers', { name: 'FP', protocol: 'openai-responses', base_url: 'https://api.openai.com/v1', api_key: 'sk-one' })
+    const input = { name: 'FP', interfaces: [{ protocol: 'responses', base_url: 'https://api.openai.com/v1' }], default_protocol: 'responses' }
+    const created = await json('POST', '/api/providers', { ...input, api_key: 'sk-one' })
     const p = (await created.json()) as { id: number }
     const [a] = await db.insert(attachments).values({
       user_id: DEFAULT_USER_ID, sha256: 'f'.repeat(64), mime: 'image/png', size: 4, width: null, height: null,
@@ -151,20 +231,11 @@ describe('REST api', () => {
     }
     const pointers = async () => (await db.select().from(attachmentProviderFiles).where(eq(attachmentProviderFiles.provider_id, p.id))).length
 
-    // A rename, or a resend of the same connection fields, must not throw away usable pointers.
     await seed()
-    await json('PUT', `/api/providers/${p.id}`, { name: 'FP renamed', protocol: 'openai-responses', base_url: 'https://api.openai.com/v1' })
+    await json('PUT', `/api/providers/${p.id}`, { ...input, name: 'FP renamed' })
     expect(await pointers()).toBe(1)
-
-    await json('PUT', `/api/providers/${p.id}`, { base_url: 'https://gateway.example.com/v1' })
-    expect(await pointers()).toBe(0)
-
-    await seed()
-    await json('PUT', `/api/providers/${p.id}`, { protocol: 'openai-completions' })
-    expect(await pointers()).toBe(0)
-
-    await seed()
-    await json('PUT', `/api/providers/${p.id}`, { api_key: 'sk-two' })
-    expect(await pointers()).toBe(0)
+    const changed = ProviderWithInterfacesSchema.parse(await (await json('PUT', `/api/providers/${p.id}`, { ...input, api_key: 'sk-two' })).json())
+    expect(changed.credential_version).toBe(2)
+    expect(await pointers()).toBe(1)
   })
 })

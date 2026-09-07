@@ -59,8 +59,8 @@ export class ModelCatalog extends Service {
     }
   }
 
-  async providerIndex(): Promise<CatalogProviderIndex> {
-    return await this.storage.readShard<CatalogProviderIndex>('providers', await publicationPointer(this.ctx.db.orm)) ?? {}
+  async providerIndex(version?: string): Promise<CatalogProviderIndex> {
+    return await this.storage.readShard<CatalogProviderIndex>('providers', await publicationPointer(this.ctx.db.orm), version) ?? {}
   }
 
   async globalModels(version: string): Promise<Record<string, CatalogModel>> {

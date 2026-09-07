@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useMediaQuery } from '@vueuse/core'
 import { ChevronDownIcon } from '@lucide/vue'
 import ModelPickerContent from '@/client/components/model-picker-content.vue'
@@ -25,6 +25,9 @@ const isDesktop = useMediaQuery('(min-width: 768px)')
 const selected = computed(() => config.modelFor(props.modelValue))
 const selectedName = computed(() => selected.value?.model.display_name ?? props.modelValue?.model_id ?? '选择模型')
 const selectedProviderName = computed(() => selected.value?.provider.name ?? '模型')
+watch(() => props.modelValue, model => {
+  void config.ensureModel(model).catch(error => { config.loadError = error instanceof Error ? error.message : String(error) })
+}, { immediate: true, deep: true })
 
 function onSelect(value: ModelRef) {
   emit('update:modelValue', value)

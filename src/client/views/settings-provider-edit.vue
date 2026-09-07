@@ -9,13 +9,15 @@ import SettingsBackButton from '@/client/components/layout/settings-back-button.
 import { useFormChanges } from '@/client/composables/use-form-changes'
 import { Alert, AlertDescription, AlertTitle } from '@/client/ui/alert'
 import ProviderNavigation from '@/client/components/provider-navigation.vue'
+import ProviderInterfaceList from '@/client/components/provider-interface-list.vue'
 import { api } from '@/client/lib/api'
+import { legacyModelView, legacyModelWrite } from '@/client/lib/legacy-catalog-ui'
 import { createModelWriteQueue } from '@/client/lib/settings'
 import { useConfigStore } from '@/client/stores/config'
 import { Badge } from '@/client/ui/badge'
 import { Button } from '@/client/ui/button'
 import { ButtonGroup } from '@/client/ui/button-group'
-import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel } from '@/client/ui/field'
+import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/client/ui/field'
 import { Input } from '@/client/ui/input'
 import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemTitle } from '@/client/ui/item'
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/client/ui/select'
@@ -28,21 +30,25 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from '@/client/ui/alert-dialog'
-import { ProtocolSchema, type Model, type Protocol } from '@/shared/models'
-import type { ModelInput } from '@/shared/api'
+import { type Model, type ModelQuery } from '@/shared/models'
+import { ProviderWriteInputSchema, type CatalogProviderSummary, type ModelInput, type ProviderWriteInput } from '@/shared/api'
 
 const props = defineProps<{ providerId: number | null }>()
 const router = useRouter()
 const config = useConfigStore()
 const providerId = computed(() => props.providerId)
-const form = reactive({ name: '', protocol: 'openai-completions' as Protocol, base_url: '', api_key: '', enabled: true, native_files: false, project: '', location: '' })
+const form = reactive<ProviderWriteInput>({ name: '', api_key: '', enabled: true, interfaces: [], default_protocol: 'chat-completions', models_dev_provider: { source: 'endpoint' } })
+const validProvider = computed(() => ProviderWriteInputSchema.safeParse(form).success)
+const savedProvider = computed(() => config.providerRecords.find(provider => provider.id === providerId.value))
+const savedName = computed(() => savedProvider.value?.name || '供应商设置')
+const catalogProviders = ref<CatalogProviderSummary[]>([])
+const associationWarning = ref<string | null>(null)
 const { dirty, markSaved } = useFormChanges(() => form)
 const models = ref<Model[]>([])
 const modelQuery = ref('')
-const visibleModels = computed(() => {
-  const query = modelQuery.value.trim().toLocaleLowerCase()
-  return models.value.filter(model => [model.model_id, model.display_name].some(value => value.toLocaleLowerCase().includes(query)))
-})
+const visibleModels = computed(() => models.value)
+const nextCursor = ref<string | null>(null)
+const modelLoadError = ref<string | null>(null)
 const newModelId = ref('')
 function focusNewModel() { document.getElementById('new-model-id')?.focus() }
 const loading = ref(true)
@@ -60,7 +66,7 @@ const editorOpen = ref(false)
 const modelToDelete = ref<Model | null>(null)
 const modelDeleteOpen = ref(false)
 const busyModels = computed(() => modelAction.value || (pendingWrites.get(providerId.value ?? -1) ?? 0) > 0)
-const canFetchModels = computed(() => form.protocol !== 'vertex' && form.protocol !== 'vertex-compatible')
+const canFetchModels = computed(() => savedProvider.value?.interfaces.find(endpoint => endpoint.id === savedProvider.value?.default_interface_id)?.protocol !== 'vertex-compatible' && !!savedProvider.value?.default_interface_id)
 const hasKey = computed(() => config.providers.find(provider => provider.id === providerId.value)?.has_key)
 const capabilityLabels = [
   { key: 'vision', label: '视觉' }, { key: 'reasoning', label: '推理' },
@@ -79,6 +85,45 @@ function report(error: unknown) {
 let loadToken = 0
 let loadedProviderId: number | null = null
 let loadController: AbortController | undefined
+let modelLoadToken = 0
+function queryFor(id: number): Partial<ModelQuery> {
+  const search = id === providerId.value ? modelQuery.value.trim() : ''
+  return search ? { search } : {}
+}
+async function readModels(id: number) {
+  const page = await config.loadProviderPage(id, queryFor(id))
+  if (id === providerId.value) nextCursor.value = page.next_cursor
+  return page.models.map(legacyModelView)
+}
+async function loadModelPage(append = false) {
+  const id = providerId.value
+  if (id === null) return
+  const token = ++modelLoadToken
+  const navigation = loadToken
+  loadController?.abort()
+  const controller = new AbortController()
+  loadController = controller
+  const search = modelQuery.value.trim()
+  if (search && Array.from(search).length < 3) {
+    models.value = []
+    nextCursor.value = null
+    modelLoadError.value = '搜索模型至少需要 3 个字符。'
+    refreshing.value = false
+    return
+  }
+  refreshing.value = true
+  modelLoadError.value = null
+  try {
+    const page = await config.loadProviderPage(id, { ...queryFor(id), ...(append && nextCursor.value ? { cursor: nextCursor.value } : {}) }, controller.signal)
+    if (token !== modelLoadToken || navigation !== loadToken) return
+    const result = page.models.map(legacyModelView)
+    models.value = append ? [...models.value, ...result.filter(model => !models.value.some(existing => existing.id === model.id))] : result
+    nextCursor.value = page.next_cursor
+  } catch (error) {
+    if (token === modelLoadToken && navigation === loadToken && !controller.signal.aborted) modelLoadError.value = error instanceof Error ? error.message : String(error)
+  } finally { if (token === modelLoadToken && navigation === loadToken) refreshing.value = false }
+}
+watch(modelQuery, () => { if (ready.value) void loadModelPage() })
 async function load() {
   const id = providerId.value
   const token = ++loadToken
@@ -91,13 +136,14 @@ async function load() {
   try {
     if (!config.loaded) await config.load()
     if (token !== loadToken) return
-    const provider = config.providers.find(item => item.id === id)
+    const provider = config.providerRecords.find(item => item.id === id)
     if (!provider) { await router.replace('/settings/providers'); return }
     if (loadedProviderId !== id) {
       Object.assign(form, {
-        name: provider.name, protocol: provider.protocol, base_url: provider.base_url, api_key: '',
-        enabled: provider.enabled, native_files: provider.native_files,
-        project: String(provider.extra?.project ?? ''), location: String(provider.extra?.location ?? ''),
+        name: provider.name, api_key: '', enabled: provider.enabled,
+        interfaces: provider.interfaces.map(({ id, protocol, base_url, native_files }) => ({ id, protocol, base_url, native_files })),
+        default_protocol: provider.interfaces.find(endpoint => endpoint.id === provider.default_interface_id)?.protocol ?? 'chat-completions',
+        models_dev_provider: provider.models_dev_provider_source === 'manual' && provider.models_dev_provider_id ? { source: 'manual', provider_id: provider.models_dev_provider_id } : { source: 'endpoint' },
       })
       markSaved()
       models.value = config.modelsByProvider[provider.id] ?? []
@@ -106,11 +152,13 @@ async function load() {
       editorOpen.value = false
       saving.value = modelAction.value = deletingProvider.value = false
       loadedProviderId = id
+      associationWarning.value = null
     }
     ready.value = true
     loading.value = false
-    const result = await api.models(provider.id, controller.signal)
-    if (token === loadToken) models.value = result
+    await loadModelPage()
+    const entries = await api.catalogProviders()
+    if (token === loadToken) catalogProviders.value = entries
   } catch (error) {
     if (token === loadToken && !controller.signal.aborted) loadError.value = error instanceof Error ? error.message : String(error)
   } finally {
@@ -118,28 +166,31 @@ async function load() {
   }
 }
 watch(providerId, load, { immediate: true })
-onBeforeUnmount(() => { loadToken++; loadController?.abort() })
+onBeforeUnmount(() => { loadToken++; modelLoadToken++; loadController?.abort() })
 
-function onProtocolChange(value: unknown) {
-  const parsed = ProtocolSchema.safeParse(value)
-  if (parsed.success) form.protocol = parsed.data
+function chooseAssociation(value: unknown) {
+  if (typeof value !== 'string') return
+  form.models_dev_provider = value === 'endpoint' ? { source: 'endpoint' } : { source: 'manual', provider_id: value }
 }
 
 async function save() {
-  if (saving.value) return
+  if (saving.value || !validProvider.value) return
   const id = requireId()
   const token = loadToken
-  const submitted = { ...form }
+  const submitted: ProviderWriteInput = JSON.parse(JSON.stringify(form))
   saving.value = true
   try {
-    // The server clears extra when protocol arrives without it, so always send both.
-    const extra = submitted.protocol === 'vertex' ? { project: submitted.project, location: submitted.location } : null
-    await api.updateProvider(id, {
-      name: submitted.name, protocol: submitted.protocol, base_url: submitted.base_url, enabled: submitted.enabled,
-      native_files: submitted.native_files, extra, ...(submitted.api_key ? { api_key: submitted.api_key } : {}),
-    })
+    const result = await api.updateProvider(id, { ...submitted, api_key: submitted.api_key || undefined }, value => { if (token === loadToken) associationWarning.value = value })
     await config.load()
     if (token === loadToken) {
+      for (const endpoint of submitted.interfaces) {
+        const persisted = result.interfaces.find(entry => entry.protocol === endpoint.protocol)
+        const current = form.interfaces.find(entry => entry.protocol === endpoint.protocol)
+        if (persisted) {
+          endpoint.id = persisted.id
+          if (current) current.id = persisted.id
+        }
+      }
       if (form.api_key === submitted.api_key) form.api_key = ''
       markSaved(JSON.stringify({ ...submitted, api_key: '' }))
       toast.success('已保存供应商')
@@ -169,7 +220,7 @@ async function fetchModels() {
   modelAction.value = true
   try {
     const result = await api.fetchModels(id)
-    const loadedModels = await api.models(id)
+    const loadedModels = await readModels(id)
     await config.load()
     if (token !== loadToken) return
     models.value = loadedModels
@@ -186,7 +237,7 @@ async function addModel() {
   modelAction.value = true
   try {
     await api.createModel(id, { model_id })
-    const loadedModels = await api.models(id)
+    const loadedModels = await readModels(id)
     await config.load()
     if (token !== loadToken) return
     newModelId.value = ''
@@ -201,9 +252,15 @@ function queueFor(id: number) {
   let queue = writeQueues.get(id)
   if (!queue) {
     queue = createModelWriteQueue({
-      write: (modelId, patch) => api.updateModel(id, modelId, patch),
+      write: async (modelId, patch) => {
+        const record = Object.values(config.modelsByRef).find(model => model.id === modelId && model.provider_id === id)
+        if (!record) throw new Error('missing model record')
+        const result = await api.updateModel(id, modelId, legacyModelWrite(record, patch))
+        if (record.model_id !== result.model_id) config.forgetModel(record)
+        config.retainModels([result])
+      },
       read: async () => {
-        const result = await api.models(id)
+        const result = await readModels(id)
         await config.load()
         return result
       },
@@ -216,6 +273,9 @@ function queueFor(id: number) {
 }
 
 async function applyModel(model: Model, patch: Partial<ModelInput>) {
+  modelLoadToken++
+  loadController?.abort()
+  refreshing.value = false
   // Apply intent before enqueueing: the next edit must build on the latest capabilities.
   Object.assign(model, patch)
   const id = model.provider_id
@@ -259,7 +319,8 @@ async function removeModel() {
   editorOpen.value = false
   try {
     await api.deleteModel(id, modelId)
-    const loadedModels = await api.models(id)
+    if (modelToDelete.value) config.forgetModel(modelToDelete.value)
+    const loadedModels = await readModels(id)
     await config.load()
     if (token !== loadToken) return
     models.value = loadedModels
@@ -273,14 +334,14 @@ async function removeModel() {
 .flex.h-full.min-h-0.overflow-hidden
   Teleport(to="#page-header")
     SettingsBackButton(to="/settings/providers" label="返回供应商列表")
-    span.truncate.text-sm.font-medium {{ form.name || '供应商设置' }}
-  ProviderNavigation(:selected-provider-id="providerId" class="hidden w-64 shrink-0 border-r md:flex")
+    span.truncate.text-sm.font-medium {{ savedName }}
+  ProviderNavigation(:selected-provider-id="providerId" class="hidden w-64 shrink-0 border-r md:flex" @catalog-refreshed="load()")
   .oc-scroll.min-h-0.min-w-0.flex-1.overflow-y-auto
     .mx-auto.flex.w-full.max-w-3xl.flex-col.gap-6.p-4(class="md:p-6 lg:p-8")
       .flex.flex-col.gap-2
         .flex.h-10.items-center.gap-3
           .flex.min-w-0.flex-1.items-center.gap-2
-            h1.truncate.text-2xl.font-semibold(:title="form.name || '供应商设置'") {{ form.name || '供应商设置' }}
+            h1.truncate.text-2xl.font-semibold(:title="savedName") {{ savedName }}
             UnsavedChangesGuard(:dirty="dirty")
             Spinner(v-if="refreshing && ready" class="shrink-0" aria-label="正在更新模型列表" title="正在更新模型列表")
           Switch#provider-enabled(v-if="ready" v-model="form.enabled" aria-label="启用供应商" class="after:-inset-y-3")
@@ -302,40 +363,25 @@ async function removeModel() {
               FieldLabel(for="provider-name") 名称
               Input#provider-name(v-model="form.name" required maxlength="100" class="min-h-10")
             Field
-              FieldLabel(for="provider-protocol") 协议
-              Select(:model-value="form.protocol" @update:model-value="onProtocolChange")
-                SelectTrigger#provider-protocol(class="min-h-10 w-full")
+              FieldLabel(for="provider-key") API Key
+              Input#provider-key(v-model="form.api_key" type="password" autocomplete="off" placeholder="留空保持不变" class="min-h-10")
+              FieldDescription 留空保留已配置的密钥。
+            Field
+              FieldLabel(for="provider-association") models.dev 关联
+              Select(:model-value="form.models_dev_provider?.source === 'manual' ? form.models_dev_provider.provider_id : 'endpoint'" @update:model-value="chooseAssociation")
+                SelectTrigger#provider-association(class="w-full")
                   SelectValue
                 SelectContent
                   SelectGroup
-                    SelectItem(value="openai-completions" class="min-h-10") OpenAI Chat Completions（含兼容中转）
-                    SelectItem(value="openai-responses" class="min-h-10") OpenAI Responses
-                    SelectItem(value="anthropic" class="min-h-10") Anthropic Messages
-                    SelectItem(value="vertex" class="min-h-10") Google Vertex AI
-                    SelectItem(value="vertex-compatible" class="min-h-10") Google Vertex 兼容
-            Field
-              FieldLabel(for="provider-url") Base URL
-              Input#provider-url(v-model="form.base_url" type="url" required placeholder="https://api.example.com/v1" class="min-h-10")
-            Field
-              FieldLabel(for="provider-key") {{ form.protocol === 'vertex' ? '服务账号 JSON' : 'API Key' }}
-              Input#provider-key(v-model="form.api_key" type="password" autocomplete="off" placeholder="留空保持不变" class="min-h-10")
-              FieldDescription 留空保留已配置的密钥。
-            template(v-if="form.protocol === 'vertex'")
-              Field
-                FieldLabel(for="provider-project") Project
-                Input#provider-project(v-model="form.project" class="min-h-10")
-              Field
-                FieldLabel(for="provider-location") Location
-                Input#provider-location(v-model="form.location" placeholder="us-central1 / global" class="min-h-10")
-            Field(orientation="horizontal" class="min-h-10")
-              FieldContent
-                FieldLabel(for="provider-files") 支持原生文件转储
-                FieldDescription 文件临时上传到当前供应商并自动过期；请确认端点支持 Files API。
-              Switch#provider-files(v-model="form.native_files" class="after:-inset-y-3")
+                    SelectItem(value="endpoint") 按端点自动匹配
+                    SelectItem(v-for="entry in catalogProviders" :key="entry.id" :value="entry.id") {{ entry.name }}
+              FieldDescription {{ form.models_dev_provider?.source === 'manual' ? '手动关联将保留，不受端点修改影响。' : `保存时按默认端点和同源接口匹配。当前关联：${savedProvider?.models_dev_provider_id ?? '未匹配'}` }}
+            ProviderInterfaceList(v-model="form.interfaces" v-model:default-protocol="form.default_protocol")
+            p.min-h-5.text-sm.text-muted-foreground(role="status") {{ associationWarning ?? '' }}
           .flex.flex-wrap.items-center.justify-between.gap-2
             ButtonGroup(aria-label="供应商操作")
-              Button(type="submit" class="min-h-10" :disabled="saving || deletingProvider") {{ saving ? '保存中…' : '保存' }}
-              Button(type="button" variant="outline" class="min-h-10" :disabled="!canFetchModels || busyModels || deletingProvider" @click="fetchModels")
+              Button(type="submit" class="min-h-10" :disabled="saving || deletingProvider || !validProvider") {{ saving ? '保存中…' : '保存' }}
+              Button(type="button" variant="outline" class="min-h-10" :disabled="dirty || !canFetchModels || busyModels || deletingProvider" @click="fetchModels")
                 DownloadIcon(data-icon="inline-start")
                 | {{ modelAction ? '处理中…' : '拉取模型' }}
             AlertDialog(v-model:open="providerDeleteOpen")
@@ -354,11 +400,13 @@ async function removeModel() {
           .flex.items-center.gap-2
             h2#provider-models-title.text-lg.font-semibold 模型
             Badge(variant="secondary") {{ models.length }}
-          p.text-sm.text-muted-foreground 管理可用模型。点击设置调整名称、能力与推理档位。
+          p.text-sm.text-muted-foreground 通过供应商拉取或手动添加模型。目录只提供元数据。
           FieldGroup
             Field
               FieldLabel.sr-only(for="provider-model-search") 搜索模型
               Input#provider-model-search(v-model="modelQuery" type="search" aria-label="搜索模型" placeholder="搜索模型 ID 或名称…" class="min-h-10")
+              FieldDescription 至少输入 3 个字符搜索全部已添加模型。
+          p.min-h-5.text-sm.text-muted-foreground(role="status") {{ modelLoadError ?? '' }}
           form(@submit.prevent="addModel")
             FieldGroup
               Field
@@ -386,8 +434,9 @@ async function removeModel() {
                 EmptyDescription {{ modelQuery.trim() ? '试试其他模型 ID 或名称。' : canFetchModels ? '从供应商拉取模型，或输入模型 ID 手动添加。' : '输入模型 ID，添加此供应商支持的模型。' }}
               EmptyContent
                 Button(v-if="modelQuery.trim()" variant="outline" class="min-h-10" @click="modelQuery = ''") 清除搜索
-                Button(v-else-if="canFetchModels" variant="outline" class="min-h-10" :disabled="busyModels || deletingProvider" @click="fetchModels") 拉取模型
+                Button(v-else-if="canFetchModels" variant="outline" class="min-h-10" :disabled="dirty || busyModels || deletingProvider" @click="fetchModels") 拉取模型
                 Button(v-else variant="outline" class="min-h-10" @click="focusNewModel") 输入模型 ID
+          Button(v-if="nextCursor" variant="outline" :disabled="refreshing || busyModels" @click="loadModelPage(true)") 加载更多模型
   ModelEditor(v-if="editorOpen && editingModel && providerId !== null" ref="modelEditor" v-model:open="editorOpen" :key="editingModel.id" :provider-id="providerId" :model="editingModel" :saving="busyModels" @save="saveModel" @delete="confirmModelDelete")
   AlertDialog(v-model:open="modelDeleteOpen")
     AlertDialogContent

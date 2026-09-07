@@ -103,3 +103,7 @@ export interface FetchModelsResponse {
   imported: number
   models: string[]
 }
+
+export interface CatalogProviderSummary { id: string; name: string; api?: string; npm?: string; doc?: string }
+export interface CatalogStatus { version: string | null; previousVersion: string | null; lastSuccessAt: number | null; lastError: string | null }
+export interface CatalogRefreshResponse { version: string; changed: boolean; providers: number; globalModels: number; providerModels: number }

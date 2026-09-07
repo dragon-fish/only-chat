@@ -4,6 +4,8 @@ import { createPinia } from 'pinia'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import ModelPicker from '@/client/components/model-picker.vue'
 import { useConfigStore } from '@/client/stores/config'
+import { api } from '@/client/lib/api'
+import { modelRecords, provider } from './provider-fixtures'
 
 const desktop = ref(false)
 vi.mock('@vueuse/core', async (importOriginal) => ({
@@ -12,15 +14,21 @@ vi.mock('@vueuse/core', async (importOriginal) => ({
 }))
 
 let cleanup = () => {}
-afterEach(() => { cleanup(); document.body.innerHTML = '' })
+afterEach(() => { cleanup(); vi.restoreAllMocks(); document.body.innerHTML = '' })
 
-function mountPicker(compact: boolean, isDesktop: boolean) {
+function mountPicker(compact: boolean, isDesktop: boolean, loaded = true) {
   desktop.value = isDesktop
   const pinia = createPinia()
   const config = useConfigStore(pinia)
   config.loaded = true
-  config.providers = [{ id: 1, user_id: 1, name: 'Example', protocol: 'openai-completions', base_url: '', enabled: true, has_key: false, native_files: false, extra: null, created_at: 0 }]
-  config.modelsByProvider = { 1: [{ id: 1, provider_id: 1, model_id: 'test-model', display_name: 'Test model', capabilities: { vision: true, tools: false }, enabled: true, pricing: null, sort: 0 }] }
+  config.providerRecords = [provider]
+  config.pickerLoaded = loaded
+  if (loaded) {
+    const records = [{ ...modelRecords[0]!, model_id: 'test-model', metadata: { name: 'Test model', tool_call: false, modalities: { input: ['text' as const, 'image' as const], output: ['text' as const] } } }]
+    config.retainModels(records)
+    vi.spyOn(api, 'queryModels').mockResolvedValue({ models: records, next_cursor: null })
+    config.pickerRefs = ['1:test-model']
+  }
   const host = document.createElement('div')
   document.body.append(host)
   const app = createApp(ModelPicker, { compact, modelValue: { provider_id: 1, model_id: 'test-model' } }).use(pinia)
@@ -30,6 +38,27 @@ function mountPicker(compact: boolean, isDesktop: boolean) {
 }
 
 describe('model picker modality', () => {
+  it('reloads enabled membership when reopened after settings changed', async () => {
+    const host = mountPicker(false, true)
+    host.querySelector<HTMLButtonElement>('button')!.click()
+    await vi.waitFor(() => expect(document.querySelector('[role="option"]')?.textContent).toContain('Test model'))
+    document.querySelector('[data-slot="command-input"]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await vi.waitFor(() => expect(document.querySelector('[data-slot="popover-content"]')).toBeNull())
+    vi.mocked(api.queryModels).mockResolvedValue({ models: [{ ...modelRecords[0]!, id: 99, model_id: 'new-model', metadata: { name: 'Newly enabled model' } }], next_cursor: null })
+    host.querySelector<HTMLButtonElement>('button')!.click()
+    await vi.waitFor(() => expect(document.querySelector('[role="option"]')?.textContent).toContain('Newly enabled model'))
+  })
+
+  it('loads a selected model outside the enabled page and keeps it renderable', async () => {
+    vi.spyOn(api, 'modelByRef').mockResolvedValue({ ...modelRecords[1]!, model_id: 'test-model', metadata: { name: 'Retained selection' } })
+    vi.spyOn(api, 'queryModels').mockResolvedValue({ models: [modelRecords[0]!], next_cursor: null })
+    const host = mountPicker(false, true, false)
+    await vi.waitFor(() => expect(host.textContent).toContain('Retained selection'))
+    host.querySelector<HTMLButtonElement>('button')!.click()
+    await vi.waitFor(() => expect(document.querySelector('[role="option"]')?.textContent).toContain('First model'))
+    expect(host.textContent).toContain('Retained selection')
+  })
+
   it('shows only declared true capabilities on each selectable model', async () => {
     // Dropping capability presentation or treating a declared false flag as enabled mislabels models.
     const host = mountPicker(false, true)

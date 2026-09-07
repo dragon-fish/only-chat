@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 import { isChatHistoryRoute, modelCapabilitiesWithEfforts, createModelWriteQueue, acknowledgedPlugins } from '@/client/lib/settings'
 import type { Model } from '@/shared/models'
+import { reactive } from 'vue'
+import { legacyModelWrite } from '@/client/lib/legacy-catalog-ui'
+import { modelRecords } from './provider-fixtures'
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -14,6 +17,18 @@ const model: Model = {
 }
 
 describe('settings navigation and model editing', () => {
+  it('translates edited controls without pinning unchanged catalog metadata or dropping other overrides', () => {
+    const record = reactive({ ...modelRecords[0]!, metadata_override: { description: 'My description' } })
+    const patch = legacyModelWrite(record, { display_name: 'New name', capabilities: { vision: true, image_output: false, tools: false } })
+    expect(patch).toEqual({ metadata_override: { description: 'My description', name: 'New name', tool_call: false } })
+    expect(record.metadata_override).toEqual({ description: 'My description' })
+  })
+
+  it('preserves non-image modalities when the legacy vision switch changes', () => {
+    const patch = legacyModelWrite({ ...modelRecords[0]!, metadata: { modalities: { input: ['text', 'image', 'audio', 'pdf'], output: ['text'] } } }, { capabilities: { vision: false } })
+    expect(patch).toEqual({ metadata_override: { modalities: { input: ['text', 'audio', 'pdf'] } } })
+  })
+
   it('acknowledges only plugin switches matching the authoritative server values', () => {
     // One settings.updated may acknowledge one of several toggles; an unrelated broadcast must
     // not clear the other pending switch or falsely announce success.

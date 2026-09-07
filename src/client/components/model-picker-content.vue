@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import ProviderAvatar from '@/client/components/provider-avatar.vue'
 import CollectionState from '@/client/components/collection-state.vue'
 import { Button } from '@/client/ui/button'
@@ -15,6 +15,17 @@ import type { Provider } from '@/shared/models'
 const props = defineProps<{ modelValue: ModelRef | null }>()
 const emit = defineEmits<{ select: [ModelRef] }>()
 const config = useConfigStore()
+const loadingModels = ref(false)
+const modelLoadError = ref<string | null>(null)
+async function loadModels(append = false) {
+  if (loadingModels.value) return
+  loadingModels.value = true
+  modelLoadError.value = null
+  try { await config.loadEnabledModels(append) }
+  catch (error) { modelLoadError.value = error instanceof Error ? error.message : String(error) }
+  finally { loadingModels.value = false }
+}
+onMounted(() => { void loadModels() })
 
 const query = ref('')
 const searchKey = ref(0)
@@ -81,7 +92,7 @@ Command(:key="searchKey" :model-value="currentKey" :should-filter="false" class=
         v-for="option in CAPABILITY_FILTERS" :key="option.value" :value="option.value"
         :aria-label="option.label" class="min-h-10 min-w-10 md:min-h-7 md:min-w-0") {{ option.label }}
   CommandList(class="max-h-[min(20rem,55vh)]")
-    CollectionState(:loaded="config.loaded" :error="config.loadError" :retry="config.load" :empty="entries.length === 0" empty-title="没有可用模型" empty-description="当前筛选条件下没有已启用的模型。")
+    CollectionState(:loaded="config.loaded && config.pickerLoaded" :error="modelLoadError ?? config.loadError" :retry="loadModels" :empty="entries.length === 0" empty-title="没有可用模型" empty-description="当前筛选条件下没有已启用的模型。")
       template(#empty-action)
         Button(v-if="query || capability !== 'all'" variant="outline" class="min-h-10" @click="clearFilters") 清除筛选
         Button(v-else as-child variant="outline" class="min-h-10")
@@ -98,4 +109,5 @@ Command(:key="searchKey" :model-value="currentKey" :should-filter="false" class=
               template(v-for="filter in CAPABILITY_FILTERS" :key="filter.value")
                 Badge(v-if="filter.value !== 'all' && entry.model.capabilities[filter.value] === true" variant="secondary") {{ filter.label }}
           span.sr-only {{ entry.provider.name }}
+  Button(v-if="config.pickerCursor" variant="ghost" :disabled="loadingModels" @click="loadModels(true)") 加载更多模型
 </template>
