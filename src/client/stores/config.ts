@@ -46,6 +46,7 @@ export const useConfigStore = defineStore('config', () => {
     revisions.set(keyFor(model), (revisions.get(keyFor(model)) ?? 0) + 1)
     delete modelsByRef.value[keyFor(model)]
     selectedRefs.delete(keyFor(model))
+    pendingRefs.delete(keyFor(model))
     pickerRefs.value = pickerRefs.value.filter(key => key !== keyFor(model))
   }
   async function load(): Promise<void> {
@@ -88,10 +89,11 @@ export const useConfigStore = defineStore('config', () => {
     const key = keyFor(model)
     const pending = pendingRefs.get(key)
     if (pending) return pending
+    const started = revisions.get(key)
     const operation = api.modelByRef(model).then(value => {
-      // A page/save may have populated a newer value while this request was in flight.
-      if (!modelsByRef.value[key]) retainModels([value])
-    }).finally(() => pendingRefs.delete(key))
+      // Saves and tombstones both supersede this read, even if the cache is currently empty.
+      if (revisions.get(key) === started && !modelsByRef.value[key]) retainModels([value])
+    }).finally(() => { if (pendingRefs.get(key) === operation) pendingRefs.delete(key) })
     pendingRefs.set(key, operation)
     return operation
   }

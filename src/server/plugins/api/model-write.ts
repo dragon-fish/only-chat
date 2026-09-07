@@ -1,27 +1,31 @@
 import type { Context } from 'cordis'
-import { eq } from 'drizzle-orm'
 import type { DB } from '@/server/db/client'
 import { models, type ModelRow } from '@/server/db/schema'
 import type { ModelMetadataOverride } from '@/shared/model-metadata'
 import { ModelWithMetadataSchema, type ModelWithMetadata } from '@/shared/models'
 import type { ModelCatalog } from '../model-catalog/types'
 import { materializeModelMetadata, resolveModelMetadata } from '../model-catalog/resolve'
+import { modelSourceFence, modelSourceMatches, type ModelSourceRow, type ProviderSource } from '../model-catalog/source-snapshot'
+export { isModelSourceConflict, ModelSourceConflict, modelSourceColumns, modelSourceFence, modelSourceMatches, providerSourceFence, retryModelSource } from '../model-catalog/source-snapshot'
+
+export type CatalogSnapshot = ModelCatalog & { version: string | null }
 
 /** Read only the operator and relevant Lab shards, pinned to one published catalog version. */
-export async function catalogForModels(ctx: Context, providerId: string | null, modelIds: readonly string[]): Promise<ModelCatalog> {
-  const status = await ctx.modelCatalog.status()
-  if (!status.version) return { providers: {}, models: {} }
+export async function catalogForModels(ctx: Context, providerId: string | null, modelIds: readonly string[], requestedVersion?: string | null): Promise<CatalogSnapshot> {
+  const version = requestedVersion === undefined ? (await ctx.modelCatalog.status()).version : requestedVersion
+  if (!version) return { version: null, providers: {}, models: {} }
   const [index, globalModels] = await Promise.all([
-    ctx.modelCatalog.providerIndex(status.version), ctx.modelCatalog.globalModels(status.version),
+    ctx.modelCatalog.providerIndex(version), ctx.modelCatalog.globalModels(version),
   ])
   const ids = new Set(modelIds.filter(id => id.includes('/')).map(id => id.slice(0, id.indexOf('/'))))
   if (providerId) ids.add(providerId)
-  const catalog: ModelCatalog = {
+  const catalog: CatalogSnapshot = {
+    version,
     providers: Object.fromEntries(Object.values(index).map(provider => [provider.id, { ...provider, models: {} }])),
     models: globalModels,
   }
   await Promise.all([...ids].filter(id => index[id]).map(async id => {
-    catalog.providers[id]!.models = await ctx.modelCatalog.providerModels(id, status.version!)
+    catalog.providers[id]!.models = await ctx.modelCatalog.providerModels(id, version)
   }))
   return catalog
 }
@@ -38,10 +42,11 @@ export function changedModelFields(row: ModelRow, next: Partial<ModelRow>): Part
   return Object.fromEntries(Object.entries(next).filter(([key, value]) => JSON.stringify(row[key as keyof ModelRow]) !== JSON.stringify(value)))
 }
 
-export function materializationUpdates(db: DB, rows: ModelRow[], catalog: ModelCatalog, providerId: string | null) {
+export function materializationUpdates(db: DB, rows: ModelSourceRow[], catalog: CatalogSnapshot, provider: ProviderSource) {
   return rows.flatMap(row => {
-    const changed = changedModelFields(row, resolveModelFields(catalog, providerId, row.model_id, row.metadata_override))
-    return Object.keys(changed).length ? [db.update(models).set(changed).where(eq(models.id, row.id))] : []
+    const changed = changedModelFields(row, resolveModelFields(catalog, provider.models_dev_provider_id, row.model_id, row.metadata_override))
+    return [modelSourceFence(db, row, provider, catalog.version),
+      ...(Object.keys(changed).length ? [db.update(models).set(changed).where(modelSourceMatches(row, provider, catalog.version))] : [])]
   })
 }
 

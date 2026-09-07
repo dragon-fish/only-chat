@@ -9,7 +9,7 @@ import { Switch } from '@/client/ui/switch'
 import { InterfaceProtocolSchema, type InterfaceProtocol } from '@/shared/models'
 import type { ProviderInterfaceInput } from '@/shared/api'
 
-const props = defineProps<{ modelValue: ProviderInterfaceInput[]; defaultProtocol: InterfaceProtocol; disabled?: boolean }>()
+const props = defineProps<{ modelValue: ProviderInterfaceInput[]; defaultProtocol?: InterfaceProtocol; initialBaseUrl?: string; disabled?: boolean }>()
 const emit = defineEmits<{ 'update:modelValue': [ProviderInterfaceInput[]]; 'update:defaultProtocol': [InterfaceProtocol] }>()
 const prefix = useId()
 const labels: Record<InterfaceProtocol, string> = {
@@ -26,7 +26,7 @@ function update(protocol: InterfaceProtocol, patch: { base_url?: string; native_
 function add(value: unknown) {
   const parsed = InterfaceProtocolSchema.safeParse(value)
   if (!parsed.success || !available.value.includes(parsed.data)) return
-  emit('update:modelValue', [...props.modelValue, { protocol: parsed.data, base_url: '', native_files: false }])
+  emit('update:modelValue', [...props.modelValue, { protocol: parsed.data, base_url: props.modelValue.length ? '' : props.initialBaseUrl ?? '', native_files: false }])
   if (!props.modelValue.length) emit('update:defaultProtocol', parsed.data)
 }
 function remove(protocol: InterfaceProtocol) {
@@ -65,7 +65,8 @@ FieldGroup
       SelectContent
         SelectGroup
           SelectItem(v-for="protocol in available" :key="protocol" :value="protocol") {{ labels[protocol] }}
-  Field
+    FieldDescription(v-if="!modelValue.length") 请选择供应商使用的接口格式。
+  Field(v-if="modelValue.length")
     FieldLabel(:for="`${prefix}-default`") 默认接口
     Select(:model-value="defaultProtocol" :disabled="disabled" @update:model-value="chooseDefault")
       SelectTrigger(:id="`${prefix}-default`" aria-label="默认接口" class="w-full")

@@ -7,7 +7,7 @@ import { ProviderWithInterfacesSchema, type InterfaceProtocol, type Protocol } f
 import { models, providerInterfaces, providers, type ProviderRow, type ProviderInterfaceRow } from '@/server/db/schema'
 import { decryptSecret, encryptSecret } from '../llm/crypto'
 import { matchProviderByEndpoints } from '../model-catalog/match'
-import { catalogForModels, materializationUpdates } from './model-write'
+import { catalogForModels, isModelSourceConflict, materializationUpdates, ModelSourceConflict, modelSourceColumns, providerSourceFence, retryModelSource } from './model-write'
 
 export class ProviderWriteError extends Error {
   constructor(message: string, readonly status: 400 | 404 | 409 = 400) { super(message) }
@@ -27,6 +27,14 @@ const legacyProtocol: Record<InterfaceProtocol, Protocol> = {
 }
 
 export async function writeProvider(ctx: Context, input: ProviderWriteInput, id?: number) {
+  try { return await retryModelSource(() => writeProviderAttempt(ctx, input, id)) }
+  catch (error) {
+    if (error instanceof ModelSourceConflict) throw new ProviderWriteError(error.message, 409)
+    throw error
+  }
+}
+
+async function writeProviderAttempt(ctx: Context, input: ProviderWriteInput, id?: number) {
   const db = ctx.db.orm
   const before = id === undefined ? undefined : await db.query.providers.findFirst({ where: and(eq(providers.id, id), eq(providers.user_id, DEFAULT_USER_ID)) })
   if (id !== undefined && !before) throw new ProviderWriteError('not found', 404)
@@ -41,7 +49,8 @@ export async function writeProvider(ctx: Context, input: ProviderWriteInput, id?
   if (removed.length && (await db.select({ id: models.id }).from(models).where(inArray(models.interface_id, removed.map(endpoint => endpoint.id))).limit(1)).length) {
     throw new ProviderWriteError('An interface is still selected by a model', 409)
   }
-  const index = await ctx.modelCatalog.providerIndex()
+  const version = (await ctx.modelCatalog.status()).version
+  const index = await ctx.modelCatalog.providerIndex(version ?? undefined)
   const association = input.models_dev_provider
   if (association?.source === 'manual' && !index[association.provider_id] && association.provider_id !== before?.models_dev_provider_id) {
     throw new ProviderWriteError('Unknown catalog provider')
@@ -64,6 +73,9 @@ export async function writeProvider(ctx: Context, input: ProviderWriteInput, id?
     models_dev_provider_id: match.id, models_dev_provider_source: match.source,
   }
   const operations: BatchItem<'sqlite'>[] = []
+  const rows = before && before.models_dev_provider_id !== match.id
+    ? await db.select(modelSourceColumns).from(models).where(eq(models.provider_id, before.id)) : undefined
+  if (before) operations.push(providerSourceFence(db, before, version, rows))
   // MAX(id) refers to the just-inserted AUTOINCREMENT row inside this single atomic D1 batch.
   // Never split creation and interface/default writes into separate batches.
   const providerId = id ?? sql<number>`(SELECT MAX(id) FROM providers)`
@@ -92,13 +104,15 @@ export async function writeProvider(ctx: Context, input: ProviderWriteInput, id?
   operations.push(db.update(providers).set({
     default_interface_id: sql`(SELECT id FROM provider_interfaces WHERE provider_id = ${providerId} AND protocol = ${input.default_protocol})`,
   }).where(eq(providers.id, providerId)))
-  if (before && before.models_dev_provider_id !== match.id) {
-    const rows = await db.select().from(models).where(eq(models.provider_id, before.id))
-    operations.push(...materializationUpdates(db, rows, await catalogForModels(ctx, match.id, rows.map(model => model.model_id)), match.id))
+  if (before && rows) {
+    operations.push(...materializationUpdates(db, rows, await catalogForModels(ctx, match.id, rows.map(model => model.model_id), version), {
+      id: before.id, models_dev_provider_id: match.id, models_dev_provider_source: match.source,
+    }))
   }
   operations.push(db.select().from(providers).where(eq(providers.id, providerId)))
   operations.push(db.select().from(providerInterfaces).where(eq(providerInterfaces.provider_id, providerId)).orderBy(providerInterfaces.id))
   const results = await db.batch(operations as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]]).catch((error: unknown) => {
+    if (isModelSourceConflict(error)) throw new ModelSourceConflict()
     let cause = error
     while (cause instanceof Error) {
       if (cause.message.includes('NOT NULL constraint failed: providers.credential_version')) {

@@ -7,19 +7,20 @@ import { materializeModelMetadata, resolveModelMetadata } from './resolve'
 import { CatalogStorage, projectProviderIndex, type CatalogCounts } from './storage'
 import { parseModelCatalog, type ModelCatalog } from './types'
 import { CatalogLease, CatalogLeaseLostError } from './lease'
+import { catalogProviderSetFence, ModelSourceConflict, modelSourceColumns, modelSourceFence, modelSourceMatches, providerSourceFence, retryModelSource } from './source-snapshot'
 
 export interface CatalogRefreshResult extends CatalogCounts {
   version: string
   changed: boolean
 }
 
-async function materialize(db: DB, catalog: ModelCatalog): Promise<BatchItem<'sqlite'>[]> {
+async function materialize(db: DB, catalog: ModelCatalog, version: string | null): Promise<BatchItem<'sqlite'>[]> {
   const [storedProviders, interfaces, storedModels] = await Promise.all([
-    db.select().from(providers), db.select().from(providerInterfaces), db.select().from(models),
+    db.select().from(providers), db.select().from(providerInterfaces), db.select(modelSourceColumns).from(models),
   ])
   const providerIndex = projectProviderIndex(catalog)
-  const associations = new Map<number, string | null>()
-  const updates: BatchItem<'sqlite'>[] = []
+  const associations = new Map<number, { id: number; models_dev_provider_id: string | null; models_dev_provider_source: 'manual' | 'endpoint' }>()
+  const updates: BatchItem<'sqlite'>[] = [catalogProviderSetFence(db, storedProviders)]
   for (const provider of storedProviders) {
     const match = matchProviderByEndpoints({
       defaultInterfaceId: provider.default_interface_id,
@@ -27,25 +28,28 @@ async function materialize(db: DB, catalog: ModelCatalog): Promise<BatchItem<'sq
       modelsDevProviderId: provider.models_dev_provider_id,
       modelsDevProviderSource: provider.models_dev_provider_source,
     }, providerIndex)
-    associations.set(provider.id, match.id)
+    associations.set(provider.id, { id: provider.id, models_dev_provider_id: match.id, models_dev_provider_source: match.source })
+    updates.push(providerSourceFence(db, provider, version, storedModels.filter(model => model.provider_id === provider.id), interfaces.filter(endpoint => endpoint.provider_id === provider.id)))
     updates.push(db.update(providers).set({
       models_dev_provider_id: match.id,
       models_dev_provider_source: match.source,
     }).where(eq(providers.id, provider.id)))
   }
   for (const model of storedModels) {
+    const source = associations.get(model.provider_id)
+    if (!source) throw new ModelSourceConflict()
     const resolved = resolveModelMetadata({
-      providerId: associations.get(model.provider_id) ?? null,
+      providerId: source.models_dev_provider_id,
       modelId: model.model_id,
       metadataOverride: model.metadata_override,
       catalog,
     })
-    updates.push(db.update(models).set({
+    updates.push(modelSourceFence(db, model, source, version), db.update(models).set({
       metadata_resolved: resolved.metadata,
       catalog_matches: resolved.matches,
       lab_id: resolved.labId,
       ...materializeModelMetadata(resolved.metadata, model.model_id, resolved.labName),
-    }).where(eq(models.id, model.id)))
+    }).where(modelSourceMatches(model, source, version)))
   }
   return updates
 }
@@ -78,8 +82,10 @@ async function refreshWithLease(storage: CatalogStorage, db: DB, lease: CatalogL
     } else {
       const manifest = await storage.stage(catalog, hash, Date.now())
       stage = 'materialization'
-      await lease.renew()
-      await lease.commit(await materialize(db, catalog), { current: manifest.version, previous: pointer?.current ?? null })
+      await retryModelSource(async () => {
+        await lease.renew()
+        await lease.commit(await materialize(db, catalog, pointer?.current ?? null), { current: manifest.version, previous: pointer?.current ?? null })
+      })
       result = { version: manifest.version, changed: true, providers: manifest.providers, globalModels: manifest.globalModels, providerModels: manifest.providerModels }
     }
   } catch (error) {

@@ -7,7 +7,7 @@ import { ModelQuerySchema } from '@/shared/models'
 import { models, providerInterfaces, providers } from '../../db/schema'
 import { parseId } from './params'
 import { ModelQueryError, queryModels } from './model-query'
-import { catalogForModels, changedModelFields, resolveModelFields, toModelDto } from './model-write'
+import { catalogForModels, changedModelFields, ModelSourceConflict, modelSourceColumns, modelSourceFence, modelSourceMatches, providerSourceFence, resolveModelFields, retryModelSource, toModelDto } from './model-write'
 
 export function modelRoutes(ctx: Context) {
   const r = new Hono<{ Bindings: Env }>()
@@ -57,13 +57,26 @@ export function modelRoutes(ctx: Context) {
     if (!parsed.success) return c.json({ error: 'invalid input', issues: parsed.error.issues }, 400)
     const input = parsed.data
     if (!await ownsInterface(provider.id, input.interface_id)) return c.json({ error: 'Interface must belong to this provider' }, 400)
-    const override = input.metadata_override ?? {}
-    const catalog = await catalogForModels(ctx, provider.models_dev_provider_id, [input.model_id])
-    const [row] = await db.insert(models).values({
-      ...input, provider_id: provider.id, display_name: input.model_id, capabilities: {}, metadata_override: override,
-      ...resolveModelFields(catalog, provider.models_dev_provider_id, input.model_id, override),
-    }).onConflictDoNothing().returning()
-    return row ? c.json(toModelDto(row), 201) : c.json({ error: 'model already exists' }, 409)
+    try {
+      return await retryModelSource(async () => {
+        const currentProvider = await ownedProvider(provider.id)
+        if (!currentProvider) return c.json({ error: 'not found' }, 404)
+        const override = input.metadata_override ?? {}
+        const catalog = await catalogForModels(ctx, currentProvider.models_dev_provider_id, [input.model_id])
+        const [, rows] = await db.batch([
+          providerSourceFence(db, currentProvider, catalog.version),
+          db.insert(models).values({
+            ...input, provider_id: provider.id, display_name: input.model_id, capabilities: {}, metadata_override: override,
+            ...resolveModelFields(catalog, currentProvider.models_dev_provider_id, input.model_id, override),
+          }).onConflictDoNothing().returning(),
+        ])
+        const row = rows[0]
+        return row ? c.json(toModelDto(row), 201) : c.json({ error: 'model already exists' }, 409)
+      })
+    } catch (error) {
+      if (error instanceof ModelSourceConflict) return c.json({ error: error.message }, 409)
+      throw error
+    }
   })
 
   r.put('/providers/:id/models/:modelRowId', async c => {
@@ -75,18 +88,32 @@ export function modelRoutes(ctx: Context) {
     if (!parsed.success) return c.json({ error: 'invalid input', issues: parsed.error.issues }, 400)
     const input = parsed.data
     if (!await ownsInterface(provider.id, input.interface_id)) return c.json({ error: 'Interface must belong to this provider' }, 400)
-    const before = await db.query.models.findFirst({ where: and(eq(models.id, mid), eq(models.provider_id, provider.id)) })
-    if (!before) return c.json({ error: 'not found' }, 404)
-    const modelId = input.model_id ?? before.model_id
-    const conflict = await db.query.models.findFirst({ where: and(eq(models.provider_id, provider.id), eq(models.model_id, modelId)) })
-    if (conflict && conflict.id !== mid) return c.json({ error: 'model already exists' }, 409)
-    const catalog = await catalogForModels(ctx, provider.models_dev_provider_id, [modelId])
-    const changed = changedModelFields(before, {
-      ...input, ...resolveModelFields(catalog, provider.models_dev_provider_id, modelId, input.metadata_override ?? before.metadata_override),
-    })
-    if (!Object.keys(changed).length) return c.json(toModelDto(before))
-    const [row] = await db.update(models).set(changed).where(and(eq(models.id, mid), eq(models.provider_id, provider.id))).returning()
-    return row ? c.json(toModelDto(row)) : c.json({ error: 'not found' }, 404)
+    try {
+      return await retryModelSource(async () => {
+        const currentProvider = await ownedProvider(provider.id)
+        if (!currentProvider) return c.json({ error: 'not found' }, 404)
+        const before = await db.select(modelSourceColumns).from(models).where(and(eq(models.id, mid), eq(models.provider_id, provider.id))).get()
+        if (!before) return c.json({ error: 'not found' }, 404)
+        const modelId = input.model_id ?? before.model_id
+        const conflict = await db.query.models.findFirst({ where: and(eq(models.provider_id, provider.id), eq(models.model_id, modelId)) })
+        if (conflict && conflict.id !== mid) return c.json({ error: 'model already exists' }, 409)
+        const catalog = await catalogForModels(ctx, currentProvider.models_dev_provider_id, [modelId])
+        const changed = changedModelFields(before, {
+          ...input, ...resolveModelFields(catalog, currentProvider.models_dev_provider_id, modelId, input.metadata_override ?? before.metadata_override),
+        })
+        const condition = modelSourceMatches(before, currentProvider, catalog.version)
+        const [, , rows] = await db.batch([
+          providerSourceFence(db, currentProvider, catalog.version),
+          modelSourceFence(db, before, currentProvider, catalog.version),
+          Object.keys(changed).length ? db.update(models).set(changed).where(condition).returning() : db.select().from(models).where(condition),
+        ])
+        const row = rows[0]
+        return row ? c.json(toModelDto(row)) : c.json({ error: 'not found' }, 404)
+      })
+    } catch (error) {
+      if (error instanceof ModelSourceConflict) return c.json({ error: error.message }, 409)
+      throw error
+    }
   })
 
   r.delete('/providers/:id/models/:modelRowId', async c => {

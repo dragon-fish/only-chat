@@ -9,7 +9,7 @@ import { decryptSecret } from '../llm/crypto'
 import { listRemoteModels } from '../llm/list-models'
 import { parseId } from './params'
 import { ProviderWriteError, toProviderDto, writeProvider } from './provider-write'
-import { catalogForModels, materializationUpdates, resolveModelFields } from './model-write'
+import { catalogForModels, materializationUpdates, ModelSourceConflict, modelSourceColumns, providerSourceFence, resolveModelFields, retryModelSource } from './model-write'
 
 export function providerRoutes(ctx: Context) {
   const r = new Hono<{ Bindings: Env }>()
@@ -58,21 +58,30 @@ export function providerRoutes(ctx: Context) {
     if (endpoint.protocol === 'vertex-compatible') return c.json({ error: 'Model listing is not supported for Vertex-compatible interfaces' }, 400)
     const key = provider.api_key ? await decryptSecret(ctx.env.KEY_ENCRYPTION_SECRET, provider.api_key) : null
     const ids = [...new Set(await listRemoteModels(endpoint, key))]
-    const existing = await db.select().from(models).where(eq(models.provider_id, id))
-    const catalog = await catalogForModels(ctx, provider.models_dev_provider_id, [...ids, ...existing.map(model => model.model_id)])
-    const operations: BatchItem<'sqlite'>[] = []
-    const existingIds = new Set(existing.map(model => model.model_id))
-    const missing = ids.filter(modelId => !existingIds.has(modelId))
-    for (const model_id of missing) {
-      operations.push(db.insert(models).values({
-        provider_id: id, model_id, display_name: model_id, capabilities: {},
-        ...resolveModelFields(catalog, provider.models_dev_provider_id, model_id, {}),
-      }).onConflictDoNothing().returning({ id: models.id }))
+    try {
+      return await retryModelSource(async () => {
+        const currentProvider = await db.query.providers.findFirst({ where: owned(id) })
+        if (!currentProvider) return c.json({ error: 'not found' }, 404)
+        const existing = await db.select(modelSourceColumns).from(models).where(eq(models.provider_id, id))
+        const catalog = await catalogForModels(ctx, currentProvider.models_dev_provider_id, [...ids, ...existing.map(model => model.model_id)])
+        const operations: BatchItem<'sqlite'>[] = [providerSourceFence(db, currentProvider, catalog.version, existing)]
+        const existingIds = new Set(existing.map(model => model.model_id))
+        const missing = ids.filter(modelId => !existingIds.has(modelId))
+        for (const model_id of missing) {
+          operations.push(db.insert(models).values({
+            provider_id: id, model_id, display_name: model_id, capabilities: {},
+            ...resolveModelFields(catalog, currentProvider.models_dev_provider_id, model_id, {}),
+          }).onConflictDoNothing().returning({ id: models.id }))
+        }
+        operations.push(...materializationUpdates(db, existing, catalog, currentProvider))
+        const results = await db.batch(operations as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]])
+        const imported = results.slice(1, missing.length + 1).reduce((count, result) => count + (result as unknown[]).length, 0)
+        return c.json({ imported, models: ids })
+      })
+    } catch (error) {
+      if (error instanceof ModelSourceConflict) return c.json({ error: error.message }, 409)
+      throw error
     }
-    operations.push(...materializationUpdates(db, existing, catalog, provider.models_dev_provider_id))
-    const results = operations.length ? await db.batch(operations as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]]) : []
-    const imported = results.slice(0, missing.length).reduce((count, result) => count + (result as unknown[]).length, 0)
-    return c.json({ imported, models: ids })
   })
 
   return r

@@ -180,7 +180,9 @@ async function save() {
   const submitted: ProviderWriteInput = JSON.parse(JSON.stringify(form))
   saving.value = true
   try {
-    const result = await api.updateProvider(id, { ...submitted, api_key: submitted.api_key || undefined }, value => { if (token === loadToken) associationWarning.value = value })
+    let responseWarning: string | null = null
+    const result = await api.updateProvider(id, { ...submitted, api_key: submitted.api_key || undefined }, value => { responseWarning = value })
+    if (token === loadToken) associationWarning.value = responseWarning
     await config.load()
     if (token === loadToken) {
       for (const endpoint of submitted.interfaces) {

@@ -38,6 +38,19 @@ function mountPicker(compact: boolean, isDesktop: boolean, loaded = true) {
 }
 
 describe('model picker modality', () => {
+  it('keeps enabled-model retry and selection usable when the selected reference returns 404', async () => {
+    vi.spyOn(api, 'modelByRef').mockRejectedValue(new Error('GET selected model failed: 404 not found'))
+    const query = vi.spyOn(api, 'queryModels').mockRejectedValueOnce(new Error('Enabled model query offline'))
+    const host = mountPicker(false, true, false)
+    host.querySelector<HTMLButtonElement>('button')!.click()
+    await vi.waitFor(() => expect(document.querySelector('[role="alert"]')?.textContent).toContain('Enabled model query offline'))
+    query.mockResolvedValue({ models: [modelRecords[0]!], next_cursor: null })
+    ;[...document.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.trim() === '重试')!.click()
+    await vi.waitFor(() => expect(document.querySelector('[role="option"]')?.textContent).toContain('First model'))
+    document.querySelector<HTMLElement>('[role="option"]')!.click()
+    await vi.waitFor(() => expect(document.querySelector('[data-slot="popover-content"]')).toBeNull())
+  })
+
   it('reloads enabled membership when reopened after settings changed', async () => {
     const host = mountPicker(false, true)
     host.querySelector<HTMLButtonElement>('button')!.click()

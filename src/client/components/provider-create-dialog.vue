@@ -20,8 +20,12 @@ const saving = ref(false)
 const error = ref<string | null>(null)
 const warning = ref<string | null>(null)
 const chosen = ref(false)
-const form = reactive<ProviderWriteInput>({ name: '', interfaces: [], default_protocol: 'chat-completions', api_key: '', models_dev_provider: { source: 'endpoint' } })
+const initialBaseUrl = ref('')
+const form = reactive<Omit<ProviderWriteInput, 'default_protocol'> & { default_protocol?: InterfaceProtocol }>({ name: '', interfaces: [], api_key: '', models_dev_provider: { source: 'endpoint' } })
 const valid = computed(() => ProviderWriteInputSchema.safeParse(form).success)
+const protocolByNpm = new Map<string, InterfaceProtocol>([
+  ['@ai-sdk/openai', 'responses'], ['@ai-sdk/anthropic', 'anthropic'], ['@ai-sdk/openai-compatible', 'chat-completions'],
+])
 let searchToken = 0
 let controller: AbortController | undefined
 async function search() {
@@ -44,10 +48,11 @@ watch(() => props.open, open => {
 onBeforeUnmount(() => { searchToken++; controller?.abort() })
 
 function choose(provider?: CatalogProviderSummary) {
-  const protocol: InterfaceProtocol = provider?.npm === '@ai-sdk/anthropic' ? 'anthropic' : provider?.npm === '@ai-sdk/openai' ? 'responses' : 'chat-completions'
+  const protocol = provider ? protocolByNpm.get(provider.npm ?? '') : 'chat-completions'
+  initialBaseUrl.value = provider?.api ?? ''
   Object.assign(form, {
     name: provider?.name ?? '自定义供应商', api_key: '',
-    interfaces: [{ protocol, base_url: provider?.api ?? '', native_files: false }], default_protocol: protocol,
+    interfaces: protocol ? [{ protocol, base_url: initialBaseUrl.value, native_files: false }] : [], default_protocol: protocol,
     models_dev_provider: provider ? { source: 'manual', provider_id: provider.id } : { source: 'endpoint' },
   })
   chosen.value = true
@@ -91,7 +96,7 @@ Dialog(:open="open" @update:open="value => { if (!saving) emit('update:open', va
           FieldLabel(for="create-provider-key") API Key
           Input#create-provider-key(v-model="form.api_key" type="password" autocomplete="off" :disabled="saving")
           FieldDescription {{ form.models_dev_provider?.source === 'manual' ? '已手动关联目录供应商。模型仍需拉取或手动添加。' : '保存时将按默认端点及同源接口自动匹配目录供应商。' }}
-        ProviderInterfaceList(v-model="form.interfaces" v-model:default-protocol="form.default_protocol" :disabled="saving")
+        ProviderInterfaceList(v-model="form.interfaces" v-model:default-protocol="form.default_protocol" :initial-base-url="initialBaseUrl" :disabled="saving")
       DialogFooter(class="mt-6")
         Button(type="button" variant="outline" :disabled="saving" @click="chosen = false") 返回
         Button(type="submit" :disabled="saving || !valid") {{ saving ? '创建中…' : '创建供应商' }}

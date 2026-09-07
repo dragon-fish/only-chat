@@ -75,6 +75,21 @@ async function submitModelName() {
 }
 
 describe('provider model editor', () => {
+  it('clears an association conflict after a later successful save has no warning', async () => {
+    await mountEditor()
+    const update = vi.spyOn(api, 'updateProvider').mockImplementationOnce(async (_id, _input, onWarning) => {
+      onWarning?.('Conflicting catalog associations')
+      return provider
+    }).mockResolvedValue(provider)
+    const submit = () => document.querySelector('#provider-name')!.closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    submit()
+    await vi.waitFor(() => expect(document.body.textContent).toContain('Conflicting catalog associations'))
+    await vi.waitFor(() => expect([...document.querySelectorAll('button')].some(button => button.textContent?.trim() === '保存中…')).toBe(false))
+    submit()
+    await vi.waitFor(() => expect(update).toHaveBeenCalledTimes(2))
+    await vi.waitFor(() => expect(document.body.textContent).not.toContain('Conflicting catalog associations'))
+  })
+
   it('cancels a pending model search and clears its progress when the query becomes too short', async () => {
     await mountEditor()
     const search = document.querySelector<HTMLInputElement>('[aria-label="搜索模型"]')!

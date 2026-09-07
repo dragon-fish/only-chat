@@ -4,10 +4,142 @@ import { ModelPageSchema, ModelWithMetadataSchema, type ModelPage } from '@/shar
 import { catalogApp, catalogFixture } from './provider-catalog-fixture'
 import { buildModelQuery } from '@/server/plugins/api/model-query'
 import { catalogForModels, resolveModelFields } from '@/server/plugins/api/model-write'
+import { createApp } from '@/server/app'
 
 afterEach(() => vi.unstubAllGlobals())
 
 describe('catalog-backed model membership and queries', () => {
+  it('accepts unchanged override snapshots with legacy JSON number formatting', async () => {
+    const { request, createProvider } = await catalogApp()
+    const provider = await createProvider()
+    const created = ModelWithMetadataSchema.parse(await (await request('POST', `/providers/${provider.id}/models`, { model_id: 'legacy-json' })).json())
+    await env.DB.prepare('UPDATE models SET metadata_override = ? WHERE id = ?').bind('{ "name": "Legacy", "cost": { "input": 3.0 } }', created.id).run()
+    const response = await request('PUT', `/providers/${provider.id}/models/${created.id}`, { enabled: false })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ metadata: { name: 'Legacy', cost: { input: 3 } }, metadata_override: { name: 'Legacy', cost: { input: 3 } }, enabled: false })
+  })
+
+  it('bounds retries and rolls back reassociation while model sources keep changing', async () => {
+    const { request, createProvider } = await catalogApp()
+    const provider = await createProvider()
+    const created = ModelWithMetadataSchema.parse(await (await request('POST', `/providers/${provider.id}/models`, { model_id: 'lab/alpha' })).json())
+    let attempts = 0
+    const contestedDB = new Proxy(env.DB, {
+      get(target, property) {
+        if (property === 'batch') return async (statements: D1PreparedStatement[]) => {
+          if (++attempts > 3) throw new Error('Retry did not stop')
+          expect((await request('PUT', `/providers/${provider.id}/models/${created.id}`, { metadata_override: { name: `Concurrent edit ${attempts}` } })).status).toBe(200)
+          return target.batch(statements)
+        }
+        const value = Reflect.get(target, property)
+        return typeof value === 'function' ? value.bind(target) : value
+      },
+    })
+    const contested = await createApp({ env: { ...env, DB: contestedDB }, side: 'worker' })
+    const response = await contested.api.request(`/api/providers/${provider.id}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
+      name: 'Must roll back', default_protocol: 'responses', interfaces: [{ protocol: 'responses', base_url: 'https://unknown.test/v1' }],
+    }) })
+    expect(response.status).toBe(409)
+    expect(attempts).toBe(3)
+    expect(await env.DB.prepare('SELECT name, models_dev_provider_id FROM providers WHERE id = ?').bind(provider.id).first()).toEqual({ name: 'Gateway', models_dev_provider_id: 'gateway' })
+    const current = ModelWithMetadataSchema.parse(await (await request('GET', `/providers/${provider.id}/models/by-ref?model_id=lab%2Falpha`)).json())
+    expect(current.metadata.name).toBe('Concurrent edit 3')
+    expect(current.metadata_override.name).toBe('Concurrent edit 3')
+  })
+
+  it('recomputes a catalog refresh after a concurrent model override edit', async () => {
+    const { request, createProvider } = await catalogApp()
+    const provider = await createProvider()
+    const created = ModelWithMetadataSchema.parse(await (await request('POST', `/providers/${provider.id}/models`, { model_id: 'lab/alpha', metadata_override: { name: 'Old override' } })).json())
+    let arrive!: () => void
+    let release!: () => void
+    const arrived = new Promise<void>(resolve => { arrive = resolve })
+    const resume = new Promise<void>(resolve => { release = resolve })
+    const delayedDB = new Proxy(env.DB, {
+      get(target, property) {
+        if (property === 'batch') return async (statements: D1PreparedStatement[]) => { arrive(); await resume; return target.batch(statements) }
+        const value = Reflect.get(target, property)
+        return typeof value === 'function' ? value.bind(target) : value
+      },
+    })
+    const delayed = await createApp({ env: { ...env, DB: delayedDB }, side: 'worker' })
+    const nextCatalog = structuredClone(catalogFixture)
+    nextCatalog.providers.gateway.models['lab/alpha'].limit.context = 300
+    vi.stubGlobal('fetch', async () => Response.json(nextCatalog))
+    const pending = delayed.modelCatalog.refresh('manual')
+    await arrived
+    try {
+      expect((await request('PUT', `/providers/${provider.id}/models/${created.id}`, { metadata_override: { name: 'Current override', tool_call: true } })).status).toBe(200)
+    } finally { release() }
+    await pending
+    const current = ModelWithMetadataSchema.parse(await (await request('GET', `/providers/${provider.id}/models/by-ref?model_id=lab%2Falpha`)).json())
+    expect(current.metadata_override).toEqual({ name: 'Current override', tool_call: true })
+    expect(current.metadata).toMatchObject({ name: 'Current override', tool_call: true, limit: { context: 300 } })
+  })
+
+  it.each(['override', 'association'] as const)('retries a model rename when its %s source changes during resolution', async source => {
+    const { request, createProvider } = await catalogApp()
+    const provider = await createProvider()
+    const created = ModelWithMetadataSchema.parse(await (await request('POST', `/providers/${provider.id}/models`, { model_id: 'draft', metadata_override: { name: 'Original override' } })).json())
+    const delayed = await createApp({ env, side: 'worker' })
+    let arrive!: () => void
+    let release!: () => void
+    const arrived = new Promise<void>(resolve => { arrive = resolve })
+    const resume = new Promise<void>(resolve => { release = resolve })
+    const readGlobalModels = delayed.modelCatalog.globalModels.bind(delayed.modelCatalog)
+    vi.spyOn(delayed.modelCatalog, 'globalModels').mockImplementationOnce(async version => { arrive(); await resume; return readGlobalModels(version) })
+    const pending = delayed.api.request(`/api/providers/${provider.id}/models/${created.id}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model_id: 'lab/alpha' }) })
+    await arrived
+    try {
+      const edit = source === 'override'
+        ? await request('PUT', `/providers/${provider.id}/models/${created.id}`, { metadata_override: { name: 'Current override' } })
+        : await request('PUT', `/providers/${provider.id}`, { name: provider.name, default_protocol: 'responses', interfaces: [{ protocol: 'responses', base_url: 'https://unknown.test/v1' }] })
+      expect(edit.status).toBe(200)
+    } finally { release() }
+    expect((await pending).status).toBe(200)
+    const current = ModelWithMetadataSchema.parse(await (await request('GET', `/providers/${provider.id}/models/by-ref?model_id=lab%2Falpha`)).json())
+    expect(current.metadata.name).toBe(current.metadata_override.name)
+    expect(current.metadata).toMatchObject({ name: source === 'override' ? 'Current override' : 'Original override', limit: { context: source === 'association' ? 200 : 100 } })
+  })
+
+  it.each(['reassociate', 'import'] as const)('recomputes %s metadata after a concurrent model override edit', async operation => {
+    const { request, createProvider } = await catalogApp()
+    const provider = await createProvider()
+    const created = ModelWithMetadataSchema.parse(await (await request('POST', `/providers/${provider.id}/models`, {
+      model_id: 'lab/alpha', metadata_override: { name: 'Old override', tool_call: false },
+    })).json())
+    if (operation === 'import') {
+      await env.DB.prepare("UPDATE models SET metadata_resolved = '{}', search_name = '' WHERE id = ?").bind(created.id).run()
+      vi.stubGlobal('fetch', async () => Response.json({ data: [{ id: 'lab/alpha' }] }))
+    }
+    let arrive!: () => void
+    let release!: () => void
+    const arrived = new Promise<void>(resolve => { arrive = resolve })
+    const resume = new Promise<void>(resolve => { release = resolve })
+    const delayedDB = new Proxy(env.DB, {
+      get(target, property) {
+        if (property === 'batch') return async (statements: D1PreparedStatement[]) => { arrive(); await resume; return target.batch(statements) }
+        const value = Reflect.get(target, property)
+        return typeof value === 'function' ? value.bind(target) : value
+      },
+    })
+    const delayed = await createApp({ env: { ...env, DB: delayedDB }, side: 'worker' })
+    const pending = operation === 'import'
+      ? delayed.api.request(`/api/providers/${provider.id}/fetch-models`, { method: 'POST' })
+      : delayed.api.request(`/api/providers/${provider.id}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
+        name: provider.name, default_protocol: 'responses', interfaces: [{ protocol: 'responses', base_url: 'https://unknown.test/v1' }],
+      }) })
+    await arrived
+    try {
+      expect((await request('PUT', `/providers/${provider.id}/models/${created.id}`, { metadata_override: { name: 'Current override', tool_call: true } })).status).toBe(200)
+    } finally { release() }
+    expect((await pending).status).toBe(200)
+    const current = ModelWithMetadataSchema.parse(await (await request('GET', `/providers/${provider.id}/models/by-ref?model_id=lab%2Falpha`)).json())
+    expect(current.metadata_override).toEqual({ name: 'Current override', tool_call: true })
+    expect(current.metadata).toMatchObject({ name: 'Current override', tool_call: true, limit: { context: operation === 'reassociate' ? 200 : 100 } })
+    expect(await env.DB.prepare('SELECT search_name, supports_tools FROM models WHERE id = ?').bind(created.id).first()).toMatchObject({ search_name: 'current override lab/alpha research lab', supports_tools: 1 })
+  })
+
   it('pins the provider index and model shards to the same catalog generation during refresh', async () => {
     const { ctx } = await catalogApp()
     const previous = await ctx.modelCatalog.status()

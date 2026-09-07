@@ -7,6 +7,20 @@ import { modelRecords, provider } from './provider-fixtures'
 afterEach(() => vi.restoreAllMocks())
 
 describe('catalog config cache', () => {
+  it('does not resurrect a forgotten model from an earlier selected-reference request', async () => {
+    const config = useConfigStore(createPinia())
+    config.providerRecords = [provider]
+    let finish!: (model: typeof modelRecords[number]) => void
+    vi.spyOn(api, 'modelByRef').mockImplementation(() => new Promise(resolve => { finish = resolve }))
+    const reference = { provider_id: 1, model_id: 'first-model' }
+    const pending = config.ensureModel(reference)
+    config.forgetModel(reference)
+    finish(modelRecords[0]!)
+    await pending
+    expect(config.modelsByRef['1:first-model']).toBeUndefined()
+    expect(config.isAvailable(reference)).toBe(false)
+  })
+
   it('does not replace a saved model with a page response that started before the save', async () => {
     const config = useConfigStore(createPinia())
     let finish!: (value: { models: typeof modelRecords; next_cursor: null }) => void

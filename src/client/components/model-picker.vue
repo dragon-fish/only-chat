@@ -25,8 +25,15 @@ const isDesktop = useMediaQuery('(min-width: 768px)')
 const selected = computed(() => config.modelFor(props.modelValue))
 const selectedName = computed(() => selected.value?.model.display_name ?? props.modelValue?.model_id ?? '选择模型')
 const selectedProviderName = computed(() => selected.value?.provider.name ?? '模型')
-watch(() => props.modelValue, model => {
-  void config.ensureModel(model).catch(error => { config.loadError = error instanceof Error ? error.message : String(error) })
+const selectedError = ref<string | null>(null)
+let selectedRequest = 0
+watch(() => props.modelValue, async model => {
+  const request = ++selectedRequest
+  selectedError.value = null
+  try { await config.ensureModel(model) }
+  catch (error) {
+    if (request === selectedRequest) selectedError.value = error instanceof Error ? error.message : String(error)
+  }
 }, { immediate: true, deep: true })
 
 function onSelect(value: ModelRef) {
@@ -52,5 +59,6 @@ component(:is="isDesktop ? Popover : Drawer" v-model:open="open")
     DrawerHeader(v-if="!isDesktop")
       DrawerTitle 选择模型
       DrawerDescription 搜索模型，或按已声明的能力筛选。
+    p.px-3.py-2.text-sm.text-muted-foreground(v-if="selectedError" role="status") 当前选择的模型无法加载：{{ selectedError }}
     ModelPickerContent(:model-value="modelValue" @select="onSelect")
 </template>
