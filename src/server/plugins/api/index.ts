@@ -7,12 +7,13 @@ import { providerRoutes } from './providers'
 import { modelRoutes } from './models'
 import { attachmentRoutes } from './attachments'
 import { projectRoutes } from './projects'
+import { modelCatalogRoutes } from './model-catalog'
 
 export type ApiApp = Hono<{ Bindings: Env }>
 
 export const ApiPlugin = {
   name: 'api',
-  inject: ['env', 'db', 'assets'],
+  inject: ['env', 'db', 'assets', 'modelCatalog'],
   apply(ctx: Context) {
     const app: ApiApp = new Hono()
     app.get('/api/health', (c) => c.json({ ok: true }))
@@ -40,6 +41,7 @@ export const ApiPlugin = {
     app.route('/api', modelRoutes(ctx))
     app.route('/api', attachmentRoutes(ctx))
     app.route('/api', projectRoutes(ctx))
+    app.route('/api', modelCatalogRoutes(ctx))
     app.onError((err, c) => {
       console.error('api error', err)
       return c.json({ error: err.message }, 500)

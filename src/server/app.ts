@@ -4,6 +4,7 @@ import { Assets } from './plugins/assets'
 import { LlmPlugin } from './plugins/llm'
 import { HubPlugin } from './plugins/hub'
 import { ApiPlugin } from './plugins/api'
+import { ModelCatalog } from './plugins/model-catalog'
 
 export type Side = 'worker' | 'hub'
 
@@ -41,6 +42,8 @@ export async function createApp(options: AppOptions): Promise<Context> {
     if (!ctx.get('hub')) throw new Error('HubPlugin loaded but ctx.hub is unavailable')
   }
   if (options.side === 'worker') {
+    await ctx.plugin(ModelCatalog)
+    if (!ctx.get('modelCatalog')) throw new Error('ModelCatalog loaded but ctx.modelCatalog is unavailable')
     await ctx.plugin(ApiPlugin)
     if (!ctx.get('api')) throw new Error('ApiPlugin loaded but ctx.api is unavailable')
   }

@@ -35,7 +35,25 @@ describe('createApp', () => {
 })
 
 describe('scheduled provider file cleanup', () => {
-  it('deletes only expired pointers and issues no remote call', async () => {
+  it('refreshes the catalog even when local pointer cleanup fails', async () => {
+    const db = createDb(env.DB)
+    await createApp({ env, side: 'worker' })
+    const [provider] = await db.insert(providers).values({ user_id: 1, name: 'cleanup-failure', protocol: 'openai-responses', base_url: 'https://api.openai.com/v1', created_at: 0 }).returning()
+    const [attachment] = await db.insert(attachments).values({ user_id: 1, sha256: 'failure-cleanup', mime: 'text/plain', size: 1, r2_key: 'cleanup-failure', origin: 'upload', created_at: 0 }).returning()
+    await db.insert(attachmentProviderFiles).values({ attachment_id: attachment!.id, provider_id: provider!.id, provider_reference: { openai: 'file-failure' }, expires_at: 0, created_at: 0 })
+    await env.DB.exec("CREATE TRIGGER fail_file_cleanup BEFORE DELETE ON attachment_provider_files BEGIN SELECT RAISE(ABORT, 'cleanup failed'); END")
+    vi.stubGlobal('fetch', async () => Response.json({ providers: {}, models: {} }))
+    try {
+      await worker.scheduled!({ scheduledTime: Date.now(), cron: '0 3 * * *', noRetry: () => {} }, env, createExecutionContext())
+      expect(await env.MODEL_CATALOG.get('models-dev:active', 'json')).toMatchObject({ current: expect.any(String) })
+    } finally {
+      await env.DB.exec('DROP TRIGGER fail_file_cleanup')
+      vi.unstubAllGlobals()
+    }
+    expect((await db.select().from(attachmentProviderFiles).where(eq(attachmentProviderFiles.attachment_id, attachment!.id)))).toHaveLength(1)
+  })
+
+  it('deletes only expired pointers when catalog download fails', async () => {
     const db = createDb(env.DB)
     await createApp({ env, side: 'worker' }) // seeds user 1
     const [p] = await db.insert(providers).values({
@@ -56,15 +74,14 @@ describe('scheduled provider file cleanup', () => {
       { attachment_id: a!.id, provider_id: q!.id, provider_reference: { openai: 'file-live' }, expires_at: now + 60_000, created_at: 0 },
     ])
 
-    // The remote copy is the provider's to expire; the job may only touch D1.
-    const fetchSpy = vi.fn(async () => new Response(null, { status: 200 }))
+    const fetchSpy = vi.fn(async () => { throw new Error('catalog unavailable') })
     vi.stubGlobal('fetch', fetchSpy)
     try {
       await worker.scheduled!({ scheduledTime: now, cron: '0 3 * * *', noRetry: () => {} }, env, createExecutionContext())
     } finally {
       vi.unstubAllGlobals()
     }
-    expect(fetchSpy).not.toHaveBeenCalled()
+    expect(fetchSpy).toHaveBeenCalledWith('https://models.dev/catalog.json')
 
     const rows = await db.select().from(attachmentProviderFiles).where(eq(attachmentProviderFiles.attachment_id, a!.id))
     expect(rows.map((r) => r.provider_reference)).toEqual([{ openai: 'file-live' }])
