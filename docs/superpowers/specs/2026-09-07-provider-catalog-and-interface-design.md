@@ -252,7 +252,7 @@ models-dev:{version}:manifest
 - Manifest 记录分片、抓取时间、上游 hash 和 schema version。
 - D1 `model_catalog_refresh` 单例保存唯一权威的当前／上一版本以及刷新状态；KV 只保存不可变分片与 manifest，不保存可变指针或状态。
 - 所有分片写入成功后，在同一个 D1 事务内提交模型物化结果、当前／上一版本和成功状态。
-- 读取目录时先从 D1 取得当前／上一版本，再读取对应 KV 分片；当前分片缺失时回退上一版本。
+- 展示目录时先从 D1 取得当前／上一版本，再读取对应 KV 分片；当前分片缺失时回退上一版本。模型物化写入必须读取与 D1 并发校验版本完全一致的 manifest 和必需分片；缺失或不一致时返回 503，不保存覆写或解析缓存。
 - 当前与上一版本不清理；其他超过 48 小时的版本和失败 staging 由 daily cron 删除。
 
 ### 8.3 刷新行为
@@ -262,7 +262,7 @@ models-dev:{version}:manifest
 - 手动刷新与 cron 使用同一服务函数。D1 单例租约使用 owner token、有效期和原子条件获取来串行化跨 Worker 发布，并在 D1 物化与发布前续期；手动竞争返回 409，cron 竞争跳过。
 - `current_version` / `previous_version` 与 D1 模型物化和成功状态在同一事务中提交。租约释放只允许当前 owner，过期 owner 的事务须整体失败；非事务工作后的状态更新必须同时匹配 owner、有效期和当前版本，旧持有者不能覆盖新发布状态。
 - 内容 hash 未变化时不写 KV，D1 成功状态仍须按上述条件更新。GC 只保护 D1 指定的当前／上一版本。
-- 租约表加入尚未部署的 `0002` migration 及其 snapshot；`0003` 保留给后续旧字段清理。
+- 租约表加入尚未部署的 `0002` migration 及其 snapshot；`0003` 以及仍被 LLM/runtime 消费的旧字段、类型清理由后续 Reasoning/Files plan 负责。
 - 设置页显示上次成功时间、当前版本和最近一次错误。
 - 从未成功缓存时，供应商和模型功能仍工作，metadata 使用保守默认值。
 
@@ -323,7 +323,7 @@ Operator provider 未命中时，从低到高：
 3. Lab provider 命中的 `reasoning_options`、`interleaved` 和 `modalities` 安全子集。
 4. `metadata_override`。
 
-普通对象递归合并；数组和原始值整体替换。缺失表示继承，显式 false 和 0 不得被 truthiness 覆盖。Nullable 字段允许显式 null 清除值。
+普通对象递归合并；数组和原始值整体替换。数组元素必须满足完整元素 schema，例如 `cost.tiers` 中每个元素都必须有 `tier.size`；对象的 deep-partial 规则不应用于数组元素。缺失表示继承，显式 false 和 0 不得被 truthiness 覆盖。Nullable 字段允许显式 null 清除值。
 
 ### 9.3 物化筛选字段
 

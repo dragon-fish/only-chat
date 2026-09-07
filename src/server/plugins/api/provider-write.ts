@@ -62,7 +62,7 @@ async function writeProviderAttempt(ctx: Context, input: ProviderWriteInput, id:
     throw new ProviderWriteError('An interface is still selected by a model', 409)
   }
   const version = (await ctx.modelCatalog.status()).version
-  const index = await ctx.modelCatalog.providerIndex(version ?? undefined)
+  const index = (await catalogForModels(ctx, null, [], version)).providers
   const association = input.models_dev_provider
   if (association?.source === 'manual' && !index[association.provider_id] && association.provider_id !== before?.models_dev_provider_id) {
     throw new ProviderWriteError('Unknown catalog provider')

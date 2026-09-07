@@ -37,6 +37,24 @@ describe('model metadata schemas', () => {
     })
   })
 
+  it.each([
+    { cost: { tiers: [{ input: 0 }] } },
+    { cost: { tiers: [{ input: 0, tier: {} }] } },
+    { reasoning_options: [{ type: 'effort' }] },
+    { links: [{ label: 'Docs' }] },
+    { weights: [{ format: 'safetensors' }] },
+    { benchmarks: [{ name: 'Score' }] },
+    { modalities: { input: ['unknown'] } },
+  ])('rejects incomplete or invalid replacement array elements: %j', override => {
+    expect(ModelMetadataOverrideSchema.safeParse(override).success).toBe(false)
+  })
+
+  it('accepts complete replacement cost tiers with zero-valued prices and boundaries', () => {
+    const override = { cost: { tiers: [{ tier: { type: 'context', size: 0 }, input: 0, output: 0 }] } }
+    expect(ModelMetadataOverrideSchema.parse(override)).toEqual(override)
+    expect(ModelMetadataSchema.parse(override)).toEqual(override)
+  })
+
   it('parses catalog-aligned nested metadata', () => {
     expect(ModelMetadataSchema.parse({
       name: 'Example',

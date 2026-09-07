@@ -8,6 +8,7 @@ import { modelRoutes } from './models'
 import { attachmentRoutes } from './attachments'
 import { projectRoutes } from './projects'
 import { modelCatalogRoutes } from './model-catalog'
+import { CatalogUnavailableError } from '../model-catalog/storage'
 
 export type ApiApp = Hono<{ Bindings: Env }>
 
@@ -43,6 +44,7 @@ export const ApiPlugin = {
     app.route('/api', projectRoutes(ctx))
     app.route('/api', modelCatalogRoutes(ctx))
     app.onError((err, c) => {
+      if (err instanceof CatalogUnavailableError) return c.json({ error: err.message }, 503)
       console.error('api error', err)
       return c.json({ error: err.message }, 500)
     })

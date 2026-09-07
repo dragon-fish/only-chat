@@ -111,7 +111,7 @@ export const ModelMetadataSchema = z.strictObject({
 })
 export type ModelMetadata = z.infer<typeof ModelMetadataSchema>
 
-/** A partial, recursively mergeable user layer over catalog metadata. */
+/** Objects merge recursively; replacement arrays retain complete element schemas. */
 export const ModelModalitiesOverrideSchema = z.strictObject({
   input: z.array(ModelModalitySchema).optional(),
   output: z.array(ModelModalitySchema).optional(),
@@ -123,27 +123,7 @@ export const ModelLimitOverrideSchema = z.strictObject({
   output: z.number().int().nonnegative().optional(),
 })
 
-const ModelCostOverrideFields = {
-  input: z.number().nonnegative().optional(),
-  output: z.number().nonnegative().optional(),
-  reasoning: z.number().nonnegative().optional(),
-  cache_read: z.number().nonnegative().optional(),
-  cache_write: z.number().nonnegative().optional(),
-  input_audio: z.number().nonnegative().optional(),
-  output_audio: z.number().nonnegative().optional(),
-}
-
-export const ModelCostOverrideSchema = z.strictObject({
-  ...ModelCostOverrideFields,
-  context_over_200k: z.strictObject(ModelCostOverrideFields).optional(),
-  tiers: z.array(z.strictObject({
-    ...ModelCostOverrideFields,
-    tier: z.strictObject({
-      type: z.literal('context').optional(),
-      size: z.number().int().nonnegative().optional(),
-    }).optional(),
-  })).optional(),
-})
+export const ModelCostOverrideSchema = ModelCostSchema
 
 export const ModelMetadataOverrideSchema = z.strictObject({
   name: z.string().optional(),

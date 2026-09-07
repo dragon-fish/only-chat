@@ -233,6 +233,25 @@ describe('model catalog', () => {
     expect(await Promise.all(before.keys.map(key => env.MODEL_CATALOG.getWithMetadata(key.name)))).toEqual(contents)
   })
 
+  it('leaves an unaffected stored model unwritten when unrelated catalog metadata changes', async () => {
+    const { ctx, model } = await seedLeasedModel()
+    serve()
+    await ctx.modelCatalog.refresh('manual')
+    await env.DB.exec('CREATE TABLE catalog_model_write_audit (model_id INTEGER)')
+    await env.DB.exec('CREATE TRIGGER catalog_model_write_audit_update AFTER UPDATE ON models BEGIN INSERT INTO catalog_model_write_audit VALUES (new.id); END')
+    const next = catalog()
+    next.providers.acme.models['not-installed'].name = 'Unrelated catalog change'
+    serve(next)
+    try {
+      expect(await ctx.modelCatalog.refresh('manual')).toMatchObject({ changed: true })
+      expect((await env.DB.prepare('SELECT model_id FROM catalog_model_write_audit WHERE model_id = ?').bind(model.id).all()).results).toEqual([])
+      expect((await ctx.db.orm.select().from(models).where(eq(models.id, model.id)))[0]?.metadata_resolved.name).toBe('Catalog model')
+    } finally {
+      await env.DB.exec('DROP TRIGGER catalog_model_write_audit_update')
+      await env.DB.exec('DROP TABLE catalog_model_write_audit')
+    }
+  })
+
   it('materializes only stored models, respecting overrides and enabled state', async () => {
     const ctx = await createApp({ env, side: 'worker' })
     const [provider] = await ctx.db.orm.insert(providers).values({ user_id: 1, name: 'catalog-test', protocol: 'openai-responses', base_url: 'https://acme.test/v1', created_at: 0 }).returning()

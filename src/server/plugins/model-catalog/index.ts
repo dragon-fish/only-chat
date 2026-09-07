@@ -59,6 +59,10 @@ export class ModelCatalog extends Service {
     }
   }
 
+  materializationCatalog(version: string, providerId: string | null, modelIds: readonly string[]) {
+    return this.storage.materializationCatalog(version, providerId, modelIds)
+  }
+
   async providerIndex(version?: string): Promise<CatalogProviderIndex> {
     return await this.storage.readShard<CatalogProviderIndex>('providers', await publicationPointer(this.ctx.db.orm), version) ?? {}
   }

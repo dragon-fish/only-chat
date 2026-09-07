@@ -9,6 +9,93 @@ import { createApp } from '@/server/app'
 afterEach(() => vi.unstubAllGlobals())
 
 describe('catalog-backed model membership and queries', () => {
+  it.each(['manifest', 'providers', 'models', 'provider:gateway', 'provider:lab'])('rejects materialization when the current %s shard is missing despite a previous generation', async shard => {
+    const { ctx, request, createProvider } = await catalogApp()
+    const provider = await createProvider()
+    const created = ModelWithMetadataSchema.parse(await (await request('POST', `/providers/${provider.id}/models`, { model_id: 'lab/alpha' })).json())
+    const previous = (await ctx.modelCatalog.status()).version!
+    const next = structuredClone(catalogFixture)
+    next.providers.gateway.models['lab/alpha'].name = 'Current operator'
+    next.providers.gateway.models['lab/alpha'].limit.context = 300
+    vi.stubGlobal('fetch', async () => Response.json(next))
+    const current = await ctx.modelCatalog.refresh('manual')
+    const before = await env.DB.prepare('SELECT * FROM models WHERE id = ?').bind(created.id).first()
+    const key = `models-dev:${current.version}:${shard}`
+    const contents = (await env.MODEL_CATALOG.get(key))!
+    expect(await env.MODEL_CATALOG.get(`models-dev:${previous}:${shard}`)).not.toBeNull()
+    await env.MODEL_CATALOG.delete(key)
+    try {
+      const response = await request('PUT', `/providers/${provider.id}/models/${created.id}`, { metadata_override: { description: 'Pending edit' } })
+      expect(response.status).toBe(503)
+      expect(await env.DB.prepare('SELECT * FROM models WHERE id = ?').bind(created.id).first()).toEqual(before)
+    } finally {
+      await env.MODEL_CATALOG.put(key, contents)
+    }
+    expect(await ctx.modelCatalog.refresh('manual')).toMatchObject({ version: current.version, changed: false })
+    const saved = await request('PUT', `/providers/${provider.id}/models/${created.id}`, { metadata_override: { description: 'Pending edit' } })
+    expect(saved.status).toBe(200)
+    expect(ModelWithMetadataSchema.parse(await saved.json())).toMatchObject({
+      metadata_override: { description: 'Pending edit' },
+      metadata: { name: 'Current operator', description: 'Pending edit', limit: { context: 300 } },
+    })
+  })
+
+  it.each(['generation', 'required shard', 'provider index'] as const)('rejects a manifest-inconsistent %s before persisting model edits', async mismatch => {
+    const { ctx, request, createProvider } = await catalogApp()
+    const provider = await createProvider()
+    const created = ModelWithMetadataSchema.parse(await (await request('POST', `/providers/${provider.id}/models`, { model_id: 'lab/alpha' })).json())
+    const version = (await ctx.modelCatalog.status()).version!
+    const key = `models-dev:${version}:manifest`
+    const contents = (await env.MODEL_CATALOG.get(key))!
+    const manifest = JSON.parse(contents)
+    if (mismatch === 'generation') manifest.version = 'different-generation'
+    if (mismatch === 'required shard') manifest.shards = manifest.shards.filter((shard: string) => !shard.endsWith(':provider:gateway'))
+    if (mismatch === 'provider index') manifest.providers += 1
+    await env.MODEL_CATALOG.put(key, JSON.stringify(manifest))
+    try {
+      const response = await request('PUT', `/providers/${provider.id}/models/${created.id}`, { metadata_override: { name: 'Must not persist' } })
+      expect(response.status).toBe(503)
+      expect(await env.DB.prepare('SELECT metadata_override FROM models WHERE id = ?').bind(created.id).first()).toEqual({ metadata_override: '{}' })
+    } finally { await env.MODEL_CATALOG.put(key, contents) }
+  })
+
+  it.each(['create', 'import', 'reassociate'] as const)('leaves provider and model state intact when %s cannot read a required current Lab shard', async operation => {
+    const { ctx, request, createProvider } = await catalogApp()
+    const provider = await createProvider()
+    expect((await request('POST', `/providers/${provider.id}/models`, { model_id: 'lab/alpha' })).status).toBe(201)
+    const next = structuredClone(catalogFixture)
+    next.providers.gateway.models['lab/alpha'].name = 'Current operator'
+    vi.stubGlobal('fetch', async () => Response.json(next))
+    const current = await ctx.modelCatalog.refresh('manual')
+    const beforeModels = (await env.DB.prepare('SELECT * FROM models WHERE provider_id = ?').bind(provider.id).all()).results
+    const beforeProvider = await env.DB.prepare('SELECT * FROM providers WHERE id = ?').bind(provider.id).first()
+    await env.MODEL_CATALOG.delete(`models-dev:${current.version}:provider:lab`)
+    vi.stubGlobal('fetch', async () => Response.json({ data: [{ id: 'lab/new' }] }))
+    const response = operation === 'create'
+      ? await request('POST', `/providers/${provider.id}/models`, { model_id: 'lab/new' })
+      : operation === 'import'
+        ? await request('POST', `/providers/${provider.id}/fetch-models`)
+        : await request('PUT', `/providers/${provider.id}`, { name: 'Must not persist', default_protocol: 'responses', interfaces: [{ protocol: 'responses', base_url: 'https://unknown.test/v1' }] })
+    expect(response.status).toBe(503)
+    expect((await env.DB.prepare('SELECT * FROM models WHERE provider_id = ?').bind(provider.id).all()).results).toEqual(beforeModels)
+    expect(await env.DB.prepare('SELECT * FROM providers WHERE id = ?').bind(provider.id).first()).toEqual(beforeProvider)
+  })
+
+  it.each(['POST', 'PUT'])('rejects incomplete replacement tiers before a %s can mutate a model', async method => {
+    const { request, createProvider } = await catalogApp()
+    const provider = await createProvider()
+    const created = ModelWithMetadataSchema.parse(await (await request('POST', `/providers/${provider.id}/models`, { model_id: 'lab/alpha' })).json())
+    const path = `/providers/${provider.id}/models${method === 'PUT' ? `/${created.id}` : ''}`
+    const response = await request(method, path, { model_id: 'invalid-tier', metadata_override: { cost: { tiers: [{ input: 0 }] } } })
+    expect(response.status).toBe(400)
+    const rows = await env.DB.prepare('SELECT model_id, metadata_override FROM models WHERE provider_id = ?').bind(provider.id).all()
+    expect(rows.results).toEqual([{ model_id: 'lab/alpha', metadata_override: '{}' }])
+    const cost = { tiers: [{ tier: { size: 0 }, input: 0, output: 0 }] }
+    const accepted = await request(method, path, { model_id: 'complete-tier', metadata_override: { cost } })
+    expect(accepted.status).toBe(method === 'PUT' ? 200 : 201)
+    expect(ModelWithMetadataSchema.parse(await accepted.json())).toMatchObject({ metadata_override: { cost }, metadata: { cost } })
+  })
+
   it('accepts unchanged override snapshots with legacy JSON number formatting', async () => {
     const { request, createProvider } = await catalogApp()
     const provider = await createProvider()
@@ -86,8 +173,8 @@ describe('catalog-backed model membership and queries', () => {
     let release!: () => void
     const arrived = new Promise<void>(resolve => { arrive = resolve })
     const resume = new Promise<void>(resolve => { release = resolve })
-    const readGlobalModels = delayed.modelCatalog.globalModels.bind(delayed.modelCatalog)
-    vi.spyOn(delayed.modelCatalog, 'globalModels').mockImplementationOnce(async version => { arrive(); await resume; return readGlobalModels(version) })
+    const readCatalog = delayed.modelCatalog.materializationCatalog.bind(delayed.modelCatalog)
+    vi.spyOn(delayed.modelCatalog, 'materializationCatalog').mockImplementationOnce(async (...args) => { arrive(); await resume; return readCatalog(...args) })
     const pending = delayed.api.request(`/api/providers/${provider.id}/models/${created.id}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model_id: 'lab/alpha' }) })
     await arrived
     try {
@@ -152,20 +239,29 @@ describe('catalog-backed model membership and queries', () => {
     expect(resolveModelFields(catalog, 'gateway', 'lab/alpha', {}).metadata_resolved.name).toBe('Operator alpha')
   })
 
-  it('keeps representative filtered page reads bounded as the model table grows', async () => {
+  it.each([
+    { interval: 2, limit: 50 },
+    { interval: 20, limit: 20 },
+  ])('keeps provider-filtered reads bounded for one match every $interval models, including a later cursor page', async ({ interval, limit }) => {
     const { createProvider } = await catalogApp()
     const provider = await createProvider()
     await env.DB.prepare(`WITH RECURSIVE ids(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM ids WHERE n < 2000)
       INSERT INTO models (provider_id, model_id, display_name, capabilities, enabled, supports_image_input, search_name)
-      SELECT ?, 'scale-' || n, 'Scale ' || n, '{}', 1, n % 2, 'scale model ' || n FROM ids`).bind(provider.id).run()
-    const query = buildModelQuery({ provider_id: provider.id, enabled: true, vision: true, limit: 50 })
-    const plan = await env.DB.prepare(`EXPLAIN QUERY PLAN ${query.sql}`).bind(...query.params).all<{ detail: string }>()
-    expect(plan.results.some(row => /USING (?:COVERING )?INDEX/u.test(row.detail))).toBe(true)
-    expect(plan.results.some(row => /SCAN (?:m|models)(?: |$)/u.test(row.detail))).toBe(false)
-    const page = await env.DB.prepare(query.sql).bind(...query.params).all()
-    expect(page.results).toHaveLength(51)
-    expect(page.meta.rows_read).toBeLessThan(250)
-    console.info('Model query diagnostic', { seeded_models: 2000, returned_rows: page.results.length, rows_read: page.meta.rows_read, plan: plan.results.map(row => row.detail) })
+      SELECT ?, 'scale-' || n, 'Scale ' || n, '{}', 1, n % ? = 0, 'scale model ' || n FROM ids`).bind(provider.id, interval).run()
+    let cursor: string | undefined
+    for (const pageNumber of [1, 2]) {
+      const query = buildModelQuery({ provider_id: provider.id, enabled: true, vision: true, limit, cursor })
+      const plan = await env.DB.prepare(`EXPLAIN QUERY PLAN ${query.sql}`).bind(...query.params).all<{ detail: string }>()
+      expect(plan.results.some(row => /USING (?:COVERING )?INDEX/u.test(row.detail))).toBe(true)
+      expect(plan.results.some(row => /SCAN (?:m|models)(?: |$)/u.test(row.detail))).toBe(false)
+      const page = await env.DB.prepare(query.sql).bind(...query.params).all<{ id: number; sort: number; model_id: string }>()
+      expect(page.results).toHaveLength(limit + 1)
+      expect(page.results[0]!.model_id).toBe(`scale-${((pageNumber - 1) * limit + 1) * interval}`)
+      expect(page.meta.rows_read).toBeLessThan(250)
+      const last = page.results[limit - 1]!
+      cursor = btoa(JSON.stringify({ sort: last.sort, id: last.id }))
+      console.info('Model query diagnostic', { seeded_models: 2000, match_interval: interval, page: pageNumber, returned_rows: page.results.length, rows_read: page.meta.rows_read, plan: plan.results.map(row => row.detail) })
+    }
   })
 
   it('imports only remote IDs, preserves manual models and overrides, and resolves operator metadata', async () => {

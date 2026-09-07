@@ -7,7 +7,7 @@ import { materializeModelMetadata, resolveModelMetadata } from './resolve'
 import { CatalogStorage, projectProviderIndex, type CatalogCounts } from './storage'
 import { parseModelCatalog, type ModelCatalog } from './types'
 import { CatalogLease, CatalogLeaseLostError } from './lease'
-import { catalogProviderSetFence, ModelSourceConflict, modelSourceColumns, modelSourceFence, modelSourceMatches, providerSourceFence, retryModelSource } from './source-snapshot'
+import { catalogProviderSetFence, changedModelFields, ModelSourceConflict, modelSourceColumns, modelSourceFence, modelSourceMatches, providerSourceFence, retryModelSource } from './source-snapshot'
 
 export interface CatalogRefreshResult extends CatalogCounts {
   version: string
@@ -44,12 +44,14 @@ async function materialize(db: DB, catalog: ModelCatalog, version: string | null
       metadataOverride: model.metadata_override,
       catalog,
     })
-    updates.push(modelSourceFence(db, model, source, version), db.update(models).set({
+    const changed = changedModelFields(model, {
       metadata_resolved: resolved.metadata,
       catalog_matches: resolved.matches,
       lab_id: resolved.labId,
       ...materializeModelMetadata(resolved.metadata, model.model_id, resolved.labName),
-    }).where(modelSourceMatches(model, source, version)))
+    })
+    updates.push(modelSourceFence(db, model, source, version))
+    if (Object.keys(changed).length) updates.push(db.update(models).set(changed).where(modelSourceMatches(model, source, version)))
   }
   return updates
 }

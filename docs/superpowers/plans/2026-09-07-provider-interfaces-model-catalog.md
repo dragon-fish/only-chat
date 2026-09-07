@@ -84,7 +84,7 @@ export const ModelMetadataSchema = z.object({
 })
 ```
 
-Add the new Provider/Model DTOs beside the existing wire contracts so this commit remains type-safe. Add strict API inputs for atomic provider/interface writes and metadata overrides. Task 5 switches the server routes and Task 6 switches the client; Task 7 removes the superseded contracts after both sides use the new types.
+Add the new Provider/Model DTOs beside the existing wire contracts so this commit remains type-safe. Add strict API inputs for atomic provider/interface writes and metadata overrides. Task 5 switches the server routes and Task 6 switches the client; Task 7 removes the temporary client projection. The following Reasoning/Files plan owns the remaining LLM/runtime legacy types and columns.
 
 - [ ] **Step 4: Run tests and typecheck**
 
@@ -111,7 +111,7 @@ git commit -m "feat(models): align metadata contracts with models.dev"
 
 **Interfaces:**
 - Consumes: shared contracts from Task 1.
-- Produces: `providerInterfaces`, additive provider/model metadata columns, append-only `attachmentProviderFiles`, the `models_fts` search index, and indexes named `models_provider_enabled_sort_idx`, `models_enabled_image_idx`, `models_enabled_reasoning_idx`, and `models_enabled_context_idx`. Legacy columns remain temporarily so the additive commit compiles; Task 7 removes them after server/client cutover.
+- Produces: `providerInterfaces`, additive provider/model metadata columns, append-only `attachmentProviderFiles`, the `models_fts` search index, and indexes named `models_provider_enabled_sort_idx`, `models_enabled_image_idx`, `models_enabled_reasoning_idx`, and `models_enabled_context_idx`. Legacy columns remain until the following Reasoning/Files plan migrates the LLM/runtime consumers and removes them in migration `0003`.
 
 - [ ] **Step 1: Write failing D1 schema tests**
 
@@ -132,7 +132,7 @@ Expected: FAIL on absent tables/columns and the old unique file-pointer constrai
 
 - [ ] **Step 3: Update Drizzle schema**
 
-Create provider interfaces and add the new provider/model fields. Keep relational/operational facts as columns and metadata as JSON. Add all foreign keys and indexes in the schema declaration. Retain the legacy provider/model columns only until the vertical cutover is complete; do not introduce runtime dual writes.
+Create provider interfaces and add the new provider/model fields. Keep relational/operational facts as columns and metadata as JSON. Add all foreign keys and indexes in the schema declaration. Retain the legacy provider/model columns for the LLM/runtime consumers until the following Reasoning/Files plan completes their migration; do not introduce runtime dual writes.
 
 ```ts
 export const providerInterfaces = sqliteTable('provider_interfaces', {
@@ -156,7 +156,7 @@ Expected: `migrations/0002_provider-catalog.sql`, snapshot, and journal entry ar
 - creates one interface per legacy provider;
 - maps legacy protocols to new names;
 - converts non-placeholder display names, capabilities, and pricing into metadata overrides;
-- adds/backfills provider and model catalog fields while retaining legacy columns for the branch-local cutover;
+- adds/backfills provider and model catalog fields while retaining legacy columns for the subsequent Reasoning/Files runtime cutover;
 - rebuilds the pointer table without the legacy unique pointer constraint;
 - rejects or removes unsupported native Vertex local rows according to the approved spec rather than silently mapping credentials.
 
@@ -303,7 +303,7 @@ export interface CatalogRefreshResult {
 }
 ```
 
-After immutable KV shards are written, atomically commit materialized models, current/previous versions, and success status in the D1 singleton. Acquire/renew a shared owner-token lease and fence that transaction against expired ownership. Readers and status use D1 as the sole publication authority; there is no mutable KV pointer or status. If a current KV shard is absent at a PoP, readers try the D1 previous version. Delete only generations older than 48 hours outside the D1 current/previous pair. Extend the unreleased 0002 migration/schema/snapshot for the singleton and retain 0003 for later legacy cleanup.
+After immutable KV shards are written, atomically commit changed materialized fields, current/previous versions, and success status in the D1 singleton. Acquire/renew a shared owner-token lease and fence that transaction against expired ownership. Readers and status use D1 as the sole publication authority; there is no mutable KV pointer or status. Display reads may try the D1 previous version if a current KV shard is absent at a PoP. Materialization reads require every relevant shard from their exact fenced D1 generation and a consistent manifest; unavailable data returns 503 before persisting edits. Delete only generations older than 48 hours outside the D1 current/previous pair. Extend the unreleased 0002 migration/schema/snapshot for the singleton; the following Reasoning/Files plan owns 0003 and the remaining runtime legacy cleanup.
 
 - [ ] **Step 4: Provision the production KV binding**
 
@@ -476,11 +476,6 @@ git commit -m "feat(settings): manage provider interfaces and catalog"
 - Modify: `src/client/stores/sync.ts`
 - Modify: `src/shared/models.ts`
 - Modify: `src/shared/api.ts`
-- Modify: `src/server/db/schema.ts`
-- Create: `migrations/0003_drop-legacy-provider-model.sql`
-- Modify: `migrations/meta/0003_snapshot.json`
-- Modify: `migrations/meta/_journal.json`
-- Modify: `test/worker/db.test.ts`
 - Test: `test/unit/client-model-picker.test.ts`
 - Create: `test/unit/client-model-groups.test.ts`
 - Modify: `test/unit/client-settings.test.ts`
@@ -516,18 +511,18 @@ Serialize vision/reasoning/tools/image output/interface/Lab/min-context/search i
 
 Bind form inputs to `metadata_override`, use effective metadata as placeholder/help text, and emit a partial override object. Derive reasoning controls from `reasoning_options`; remove the old capability conversion helpers and hand-written flags.
 
-- [ ] **Step 7: Remove superseded shared contracts**
+- [ ] **Step 7: Remove the temporary client compatibility projection**
 
-Remove the old single-protocol Provider DTO, `display_name`, `capabilities`, `pricing`, and legacy model inputs after every server and client consumer uses the interface/metadata contracts. Remove the corresponding legacy D1 columns from `src/server/db/schema.ts`, run `pnpm exec drizzle-kit generate --name drop-legacy-provider-model`, and review `migrations/0003_drop-legacy-provider-model.sql`. Do not retain compatibility fields or dual serialization.
+Remove `legacy-catalog-ui.ts` and the old capability conversion helpers from the editor/picker after their consumers use the interface/metadata contracts. REST responses use only the new DTOs. Retain the legacy provider protocol/native-files fields, model capabilities, and associated shared types still consumed by LLM/runtime code. The following Reasoning/Files plan owns migrating those consumers and creating `migrations/0003_drop-legacy-provider-model.sql`, its snapshot, and the journal update; do not perform that cleanup in Task 7.
 
 - [ ] **Step 8: Run client tests, typecheck, and commit**
 
-Run: `pnpm vitest run test/unit/client-model-picker.test.ts test/unit/client-model-groups.test.ts test/unit/client-settings.test.ts test/unit/client-ui-models.test.ts test/worker/db.test.ts && pnpm typecheck`
+Run: `pnpm vitest run test/unit/client-model-picker.test.ts test/unit/client-model-groups.test.ts test/unit/client-settings.test.ts test/unit/client-ui-models.test.ts && pnpm typecheck`
 
 Expected: PASS.
 
 ```bash
-git add src/client/components/lab-avatar.vue src/client/components/model-filter-bar.vue src/client/components/model-group-list.vue src/client/components/model-editor.vue src/client/components/model-picker-content.vue src/client/components/model-picker.vue src/client/views/settings-provider-edit.vue src/client/lib/ui-models.ts src/client/stores/sync.ts src/shared/models.ts src/shared/api.ts src/server/db/schema.ts migrations test/unit/client-model-picker.test.ts test/unit/client-model-groups.test.ts test/unit/client-settings.test.ts test/unit/client-ui-models.test.ts test/worker/db.test.ts
+git add src/client/components/lab-avatar.vue src/client/components/model-filter-bar.vue src/client/components/model-group-list.vue src/client/components/model-editor.vue src/client/components/model-picker-content.vue src/client/components/model-picker.vue src/client/views/settings-provider-edit.vue src/client/lib/ui-models.ts src/client/stores/sync.ts src/shared/models.ts src/shared/api.ts test/unit/client-model-picker.test.ts test/unit/client-model-groups.test.ts test/unit/client-settings.test.ts test/unit/client-ui-models.test.ts
 git commit -m "feat(models): add catalog metadata and Lab groups"
 ```
 

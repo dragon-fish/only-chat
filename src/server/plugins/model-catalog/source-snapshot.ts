@@ -10,6 +10,10 @@ export const modelSourceColumns = {
   metadata_override_snapshot: sql<string>`${models.metadata_override}`.as('metadata_override_snapshot'),
 }
 
+export function changedModelFields(row: ModelRow, next: Partial<ModelRow>): Partial<ModelRow> {
+  return Object.fromEntries(Object.entries(next).filter(([key, value]) => JSON.stringify(row[key as keyof ModelRow]) !== JSON.stringify(value)))
+}
+
 export class ModelSourceConflict extends Error {
   constructor() { super('Model metadata changed concurrently; retry the operation') }
 }

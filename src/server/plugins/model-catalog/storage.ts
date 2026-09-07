@@ -1,4 +1,4 @@
-import type { CatalogProviderIndex, ModelCatalog } from './types'
+import type { CatalogModel, CatalogProviderIndex, ModelCatalog } from './types'
 
 export interface CatalogPointer {
   current: string
@@ -17,6 +17,10 @@ export interface CatalogManifest extends CatalogCounts {
   fetchedAt: number
   schemaVersion: 1
   shards: string[]
+}
+
+export class CatalogUnavailableError extends Error {
+  constructor() { super('Current model catalog is unavailable; retry the operation') }
 }
 
 export function projectProviderIndex(catalog: ModelCatalog): CatalogProviderIndex {
@@ -68,6 +72,43 @@ export class CatalogStorage {
     }
     if (requested !== pointer?.current || !pointer.previous) return null
     return this.kv.get<T>(`models-dev:${pointer.previous}:${shard}`, 'json')
+  }
+
+  /** Writes must use complete shards from their fenced D1 generation, never display fallback data. */
+  async materializationCatalog(version: string, providerId: string | null, modelIds: readonly string[]): Promise<ModelCatalog> {
+    try {
+      const manifest = await this.manifest(version)
+      if (!manifest || manifest.version !== version || manifest.schemaVersion !== 1 || !Array.isArray(manifest.shards)) throw new CatalogUnavailableError()
+      const prefix = `models-dev:${version}:`
+      const readRequired = async <T>(shard: string): Promise<T> => {
+        const key = `${prefix}${shard}`
+        if (!manifest.shards.includes(key)) throw new CatalogUnavailableError()
+        const value = await this.kv.get<T>(key, 'json')
+        if (value === null) throw new CatalogUnavailableError()
+        return value
+      }
+      const [index, globalModels] = await Promise.all([
+        readRequired<CatalogProviderIndex>('providers'), readRequired<Record<string, CatalogModel>>('models'),
+      ])
+      const providerIds = Object.keys(index)
+      const expectedShards = ['providers', 'models', ...providerIds.map(id => `provider:${id}`)].map(shard => `${prefix}${shard}`)
+      if (manifest.providers !== providerIds.length || manifest.globalModels !== Object.keys(globalModels).length
+        || manifest.shards.length !== expectedShards.length || expectedShards.some(key => !manifest.shards.includes(key))
+        || providerIds.some(id => index[id]?.id !== id)) throw new CatalogUnavailableError()
+      const ids = new Set(modelIds.filter(id => id.includes('/')).map(id => id.slice(0, id.indexOf('/'))))
+      if (providerId) ids.add(providerId)
+      const catalog: ModelCatalog = {
+        providers: Object.fromEntries(Object.entries(index).map(([id, provider]) => [id, { ...provider, models: {} }])),
+        models: globalModels,
+      }
+      await Promise.all([...ids].filter(id => index[id]).map(async id => {
+        catalog.providers[id]!.models = await readRequired<Record<string, CatalogModel>>(`provider:${id}`)
+      }))
+      return catalog
+    } catch {
+      // KV errors and inconsistent manifests must not leak storage payloads through the API.
+      throw new CatalogUnavailableError()
+    }
   }
 
   async collectGarbage(now: number, committed: CatalogPointer | null): Promise<void> {

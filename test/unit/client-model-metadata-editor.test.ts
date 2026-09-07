@@ -69,4 +69,19 @@ describe('metadata override editor', () => {
     draft.interface_id = null
     expect(modelWriteFromDraft({ ...modelRecords[0]!, interface_id: 10 }, draft, provider.interfaces)).toEqual({ interface_id: null })
   })
+
+  it('rejects incomplete replacement tiers at both editor entry and submission', () => {
+    const invalidCost = { tiers: [{ input: 0 }] }
+    expect(() => setMetadataOverride({}, 'cost', invalidCost)).toThrow()
+    const draft = createModelDraft(modelRecords[0]!)
+    Reflect.set(draft.metadata_override, 'cost', invalidCost)
+    expect(() => modelWriteFromDraft(modelRecords[0]!, draft, provider.interfaces)).toThrow()
+  })
+
+  it('submits a complete zero-valued replacement tier unchanged', () => {
+    const cost = { tiers: [{ tier: { size: 0 }, input: 0, output: 0 }] }
+    const draft = createModelDraft(modelRecords[0]!)
+    draft.metadata_override = setMetadataOverride({}, 'cost', cost)
+    expect(modelWriteFromDraft(modelRecords[0]!, draft, provider.interfaces)).toEqual({ metadata_override: { cost } })
+  })
 })
