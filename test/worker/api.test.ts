@@ -14,6 +14,45 @@ const json = (method: string, path: string, body?: unknown) =>
   exports.default.fetch(new Request(`https://x${path}`, { method, headers: { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) }))
 
 describe('atomic provider interface API', () => {
+  it.each(['stale-key', '', undefined])('retains the original credential guard across source retries (api_key=%s)', async api_key => {
+    const { request, createProvider } = await catalogApp()
+    const provider = await createProvider({ api_key: 'original-key' })
+    let arrive!: () => void
+    let release!: () => void
+    const arrived = new Promise<void>(resolve => { arrive = resolve })
+    const resume = new Promise<void>(resolve => { release = resolve })
+    const delayedDB = new Proxy(env.DB, {
+      get(target, property) {
+        if (property === 'batch') return async (statements: D1PreparedStatement[]) => { arrive(); await resume; return target.batch(statements) }
+        const value = Reflect.get(target, property)
+        return typeof value === 'function' ? value.bind(target) : value
+      },
+    })
+    const delayed = await createApp({ env: { ...env, DB: delayedDB }, side: 'worker' })
+    const pending = delayed.api.request(`/api/providers/${provider.id}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
+      name: 'Stale request', enabled: true, api_key, default_protocol: 'responses', models_dev_provider: { source: 'endpoint' },
+      interfaces: [{ protocol: 'responses', base_url: 'https://gateway.test/v1' }],
+    }) })
+    await arrived
+    let newer
+    try {
+      const saved = await request('PUT', `/providers/${provider.id}`, {
+        name: 'Newer config', enabled: false, api_key: 'current-key', default_protocol: 'anthropic', models_dev_provider: { source: 'endpoint' },
+        interfaces: [{ protocol: 'responses', base_url: 'https://gateway.test/v1' }, { protocol: 'anthropic', base_url: 'https://lab.test/v1' }],
+      })
+      expect(saved.status).toBe(200)
+      newer = ProviderWithInterfacesSchema.parse(await saved.json())
+    } finally { release() }
+    expect((await pending).status).toBe(api_key === undefined ? 200 : 409)
+    const row = await env.DB.prepare('SELECT api_key, credential_version FROM providers WHERE id = ?').bind(provider.id).first<{ api_key: string; credential_version: number }>()
+    expect(row?.credential_version).toBe(2)
+    expect(await decryptSecret(env.KEY_ENCRYPTION_SECRET, row!.api_key)).toBe('current-key')
+    const listed = await (await request('GET', '/providers')).json() as unknown[]
+    const current = listed.map(value => ProviderWithInterfacesSchema.parse(value)).find(value => value.id === provider.id)!
+    if (api_key === undefined) expect(current.name).toBe('Stale request')
+    else expect(current).toEqual(newer)
+  })
+
   it.each([false, true])('protects credentials when an older provider write resumes (writesKey=%s)', async writesKey => {
     const { request, createProvider } = await catalogApp()
     const provider = await createProvider({ api_key: 'original-key' })

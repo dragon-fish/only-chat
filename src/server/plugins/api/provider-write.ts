@@ -26,18 +26,30 @@ const legacyProtocol: Record<InterfaceProtocol, Protocol> = {
   responses: 'openai-responses', 'chat-completions': 'openai-completions', anthropic: 'anthropic', 'vertex-compatible': 'vertex-compatible',
 }
 
+type CredentialExpectation = Readonly<Pick<ProviderRow, 'api_key' | 'credential_version'>>
+
 export async function writeProvider(ctx: Context, input: ProviderWriteInput, id?: number) {
-  try { return await retryModelSource(() => writeProviderAttempt(ctx, input, id)) }
+  let credentialExpectation: CredentialExpectation | undefined
+  if (id !== undefined && input.api_key !== undefined) {
+    const original = await ctx.db.orm.query.providers.findFirst({ where: and(eq(providers.id, id), eq(providers.user_id, DEFAULT_USER_ID)) })
+    if (!original) throw new ProviderWriteError('not found', 404)
+    // Source retries may refresh metadata, but must never adopt another request's credential version.
+    credentialExpectation = { api_key: original.api_key, credential_version: original.credential_version }
+  }
+  try { return await retryModelSource(() => writeProviderAttempt(ctx, input, id, credentialExpectation)) }
   catch (error) {
     if (error instanceof ModelSourceConflict) throw new ProviderWriteError(error.message, 409)
     throw error
   }
 }
 
-async function writeProviderAttempt(ctx: Context, input: ProviderWriteInput, id?: number) {
+async function writeProviderAttempt(ctx: Context, input: ProviderWriteInput, id: number | undefined, credentialExpectation: CredentialExpectation | undefined) {
   const db = ctx.db.orm
   const before = id === undefined ? undefined : await db.query.providers.findFirst({ where: and(eq(providers.id, id), eq(providers.user_id, DEFAULT_USER_ID)) })
   if (id !== undefined && !before) throw new ProviderWriteError('not found', 404)
+  if (before && credentialExpectation && (before.credential_version !== credentialExpectation.credential_version || before.api_key !== credentialExpectation.api_key)) {
+    throw new ProviderWriteError('Credentials changed concurrently; reload and retry', 409)
+  }
   const existing = id === undefined ? [] : await db.select().from(providerInterfaces).where(eq(providerInterfaces.provider_id, id))
   for (const endpoint of input.interfaces) {
     if (endpoint.id !== undefined && !existing.some(row => row.id === endpoint.id && row.protocol === endpoint.protocol)) {
@@ -84,7 +96,7 @@ async function writeProviderAttempt(ctx: Context, input: ProviderWriteInput, id?
     ...(input.api_key === undefined ? {} : {
       api_key: encryptedKey,
       // A stale credential edit must abort the whole batch. Never reuse a version for another key.
-      credential_version: sql`CASE WHEN ${providers.credential_version} = ${before.credential_version} THEN ${providers.credential_version} + ${Number(keyChanged)} ELSE NULL END`,
+      credential_version: sql`CASE WHEN ${providers.credential_version} = ${credentialExpectation!.credential_version} AND ${providers.api_key} IS ${credentialExpectation!.api_key} THEN ${providers.credential_version} + ${Number(keyChanged)} ELSE NULL END`,
     }),
   }).where(eq(providers.id, before.id)))
   else operations.push(db.insert(providers).values({
