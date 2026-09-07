@@ -1,3 +1,12 @@
+CREATE TABLE `model_catalog_refresh` (
+	`id` integer PRIMARY KEY NOT NULL,
+	`owner` text,
+	`expires_at` integer DEFAULT 0 NOT NULL,
+	`current_version` text,
+	`previous_version` text,
+	CONSTRAINT "model_catalog_refresh_singleton_check" CHECK("model_catalog_refresh"."id" = 1)
+);
+--> statement-breakpoint
 CREATE TABLE `provider_interfaces` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
 	`provider_id` integer NOT NULL,

@@ -92,14 +92,14 @@ export class CatalogStorage {
     return this.kv.get<T>(`models-dev:${pointer.previous}:${shard}`, 'json')
   }
 
-  async collectGarbage(now: number): Promise<void> {
+  async collectGarbage(now: number, committed?: CatalogPointer | null): Promise<void> {
     let cursor: string | undefined
     do {
       const page = await this.kv.list<{ fetchedAt: number }>({ prefix: 'models-dev:', cursor })
       const pointer = await this.pointer()
       for (const key of page.keys) {
         const generation = /^models-dev:([^:]+):/u.exec(key.name)?.[1]
-        if (!generation || generation === pointer?.current || generation === pointer?.previous) continue
+        if (!generation || [pointer?.current, pointer?.previous, committed?.current, committed?.previous].includes(generation)) continue
         if (typeof key.metadata?.fetchedAt !== 'number' || now - key.metadata.fetchedAt <= 48 * 60 * 60 * 1000) continue
         await this.kv.delete(key.name)
       }

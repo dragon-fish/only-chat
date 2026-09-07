@@ -6,13 +6,14 @@ import { matchProviderByEndpoints } from './match'
 import { materializeModelMetadata, resolveModelMetadata } from './resolve'
 import { CatalogStorage, projectProviderIndex, type CatalogCounts } from './storage'
 import { parseModelCatalog, type ModelCatalog } from './types'
+import { CatalogLease, CatalogLeaseLostError } from './lease'
 
 export interface CatalogRefreshResult extends CatalogCounts {
   version: string
   changed: boolean
 }
 
-async function materialize(db: DB, catalog: ModelCatalog): Promise<void> {
+async function materialize(db: DB, catalog: ModelCatalog): Promise<BatchItem<'sqlite'>[]> {
   const [storedProviders, interfaces, storedModels] = await Promise.all([
     db.select().from(providers), db.select().from(providerInterfaces), db.select().from(models),
   ])
@@ -46,11 +47,19 @@ async function materialize(db: DB, catalog: ModelCatalog): Promise<void> {
       ...materializeModelMetadata(resolved.metadata, model.model_id, resolved.labName),
     }).where(eq(models.id, model.id)))
   }
-  // D1 batch is transactional; do not leave a partially materialized generation after an error.
-  if (updates.length > 0) await db.batch(updates as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]])
+  return updates
 }
 
 export async function refreshCatalog(storage: CatalogStorage, db: DB): Promise<CatalogRefreshResult> {
+  const lease = await CatalogLease.acquire(db)
+  try {
+    return await refreshWithLease(storage, db, lease)
+  } finally {
+    await lease.release()
+  }
+}
+
+async function refreshWithLease(storage: CatalogStorage, db: DB, lease: CatalogLease): Promise<CatalogRefreshResult> {
   let stage = 'download'
   let result: CatalogRefreshResult
   try {
@@ -61,24 +70,33 @@ export async function refreshCatalog(storage: CatalogStorage, db: DB): Promise<C
     const catalog = parseModelCatalog(JSON.parse(new TextDecoder().decode(bytes)))
     const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), byte => byte.toString(16).padStart(2, '0')).join('')
     stage = 'storage'
-    const pointer = await storage.pointer()
+    const pointer = lease.pointer
     const active = pointer ? await storage.manifest(pointer.current) : null
     if (active?.hash === hash) {
       result = { version: active.version, changed: false, providers: active.providers, globalModels: active.globalModels, providerModels: active.providerModels }
     } else {
       const manifest = await storage.stage(catalog, hash, Date.now())
       stage = 'materialization'
-      await materialize(db, catalog)
-      stage = 'activation'
-      await storage.activate({ current: manifest.version, previous: pointer?.current ?? null })
+      await lease.renew()
+      await lease.commit(await materialize(db, catalog), { current: manifest.version, previous: pointer?.current ?? null })
       result = { version: manifest.version, changed: true, providers: manifest.providers, globalModels: manifest.globalModels, providerModels: manifest.providerModels }
     }
-  } catch {
+    stage = 'activation'
+    const distributed = await storage.pointer()
+    await lease.renew()
+    // Writers use the committed D1 state, never an eventually consistent KV read, to form the chain.
+    if (lease.pointer && (distributed?.current !== lease.pointer.current || distributed?.previous !== lease.pointer.previous)) {
+      await storage.activate(lease.pointer)
+    }
+  } catch (error) {
+    if (error instanceof CatalogLeaseLostError) throw error
     // Keep status/API errors bounded and free of upstream payloads, DB values or credentials.
     const message = `Catalog refresh failed during ${stage}`
     try {
-      const previous = await storage.refreshState()
-      await storage.recordRefresh({ lastSuccessAt: previous?.lastSuccessAt ?? null, lastError: message })
+      if (await lease.isOwner()) {
+        const previous = await storage.refreshState()
+        await storage.recordRefresh({ lastSuccessAt: previous?.lastSuccessAt ?? null, lastError: message })
+      }
     } catch (error) {
       console.error('Could not record catalog refresh failure', error)
     }

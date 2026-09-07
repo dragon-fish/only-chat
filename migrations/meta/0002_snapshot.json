@@ -4,6 +4,26 @@
   "id": "9cf7f555-6983-4346-883d-7dd917effb5a",
   "prevId": "bd8b17e5-1d24-4106-bd59-11e3f359c359",
   "tables": {
+    "model_catalog_refresh": {
+      "name": "model_catalog_refresh",
+      "columns": {
+        "id": { "name": "id", "type": "integer", "primaryKey": true, "notNull": true, "autoincrement": false },
+        "owner": { "name": "owner", "type": "text", "primaryKey": false, "notNull": false, "autoincrement": false },
+        "expires_at": { "name": "expires_at", "type": "integer", "primaryKey": false, "notNull": true, "autoincrement": false, "default": 0 },
+        "current_version": { "name": "current_version", "type": "text", "primaryKey": false, "notNull": false, "autoincrement": false },
+        "previous_version": { "name": "previous_version", "type": "text", "primaryKey": false, "notNull": false, "autoincrement": false }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "model_catalog_refresh_singleton_check": {
+          "name": "model_catalog_refresh_singleton_check",
+          "value": "\"model_catalog_refresh\".\"id\" = 1"
+        }
+      }
+    },
     "attachment_provider_files": {
       "name": "attachment_provider_files",
       "columns": {

@@ -3,6 +3,7 @@ import { eq } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp } from '@/server/app'
 import { models, providerInterfaces, providers } from '@/server/db/schema'
+import { CatalogLease } from '@/server/plugins/model-catalog/lease'
 
 function catalog(name = 'Catalog model') {
   return {
@@ -24,7 +25,33 @@ function serve(body: unknown = catalog(), status = 200) {
   })
 }
 
+function pauseStaging() {
+  let release!: () => void
+  let signal!: () => void
+  const resume = new Promise<void>(resolve => { release = resolve })
+  const paused = new Promise<void>(resolve => { signal = resolve })
+  const kv = new Proxy(env.MODEL_CATALOG, {
+    get(target, property) {
+      if (property === 'put') return async (key: string, value: string, options?: KVNamespacePutOptions) => {
+        if (key.endsWith(':manifest')) { signal(); await resume }
+        return target.put(key, value, options)
+      }
+      const member = Reflect.get(target, property)
+      return typeof member === 'function' ? member.bind(target) : member
+    },
+  })
+  return { kv, paused, release }
+}
+
+async function seedLeasedModel() {
+  const ctx = await createApp({ env, side: 'worker' })
+  const [provider] = await ctx.db.orm.insert(providers).values({ user_id: 1, name: 'lease', protocol: 'openai-responses', base_url: 'https://acme.test/v1', models_dev_provider_id: 'acme', models_dev_provider_source: 'manual', created_at: 0 }).returning()
+  const [model] = await ctx.db.orm.insert(models).values({ provider_id: provider!.id, model_id: 'acme/model', display_name: 'lease', capabilities: {} }).returning()
+  return { ctx, model: model! }
+}
+
 async function clearCatalog() {
+  await env.DB.exec('DELETE FROM model_catalog_refresh')
   const listed = await env.MODEL_CATALOG.list()
   await Promise.all(listed.keys.map(key => env.MODEL_CATALOG.delete(key.name)))
 }
@@ -33,6 +60,92 @@ beforeEach(clearCatalog)
 afterEach(() => vi.unstubAllGlobals())
 
 describe('model catalog', () => {
+  it('reclaims an expired lease and fences commits and release by its previous owner', async () => {
+    const ctx = await createApp({ env, side: 'worker' })
+    const stale = await CatalogLease.acquire(ctx.db.orm)
+    await env.DB.exec('UPDATE model_catalog_refresh SET expires_at = 0 WHERE id = 1')
+    const replacement = await CatalogLease.acquire(ctx.db.orm)
+    try {
+      await expect(stale.renew()).rejects.toThrow('lease expired')
+      await expect(stale.commit([], { current: 'stale', previous: null })).rejects.toThrow()
+      await stale.release()
+      await expect(CatalogLease.acquire(ctx.db.orm)).rejects.toThrow('already in progress')
+      await replacement.commit([], { current: 'replacement', previous: null })
+      expect(await env.DB.prepare('SELECT current_version FROM model_catalog_refresh').first()).toEqual({ current_version: 'replacement' })
+    } finally {
+      await replacement.release()
+    }
+  })
+
+  it('stops an expired publisher before materialization and preserves its successor lease', async () => {
+    const { ctx, model } = await seedLeasedModel()
+    serve()
+    await ctx.modelCatalog.refresh('manual')
+    const gate = pauseStaging()
+    const stale = await createApp({ env: { ...env, MODEL_CATALOG: gate.kv }, side: 'worker' })
+    serve(catalog('Stale owner'))
+    const pending = stale.modelCatalog.refresh('manual')
+    await gate.paused
+    try {
+      await env.DB.exec('UPDATE model_catalog_refresh SET expires_at = 0 WHERE id = 1')
+      serve(catalog('Replacement owner'))
+      const replacement = await ctx.modelCatalog.refresh('manual')
+      const successor = await CatalogLease.acquire(ctx.db.orm)
+      try {
+        gate.release()
+        await expect(pending).rejects.toThrow('lease expired')
+        expect(await successor.isOwner()).toBe(true)
+        expect((await ctx.db.orm.select().from(models).where(eq(models.id, model.id)))[0]?.metadata_resolved.name).toBe('Replacement owner')
+        expect(await env.MODEL_CATALOG.get('models-dev:active', 'json')).toMatchObject({ current: replacement.version })
+        expect((await ctx.modelCatalog.status()).lastError).toBeNull()
+      } finally {
+        await successor.release()
+      }
+    } finally {
+      gate.release()
+      await pending.catch(() => {})
+    }
+  })
+
+  it('serializes two service publishers and ignores stale KV publication pointers', async () => {
+    const { ctx, model } = await seedLeasedModel()
+    serve()
+    const initial = await ctx.modelCatalog.refresh('manual')
+    const gate = pauseStaging()
+    const owner = await createApp({ env: { ...env, MODEL_CATALOG: gate.kv }, side: 'worker' })
+    const staleKV = new Proxy(env.MODEL_CATALOG, {
+      get(target, property) {
+        if (property === 'get') return async (key: string, type: 'json') => key === 'models-dev:active'
+          ? { current: initial.version, previous: null }
+          : target.get(key, type)
+        const member = Reflect.get(target, property)
+        return typeof member === 'function' ? member.bind(target) : member
+      },
+    })
+    const contender = await createApp({ env: { ...env, MODEL_CATALOG: staleKV }, side: 'worker' })
+    serve(catalog('Owner version'))
+    const publishing = owner.modelCatalog.refresh('manual')
+    await gate.paused
+    let published
+    try {
+      serve(catalog('Contender version'))
+      const conflict = await contender.api.request('/api/model-catalog/refresh', { method: 'POST' })
+      expect(conflict.status).toBe(409)
+      expect(await conflict.json()).toEqual({ error: 'Catalog refresh already in progress' })
+      expect(await contender.modelCatalog.refresh('cron')).toBeNull()
+      expect((await ctx.db.orm.select().from(models).where(eq(models.id, model.id)))[0]?.metadata_resolved.name).toBe('Catalog model')
+      expect(await env.MODEL_CATALOG.get('models-dev:active', 'json')).toEqual({ current: initial.version, previous: null })
+    } finally {
+      gate.release()
+      published = await publishing
+    }
+    expect((await ctx.db.orm.select().from(models).where(eq(models.id, model.id)))[0]?.metadata_resolved.name).toBe('Owner version')
+    expect(await env.MODEL_CATALOG.get('models-dev:active', 'json')).toEqual({ current: published.version, previous: initial.version })
+    const last = await contender.modelCatalog.refresh('manual')
+    expect((await ctx.db.orm.select().from(models).where(eq(models.id, model.id)))[0]?.metadata_resolved.name).toBe('Contender version')
+    expect(await env.MODEL_CATALOG.get('models-dev:active', 'json')).toEqual({ current: last.version, previous: published.version })
+  })
+
   it('publishes immutable shards and keeps current plus previous', async () => {
     const ctx = await createApp({ env, side: 'worker' })
     serve()
@@ -126,6 +239,30 @@ describe('model catalog', () => {
     await expect(failing.modelCatalog.refresh('manual')).rejects.toThrow('storage')
     expect(await env.MODEL_CATALOG.get('models-dev:active', 'json')).toEqual({ current: first.version, previous: null })
     expect((await ctx.modelCatalog.providerModels('acme', first.version))['acme/model']?.name).toBe('Catalog model')
+  })
+
+  it('republishes committed D1 state after a KV activation failure without losing the previous version', async () => {
+    const ctx = await createApp({ env, side: 'worker' })
+    serve()
+    const first = await ctx.modelCatalog.refresh('manual')
+    const failingKV = new Proxy(env.MODEL_CATALOG, {
+      get(target, property) {
+        if (property === 'put') return async (key: string, value: string, options?: KVNamespacePutOptions) => {
+          if (key === 'models-dev:active') throw new Error('KV unavailable')
+          return target.put(key, value, options)
+        }
+        const member = Reflect.get(target, property)
+        return typeof member === 'function' ? member.bind(target) : member
+      },
+    })
+    const failing = await createApp({ env: { ...env, MODEL_CATALOG: failingKV }, side: 'worker' })
+    serve(catalog('Committed'))
+    await expect(failing.modelCatalog.refresh('manual')).rejects.toThrow('activation')
+    expect(await env.MODEL_CATALOG.get('models-dev:active', 'json')).toEqual({ current: first.version, previous: null })
+    const recovered = await ctx.modelCatalog.refresh('manual')
+    expect(recovered.changed).toBe(false)
+    expect(await env.MODEL_CATALOG.get('models-dev:active', 'json')).toEqual({ current: recovered.version, previous: first.version })
+    expect((await ctx.modelCatalog.status()).lastError).toBeNull()
   })
 
   it('falls back to previous when current shards are missing, and returns empty before first refresh', async () => {

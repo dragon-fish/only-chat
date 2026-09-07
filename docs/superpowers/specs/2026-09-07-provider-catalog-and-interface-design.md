@@ -260,7 +260,9 @@ models-dev:active
 
 - 下载、JSON 解析和最小 schema 校验全部成功后才写新版本。
 - KV 写入或 D1 物化失败时不切换 active。
-- 手动刷新与 cron 使用同一服务函数，操作幂等；并发刷新通过内容 hash 和不可变 key 不会互相覆盖分片。
+- 手动刷新与 cron 使用同一服务函数。D1 单例租约使用 owner token、有效期和原子条件获取来串行化跨 Worker 发布，并在物化与 KV 发布前续期；手动竞争返回 409，cron 竞争跳过。
+- 租约表保留写入侧权威 `current_version` / `previous_version`，与 D1 模型物化在同一事务中提交；KV active 从提交后的 D1 状态发布，不能用可能过期的 KV 指针推导版本链。租约释放只允许当前 owner，过期 owner 的事务须整体失败。
+- 租约表加入尚未部署的 `0002` migration 及其 snapshot；`0003` 保留给后续旧字段清理。
 - 设置页显示上次成功时间、当前版本和最近一次错误。
 - 从未成功缓存时，供应商和模型功能仍工作，metadata 使用保守默认值。
 

@@ -2,6 +2,7 @@ import { Context, Service } from 'cordis'
 import { refreshCatalog, type CatalogRefreshResult } from './refresh'
 import { CatalogStorage } from './storage'
 import type { CatalogModel, CatalogProviderIndex } from './types'
+import { CatalogRefreshBusyError, publicationPointer } from './lease'
 
 export type { CatalogRefreshResult } from './refresh'
 
@@ -23,14 +24,24 @@ export class ModelCatalog extends Service {
     this.storage = new CatalogStorage(ctx.env.MODEL_CATALOG)
   }
 
-  async refresh(source: 'cron' | 'manual'): Promise<CatalogRefreshResult> {
+  refresh(source: 'manual'): Promise<CatalogRefreshResult>
+  refresh(source: 'cron'): Promise<CatalogRefreshResult | null>
+  async refresh(source: 'cron' | 'manual'): Promise<CatalogRefreshResult | null> {
     this.refreshing ??= refreshCatalog(this.storage, this.ctx.db.orm).finally(() => { this.refreshing = undefined })
+    let busy = false
     try {
       return await this.refreshing
+    } catch (error) {
+      busy = error instanceof CatalogRefreshBusyError
+      if (busy && source === 'cron') {
+        console.info('Scheduled catalog refresh skipped: refresh already in progress')
+        return null
+      }
+      throw error
     } finally {
-      if (source === 'cron') {
+      if (source === 'cron' && !busy) {
         try {
-          await this.storage.collectGarbage(Date.now())
+          await this.storage.collectGarbage(Date.now(), await publicationPointer(this.ctx.db.orm))
         } catch (error) {
           console.error('Catalog garbage collection failed', error)
         }

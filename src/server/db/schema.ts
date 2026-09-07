@@ -13,6 +13,14 @@ export const users = sqliteTable('users', {
   created_at: integer().notNull(),
 })
 
+export const modelCatalogRefresh = sqliteTable('model_catalog_refresh', {
+  id: integer().primaryKey(),
+  owner: text(),
+  expires_at: integer().notNull().default(0),
+  current_version: text(),
+  previous_version: text(),
+}, t => [check('model_catalog_refresh_singleton_check', sql`${t.id} = 1`)])
+
 export const providers = sqliteTable('providers', {
   id: integer().primaryKey({ autoIncrement: true }),
   user_id: integer().notNull().references(() => users.id, { onDelete: 'cascade' }),
