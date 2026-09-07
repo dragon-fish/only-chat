@@ -84,6 +84,42 @@ it('keeps the global frame around Project contextual navigation', async () => {
   expectGlobalFrame('open')
 })
 
+it('keeps Project controls in contextual content below the global brand', async () => {
+  await mountSidebar('/project/1')
+
+  const brand = document.querySelector('[data-sidebar-brand]')
+  const projectContext = document.querySelector('[data-project-context]')
+  expect(brand).not.toBeNull()
+  expect(projectContext).not.toBeNull()
+  expect(brand!.compareDocumentPosition(projectContext!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  expect(document.querySelectorAll('[data-project-back]')).toHaveLength(1)
+  expect(document.querySelectorAll('[data-project-switcher]')).toHaveLength(1)
+  expect(document.querySelectorAll('[data-project-new-chat]')).toHaveLength(1)
+  expect(document.querySelectorAll('[data-project-settings]')).toHaveLength(1)
+})
+
+it('keeps settings navigation contextual and activates the global settings link', async () => {
+  await mountSidebar('/settings/providers')
+
+  const settingsHeader = document.querySelector('[data-settings-header]')
+  const settingsContent = document.querySelector('[data-settings-content]')
+  const globalSettings = document.querySelector('[data-global-settings]')
+  expect(settingsHeader).not.toBeNull()
+  expect(settingsContent).not.toBeNull()
+  expect(document.querySelectorAll('[data-sidebar-brand]')).toHaveLength(1)
+  expect(document.querySelectorAll('[data-global-settings]')).toHaveLength(1)
+  expect(globalSettings?.getAttribute('data-active')).toBe('true')
+  expect(settingsHeader!.querySelectorAll('[data-settings-back]')).toHaveLength(1)
+  expect(settingsContent!.querySelectorAll('[data-settings-category]')).toHaveLength(3)
+  expect(settingsContent!.querySelectorAll('[data-global-settings]')).toHaveLength(0)
+})
+
+it('keeps the global settings link active on every settings route', async () => {
+  await mountSidebar('/settings/plugins')
+
+  expect(document.querySelector('[data-global-settings]')?.getAttribute('data-active')).toBe('true')
+})
+
 it('uses the warning token while reconnecting', async () => {
   await mountSidebar('/new', 'connecting')
 

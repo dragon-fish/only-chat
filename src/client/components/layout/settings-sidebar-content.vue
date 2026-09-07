@@ -22,19 +22,19 @@ function backToChat() {
 </script>
 
 <template lang="pug">
-SidebarHeader
+SidebarHeader(data-settings-header)
   SidebarMenu
     SidebarMenuItem
-      SidebarMenuButton(class="min-h-10 md:min-h-0" tooltip="返回聊天" @click="backToChat")
+      SidebarMenuButton(data-settings-back class="min-h-10 md:min-h-0" tooltip="返回聊天" @click="backToChat")
         ArrowLeftIcon
         span 返回聊天
-SidebarContent
+SidebarContent(data-settings-content)
   SidebarGroup
     SidebarGroupLabel 设置
     SidebarGroupContent
       SidebarMenu
         SidebarMenuItem(v-for="category in categories" :key="category.to")
-          SidebarMenuButton(as-child :is-active="route.path.startsWith(category.to)" class="min-h-10 md:min-h-0" :tooltip="category.label")
+          SidebarMenuButton(data-settings-category as-child :is-active="route.path.startsWith(category.to)" class="min-h-10 md:min-h-0" :tooltip="category.label")
             RouterLink(:to="category.to")
               component(:is="category.icon")
               span {{ category.label }}
