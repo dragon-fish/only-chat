@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from 'vue'
-import { EllipsisIcon, Trash2Icon } from '@lucide/vue'
+import { EllipsisIcon, MessageCircleIcon, Trash2Icon } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 import { DISCONNECTED_MESSAGE, moveSessionCommand, useSyncStore } from '@/client/stores/sync'
 import { sessionPath } from '@/client/lib/ui-models'
@@ -60,8 +60,9 @@ function send(command: Parameters<typeof sync.send>[0]): boolean {
 
 <template>
   <SidebarMenuItem>
-    <SidebarMenuButton as-child size="lg" class="h-10" :is-active="active">
+    <SidebarMenuButton as-child class="min-h-10 md:min-h-0" :is-active="active" :tooltip="session.title">
       <RouterLink :to="sessionPath(session)" @click="emit('navigate')">
+        <MessageCircleIcon />
         <span>{{ session.title }}</span>
       </RouterLink>
     </SidebarMenuButton>

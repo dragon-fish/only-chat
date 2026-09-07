@@ -21,7 +21,7 @@ import {
 import { ScrollArea } from '@/client/ui/scroll-area'
 import {
   SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarHeader,
-  SidebarInput, SidebarMenu, SidebarMenuButton, SidebarMenuItem,
+  SidebarGroupAction, SidebarInput, SidebarMenu, SidebarMenuButton, SidebarMenuItem,
 } from '@/client/ui/sidebar'
 
 const props = defineProps<{
@@ -61,7 +61,7 @@ function clearSearch() {
     <SidebarHeader>
       <SidebarMenu>
         <SidebarMenuItem>
-          <SidebarMenuButton as-child class="min-h-10">
+          <SidebarMenuButton as-child class="min-h-10 md:min-h-0" tooltip="返回聊天">
             <RouterLink to="/new" @click="clearSearch">
               <ArrowLeftIcon />
               <span>返回聊天</span>
@@ -71,7 +71,7 @@ function clearSearch() {
         <SidebarMenuItem>
           <DropdownMenu>
             <DropdownMenuTrigger as-child>
-              <SidebarMenuButton size="lg" class="min-h-12">
+              <SidebarMenuButton size="lg" :tooltip="project.name">
                 <ProjectAvatar :name="project.name" />
                 <span class="min-w-0 flex-1 truncate font-medium">{{ project.name }}</span>
                 <ChevronsUpDownIcon />
@@ -94,7 +94,7 @@ function clearSearch() {
 
       <SidebarMenu>
         <SidebarMenuItem>
-          <SidebarMenuButton as-child class="min-h-10">
+          <SidebarMenuButton as-child class="min-h-10 md:min-h-0" tooltip="Project 新对话">
             <RouterLink :to="`/project/${project.id}/new`">
               <PlusIcon />
               <span>Project 新对话</span>
@@ -102,13 +102,13 @@ function clearSearch() {
           </SidebarMenuButton>
         </SidebarMenuItem>
       </SidebarMenu>
-      <div class="relative">
+      <div class="relative group-data-[collapsible=icon]:hidden">
         <SearchIcon class="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
         <SidebarInput v-model="query" class="min-h-10 pl-8" placeholder="搜索 Project 对话…" />
       </div>
       <SidebarMenu>
         <SidebarMenuItem>
-          <SidebarMenuButton as-child class="min-h-10">
+          <SidebarMenuButton as-child class="min-h-10 md:min-h-0" tooltip="Project 设置">
             <RouterLink :to="`/project/${project.id}/settings`">
               <SlidersHorizontalIcon />
               <span>Project 设置</span>
@@ -147,15 +147,17 @@ function clearSearch() {
     <SidebarHeader>
       <SidebarMenu>
         <SidebarMenuItem>
-          <SidebarMenuButton as-child size="lg" class="min-h-12">
+          <SidebarMenuButton as-child size="lg" tooltip="only-chat">
             <RouterLink to="/new">
-              <MessageCircleIcon />
+              <div class="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
+                <MessageCircleIcon />
+              </div>
               <span class="font-semibold">only-chat</span>
             </RouterLink>
           </SidebarMenuButton>
         </SidebarMenuItem>
         <SidebarMenuItem>
-          <SidebarMenuButton as-child class="min-h-10">
+          <SidebarMenuButton as-child class="min-h-10 md:min-h-0" tooltip="新建随心聊">
             <RouterLink to="/new">
               <PlusIcon />
               <span>新建随心聊</span>
@@ -163,7 +165,7 @@ function clearSearch() {
           </SidebarMenuButton>
         </SidebarMenuItem>
       </SidebarMenu>
-      <div class="relative">
+      <div class="relative group-data-[collapsible=icon]:hidden">
         <SearchIcon class="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
         <SidebarInput v-model="query" class="min-h-10 pl-8" placeholder="搜索聊天或 Project…" />
       </div>
@@ -172,10 +174,15 @@ function clearSearch() {
     <SidebarContent class="overflow-hidden">
       <ScrollArea class="min-h-0 flex-1">
         <SidebarGroup>
-          <div class="flex min-h-10 items-center">
-            <SidebarGroupLabel class="flex-1">Projects</SidebarGroupLabel>
-            <ProjectCreateDialog compact />
-          </div>
+          <SidebarGroupLabel>Projects</SidebarGroupLabel>
+          <ProjectCreateDialog>
+            <template #trigger>
+              <SidebarGroupAction aria-label="新建 Project">
+                <PlusIcon />
+                <span class="sr-only">新建 Project</span>
+              </SidebarGroupAction>
+            </template>
+          </ProjectCreateDialog>
           <SidebarGroupContent>
             <CollectionState :loaded="sync.projectsLoaded" :error="sync.projectsError" :retry="sync.loadProjects" :empty="visibleProjects.length === 0" :empty-title="query ? '没有匹配的 Project' : '还没有 Project'">
               <template #empty-action>
@@ -188,7 +195,7 @@ function clearSearch() {
             </CollectionState>
             <SidebarMenu>
               <SidebarMenuItem>
-                <RouterLink to="/projects" class="flex min-h-10 items-center px-2 text-xs font-normal text-muted-foreground underline-offset-4 hover:underline focus-visible:underline">
+                <RouterLink to="/projects" class="flex min-h-10 items-center px-2 text-xs font-normal text-muted-foreground underline-offset-4 hover:underline focus-visible:underline group-data-[collapsible=icon]:hidden">
                   查看全部 Projects
                 </RouterLink>
               </SidebarMenuItem>
@@ -199,7 +206,7 @@ function clearSearch() {
         <Collapsible default-open>
           <SidebarGroup>
             <CollapsibleTrigger as-child>
-              <SidebarGroupLabel class="min-h-10 cursor-pointer">{{ query.trim() ? '搜索结果' : '随心聊' }}</SidebarGroupLabel>
+              <SidebarGroupLabel class="min-h-10 cursor-pointer md:min-h-0">{{ query.trim() ? '搜索结果' : '随心聊' }}</SidebarGroupLabel>
             </CollapsibleTrigger>
             <CollapsibleContent>
               <SidebarGroupContent>
@@ -228,7 +235,7 @@ function clearSearch() {
   <SidebarFooter>
     <SidebarMenu>
       <SidebarMenuItem>
-        <SidebarMenuButton as-child class="min-h-10" :is-active="route.path.startsWith('/settings')">
+        <SidebarMenuButton as-child class="min-h-10 md:min-h-0" :is-active="route.path.startsWith('/settings')" tooltip="设置">
           <RouterLink to="/settings/providers">
             <SettingsIcon />
             <span>设置</span>

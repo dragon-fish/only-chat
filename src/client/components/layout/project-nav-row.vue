@@ -43,7 +43,7 @@ function remove() {
 
 <template>
   <SidebarMenuItem>
-    <SidebarMenuButton as-child size="lg" class="h-10" :is-active="active">
+    <SidebarMenuButton as-child class="min-h-10 md:min-h-0" :is-active="active" :tooltip="project.name">
       <RouterLink :to="`/project/${project.id}`" @click="emit('navigate')">
         <ProjectAvatar :name="project.name" size="sm" />
         <span>{{ project.name }}</span>

@@ -63,7 +63,9 @@ function createProject() {
 <template>
   <Dialog v-model:open="open">
     <DialogTrigger as-child>
+      <slot v-if="$slots.trigger" name="trigger" />
       <Button
+        v-else
         :variant="compact ? 'ghost' : 'default'"
         :size="compact ? 'icon-sm' : 'default'"
         :class="cn(compact ? 'size-10' : 'min-h-10')"

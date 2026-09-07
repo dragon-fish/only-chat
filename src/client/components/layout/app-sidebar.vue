@@ -5,7 +5,7 @@ import ChatSidebarContent from '@/client/components/layout/chat-sidebar-content.
 import SettingsSidebarContent from '@/client/components/layout/settings-sidebar-content.vue'
 import { routeParamToId } from '@/client/lib/route-params'
 import { useSyncStore } from '@/client/stores/sync'
-import { Sidebar } from '@/client/ui/sidebar'
+import { Sidebar, SidebarRail } from '@/client/ui/sidebar'
 
 const route = useRoute()
 const router = useRouter()
@@ -37,12 +37,13 @@ const projectId = computed<number | undefined>(() => {
 
 <template>
   <Sidebar
-    collapsible="offcanvas"
+    collapsible="icon"
     class="h-full"
     :data-sidebar-context="isSettings ? 'settings' : projectId === undefined ? 'chat' : 'project'"
     :data-connection="sync.status"
   >
     <SettingsSidebarContent v-if="isSettings" />
     <ChatSidebarContent v-else :project-id="projectId" />
+    <SidebarRail />
   </Sidebar>
 </template>
