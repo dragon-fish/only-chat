@@ -76,6 +76,155 @@ async function submitModelName() {
 }
 
 describe('provider model editor', () => {
+  it('refreshes rematerialized provider models and off-page selections while preserving newer drafts', async () => {
+    const { config } = await mountEditor()
+    const foreign = { ...models[0]!, id: 20, provider_id: 2, metadata: { name: 'Unchanged foreign model' } }
+    config.providerRecords.push({ ...provider, id: 2 })
+    config.retainModels([foreign])
+    await config.ensureModel(models[1]!)
+    await config.ensureModel(foreign)
+    await type(document.querySelector<HTMLInputElement>('[aria-label="搜索模型"]')!, 'first')
+    await vi.waitFor(() => expect(document.querySelector('[aria-label="编辑 Second model"]')).toBeNull())
+    let persisted = structuredClone(models)
+    vi.mocked(api.queryModels).mockImplementation(async query => ({ models: structuredClone(persisted).filter(model => !query?.search || model.model_id.includes(query.search)), next_cursor: null }))
+    vi.spyOn(api, 'modelByRef').mockImplementation(async reference => reference.provider_id === 2
+      ? { ...foreign, metadata: { name: 'Foreign metadata must not be refreshed by this save' } }
+      : structuredClone(persisted.find(model => model.model_id === reference.model_id)!))
+    let acknowledge!: () => void
+    vi.spyOn(api, 'updateProvider').mockImplementation(async () => {
+      await new Promise<void>(resolve => { acknowledge = resolve })
+      persisted = models.map(model => ({ ...model, metadata: { name: `Acme ${model.model_id}`, reasoning: true, limit: { context: 128000 } } }))
+      return { ...provider, models_dev_provider_source: 'manual', models_dev_provider_id: 'acme' }
+    })
+    vi.mocked(api.providers).mockResolvedValue([{ ...provider, models_dev_provider_source: 'manual', models_dev_provider_id: 'acme' }, { ...provider, id: 2 }])
+    document.querySelector<HTMLButtonElement>('#provider-association')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+    await vi.waitFor(() => expect(document.querySelector('[role="option"]')).not.toBeNull())
+    ;[...document.querySelectorAll<HTMLElement>('[role="option"]')].find(option => option.textContent?.trim() === 'Acme')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    await vi.waitFor(() => expect(document.querySelector('#provider-association')?.textContent).toContain('Acme'))
+    document.querySelector('#provider-name')!.closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(acknowledge).toBeTypeOf('function'))
+    await type(document.querySelector<HTMLInputElement>('#provider-name')!, 'Newer provider draft')
+    document.querySelector<HTMLButtonElement>('[aria-label="编辑 First model"]')!.click()
+    await vi.waitFor(() => expect(document.querySelector('#model-1-2-name')).not.toBeNull())
+    await type(document.querySelector<HTMLInputElement>('#model-1-2-name')!, 'Newer model draft')
+    acknowledge()
+    await vi.waitFor(() => expect(config.modelFor(models[1]!)?.model.metadata).toEqual({ name: 'Acme second-model', reasoning: true, limit: { context: 128000 } }))
+    expect(document.querySelector('[aria-label="编辑 Acme first-model"]')).not.toBeNull()
+    expect(document.querySelector('[aria-label="编辑 Acme second-model"]')).toBeNull()
+    expect(config.modelsByRef['2:first-model']?.metadata.name).toBe('Unchanged foreign model')
+    expect(document.querySelector<HTMLInputElement>('#provider-name')?.value).toBe('Newer provider draft')
+    expect(document.querySelector<HTMLInputElement>('#model-1-2-name')?.value).toBe('Newer model draft')
+    expect(document.querySelector('[data-slot="sheet-content"] [role="status"]')?.textContent).toContain('未保存')
+  })
+
+  it.each(['filter', 'provider'] as const)('does not repaint a newer %s after a provider save starts refreshing models', async context => {
+    const { router, config } = await mountEditor()
+    const secondProvider = { ...provider, id: 2, name: 'Second provider' }
+    const currentModel = context === 'filter' ? { ...models[1]!, metadata: { name: 'Current model' } } : { ...models[1]!, id: 20, provider_id: 2, metadata: { name: 'Current model' } }
+    config.providerRecords.push(secondProvider)
+    vi.mocked(api.providers).mockResolvedValue([provider, secondProvider])
+    vi.spyOn(api, 'updateProvider').mockResolvedValue(provider)
+    let finishPage!: (page: ModelPage) => void
+    vi.mocked(api.queryModels).mockImplementationOnce(() => new Promise(resolve => { finishPage = resolve }))
+      .mockResolvedValue({ models: [currentModel], next_cursor: null })
+    document.querySelector('#provider-name')!.closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(finishPage).toBeTypeOf('function'))
+    if (context === 'filter') await type(document.querySelector<HTMLInputElement>('[aria-label="搜索模型"]')!, 'second')
+    else await router.push('/settings/providers/2')
+    await vi.waitFor(() => expect(document.querySelector('[aria-label="编辑 Current model"]')).not.toBeNull())
+    finishPage({ models: structuredClone(models), next_cursor: 'stale-cursor' })
+    await nextTick()
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(document.querySelector('[aria-label="编辑 Current model"]')).not.toBeNull()
+    expect(document.querySelector('[aria-label="编辑 First model"]')).toBeNull()
+    expect([...document.querySelectorAll('button')].some(button => button.textContent?.trim() === '加载更多模型')).toBe(false)
+    expect(config.modelsByRef[`${currentModel.provider_id}:second-model`]?.metadata.name).toBe('Current model')
+    expect(document.querySelector<HTMLInputElement>('#provider-name')?.value).toBe(context === 'filter' ? 'Example' : 'Second provider')
+  })
+
+  it('invalidates earlier selected and picker reads before refreshing a saved provider', async () => {
+    const { config } = await mountEditor()
+    await config.ensureModel(models[1]!)
+    let finishOldSelection!: (model: ModelWithMetadata) => void
+    let finishSelection!: (model: ModelWithMetadata) => void
+    vi.spyOn(api, 'modelByRef').mockImplementationOnce(() => new Promise(resolve => { finishOldSelection = resolve }))
+      .mockImplementationOnce(() => new Promise(resolve => { finishSelection = resolve }))
+    const oldSelection = config.refreshSelectedModels()
+    let finishPicker!: (page: ModelPage) => void
+    let finishPage!: (page: ModelPage) => void
+    vi.mocked(api.queryModels).mockImplementationOnce(() => new Promise(resolve => { finishPicker = resolve }))
+      .mockImplementationOnce(() => new Promise(resolve => { finishPage = resolve }))
+    const oldPicker = config.loadEnabledModels()
+    vi.spyOn(api, 'updateProvider').mockResolvedValue(provider)
+    document.querySelector('#provider-name')!.closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(finishSelection).toBeTypeOf('function'))
+    await vi.waitFor(() => expect(finishPage).toBeTypeOf('function'))
+    finishOldSelection({ ...models[1]!, metadata: { name: 'Stale selection' } })
+    finishPicker({ models: [{ ...models[0]!, id: 99, model_id: 'uncached-stale-model' }], next_cursor: null })
+    await Promise.all([oldSelection, oldPicker])
+    expect(config.modelsByRef['1:second-model']?.metadata.name).not.toBe('Stale selection')
+    expect(config.modelsByRef['1:uncached-stale-model']).toBeUndefined()
+    finishSelection({ ...models[1]!, metadata: { name: 'Fresh selection' } })
+    finishPage({ models: [{ ...models[0]!, metadata: { name: 'Fresh page' } }], next_cursor: null })
+    await vi.waitFor(() => expect(config.modelsByRef['1:second-model']?.metadata.name).toBe('Fresh selection'))
+    await vi.waitFor(() => expect(document.querySelector('[aria-label="编辑 Fresh page"]')).not.toBeNull())
+  })
+
+  it('keeps retained rows editable while a provider save is refreshing their metadata', async () => {
+    const { config } = await mountEditor()
+    let finishPage!: (page: ModelPage) => void
+    vi.mocked(api.queryModels).mockImplementationOnce(() => new Promise(resolve => { finishPage = resolve }))
+    vi.spyOn(api, 'updateProvider').mockResolvedValue(provider)
+    document.querySelector('#provider-name')!.closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(finishPage).toBeTypeOf('function'))
+    document.querySelector<HTMLButtonElement>('[aria-label="编辑 First model"]')!.click()
+    await vi.waitFor(() => expect(document.querySelector('#model-1-2-name')).not.toBeNull())
+    await type(document.querySelector<HTMLInputElement>('#model-1-2-name')!, 'Draft during refresh')
+    finishPage({ models: [models[0]!], next_cursor: null })
+    await vi.waitFor(() => expect(document.querySelector('[aria-label="正在更新模型列表"]')).toBeNull())
+    expect(document.querySelector<HTMLInputElement>('#model-1-2-name')?.value).toBe('Draft during refresh')
+    vi.spyOn(api, 'modelByRef').mockResolvedValue({ ...models[1]!, metadata: { name: 'Freshly selected off-page model' } })
+    await config.ensureModel(models[1]!)
+    expect(config.modelsByRef['1:second-model']?.metadata.name).toBe('Freshly selected off-page model')
+  })
+
+  it('tombstones only the original model when its delayed delete finishes after another provider opens a confirmation', async () => {
+    const { router, config } = await mountEditor()
+    const secondProvider = { ...provider, id: 2, name: 'Second provider' }
+    const secondModel = { ...models[0]!, id: 20, provider_id: 2, metadata: { name: 'Second provider model' } }
+    config.providerRecords.push(secondProvider)
+    vi.mocked(api.providers).mockResolvedValue([provider, secondProvider])
+    let finishOldPage!: (page: ModelPage) => void
+    vi.mocked(api.queryModels).mockImplementationOnce(() => new Promise(resolve => { finishOldPage = resolve }))
+      .mockResolvedValue({ models: [secondModel], next_cursor: null })
+    const oldPage = config.loadProviderPage(1)
+    let finishDelete!: () => void
+    vi.spyOn(api, 'deleteModel').mockImplementation(async (providerId, modelId) => {
+      if (providerId !== 1 || modelId !== 2) throw new Error('Deleted the wrong model')
+      await new Promise<void>(resolve => { finishDelete = resolve })
+    })
+    document.querySelector<HTMLButtonElement>('[aria-label="编辑 First model"]')!.click()
+    await vi.waitFor(() => expect(document.querySelector('#model-1-2-name')).not.toBeNull())
+    ;[...document.querySelectorAll<HTMLButtonElement>('[data-slot="sheet-content"] button')].find(button => button.textContent?.trim() === '删除模型')!.click()
+    await vi.waitFor(() => expect(document.querySelector('[role="alertdialog"]')).not.toBeNull())
+    ;[...document.querySelectorAll<HTMLButtonElement>('[role="alertdialog"] button')].find(button => button.textContent?.trim() === '删除模型')!.click()
+    await vi.waitFor(() => expect(finishDelete).toBeTypeOf('function'))
+    await router.push('/settings/providers/2')
+    await vi.waitFor(() => expect(document.querySelector('[aria-label="编辑 Second provider model"]')).not.toBeNull())
+    document.querySelector<HTMLButtonElement>('[aria-label="编辑 Second provider model"]')!.click()
+    await vi.waitFor(() => expect(document.querySelector('#model-2-20-name')).not.toBeNull())
+    ;[...document.querySelectorAll<HTMLButtonElement>('[data-slot="sheet-content"] button')].find(button => button.textContent?.trim() === '删除模型')!.click()
+    await vi.waitFor(() => expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain('Second provider model'))
+    finishDelete()
+    await vi.waitFor(() => expect(config.modelsByRef['1:first-model']).toBeUndefined())
+    finishOldPage({ models: structuredClone(models), next_cursor: null })
+    await oldPage
+    expect(config.modelsByRef['1:first-model']).toBeUndefined()
+    expect(config.modelsByRef['2:first-model']?.id).toBe(20)
+    expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain('Second provider model')
+    expect(document.querySelector<HTMLInputElement>('#provider-name')?.value).toBe('Second provider')
+  })
+
   it('keeps a reopened pending override dirty and retryable after the save fails', async () => {
     await mountEditor()
     const save = delayModelSave()

@@ -205,7 +205,12 @@ async function save() {
     let responseWarning: string | null = null
     const result = await api.updateProvider(id, { ...submitted, api_key: submitted.api_key || undefined }, value => { responseWarning = value })
     if (token === loadToken) associationWarning.value = responseWarning
-    await config.load()
+    config.invalidateProviderModels(id)
+    await Promise.all([
+      config.load(),
+      config.refreshSelectedModels(id),
+      token === loadToken ? loadModelPage() : Promise.resolve(),
+    ])
     if (token === loadToken) {
       for (const endpoint of submitted.interfaces) {
         const persisted = result.interfaces.find(entry => entry.protocol === endpoint.protocol)
@@ -346,14 +351,14 @@ function confirmModelDelete() {
 
 async function removeModel() {
   if (!modelToDelete.value || busyModels.value) return
-  const id = requireId()
+  const target = { id: modelToDelete.value.id, provider_id: modelToDelete.value.provider_id, model_id: modelToDelete.value.model_id }
+  const id = target.provider_id
   const token = loadToken
-  const modelId = modelToDelete.value.id
   modelAction.value = true
   editorOpen.value = false
   try {
-    await api.deleteModel(id, modelId)
-    if (modelToDelete.value) config.forgetModel(modelToDelete.value)
+    await api.deleteModel(id, target.id)
+    config.forgetModel(target)
     const loadedModels = await readModels(id)
     const modelToken = modelLoadToken
     await config.load()

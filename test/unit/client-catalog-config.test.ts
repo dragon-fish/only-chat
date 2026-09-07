@@ -71,6 +71,24 @@ describe('catalog config cache', () => {
     expect(config.modelsByRef['1:second-model']?.metadata.name).toBe('Refreshed selected model')
   })
 
+  it('restarts an invalidated selected-reference read without letting the earlier response seed the cache', async () => {
+    const config = useConfigStore(createPinia())
+    let finishOld!: (model: typeof modelRecords[number]) => void
+    let finishCurrent!: (model: typeof modelRecords[number]) => void
+    vi.spyOn(api, 'modelByRef').mockImplementationOnce(() => new Promise(resolve => { finishOld = resolve }))
+      .mockImplementationOnce(() => new Promise(resolve => { finishCurrent = resolve }))
+    const reference = { provider_id: 1, model_id: 'first-model' }
+    const old = config.ensureModel(reference)
+    config.invalidateProviderModels(1)
+    const current = config.ensureModel(reference)
+    finishOld(modelRecords[0]!)
+    await old
+    expect(config.modelsByRef['1:first-model']).toBeUndefined()
+    finishCurrent({ ...modelRecords[0]!, metadata: { name: 'Current selection' } })
+    await current
+    expect(config.modelsByRef['1:first-model']?.metadata.name).toBe('Current selection')
+  })
+
   it('loads providers independently and retains an explicitly selected disabled model across model pages', async () => {
     vi.spyOn(api, 'providers').mockResolvedValue([provider])
     const pages = vi.spyOn(api, 'queryModels').mockResolvedValue({ models: [modelRecords[0]!], next_cursor: 'next' })

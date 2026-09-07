@@ -30,25 +30,42 @@ export const useConfigStore = defineStore('config', () => {
   const pendingRefs = new Map<string, Promise<void>>()
   const selectedRefs = new Map<string, ModelRef>()
   const revisions = new Map<string, number>()
+  const providerRevisions = new Map<number, number>()
+  const staleRefs = new Set<string>()
+
+  function readRevisions() {
+    return { models: new Map(revisions), providers: new Map(providerRevisions) }
+  }
 
   function retainModels(models: readonly ModelWithMetadata[]) {
     for (const model of models) {
       const key = keyFor(model)
       revisions.set(key, (revisions.get(key) ?? 0) + 1)
+      staleRefs.delete(key)
       modelsByRef.value[key] = model
     }
   }
-  function retainRead(models: readonly ModelWithMetadata[], started: ReadonlyMap<string, number>) {
+  function retainRead(models: readonly ModelWithMetadata[], started: ReturnType<typeof readRevisions>) {
     return models.flatMap(model => {
       const key = keyFor(model)
-      if (revisions.get(key) !== started.get(key)) return modelsByRef.value[key] ? [modelsByRef.value[key]!] : []
+      if (revisions.get(key) !== started.models.get(key) || providerRevisions.get(model.provider_id) !== started.providers.get(model.provider_id)) {
+        return modelsByRef.value[key] ? [modelsByRef.value[key]!] : []
+      }
       retainModels([model])
       return [model]
     })
   }
+  function invalidateProviderModels(providerId: number) {
+    // Association/interface writes rematerialize every model, including uncached rows in old reads.
+    providerRevisions.set(providerId, (providerRevisions.get(providerId) ?? 0) + 1)
+    // Retain row identities for open editors and queued writes while refreshed metadata is pending.
+    for (const [key, model] of Object.entries(modelsByRef.value)) if (model.provider_id === providerId) staleRefs.add(key)
+    for (const [key, model] of selectedRefs) if (model.provider_id === providerId) pendingRefs.delete(key)
+  }
   function forgetModel(model: ModelRef) {
     revisions.set(keyFor(model), (revisions.get(keyFor(model)) ?? 0) + 1)
     delete modelsByRef.value[keyFor(model)]
+    staleRefs.delete(keyFor(model))
     selectedRefs.delete(keyFor(model))
     pendingRefs.delete(keyFor(model))
     pickerRefs.value = pickerRefs.value.filter(key => key !== keyFor(model))
@@ -80,7 +97,7 @@ export const useConfigStore = defineStore('config', () => {
     if (!append) { pickerRefs.value = []; pickerCursor.value = null; pickerLoaded.value = false }
     pickerLoading.value = true
     pickerError.value = null
-    const started = new Map(revisions)
+    const started = readRevisions()
     try {
       const page = await api.queryModels({ ...filters, ...(append ? { cursor: pickerCursor.value! } : {}) }, controller.signal)
       if (token !== pickerToken || controller.signal.aborted) return
@@ -107,7 +124,7 @@ export const useConfigStore = defineStore('config', () => {
   async function loadProviderPage(providerId: number, query: Partial<ModelQuery> = {}, signal?: AbortSignal) {
     const token = (pageTokens.get(providerId) ?? 0) + 1
     pageTokens.set(providerId, token)
-    const started = new Map(revisions)
+    const started = readRevisions()
     const page = await api.queryModels({ ...query, provider_id: providerId }, signal)
     if (pageTokens.get(providerId) === token && !signal?.aborted) return { ...page, models: retainRead(page.models, started) }
     return page
@@ -115,21 +132,22 @@ export const useConfigStore = defineStore('config', () => {
   async function ensureModel(model: ModelRef | null | undefined): Promise<void> {
     if (!model) return
     selectedRefs.set(keyFor(model), { provider_id: model.provider_id, model_id: model.model_id })
-    if (modelsByRef.value[keyFor(model)]) return
+    if (modelsByRef.value[keyFor(model)] && !staleRefs.has(keyFor(model))) return
     const key = keyFor(model)
     const pending = pendingRefs.get(key)
     if (pending) return pending
     const started = revisions.get(key)
+    const providerStarted = providerRevisions.get(model.provider_id)
     const operation = api.modelByRef(model).then(value => {
       // Saves and tombstones both supersede this read, even if the cache is currently empty.
-      if (revisions.get(key) === started && !modelsByRef.value[key]) retainModels([value])
+      if (revisions.get(key) === started && providerRevisions.get(model.provider_id) === providerStarted && (!modelsByRef.value[key] || staleRefs.has(key))) retainModels([value])
     }).finally(() => { if (pendingRefs.get(key) === operation) pendingRefs.delete(key) })
     pendingRefs.set(key, operation)
     return operation
   }
-  async function refreshSelectedModels() {
-    await Promise.all([...selectedRefs.values()].map(async model => {
-      const started = new Map(revisions)
+  async function refreshSelectedModels(providerId?: number) {
+    await Promise.all([...selectedRefs.values()].filter(model => providerId === undefined || model.provider_id === providerId).map(async model => {
+      const started = readRevisions()
       retainRead([await api.modelByRef(model)], started)
     }))
   }
@@ -153,6 +171,6 @@ export const useConfigStore = defineStore('config', () => {
   }
   return {
     providerRecords, providers, catalogProviders, modelsByRef, modelsByProvider, loaded, loadError, pickerRefs, pickerCursor, pickerLoaded, pickerLoading, pickerError,
-    load, loadCatalogProviders, loadEnabledModels, cancelPickerQuery, loadProviderPage, ensureModel, refreshSelectedModels, retainModels, forgetModel, enabledModels, modelFor, isAvailable,
+    load, loadCatalogProviders, loadEnabledModels, cancelPickerQuery, loadProviderPage, ensureModel, refreshSelectedModels, invalidateProviderModels, retainModels, forgetModel, enabledModels, modelFor, isAvailable,
   }
 })

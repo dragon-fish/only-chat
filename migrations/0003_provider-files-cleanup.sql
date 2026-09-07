@@ -1,17 +1,64 @@
--- OpenAI Responses emitted summaries as reasoning text. Keep that distinction when changing SDKs.
+-- OpenAI Responses emitted summaries as reasoning text, sometimes split across one item's parts.
+-- The new SDK keeps only the first same-ID summary/encrypted payload, so coalesce legacy runs here.
 UPDATE messages SET parts = (
-  SELECT json_group_array(json(CASE
-    WHEN json_type(part.value, '$.providerOptions.openai') = 'object' THEN
-      json_remove(json_set(part.value, '$.providerOptions.responses',
-        CASE WHEN json_extract(part.value, '$.type') = 'reasoning' THEN
-          json_set(json_extract(part.value, '$.providerOptions.openai'),
-            '$.reasoningContent', NULL,
-            '$.reasoningSummary', CASE WHEN length(json_extract(part.value, '$.text')) > 0
-              THEN json_array(json_object('type', 'summary_text', 'text', json_extract(part.value, '$.text')))
-              ELSE json('[]') END)
-        ELSE json_extract(part.value, '$.providerOptions.openai') END), '$.providerOptions.openai')
-    ELSE part.value END))
-  FROM json_each(messages.parts) AS part
+  WITH normalized AS (
+    SELECT part.key AS position,
+      CASE WHEN json_extract(part.value, '$.type') = 'reasoning'
+        AND json_type(part.value, '$.providerOptions.openai.itemId') = 'text'
+        THEN json_extract(part.value, '$.providerOptions.openai.itemId') END AS item_id,
+      CASE WHEN json_type(part.value, '$.providerOptions.openai') = 'object' THEN
+        json_remove(json_set(part.value, '$.providerOptions.responses',
+          CASE WHEN json_extract(part.value, '$.type') = 'reasoning' THEN
+            json_set(json_extract(part.value, '$.providerOptions.openai'),
+              '$.reasoningContent', NULL,
+              '$.reasoningSummary', CASE WHEN length(json_extract(part.value, '$.text')) > 0
+                THEN json_array(json_object('type', 'summary_text', 'text', json_extract(part.value, '$.text')))
+                ELSE json('[]') END)
+          ELSE json_extract(part.value, '$.providerOptions.openai') END), '$.providerOptions.openai')
+      ELSE part.value END AS value
+    FROM json_each(messages.parts) AS part
+  ), boundaries AS (
+    SELECT *, CASE WHEN item_id = lag(item_id) OVER (ORDER BY position) THEN 0 ELSE 1 END AS starts_run
+    FROM normalized
+  ), grouped AS (
+    SELECT *, sum(starts_run) OVER (ORDER BY position) AS run FROM boundaries
+  ), namespaces AS (
+    SELECT grouped.run, grouped.position, namespace.key AS name, namespace.value
+    FROM grouped, json_each(grouped.value, '$.providerOptions') AS namespace
+    WHERE grouped.item_id IS NOT NULL
+  ), fields AS (
+    SELECT namespaces.run, namespaces.name, field.key, field.value, field.type,
+      row_number() OVER (
+        PARTITION BY namespaces.run, namespaces.name, field.key
+        ORDER BY (namespaces.name = 'responses' AND field.key = 'reasoningEncryptedContent' AND field.type = 'null'), namespaces.position DESC
+      ) AS priority
+    FROM namespaces, json_each(namespaces.value) AS field
+  ), namespace_objects AS (
+    SELECT DISTINCT namespaces.run, namespaces.name, (
+      -- json_patch would delete explicit nulls; preserve opaque JSON and the last non-null ciphertext.
+      SELECT json_group_object(fields.key, json(CASE fields.type
+        WHEN 'text' THEN json_quote(fields.value) WHEN 'true' THEN 'true'
+        WHEN 'false' THEN 'false' WHEN 'null' THEN 'null' ELSE fields.value END))
+      FROM fields WHERE fields.run = namespaces.run AND fields.name = namespaces.name AND fields.priority = 1
+    ) AS value FROM namespaces
+  ), options AS (
+    SELECT run, json_group_object(name, json(value)) AS value FROM namespace_objects GROUP BY run
+  ), coalesced AS (
+    SELECT grouped.position, CASE WHEN grouped.item_id IS NULL THEN grouped.value ELSE
+      json_set(grouped.value,
+        -- Preserve displayed separators, but never turn an encrypted-only run into visible plaintext.
+        '$.text', (SELECT CASE WHEN sum(length(json_extract(value, '$.text'))) > 0
+          THEN group_concat(json_extract(value, '$.text'), char(10)) ELSE '' END
+          FROM (SELECT value FROM grouped AS entry WHERE entry.run = grouped.run ORDER BY position)),
+        '$.providerOptions', json((SELECT value FROM options WHERE options.run = grouped.run)),
+        '$.providerOptions.responses.reasoningSummary', json((
+          SELECT json_group_array(json_object('type', 'summary_text', 'text', json_extract(value, '$.text')))
+          FROM (SELECT value FROM grouped AS entry WHERE entry.run = grouped.run AND length(json_extract(value, '$.text')) > 0 ORDER BY position)
+        ))) END AS value
+    FROM grouped WHERE position = (SELECT min(entry.position) FROM grouped AS entry WHERE entry.run = grouped.run)
+    ORDER BY grouped.position
+  )
+  SELECT json_group_array(json(value)) FROM coalesced
 )
 WHERE EXISTS (SELECT 1 FROM json_each(messages.parts) AS part WHERE json_type(part.value, '$.providerOptions.openai') = 'object');
 --> statement-breakpoint
