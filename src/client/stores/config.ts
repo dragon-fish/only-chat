@@ -70,6 +70,33 @@ export const useConfigStore = defineStore('config', () => {
     pendingRefs.delete(keyFor(model))
     pickerRefs.value = pickerRefs.value.filter(key => key !== keyFor(model))
   }
+  function beginModelWrite(model: ModelRef) {
+    const reference = { provider_id: model.provider_id, model_id: model.model_id }
+    const key = keyFor(reference)
+    const providerRevision = providerRevisions.get(reference.provider_id)
+    const modelRevision = revisions.get(key)
+    return (result: ModelWithMetadata) => {
+      const current = providerRevisions.get(reference.provider_id) === providerRevision && revisions.get(key) === modelRevision
+      if (reference.model_id !== result.model_id) forgetModel(reference)
+      // A committed PUT can arrive after a provider save has rematerialized its metadata.
+      if (!current) return false
+      retainModels([result])
+      return true
+    }
+  }
+  async function refreshModel(model: Pick<ModelWithMetadata, 'id' | 'provider_id' | 'model_id'>) {
+    const reference = { provider_id: model.provider_id, model_id: model.model_id }
+    const key = keyFor(reference)
+    revisions.set(key, (revisions.get(key) ?? 0) + 1)
+    staleRefs.add(key)
+    pendingRefs.delete(key)
+    const started = readRevisions()
+    const result = await api.modelByRef(reference)
+    if (result.id !== model.id) throw new Error('Model reference changed during metadata refresh')
+    const [current] = retainRead([result], started)
+    if (!current || current.id !== model.id || staleRefs.has(key)) throw new Error('Model metadata refresh was superseded; retry to load the current metadata')
+    return current
+  }
   async function load(): Promise<void> {
     const token = ++loadToken
     loadError.value = null
@@ -171,6 +198,6 @@ export const useConfigStore = defineStore('config', () => {
   }
   return {
     providerRecords, providers, catalogProviders, modelsByRef, modelsByProvider, loaded, loadError, pickerRefs, pickerCursor, pickerLoaded, pickerLoading, pickerError,
-    load, loadCatalogProviders, loadEnabledModels, cancelPickerQuery, loadProviderPage, ensureModel, refreshSelectedModels, invalidateProviderModels, retainModels, forgetModel, enabledModels, modelFor, isAvailable,
+    load, loadCatalogProviders, loadEnabledModels, cancelPickerQuery, loadProviderPage, ensureModel, refreshSelectedModels, invalidateProviderModels, beginModelWrite, refreshModel, retainModels, forgetModel, enabledModels, modelFor, isAvailable,
   }
 })

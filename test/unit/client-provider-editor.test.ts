@@ -1,7 +1,8 @@
 // @vitest-environment happy-dom
-import { createApp, h, nextTick, ref } from 'vue'
+import { createApp, h, nextTick, ref, watch } from 'vue'
 import { createPinia } from 'pinia'
 import { createMemoryHistory, createRouter, RouterView } from 'vue-router'
+import { toast, type Action } from 'vue-sonner'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import ProviderEditor from '@/client/views/settings-provider-edit.vue'
 import { api } from '@/client/lib/api'
@@ -75,7 +76,125 @@ async function submitModelName() {
   await nextTick()
 }
 
+async function pendingAcknowledgementAcrossAssociation() {
+  const { config, router } = await mountEditor()
+  const secondProvider = { ...provider, id: 2, name: 'Second provider' }
+  const secondModel = { ...models[0]!, id: 20, provider_id: 2, metadata: { name: 'Other provider model' } }
+  config.providerRecords.push(secondProvider)
+  let persistedProvider = provider
+  let persisted = models.map(model => ({ ...model, metadata: { ...model.metadata, description: 'Association A', limit: { context: 1000 } } }))
+  vi.mocked(api.providers).mockImplementation(async () => [persistedProvider, secondProvider])
+  vi.mocked(api.queryModels).mockImplementation(async query => ({
+    models: query?.provider_id === 2 ? [secondModel] : structuredClone(persisted).filter(model => !query?.search || `${model.model_id} ${model.metadata.name}`.toLowerCase().includes(query.search.toLowerCase())),
+    next_cursor: null,
+  }))
+  vi.spyOn(api, 'modelByRef').mockImplementation(async reference => {
+    const model = persisted.find(model => model.provider_id === reference.provider_id && model.model_id === reference.model_id)
+    if (!model) throw new Error('Unknown model reference')
+    return structuredClone(model)
+  })
+  await config.ensureModel(models[0]!)
+  let commitProvider!: () => void
+  vi.spyOn(api, 'updateProvider').mockImplementation(async (_id, input) => {
+    await new Promise<void>(resolve => { commitProvider = resolve })
+    persistedProvider = { ...provider, models_dev_provider_id: 'acme', interfaces: [{ ...provider.interfaces[0]!, base_url: input.interfaces[0]!.base_url }] }
+    persisted = persisted.map(model => ({ ...model, metadata: { ...model.metadata, description: 'Association B', limit: { context: 200000 } } }))
+    return persistedProvider
+  })
+  let releaseModel!: () => void
+  const write = vi.spyOn(api, 'updateModel').mockImplementation(async (_id, modelId, patch) => {
+    const model = persisted.find(model => model.id === modelId)!
+    Object.assign(model, patch)
+    Object.assign(model.metadata, patch.metadata_override)
+    const committedUnderA = structuredClone(model)
+    await new Promise<void>(resolve => { releaseModel = resolve })
+    return committedUnderA
+  })
+  await type(document.querySelector<HTMLInputElement>('[aria-label="搜索模型"]')!, 'First model')
+  await vi.waitFor(() => expect(config.modelsByRef['1:first-model']?.metadata.description).toBe('Association A'))
+  await type(document.querySelector<HTMLInputElement>('[data-interface-url]')!, 'https://acme.test/v1')
+  document.querySelector('#provider-name')!.closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+  await vi.waitFor(() => expect(commitProvider).toBeTypeOf('function'))
+  await submitModelName()
+  await vi.waitFor(() => expect(releaseModel).toBeTypeOf('function'))
+  commitProvider()
+  await vi.waitFor(() => expect(config.modelsByRef['1:first-model']?.metadata.description).toBe('Association B'))
+  await vi.waitFor(() => expect(document.querySelector('[aria-label="供应商操作"]')?.textContent).not.toContain('保存中'))
+  expect(document.querySelectorAll('button[aria-label^="编辑 "]')).toHaveLength(0)
+  return { config, router, write, releaseModel, currentModel: () => structuredClone(persisted[0]!) }
+}
+
 describe('provider model editor', () => {
+  it.each(['filter', 'provider'] as const)('refreshes an exact off-page model after an old association acknowledgement across a %s change', async context => {
+    const { config, router, releaseModel, currentModel } = await pendingAcknowledgementAcrossAssociation()
+    if (context === 'filter') await type(document.querySelector<HTMLInputElement>('#model-1-2-name')!, 'Newer model draft')
+    else {
+      const navigation = router.push('/settings/providers/2')
+      await vi.waitFor(() => expect(document.querySelector('[role="alertdialog"]')).not.toBeNull())
+      ;[...document.querySelectorAll<HTMLButtonElement>('[role="alertdialog"] button')].find(button => button.textContent?.trim() === '放弃更改')!.click()
+      await navigation
+      await vi.waitFor(() => expect(document.querySelector('[aria-label="编辑 Other provider model"]')).not.toBeNull())
+      document.querySelector<HTMLButtonElement>('[aria-label="编辑 Other provider model"]')!.click()
+      await vi.waitFor(() => expect(document.querySelector('#model-2-20-name')).not.toBeNull())
+      await type(document.querySelector<HTMLInputElement>('#model-2-20-name')!, 'Other provider draft')
+    }
+    const observed: unknown[] = []
+    const stop = watch(() => config.modelsByRef['1:first-model']?.metadata.description, value => observed.push(value), { flush: 'sync' })
+    let finishExact!: (value: ModelWithMetadata) => void
+    vi.mocked(api.modelByRef).mockImplementationOnce(reference => {
+      if (reference.provider_id !== 1 || reference.model_id !== 'first-model') throw new Error('Refreshed the wrong model')
+      return new Promise(resolve => { finishExact = resolve })
+    })
+    releaseModel()
+    await vi.waitFor(() => expect(finishExact).toBeTypeOf('function'))
+    expect(config.modelsByRef['1:first-model']?.metadata.description).toBe('Association B')
+    finishExact(currentModel())
+    await vi.waitFor(() => expect([...document.querySelectorAll('button')].some(button => button.textContent?.trim() === '保存中…')).toBe(false))
+    expect(observed).not.toContain('Association A')
+    expect(config.modelFor(models[0]!)?.model).toMatchObject({ metadata_override: { name: 'Submitted model' }, metadata: { name: 'Submitted model', description: 'Association B', limit: { context: 200000 } } })
+    expect(config.isAvailable(models[0]!)).toBe(true)
+    if (context === 'filter') {
+      expect(document.querySelector<HTMLInputElement>('#model-1-2-name')?.value).toBe('Newer model draft')
+      expect(document.querySelector<HTMLInputElement>('#model-1-2-description')?.placeholder).toBe('Association B')
+      expect(document.querySelector('[data-slot="sheet-content"] [role="status"]')?.textContent).toContain('未保存')
+      await type(document.querySelector<HTMLInputElement>('#model-1-2-name')!, 'Submitted model')
+      const unload = new Event('beforeunload', { cancelable: true })
+      window.dispatchEvent(unload)
+      expect(unload.defaultPrevented).toBe(false)
+      expect(document.querySelectorAll('button[aria-label^="编辑 "]')).toHaveLength(0)
+    } else {
+      expect(document.querySelector<HTMLInputElement>('#provider-name')?.value).toBe('Second provider')
+      expect(document.querySelector<HTMLInputElement>('#model-2-20-name')?.value).toBe('Other provider draft')
+    }
+    stop()
+  })
+
+  it('keeps a committed write successful and its metadata retryable when the exact refresh fails', async () => {
+    const { config, releaseModel, currentModel, write } = await pendingAcknowledgementAcrossAssociation()
+    const warning = vi.spyOn(toast, 'warning')
+    vi.mocked(api.modelByRef).mockRejectedValueOnce(new Error('Metadata unavailable'))
+    releaseModel()
+    await vi.waitFor(() => expect(warning.mock.calls.some(([, options]) => options?.action)).toBe(true))
+    await vi.waitFor(() => expect(document.querySelector('#model-1-2-name')).toBeNull())
+    expect(config.modelsByRef['1:first-model']?.metadata.description).toBe('Association B')
+    const unload = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(unload)
+    expect(unload.defaultPrevented).toBe(false)
+    let finishRecovery!: (value: ModelWithMetadata) => void
+    vi.mocked(api.modelByRef).mockImplementationOnce(() => new Promise(resolve => { finishRecovery = resolve }))
+    const recovery = config.ensureModel(models[0]!)
+    expect(finishRecovery).toBeTypeOf('function')
+    finishRecovery({ ...currentModel(), metadata: { ...currentModel().metadata, description: 'Recovered association B' } })
+    await recovery
+    expect(config.modelsByRef['1:first-model']?.metadata.description).toBe('Recovered association B')
+    vi.mocked(api.modelByRef).mockResolvedValue({ ...currentModel(), metadata: { ...currentModel().metadata, description: 'Retried association B' } })
+    const action = warning.mock.calls.find(([, options]) => options?.action)![1]!.action as Action
+    action.onClick(new MouseEvent('click'))
+    await vi.waitFor(() => expect(config.modelsByRef['1:first-model']?.metadata.description).toBe('Retried association B'))
+    expect(write).toHaveBeenCalledOnce()
+    expect(config.isAvailable(models[0]!)).toBe(true)
+  })
+
   it('refreshes rematerialized provider models and off-page selections while preserving newer drafts', async () => {
     const { config } = await mountEditor()
     const foreign = { ...models[0]!, id: 20, provider_id: 2, metadata: { name: 'Unchanged foreign model' } }

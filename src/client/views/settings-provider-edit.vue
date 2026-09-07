@@ -278,6 +278,20 @@ async function addModel() {
   finally { if (token === loadToken) modelAction.value = false }
 }
 
+async function refreshWrittenModel(target: Pick<ModelWithMetadata, 'id' | 'provider_id' | 'model_id'>) {
+  try {
+    const current = await config.refreshModel(target)
+    const session = editingSession.value
+    if (session?.target.provider_id === target.provider_id && session.target.id === target.id) session.acknowledge(current)
+  } catch (error) {
+    toast.warning('模型已保存，但元数据刷新失败', {
+      id: `model-metadata-${target.provider_id}-${target.id}`,
+      description: error instanceof Error ? error.message : String(error),
+      action: { label: '重试刷新', onClick: () => { void refreshWrittenModel(target) } },
+    })
+  }
+}
+
 const writeQueues = new Map<number, ReturnType<typeof createModelWriteQueue>>()
 function queueFor(id: number) {
   let queue = writeQueues.get(id)
@@ -286,11 +300,18 @@ function queueFor(id: number) {
       write: async (modelId, patch) => {
         const record = Object.values(config.modelsByRef).find(model => model.id === modelId && model.provider_id === id)
         if (!record) throw new Error('missing model record')
+        const retainAcknowledgement = config.beginModelWrite(record)
         const result = await api.updateModel(id, modelId, patch)
-        if (record.model_id !== result.model_id) config.forgetModel(record)
-        config.retainModels([result])
+        const retained = retainAcknowledgement(result)
         const session = editingSession.value
-        if (session?.target.provider_id === id && session.target.id === modelId) session.acknowledge(result)
+        if (session?.target.provider_id === id && session.target.id === modelId) {
+          const cached = config.modelsByRef[`${id}:${result.model_id}`]
+          const current = cached?.id === modelId ? cached : session.model
+          const { model_id, interface_id, enabled, sort, metadata_override } = result
+          // Acknowledge committed settings without restoring effective metadata from an older association.
+          session.acknowledge(retained ? result : { ...current, model_id, interface_id, enabled, sort, metadata_override })
+        }
+        if (!retained) await refreshWrittenModel({ id: modelId, provider_id: id, model_id: result.model_id })
       },
       read: async () => {
         const result = await readModels(id)

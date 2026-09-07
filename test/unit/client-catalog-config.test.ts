@@ -7,6 +7,40 @@ import { modelRecords, provider } from './provider-fixtures'
 afterEach(() => vi.restoreAllMocks())
 
 describe('catalog config cache', () => {
+  it('fences obsolete write metadata and an exact refresh overtaken by another provider revision', async () => {
+    const config = useConfigStore(createPinia())
+    const model = modelRecords[0]!
+    config.retainModels([model])
+    const acknowledge = config.beginModelWrite(model)
+    config.invalidateProviderModels(1)
+    config.retainModels([{ ...model, metadata: { name: 'Association B' } }])
+    acknowledge({ ...model, metadata: { name: 'Obsolete association A' } })
+    expect(config.modelsByRef['1:first-model']?.metadata.name).toBe('Association B')
+    let finish!: (value: typeof model) => void
+    vi.spyOn(api, 'modelByRef').mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    const pending = config.refreshModel(model)
+    config.invalidateProviderModels(1)
+    config.retainModels([{ ...model, metadata: { name: 'Association C' } }])
+    finish({ ...model, metadata: { name: 'Superseded association B' } })
+    expect((await pending).metadata.name).toBe('Association C')
+    expect(config.modelsByRef['1:first-model']?.metadata.name).toBe('Association C')
+  })
+
+  it('keeps a tombstone when a committed-write metadata refresh completes after deletion', async () => {
+    const config = useConfigStore(createPinia())
+    config.providerRecords = [provider]
+    const model = modelRecords[0]!
+    config.retainModels([model])
+    let finish!: (value: typeof model) => void
+    vi.spyOn(api, 'modelByRef').mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    const pending = config.refreshModel(model)
+    config.forgetModel(model)
+    finish(model)
+    await expect(pending).rejects.toThrow()
+    expect(config.modelsByRef['1:first-model']).toBeUndefined()
+    expect(config.isAvailable(model)).toBe(false)
+  })
+
   it('aborts a stale filtered request, appends the current cursor, and retains the selected off-page model', async () => {
     const config = useConfigStore(createPinia())
     config.providerRecords = [provider]
