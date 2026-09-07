@@ -155,6 +155,58 @@ describe('PartAccumulator', () => {
     expect(events).toEqual([{ kind: 'part', part_index: 0, part: { type: 'reasoning', text: expected, providerOptions: providerMetadata } }])
   })
 
+  it('uses raw delta provenance with remapped IDs even when summary and full text are identical', () => {
+    const acc = new PartAccumulator()
+    acc.apply({ type: 'reasoning-start', id: 'normalized-1' })
+    expect(acc.apply({ type: 'raw', rawValue: { type: 'response.reasoning_summary_text.delta', item_id: 'wire-1', delta: 'same' } })).toEqual([])
+    acc.apply({ type: 'reasoning-delta', id: 'normalized-1', text: 'same' })
+    acc.apply({ type: 'raw', rawValue: { type: 'response.reasoning_text.delta', item_id: 'wire-1', delta: 'same' } })
+    const switched = acc.apply({ type: 'reasoning-delta', id: 'normalized-1', text: 'same' })
+    expect(switched).toMatchObject([{ kind: 'part', part_index: 0, part: { type: 'reasoning', text: 'same' } }])
+    acc.apply({ type: 'raw', rawValue: { type: 'response.reasoning_summary_text.delta', item_id: 'wire-1', delta: ' summary' } })
+    expect(acc.apply({ type: 'reasoning-delta', id: 'normalized-1', text: ' summary' })).toEqual([])
+    const ended = acc.apply({ type: 'reasoning-end', id: 'normalized-1', providerMetadata: { responses: {
+      itemId: 'wire-1', reasoningContent: null, reasoningSummary: [{ type: 'summary_text', text: 'final summary' }], reasoningEncryptedContent: 'ENC',
+    } } })
+    expect(acc.parts[0]).toEqual({ type: 'reasoning', text: 'same', providerOptions: { responses: {
+      itemId: 'wire-1', reasoningContent: [{ type: 'reasoning_text', text: 'same' }],
+      reasoningSummary: [{ type: 'summary_text', text: 'final summary' }], reasoningEncryptedContent: 'ENC',
+    } } })
+    expect(ended).toEqual([{ kind: 'part', part_index: 0, part: acc.parts[0] }])
+  })
+
+  it('keeps full buffers independent for interleaved items and prefers explicit completion content', () => {
+    const acc = new PartAccumulator()
+    acc.apply({ type: 'reasoning-start', id: 'normalized-a' })
+    acc.apply({ type: 'reasoning-start', id: 'normalized-b' })
+    acc.apply({ type: 'raw', rawValue: { type: 'response.reasoning_text.delta', item_id: 'wire-a', delta: 'full a' } })
+    acc.apply({ type: 'reasoning-delta', id: 'normalized-a', text: 'full a' })
+    acc.apply({ type: 'raw', rawValue: { type: 'response.reasoning_text.delta', item_id: 'wire-b', delta: 'full b' } })
+    acc.apply({ type: 'reasoning-delta', id: 'normalized-b', text: 'full b' })
+    acc.apply({ type: 'reasoning-end', id: 'normalized-b', providerMetadata: { responses: { itemId: 'wire-b', reasoningContent: [{ type: 'reasoning_text', text: 'final b' }], reasoningSummary: [] } } })
+    acc.apply({ type: 'reasoning-end', id: 'normalized-a', providerMetadata: { responses: { itemId: 'wire-a', reasoningContent: null, reasoningSummary: [{ type: 'summary_text', text: 'summary a' }] } } })
+    expect(acc.parts.map(part => part.type === 'reasoning' ? part.text : null)).toEqual(['full a', 'final b'])
+  })
+
+  it('retains summary provenance when completion omits both text representations', () => {
+    const acc = new PartAccumulator()
+    acc.apply({ type: 'reasoning-start', id: 'normalized' })
+    acc.apply({ type: 'raw', rawValue: { type: 'response.reasoning_summary_text.delta', item_id: 'wire', delta: 'summary only' } })
+    acc.apply({ type: 'reasoning-delta', id: 'normalized', text: 'summary only' })
+    acc.apply({ type: 'reasoning-end', id: 'normalized', providerMetadata: { responses: { itemId: 'wire', reasoningContent: null, reasoningSummary: [] } } })
+    expect(acc.parts[0]).toEqual({ type: 'reasoning', text: 'summary only', providerOptions: { responses: {
+      itemId: 'wire', reasoningContent: null, reasoningSummary: [{ type: 'summary_text', text: 'summary only' }],
+    } } })
+  })
+
+  it('does not carry a pending raw delta into the next model step', () => {
+    const acc = new PartAccumulator()
+    acc.apply({ type: 'raw', rawValue: { type: 'response.reasoning_text.delta', item_id: 'old', delta: 'old' } })
+    acc.apply({ type: 'start-step', request: {}, warnings: [] })
+    acc.apply({ type: 'reasoning-delta', id: 'new', text: 'generic' })
+    expect(acc.parts).toEqual([{ type: 'reasoning', text: 'generic' }])
+  })
+
   it('never lets a later event without metadata clear what was already captured', () => {
     const acc = new PartAccumulator()
     acc.apply({ type: 'reasoning-start', id: 'r1' })

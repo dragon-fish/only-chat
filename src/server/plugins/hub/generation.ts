@@ -182,6 +182,8 @@ async function generate(hub: Hub, target: Target, shell: Message, leafUserId: nu
       messages,
       // The system prompt travels as a `role: 'system'` message so cache breakpoints can attach to it.
       allowSystemInMessages: true,
+      // Responses raw deltas preserve full-text versus summary provenance before SDK normalization.
+      include: { rawChunks: target.providerInterface.protocol === 'responses' },
       abortSignal: controller.signal,
       temperature: params.temperature,
       topP: params.top_p,

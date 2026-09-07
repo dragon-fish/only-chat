@@ -1,6 +1,9 @@
 import type { TextStreamPart, ToolSet } from 'ai'
 import type { Part, ProviderOptions, ReasoningPart, TextPart, ToolCallPart, ToolResultPart } from '@/shared/parts'
-import { completedResponsesReasoningText } from './responses-reasoning'
+import {
+  completedResponsesReasoningOptions, completedResponsesReasoningText, readResponsesReasoningDelta,
+  streamedResponsesReasoningOptions, type ResponsesReasoningBuffers, type ResponsesReasoningDelta,
+} from './responses-reasoning'
 
 export type AccEvent =
   | { kind: 'delta'; part_index: number; part_kind: 'text' | 'reasoning'; delta: string }
@@ -19,12 +22,21 @@ type MetaPart = TextPart | ReasoningPart | ToolCallPart | ToolResultPart
 export class PartAccumulator {
   readonly parts: Part[] = []
   private readonly _indexById = new Map<string, number>()
+  private readonly _pendingResponsesDeltas: ResponsesReasoningDelta[] = []
+  private readonly _responsesById = new Map<string, ResponsesReasoningBuffers>()
 
   apply(part: TextStreamPart<ToolSet>): AccEvent[] {
     switch (part.type) {
       case 'start-step':
         this._indexById.clear()
+        this._pendingResponsesDeltas.length = 0
+        this._responsesById.clear()
         return []
+      case 'raw': {
+        const delta = readResponsesReasoningDelta(part.rawValue)
+        if (delta) this._pendingResponsesDeltas.push(delta)
+        return []
+      }
       case 'text-start': {
         const idx = this._ensure(part.id, { type: 'text', text: '' })
         this._setMeta(idx, part.providerMetadata)
@@ -50,8 +62,25 @@ export class PartAccumulator {
       }
       case 'reasoning-delta': {
         const idx = this._ensure(part.id, { type: 'reasoning', text: '' })
-        ;(this.parts[idx] as ReasoningPart).text += part.text
         this._setMeta(idx, part.providerMetadata)
+        const source = this._pendingResponsesDeltas.shift()
+        if (source) {
+          // Open Responses emits raw immediately before normalized delta; AI SDK may rename its ID.
+          const buffer = this._responsesById.get(part.id) ?? { itemId: source.itemId }
+          if (buffer.itemId !== source.itemId) throw new Error('Responses reasoning delta does not match its stream')
+          const hadFull = buffer.full !== undefined
+          const hadSummary = buffer.summary !== undefined
+          buffer[source.kind] = (buffer[source.kind] ?? '') + source.text
+          this._responsesById.set(part.id, buffer)
+          this._setMeta(idx, streamedResponsesReasoningOptions(buffer))
+          ;(this.parts[idx] as ReasoningPart).text = buffer.full ?? buffer.summary ?? ''
+          if (source.kind === 'full' && !hadFull && hadSummary) return [this._partEvent(idx)]
+          const events: AccEvent[] = source.text.length > 0 && (source.kind === 'full' || !hadFull)
+            ? [{ kind: 'delta', part_index: idx, part_kind: 'reasoning', delta: source.text }] : []
+          if (part.providerMetadata) events.push(this._partEvent(idx))
+          return events
+        }
+        ;(this.parts[idx] as ReasoningPart).text += part.text
         const events: AccEvent[] = part.text.length > 0 ? [{ kind: 'delta', part_index: idx, part_kind: 'reasoning', delta: part.text }] : []
         if (part.providerMetadata) events.push(this._partEvent(idx))
         return events
@@ -60,7 +89,10 @@ export class PartAccumulator {
         const idx = this._ensure(part.id, { type: 'reasoning', text: '' })
         this._setMeta(idx, part.providerMetadata)
         const reasoning = this.parts[idx] as ReasoningPart
+        const buffer = this._responsesById.get(part.id)
+        if (buffer) reasoning.providerOptions = completedResponsesReasoningOptions(reasoning.providerOptions, buffer)
         reasoning.text = completedResponsesReasoningText(reasoning.text, reasoning.providerOptions)
+        this._responsesById.delete(part.id)
         return [this._partEvent(idx)]
       }
       case 'tool-input-start': {

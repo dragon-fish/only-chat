@@ -496,7 +496,12 @@ describe('effective model interface', () => {
 })
 
 describe('DeepSeek Responses reasoning lifecycle', () => {
-  it.each([true, false])('streams full reasoning through live events and D1, then replays it with thinking disabled (metadata present: %s)', async metadataPresent => {
+  it.each([
+    { metadataPresent: true, omitReasoningContent: false },
+    { metadataPresent: false, omitReasoningContent: false },
+    { metadataPresent: true, omitReasoningContent: true },
+    { metadataPresent: false, omitReasoningContent: true },
+  ])('streams full reasoning through live events and D1, then replays it with thinking disabled (metadata: $metadataPresent, content omitted: $omitReasoningContent)', async ({ metadataPresent, omitReasoningContent }) => {
     const db = createDb(env.DB)
     const providerId = await seedProvider('deepseek', 'deepseek-fixture', false, {
       reasoning: true, reasoning_options: [{ type: 'effort', values: ['none', 'high'] }],
@@ -510,7 +515,7 @@ describe('DeepSeek Responses reasoning lifecycle', () => {
             fetch: async (input, init) => {
               const request = new Request(input, init)
               requests.push({ url: request.url, body: await request.json() })
-              return deepseekResponsesStream()
+              return deepseekResponsesStream({ omitReasoningContent })
             },
           })(model.model_id)
         },

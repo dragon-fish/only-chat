@@ -160,7 +160,7 @@ describe('responses protocol', () => {
       })
       try {
         const acc = new PartAccumulator()
-        const result = streamText({ model: lm, prompt: 'fixture', providerOptions: buildProviderOptions('responses', { reasoning_effort: 'high' }, { reasoning: true }) })
+        const result = streamText({ model: lm, prompt: 'fixture', include: { rawChunks: true }, providerOptions: buildProviderOptions('responses', { reasoning_effort: 'high' }, { reasoning: true }) })
         for await (const part of result.stream) {
           if (part.type === 'error') throw part.error
           acc.apply(part)
@@ -183,22 +183,23 @@ describe('responses protocol', () => {
       })
       try {
         const acc = new PartAccumulator()
-        for await (const part of streamText({ model: lm, prompt: 'fixture' }).stream) {
+        for await (const part of streamText({ model: lm, prompt: 'fixture', include: { rawChunks: true } }).stream) {
           if (part.type === 'error') throw part.error
           acc.apply(part)
         }
         const persisted = JSON.parse(JSON.stringify(acc.parts[0])) as Part
         expect(persisted).toMatchObject({ type: 'reasoning', text: 'complete reasoning', providerOptions: { responses: {
-          reasoningContent: null, reasoningSummary: [], itemId: 'rs_fixture', reasoningEncryptedContent: 'fixture-encrypted-state',
+          reasoningContent: deepseekReasoningItem.content, reasoningSummary: deepseekReasoningItem.summary, itemId: 'rs_fixture', reasoningEncryptedContent: 'fixture-encrypted-state',
         } } })
         const message: Message = { id: 1, session_id: 1, parent_id: null, seq: 1, role: 'assistant', parts: [persisted], provider_id: 1, model_id: model.model_id, usage: null, status: 'done', error: null, created_at: 0 }
+        const beforeReplay = JSON.stringify(message)
         const messages = buildModelMessages({ protocol: 'responses', systemPrompt: null, path: [message], attachments: new Map() })
         for await (const part of streamText({ model: lm, messages }).stream) if (part.type === 'error') throw part.error
         expect(requests[1]!.input).toEqual([{
-          type: 'reasoning', id: 'rs_fixture', summary: [],
+          type: 'reasoning', id: 'rs_fixture', summary: deepseekReasoningItem.summary,
           content: [{ type: 'reasoning_text', text: 'complete reasoning' }], encrypted_content: 'fixture-encrypted-state',
         }])
-        expect(message.parts[0]).toMatchObject({ providerOptions: { responses: { reasoningContent: null } } })
+        expect(JSON.stringify(message)).toBe(beforeReplay)
       } finally { vi.unstubAllGlobals() }
     })
   })
@@ -231,21 +232,21 @@ describe('responses protocol', () => {
 })
 
 describe('chat-completions reasoning', () => {
-  it('replays the canonical full Responses body without concatenated summary deltas', async () => {
+  it.each([false, true])('replays the canonical full Responses body without concatenated summary deltas (completion content omitted: %s)', async omitReasoningContent => {
     await inHub(async ctx => {
       const responses = await ctx.llm.createModel(await provider('k'), providerInterface('responses'), model)
       const chat = await ctx.llm.createModel(await provider('k'), providerInterface('chat-completions'), model)
       let chatRequest: unknown
       vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
         const request = new Request(input as RequestInfo, init)
-        if (request.url.endsWith('/responses')) return deepseekResponsesStream()
+        if (request.url.endsWith('/responses')) return deepseekResponsesStream({ omitReasoningContent })
         chatRequest = await request.json()
         const reply = { id: 'chat_fixture', object: 'chat.completion.chunk', created: 1, model: 'test-model', choices: [{ index: 0, delta: { role: 'assistant', content: 'fixture answer' }, finish_reason: 'stop' }] }
         return new Response(`data: ${JSON.stringify(reply)}\n\ndata: [DONE]\n\n`, { headers: { 'content-type': 'text/event-stream' } })
       })
       try {
         const acc = new PartAccumulator()
-        for await (const part of streamText({ model: responses, prompt: 'fixture' }).stream) {
+        for await (const part of streamText({ model: responses, prompt: 'fixture', include: { rawChunks: true } }).stream) {
           if (part.type === 'error') throw part.error
           acc.apply(part)
         }

@@ -28,13 +28,13 @@ export const deepseekResponsesBody = {
 
 export function deepseekResponsesStream({ omitReasoningContent = false } = {}): Response {
   const reasoningItem = omitReasoningContent
-    ? { ...deepseekReasoningItem, content: undefined, summary: [] }
+    ? { ...deepseekReasoningItem, content: undefined }
     : deepseekReasoningItem
   const responseBody = { ...deepseekResponsesBody, output: [reasoningItem, functionCall, message] }
   const events = [
     { type: 'response.created', response: { ...responseBody, status: 'in_progress', output: [], usage: null } },
     { type: 'response.output_item.added', output_index: 0, item: { id: 'rs_fixture', type: 'reasoning', status: 'in_progress', summary: [] } },
-    ...(!omitReasoningContent ? [{ type: 'response.reasoning_summary_text.delta', output_index: 0, item_id: 'rs_fixture', summary_index: 0, delta: 'fixture summary' }] : []),
+    { type: 'response.reasoning_summary_text.delta', output_index: 0, item_id: 'rs_fixture', summary_index: 0, delta: 'fixture summary' },
     { type: 'response.reasoning_text.delta', output_index: 0, item_id: 'rs_fixture', content_index: 0, delta: 'complete ' },
     { type: 'response.reasoning_text.delta', output_index: 0, item_id: 'rs_fixture', content_index: 0, delta: 'reasoning' },
     { type: 'response.output_item.done', output_index: 0, item: reasoningItem },
