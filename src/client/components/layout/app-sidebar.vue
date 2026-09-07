@@ -1,22 +1,29 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
-import SessionList from '@/client/components/session-list.vue'
+import ChatSidebarContent from '@/client/components/layout/chat-sidebar-content.vue'
+import { routeParamToId } from '@/client/lib/route-params'
 import { useSyncStore } from '@/client/stores/sync'
-import { Sidebar, SidebarContent } from '@/client/ui/sidebar'
+import { Sidebar } from '@/client/ui/sidebar'
 
 const route = useRoute()
 const sync = useSyncStore()
 
-const context = computed<'chat' | 'project' | 'settings'>(() => {
-  if (route.path.startsWith('/settings')) return 'settings'
+const projectId = computed<number | undefined>(() => {
+  if (route.path.startsWith('/settings')) return undefined
 
-  const routeSessionId = Number(route.path.startsWith('/c/') ? route.path.slice(3) : Number.NaN)
-  const sessionProjectId = Number.isFinite(routeSessionId)
-    ? sync.sessions.get(routeSessionId)?.project_id
-    : null
-  if (route.query.project !== undefined || sessionProjectId != null) return 'project'
-  return 'chat'
+  const routeProjectId = routeParamToId(
+    'projectId' in route.params && typeof route.params.projectId === 'string' ? route.params.projectId : undefined,
+  )
+  if (routeProjectId !== null) return routeProjectId
+
+  const draftProjectId = routeParamToId(typeof route.query.project === 'string' ? route.query.project : undefined)
+  if (draftProjectId !== null) return draftProjectId
+
+  const sessionId = routeParamToId(
+    'sessionId' in route.params && typeof route.params.sessionId === 'string' ? route.params.sessionId : undefined,
+  )
+  return sessionId === null ? undefined : sync.sessions.get(sessionId)?.project_id ?? undefined
 })
 </script>
 
@@ -24,13 +31,9 @@ const context = computed<'chat' | 'project' | 'settings'>(() => {
   <Sidebar
     collapsible="offcanvas"
     class="h-full"
-    :data-sidebar-context="context"
+    :data-sidebar-context="projectId === undefined ? 'chat' : 'project'"
     :data-connection="sync.status"
   >
-    <SidebarContent class="overflow-hidden">
-      <slot :name="context" :route="route" :sync="sync">
-        <SessionList />
-      </slot>
-    </SidebarContent>
+    <ChatSidebarContent :project-id="projectId" />
   </Sidebar>
 </template>
