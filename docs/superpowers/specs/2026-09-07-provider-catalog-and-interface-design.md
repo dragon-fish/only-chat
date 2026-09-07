@@ -122,10 +122,7 @@
 | `interface_id` | 可空；为空时跟随供应商默认接口 |
 | `metadata_override` | `Partial<ModelMetadata>`；仅保存用户覆写 |
 | `metadata_resolved` | 当前 catalog 与覆写合并后的可重建缓存 |
-| `catalog_model_id` | 命中的 provider-agnostic ID，可空 |
-| `catalog_provider_model_id` | 命中的供应商模型 ID，可空 |
-| `catalog_match_source` | 实际 metadata fallback 来源：`provider`、`model` 或空 |
-| `catalog_match_kind` | `exact`、`basename` 或空 |
+| `catalog_matches` | 可重建 JSON；分别记录 operator provider、Lab provider 和 global model 的命中 ID 与 `exact`/`basename` 种类 |
 | `search_name` | 有效人类可读名称的规范化搜索文本 |
 | `lab_id` | 有效 Lab ID，可空 |
 | `supports_image_input` | 物化筛选字段 |
@@ -291,23 +288,34 @@ Catalog 查找严格按以下层级执行，命中较高层后不再用较低层
 
 1. 供应商已有 `models_dev_provider_id` 时，在 `providers[id].models` 中完整 ID 逐字匹配。
 2. 该供应商目录未精确命中，且只有一方含斜杠时，在同一 `providers[id].models` 中按 `/` 最后一段匹配。
-3. 供应商目录仍未命中时，在全局 `models` 中完整 ID 逐字匹配。
-4. 全局目录未精确命中，且只有一方含斜杠时，在全局 `models` 中按 `/` 最后一段匹配。
-5. Basename 只能命中一个候选；多个候选视为歧义并继续下一层或最终不匹配。
-6. 双方都有斜杠但完整 ID 不同，不做 basename 匹配。
-7. 不转换大小写、点号、连字符、下划线或版本号。
+3. Operator provider 未命中且运营商 model ID 含 `/` 时，若第一段逐字命中已知 Lab ID 和同 ID provider，则在 `providers[lab].models` 中匹配去掉 Lab 前缀后的 ID。
+4. Lab provider 未精确命中且只有一方含斜杠时，在同一 Lab provider 中按 `/` 最后一段匹配。
+5. 在全局 `models` 中完整 ID 逐字匹配。
+6. 全局目录未精确命中，且只有一方含斜杠时，在全局 `models` 中按 `/` 最后一段匹配。
+7. Basename 只能命中一个候选；多个候选视为歧义并继续下一层或最终不匹配。
+8. 双方都有斜杠但完整 ID 不同，不做 basename 匹配。
+9. 不转换大小写、点号、连字符、下划线或版本号。
 
-Provider-specific 条目是首选 fallback，因为它表达该运营商实际暴露的模型 ID、能力、reasoning options、限制和价格。只有供应商目录没有对应模型时，才使用 provider-agnostic `models` 的通用事实。匹配来源、ID 和种类写入模型解析缓存，方便 UI 解释来源。
+Operator provider 条目是首选 fallback，因为它表达该运营商实际暴露的模型 ID、能力、reasoning options、限制和价格。Lab provider 是 operator 未命中时的保守增强层：它只提供 `reasoning_options`、`interleaved` 和 `modalities`，不得提供 `cost`、`limit`、`provider`、`experimental`、`status` 或其他运营商相关字段。全局 `models` 提供模型自身通用事实。所有匹配来源、ID 和种类写入模型解析缓存，方便 UI 解释来源。
 
 例如 DeepSeek 接口已关联 `models_dev_provider_id = deepseek` 时，`providers.deepseek.models.deepseek-v4-flash` 优先于全局 `models["deepseek/deepseek-v4-flash"]`，因此有效 metadata 包含运营商条目提供的 `reasoning_options` 和 `cost`。
 
+如果未知网关未关联 known provider，但返回 `deepseek/deepseek-v4-flash`，则可以从 `providers.deepseek.models.deepseek-v4-flash` 补充 `reasoning_options`、`interleaved` 和 `modalities`；DeepSeek 官方 `cost` 和 `limit` 不得用于该未知网关。
+
 ### 9.2 合并顺序
 
-从低到高：
+Operator provider 模型命中时，从低到高：
 
 1. 保守默认值。
-2. 最高优先级 catalog 查找命中的单个 fallback：provider-specific 优先，否则 provider-agnostic。
+2. Operator provider metadata，允许使用其完整字段，包括 `cost` 和 `limit`。
 3. `metadata_override`。
+
+Operator provider 未命中时，从低到高：
+
+1. 保守默认值。
+2. Provider-agnostic global model metadata。
+3. Lab provider 命中的 `reasoning_options`、`interleaved` 和 `modalities` 安全子集。
+4. `metadata_override`。
 
 普通对象递归合并；数组和原始值整体替换。缺失表示继承，显式 false 和 0 不得被 truthiness 覆盖。Nullable 字段允许显式 null 清除值。
 
@@ -324,7 +332,7 @@ Provider-specific 条目是首选 fallback，因为它表达该运营商实际�
 - `lab_id`：唯一匹配的 provider-agnostic ID 第一段。
 - `search_name`：有效 name、model ID、Lab 名称组成的搜索文本。
 
-模型 metadata fallback 与 Lab 识别是两条独立链路。Provider-agnostic 模型命中时，其 ID 第一段是 Lab ID；provider-specific 模型命中或模型完全未匹配时，如果运营商模型 ID 的第一段能逐字匹配已知 Lab ID，仍可仅用它确定分组、Lab 名称和图标。精确 Lab 前缀不能触发模型名称、能力、限制或价格 fallback。
+模型 metadata fallback 与 Lab 识别是两条独立链路。Provider-agnostic 或 Lab provider 模型命中时可以得到 Lab ID；operator provider 模型命中或模型完全未匹配时，如果运营商模型 ID 的第一段能逐字匹配已知 Lab ID，仍可仅用它确定分组、Lab 名称和图标。精确 Lab 前缀不能触发 Lab provider 安全子集以外的模型名称、能力、限制或价格 fallback。
 
 Lab 人类可读名称优先取同 ID 的 models.dev provider 名称；没有对应 provider 时将 Lab ID 转为标题格式。图标直接使用 models.dev 的 `/logos/labs/{lab_id}.svg`，加载失败时回退供应商占位头像，不抓取或解析 `/labs/` HTML 页面。
 
@@ -470,7 +478,7 @@ Session 与 Project 行尾操作使用官方 `SidebarMenuAction`，桌面点击�
 - Chat Completions `reasoning_content` 与工具调用交错顺序。
 - OpenAI/Anthropic Files 上传、共享作用域、凭据版本、过期拒绝和删除重试。
 - Catalog 分片、hash no-op、失败不激活、previous fallback 和旧版本清理。
-- Provider-first、global fallback、exact/basename 和歧义模型匹配。
+- Operator provider、Lab provider 安全子集、global fallback、exact/basename 和歧义模型匹配。
 - Metadata 深合并、false/0/null、物化字段和 Lab 解析。
 - Provider/model API 的竞态、分页、筛选和未保存状态。
 - SQL query plan 与 D1 rows-read 诊断。
