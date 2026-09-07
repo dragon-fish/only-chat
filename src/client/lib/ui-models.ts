@@ -1,10 +1,9 @@
-import type { Model, Project, Provider, Session } from '@/shared/models'
-
-export type ModelCapabilityFilter = 'all' | 'vision' | 'reasoning' | 'tools' | 'image_output'
+import type { CatalogProviderSummary } from '@/shared/api'
+import type { ModelWithMetadata, Project, ProviderWithInterfaces, Session } from '@/shared/models'
 
 export type EnabledModelEntry = {
-  provider: Provider
-  model: Model
+  provider: ProviderWithInterfaces
+  model: ModelWithMetadata
 }
 
 const normalizeQuery = (query: string) => query.trim().toLocaleLowerCase()
@@ -61,16 +60,44 @@ export function searchSessions(
   })
 }
 
-export function filterModelEntries(
-  entries: readonly EnabledModelEntry[],
-  query: string,
-  capability: ModelCapabilityFilter,
-): EnabledModelEntry[] {
-  const normalized = normalizeQuery(query)
-  return entries.filter(({ provider, model }) => {
-    const matchesQuery = !normalized || [provider.name, model.display_name, model.model_id]
-      .some(value => value.toLocaleLowerCase().includes(normalized))
-    const matchesCapability = capability === 'all' || model.capabilities[capability] === true
-    return matchesQuery && matchesCapability
-  })
+export const MODEL_CAPABILITY_FILTERS = [
+  { key: 'vision', label: '视觉' }, { key: 'reasoning', label: '推理' },
+  { key: 'tools', label: '工具' }, { key: 'image_output', label: '图片输出' },
+] as const
+
+export function modelName(model: ModelWithMetadata): string {
+  return model.metadata.name ?? model.model_id
+}
+
+export function modelBadges(model: ModelWithMetadata) {
+  const metadata = model.metadata
+  const values = {
+    vision: metadata.modalities?.input.includes('image'), reasoning: metadata.reasoning,
+    tools: metadata.tool_call, image_output: metadata.modalities?.output.includes('image'),
+  }
+  return MODEL_CAPABILITY_FILTERS.filter(option => values[option.key] === true)
+}
+
+export function labName(id: string, catalogProviders: readonly CatalogProviderSummary[] = []): string {
+  return catalogProviders.find(provider => provider.id === id)?.name
+    ?? id.replace(/[-_]+/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase())
+}
+
+export interface ModelLabGroup { id: string | null; heading: string | null; entries: EnabledModelEntry[] }
+export interface ModelProviderGroup { provider: ProviderWithInterfaces; labs: ModelLabGroup[] }
+
+/** Lab identity is resolved on the server independently from model facts. Never infer it here. */
+export function groupModelEntries(entries: readonly EnabledModelEntry[], catalogProviders: readonly CatalogProviderSummary[] = []): ModelProviderGroup[] {
+  const providers = new Map<number, ModelProviderGroup>()
+  for (const entry of entries) {
+    let group = providers.get(entry.provider.id)
+    if (!group) { group = { provider: entry.provider, labs: [] }; providers.set(entry.provider.id, group) }
+    let lab = group.labs.find(lab => lab.id === entry.model.lab_id)
+    if (!lab) { lab = { id: entry.model.lab_id, heading: null, entries: [] }; group.labs.push(lab) }
+    lab.entries.push(entry)
+  }
+  for (const group of providers.values()) {
+    if (group.labs.length > 1) for (const lab of group.labs) lab.heading = lab.id === null ? '其他' : labName(lab.id, catalogProviders)
+  }
+  return [...providers.values()]
 }

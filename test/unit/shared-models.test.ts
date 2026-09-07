@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
   InterfaceProtocolSchema, MessageSchema, ModelCapabilitiesSchema, ModelPageSchema, ModelQuerySchema,
-  ProjectSchema, ProtocolSchema, ProviderInterfaceSchema, ProviderSchema,
+  ProjectSchema, ProtocolSchema, ProviderInterfaceSchema, ProviderWithInterfacesSchema,
   SessionParamsSchema, UsageSchema, UserSettingsSchema,
 } from '@/shared/models'
 import { ModelWriteInputSchema, ProviderInterfaceInputSchema, ProviderWriteInputSchema } from '@/shared/api'
+import { provider } from './provider-fixtures'
 
 describe('models schemas', () => {
   it('distinguishes undefined and 0 in usage', () => {
@@ -22,10 +23,8 @@ describe('models schemas', () => {
   })
 
   it('never carries an api key on Provider DTOs', () => {
-    expect(ProviderSchema.safeParse({
-      id: 1, user_id: 1, name: 'x', protocol: 'anthropic', base_url: 'https://api.anthropic.com/v1',
-      has_key: true, extra: null, enabled: true, created_at: 0, api_key: 'leak',
-    }).success).toBe(false)
+    expect(ProviderWithInterfacesSchema.safeParse(provider).success).toBe(true)
+    expect(ProviderWithInterfacesSchema.safeParse({ ...provider, api_key: 'leak' }).success).toBe(false)
   })
 
   it('defaults settings.plugins to an empty map', () => {

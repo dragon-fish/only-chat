@@ -75,6 +75,65 @@ async function submitModelName() {
 }
 
 describe('provider model editor', () => {
+  it('does not repaint a newer filter after a save reread waits for provider refresh', async () => {
+    await mountEditor()
+    vi.spyOn(api, 'updateModel').mockResolvedValue({ ...models[0]!, enabled: false })
+    let finishRefresh!: (providers: ProviderWithInterfaces[]) => void
+    vi.mocked(api.providers).mockImplementationOnce(() => new Promise(resolve => { finishRefresh = resolve }))
+    document.querySelector<HTMLButtonElement>('[aria-label="启用 First model"]')!.click()
+    await vi.waitFor(() => expect(finishRefresh).toBeTypeOf('function'))
+    await type(document.querySelector<HTMLInputElement>('[aria-label="搜索模型"]')!, 'second')
+    await vi.waitFor(() => expect(document.querySelector('[aria-label="编辑 First model"]')).toBeNull())
+    finishRefresh([provider])
+    await nextTick()
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(document.querySelector('[aria-label="编辑 First model"]')).toBeNull()
+    expect(document.querySelector('[aria-label="编辑 Second model"]')).not.toBeNull()
+  })
+
+  it('offers only saved interfaces belonging to the model provider', async () => {
+    const { config } = await mountEditor()
+    const own = { ...provider.interfaces[0]!, id: 11, protocol: 'responses' as const }
+    const foreign = { ...provider.interfaces[0]!, id: 99, provider_id: 2, protocol: 'anthropic' as const }
+    config.providerRecords = [{ ...provider, interfaces: [...provider.interfaces, own, foreign] }]
+    const write = vi.spyOn(api, 'updateModel').mockResolvedValue({ ...models[0]!, interface_id: 11 })
+    document.querySelector<HTMLButtonElement>('[aria-label="编辑 First model"]')!.click()
+    await vi.waitFor(() => expect(document.querySelector('#model-1-2-interface')).not.toBeNull())
+    document.querySelector<HTMLButtonElement>('#model-1-2-interface')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+    await vi.waitFor(() => expect(document.querySelector('[role="option"]')).not.toBeNull())
+    const options = [...document.querySelectorAll<HTMLElement>('[role="option"]')]
+    expect(options.map(option => option.textContent?.trim())).toEqual(['跟随默认 · chat-completions', 'chat-completions', 'responses'])
+    options.find(option => option.textContent?.trim() === 'responses')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    await vi.waitFor(() => expect(document.querySelector('#model-1-2-interface')?.textContent).toContain('responses'))
+    document.querySelector('#model-1-2-name')!.closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(write).toHaveBeenCalledWith(1, 2, { interface_id: 11 }))
+  })
+
+  it('shows effective metadata as inherited, saves only edited overrides, and resets fields and groups', async () => {
+    await mountEditor()
+    const write = vi.spyOn(api, 'updateModel').mockResolvedValue(models[0]!)
+    document.querySelector<HTMLButtonElement>('[aria-label="编辑 First model"]')!.click()
+    await vi.waitFor(() => expect(document.querySelector('#model-1-2-name')).not.toBeNull())
+    const name = document.querySelector<HTMLInputElement>('#model-1-2-name')!
+    expect(name.value).toBe('')
+    expect(name.placeholder).toBe('First model')
+    expect(document.querySelector('[data-metadata-source="name"]')?.textContent).toContain('继承')
+    await type(name, 'Personal name')
+    expect(document.querySelector('[data-metadata-source="name"]')?.textContent).toContain('用户覆写')
+    document.querySelector<HTMLButtonElement>('[aria-label="恢复 显示名称 默认值"]')!.click()
+    await nextTick()
+    expect(name.value).toBe('')
+    await type(document.querySelector<HTMLInputElement>('#model-1-2-limit-context')!, '0')
+    document.querySelector<HTMLButtonElement>('[aria-label="恢复 限制 整组默认值"]')!.click()
+    await nextTick()
+    expect(document.querySelector<HTMLInputElement>('#model-1-2-limit-context')?.value).toBe('')
+    await type(document.querySelector<HTMLInputElement>('#model-1-2-cost-input')!, '0')
+    document.querySelector<HTMLButtonElement>('[aria-label="清除价格"]')!.click()
+    document.querySelector<HTMLButtonElement>('#model-1-2-tool_call')!.click()
+    name.closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(write).toHaveBeenCalledWith(1, 2, { metadata_override: { cost: null, tool_call: true } }))
+  })
+
   it('clears an association conflict after a later successful save has no warning', async () => {
     await mountEditor()
     const update = vi.spyOn(api, 'updateProvider').mockImplementationOnce(async (_id, _input, onWarning) => {
@@ -146,7 +205,7 @@ describe('provider model editor', () => {
     const save = delayModelSave()
     await submitModelName()
     await vi.waitFor(() => expect(save.write).toHaveBeenCalledWith(1, 2, {
-      model_id: 'first-model', enabled: true, metadata_override: { name: 'Submitted model' },
+      metadata_override: { name: 'Submitted model' },
     }))
     if (reopen) {
       document.querySelector<HTMLInputElement>('#model-1-2-name')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
@@ -262,14 +321,14 @@ describe('provider model editor', () => {
     const search = document.querySelector<HTMLInputElement>('input[aria-label="搜索模型"]')
     expect(search).not.toBeNull()
     await type(search!, ' SECOND-MODEL ')
-    await vi.waitFor(() => expect(document.querySelector('[aria-label="编辑 First model"]')).toBeNull())
-    expect(document.querySelector('[aria-label="编辑 Second model"]')).not.toBeNull()
+    await vi.waitFor(() => expect(document.querySelector('[aria-label="编辑 Second model"]')).not.toBeNull())
+    expect(document.querySelector('[aria-label="编辑 First model"]')).toBeNull()
     await type(search!, 'first model')
     await vi.waitFor(() => expect(document.querySelector('[aria-label="编辑 First model"]')).not.toBeNull())
     expect(document.querySelector('[aria-label="编辑 Second model"]')).toBeNull()
     await type(search!, 'no match')
     await vi.waitFor(() => expect(document.querySelectorAll('button[aria-label^="编辑 "]')).toHaveLength(0))
-    const clear = [...document.querySelectorAll('button')].find(button => button.textContent?.trim() === '清除搜索')
+    const clear = [...document.querySelectorAll('button')].find(button => button.textContent?.trim() === '清除筛选')
     expect(clear).toBeDefined()
     clear!.click()
     await vi.waitFor(() => expect(document.querySelectorAll('button[aria-label^="编辑 "]')).toHaveLength(2))
@@ -284,12 +343,12 @@ describe('provider model editor', () => {
     opener.click()
     await vi.waitFor(() => expect(document.querySelector('#model-1-2-name')).not.toBeNull())
     await type(document.querySelector<HTMLInputElement>('#model-1-2-name')!, 'Unsaved name')
-    document.querySelector<HTMLButtonElement>('#model-1-2-tools')!.click()
+    document.querySelector<HTMLButtonElement>('#model-1-2-tool_call')!.click()
     await nextTick()
     desktop.value = false
     await vi.waitFor(() => expect(document.querySelector('[data-slot="drawer-content"]')).not.toBeNull())
     expect(document.querySelector<HTMLInputElement>('#model-1-2-name')!.value).toBe('Unsaved name')
-    expect(document.querySelector('#model-1-2-tools')!.getAttribute('aria-checked')).toBe('true')
+    expect(document.querySelector('#model-1-2-tool_call')!.getAttribute('aria-checked')).toBe('true')
     desktop.value = true
     await vi.waitFor(() => expect(document.querySelector('[data-slot="sheet-content"]')).not.toBeNull())
     expect(document.querySelector<HTMLInputElement>('#model-1-2-name')!.value).toBe('Unsaved name')

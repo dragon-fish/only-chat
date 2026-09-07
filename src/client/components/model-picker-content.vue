@@ -1,113 +1,72 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import ProviderAvatar from '@/client/components/provider-avatar.vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import LabAvatar from '@/client/components/lab-avatar.vue'
 import CollectionState from '@/client/components/collection-state.vue'
+import ModelFilterBar from '@/client/components/model-filter-bar.vue'
+import ModelGroupList from '@/client/components/model-group-list.vue'
 import { Button } from '@/client/ui/button'
 import { Badge } from '@/client/ui/badge'
 import { RouterLink } from 'vue-router'
-import { filterModelEntries, type EnabledModelEntry, type ModelCapabilityFilter } from '@/client/lib/ui-models'
+import { modelBadges, modelName, type EnabledModelEntry } from '@/client/lib/ui-models'
 import { useConfigStore } from '@/client/stores/config'
-import { Command, CommandGroup, CommandInput, CommandItem, CommandList } from '@/client/ui/command'
-import { ToggleGroup, ToggleGroupItem } from '@/client/ui/toggle-group'
+import { Command, CommandInput, CommandItem, CommandList } from '@/client/ui/command'
 import type { ModelRef } from '@/shared/api'
-import type { Provider } from '@/shared/models'
+import type { ModelQuery } from '@/shared/models'
 
 const props = defineProps<{ modelValue: ModelRef | null }>()
 const emit = defineEmits<{ select: [ModelRef] }>()
 const config = useConfigStore()
-const loadingModels = ref(false)
-const modelLoadError = ref<string | null>(null)
-async function loadModels(append = false) {
-  if (loadingModels.value) return
-  loadingModels.value = true
-  modelLoadError.value = null
-  try { await config.loadEnabledModels(append) }
-  catch (error) { modelLoadError.value = error instanceof Error ? error.message : String(error) }
-  finally { loadingModels.value = false }
-}
-onMounted(() => { void loadModels() })
-
-const query = ref('')
+const filters = ref<Partial<ModelQuery>>({})
 const searchKey = ref(0)
-const capability = ref<ModelCapabilityFilter>('all')
-
-const CAPABILITY_FILTERS: ReadonlyArray<{ value: ModelCapabilityFilter, label: string }> = [
-  { value: 'all', label: '全部' },
-  { value: 'vision', label: '视觉' },
-  { value: 'reasoning', label: '推理' },
-  { value: 'tools', label: '工具' },
-  { value: 'image_output', label: '生图' },
-]
-
-const entries = computed(() => filterModelEntries(config.enabledModels(), query.value, capability.value))
-const groups = computed(() => {
-  const byProvider = new Map<number, { provider: Provider, entries: EnabledModelEntry[] }>()
-  for (const entry of entries.value) {
-    const group = byProvider.get(entry.provider.id)
-    if (group) group.entries.push(entry)
-    else byProvider.set(entry.provider.id, { provider: entry.provider, entries: [entry] })
-  }
-  return [...byProvider.values()]
+const validationError = computed(() => {
+  const search = filters.value.search?.trim()
+  if (search && Array.from(search).length < 3) return '搜索模型至少需要 3 个字符。'
+  if (filters.value.min_context !== undefined && (!Number.isInteger(filters.value.min_context) || filters.value.min_context < 0)) return '最小上下文需要填写非负整数。'
+  return null
 })
-const currentKey = computed(() => props.modelValue
-  ? `${props.modelValue.provider_id}:${props.modelValue.model_id}`
-  : '')
-
-function keyFor(entry: EnabledModelEntry) {
-  return `${entry.provider.id}:${entry.model.model_id}`
+async function loadModels(append = false) {
+  if (validationError.value) { config.cancelPickerQuery(); return }
+  const search = filters.value.search?.trim()
+  try { await config.loadEnabledModels(append, { ...filters.value, search: search || undefined }) }
+  catch { /* The store owns the error and retry state for the active query. */ }
 }
-
-function onSearch(event: Event) {
-  query.value = (event.target as HTMLInputElement).value
+onMounted(() => { void loadModels(); void config.loadCatalogProviders() })
+onBeforeUnmount(() => config.cancelPickerQuery())
+watch(filters, () => { void loadModels() }, { deep: true })
+const entries = computed(() => validationError.value ? [] : config.enabledModels())
+const currentKey = computed(() => props.modelValue ? `${props.modelValue.provider_id}:${props.modelValue.model_id}` : '')
+const keyFor = (entry: EnabledModelEntry) => `${entry.provider.id}:${entry.model.model_id}`
+function onSearch(event: Event) { filters.value = { ...filters.value, search: (event.target as HTMLInputElement).value } }
+function updateFilters(value: Partial<ModelQuery>) {
+  if (!value.search && filters.value.search) searchKey.value++
+  filters.value = value
 }
-
-function clearFilters() {
-  query.value = ''
-  capability.value = 'all'
-  searchKey.value++
-}
-
-function onCapability(value: unknown) {
-  const next = CAPABILITY_FILTERS.find(option => option.value === value)?.value
-  capability.value = next ?? 'all'
-}
-
-// reka-ui emits `AcceptableValue`; narrow it against enabled models before exposing a ModelRef.
 function onSelect(value: unknown) {
-  const entry = config.enabledModels().find(candidate => keyFor(candidate) === value)
-  if (!entry) return
-  emit('select', { provider_id: entry.provider.id, model_id: entry.model.model_id })
-  query.value = ''
+  const entry = entries.value.find(candidate => keyFor(candidate) === value)
+  if (entry) emit('select', { provider_id: entry.provider.id, model_id: entry.model.model_id })
 }
 </script>
 
 <template lang="pug">
 Command(:key="searchKey" :model-value="currentKey" :should-filter="false" class="min-h-0" @update:model-value="onSelect")
-  CommandInput(placeholder="搜索提供商或模型…" @input="onSearch")
+  CommandInput(placeholder="搜索模型名称或 ID…" @input="onSearch")
   .px-3.py-2
-    ToggleGroup(
-      type="single" size="sm" variant="outline" :model-value="capability"
-      aria-label="按模型能力筛选" @update:model-value="onCapability")
-      ToggleGroupItem(
-        v-for="option in CAPABILITY_FILTERS" :key="option.value" :value="option.value"
-        :aria-label="option.label" class="min-h-10 min-w-10 md:min-h-7 md:min-w-0") {{ option.label }}
-  CommandList(class="max-h-[min(20rem,55vh)]")
-    CollectionState(:loaded="config.loaded && config.pickerLoaded" :error="modelLoadError ?? config.loadError" :retry="loadModels" :empty="entries.length === 0" empty-title="没有可用模型" empty-description="当前筛选条件下没有已启用的模型。")
+    ModelFilterBar(:model-value="filters" :providers="config.providers" :search="false" @update:model-value="updateFilters")
+  CommandList(class="max-h-[min(20rem,40vh)]")
+    CollectionState(:loaded="config.loaded && config.pickerLoaded" :error="validationError ?? config.pickerError ?? config.loadError" :retry="loadModels" :empty="entries.length === 0" empty-title="没有可用模型" empty-description="当前筛选条件下没有已启用的模型。")
       template(#empty-action)
-        Button(v-if="query || capability !== 'all'" variant="outline" class="min-h-10" @click="clearFilters") 清除筛选
+        Button(v-if="Object.keys(filters).length" variant="outline" class="min-h-10" @click="updateFilters({})") 清除筛选
         Button(v-else as-child variant="outline" class="min-h-10")
           RouterLink(to="/settings/providers") 配置模型
-      CommandGroup(v-for="group in groups" :key="group.provider.id" :heading="group.provider.name")
-        CommandItem(
-          v-for="entry in group.entries" :key="keyFor(entry)" :value="keyFor(entry)"
-          class="min-h-10 md:min-h-0")
-          ProviderAvatar(:name="entry.provider.name" size="sm")
-          .min-w-0.flex-1
-            p.truncate {{ entry.model.display_name }}
-            p.truncate.text-xs.text-muted-foreground {{ entry.model.model_id }}
-            .mt-1.flex.flex-wrap.gap-1
-              template(v-for="filter in CAPABILITY_FILTERS" :key="filter.value")
-                Badge(v-if="filter.value !== 'all' && entry.model.capabilities[filter.value] === true" variant="secondary") {{ filter.label }}
-          span.sr-only {{ entry.provider.name }}
-  Button(v-if="config.pickerCursor" variant="ghost" :disabled="loadingModels" @click="loadModels(true)") 加载更多模型
+      ModelGroupList(:entries="entries" :catalog-providers="config.catalogProviders" command)
+        template(#default="{ entry }")
+          CommandItem(:value="keyFor(entry)" class="min-h-10 md:min-h-0")
+            LabAvatar(:lab-id="entry.model.lab_id" :provider-name="entry.provider.name" size="sm")
+            .min-w-0.flex-1
+              p.truncate {{ modelName(entry.model) }}
+              p.truncate.text-xs.text-muted-foreground {{ entry.model.model_id }}
+              .mt-1.flex.flex-wrap.gap-1
+                Badge(v-for="badge in modelBadges(entry.model)" :key="badge.key" variant="secondary") {{ badge.label }}
+            span.sr-only {{ entry.provider.name }}
+  Button(v-if="config.pickerCursor && !validationError" variant="ghost" :disabled="config.pickerLoading" @click="loadModels(true)") 加载更多模型
 </template>

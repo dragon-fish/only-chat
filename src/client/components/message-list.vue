@@ -24,7 +24,7 @@ const rows = computed(() => props.messages.map((message) => {
   const actual = message.provider_id !== null && message.model_id !== null
     ? config.modelFor({ provider_id: message.provider_id, model_id: message.model_id })
     : undefined
-  const actualModelName = actual?.model.display_name ?? message.model_id ?? '助手'
+  const actualModelName = actual?.model.metadata.name ?? message.model_id ?? '助手'
   return {
     message,
     assistantName: props.project?.name ?? actualModelName,

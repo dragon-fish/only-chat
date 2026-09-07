@@ -17,6 +17,7 @@ let cleanup = () => {}
 afterEach(() => { cleanup(); vi.restoreAllMocks(); document.body.innerHTML = '' })
 
 function mountPicker(compact: boolean, isDesktop: boolean, loaded = true) {
+  vi.spyOn(api, 'catalogProviders').mockResolvedValue([])
   desktop.value = isDesktop
   const pinia = createPinia()
   const config = useConfigStore(pinia)
@@ -38,6 +39,22 @@ function mountPicker(compact: boolean, isDesktop: boolean, loaded = true) {
 }
 
 describe('model picker modality', () => {
+  it('sends search and capability filters to the server and shows models outside the initial page', async () => {
+    const host = mountPicker(false, true)
+    host.querySelector<HTMLButtonElement>('button')!.click()
+    await vi.waitFor(() => expect(document.querySelector('[role="option"]')).not.toBeNull())
+    const remote = { ...modelRecords[1]!, enabled: true, metadata: { name: 'Remote reasoning model', reasoning: true } }
+    vi.mocked(api.queryModels).mockResolvedValue({ models: [remote], next_cursor: null })
+    const input = document.querySelector<HTMLInputElement>('[data-slot="command-input"]')!
+    input.value = 'remote'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await vi.waitFor(() => expect(vi.mocked(api.queryModels).mock.calls.at(-1)?.[0]).toMatchObject({ search: 'remote' }))
+    document.querySelector<HTMLButtonElement>('[aria-label="推理"]')!.click()
+    await vi.waitFor(() => expect(vi.mocked(api.queryModels).mock.calls.at(-1)?.[0]).toMatchObject({ search: 'remote', reasoning: true }))
+    await vi.waitFor(() => expect(document.querySelector('[role="option"]')?.textContent).toContain('Remote reasoning model'))
+    expect(host.textContent).toContain('Test model')
+  })
+
   it('keeps enabled-model retry and selection usable when the selected reference returns 404', async () => {
     vi.spyOn(api, 'modelByRef').mockRejectedValue(new Error('GET selected model failed: 404 not found'))
     const query = vi.spyOn(api, 'queryModels').mockRejectedValueOnce(new Error('Enabled model query offline'))

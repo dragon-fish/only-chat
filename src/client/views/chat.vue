@@ -108,8 +108,7 @@ const sendHint = computed(() => {
  * The reasoning control derives its own stops; it only needs the resolved model's declarations.
  * Both are `null` until the config loads, which is also what `noModel` below reports.
  */
-const capabilities = computed(() => entry.value?.model.capabilities ?? null)
-const protocol = computed(() => entry.value?.provider.protocol ?? null)
+const metadata = computed(() => entry.value?.model.metadata ?? null)
 /** What the session inherits when it sets nothing itself. */
 const inheritedReasoning = computed<ReasoningChoice>(() => choiceFromParams(project.value?.params))
 /** The three widgets always show the effective value, never the raw override (spec §5.6). */
@@ -322,7 +321,7 @@ function onReasoningChange(choice: ReasoningChoice) {
     :can-send="canSend" :hint="sendHint" @send="onSend" @stop="onStop")
     template(#controls)
       ReasoningControl(
-        :capabilities="capabilities" :protocol="protocol" :active="activeReasoning"
+        :metadata="metadata" :active="activeReasoning"
         :overridden="form.reasoning !== 'inherit'" :no-model="entry === undefined"
         @update="onReasoningChange")
 </template>

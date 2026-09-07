@@ -7,6 +7,37 @@ import { modelRecords, provider } from './provider-fixtures'
 afterEach(() => vi.restoreAllMocks())
 
 describe('catalog config cache', () => {
+  it('aborts a stale filtered request, appends the current cursor, and retains the selected off-page model', async () => {
+    const config = useConfigStore(createPinia())
+    config.providerRecords = [provider]
+    config.retainModels([modelRecords[1]!])
+    let finish!: (value: { models: typeof modelRecords; next_cursor: string | null }) => void
+    const pages = vi.spyOn(api, 'queryModels').mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    const old = config.loadEnabledModels(false, { search: 'first' })
+    const signal = pages.mock.calls[0]![1]
+    pages.mockResolvedValueOnce({ models: [modelRecords[0]!], next_cursor: 'next' })
+    await config.loadEnabledModels(false, { vision: true, min_context: 0, lab_id: 'deepseek' })
+    expect(signal?.aborted).toBe(true)
+    pages.mockResolvedValueOnce({ models: [{ ...modelRecords[0]!, id: 20, model_id: 'appended' }], next_cursor: null })
+    await config.loadEnabledModels(true, { vision: true, min_context: 0, lab_id: 'deepseek' })
+    expect(pages.mock.calls[2]![0]).toMatchObject({ enabled: true, vision: true, min_context: 0, lab_id: 'deepseek', cursor: 'next' })
+    finish({ models: [], next_cursor: 'stale' })
+    await old
+    expect(config.enabledModels().map(entry => entry.model.model_id)).toEqual(['first-model', 'appended'])
+    expect(config.pickerCursor).toBeNull()
+    expect(config.modelFor({ provider_id: 1, model_id: 'second-model' })?.model.metadata.name).toBe('Second model')
+    pages.mockResolvedValueOnce({ models: [], next_cursor: null })
+    await config.loadEnabledModels(false, { tools: true })
+    expect(config.enabledModels()).toEqual([])
+    expect(config.modelsByRef['1:second-model']).toBeDefined()
+  })
+
+  it('serializes false, zero, raw Lab IDs, and interface filters into the server query', async () => {
+    const fetcher = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ models: [], next_cursor: null })))
+    await api.queryModels({ vision: false, reasoning: true, tools: true, image_output: true, interface_id: 10, lab_id: 'lab/name', min_context: 0, search: 'human name' })
+    const url = new URL(String(fetcher.mock.calls[0]![0]), 'https://only.chat')
+    expect(Object.fromEntries(url.searchParams)).toEqual({ vision: 'false', reasoning: 'true', tools: 'true', image_output: 'true', interface_id: '10', lab_id: 'lab/name', min_context: '0', search: 'human name' })
+  })
   it('does not resurrect a forgotten model from an earlier selected-reference request', async () => {
     const config = useConfigStore(createPinia())
     config.providerRecords = [provider]
@@ -51,7 +82,7 @@ describe('catalog config cache', () => {
     await config.loadEnabledModels()
     pages.mockResolvedValue({ models: [], next_cursor: null })
     await config.loadProviderPage(1)
-    expect(config.modelFor({ provider_id: 1, model_id: 'second-model' })?.model.display_name).toBe('Second model')
+    expect(config.modelFor({ provider_id: 1, model_id: 'second-model' })?.model.metadata.name).toBe('Second model')
     expect(config.isAvailable({ provider_id: 1, model_id: 'second-model' })).toBe(false)
     expect(config.enabledModels().map(entry => entry.model.model_id)).toEqual(['first-model'])
   })

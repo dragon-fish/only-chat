@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { ModelMetadataOverrideSchema } from './model-metadata'
-import { InterfaceProtocolSchema, ModelCapabilitiesSchema, ModelPricingSchema, ProtocolSchema, SessionParamsSchema } from './models'
+import { InterfaceProtocolSchema, SessionParamsSchema } from './models'
 
 export interface ModelRef {
   provider_id: number
@@ -16,29 +16,6 @@ export const ProjectInputSchema = z.object({
   params: SessionParamsSchema.nullable().optional(),
 })
 export type ProjectInput = z.infer<typeof ProjectInputSchema>
-
-export const ProviderInputSchema = z.object({
-  name: z.string().min(1).max(100),
-  protocol: ProtocolSchema,
-  base_url: z.string().url(),
-  /** Plaintext key on input only; stored encrypted. Omit to keep the existing key. */
-  api_key: z.string().optional(),
-  extra: z.record(z.string(), z.unknown()).nullable().optional(),
-  enabled: z.boolean().optional(),
-  /** Supports the provider's native Files API with upload-time expiry. Custom providers default false. */
-  native_files: z.boolean().optional(),
-})
-export type ProviderInput = z.infer<typeof ProviderInputSchema>
-
-export const ModelInputSchema = z.object({
-  model_id: z.string().min(1),
-  display_name: z.string().min(1).optional(),
-  capabilities: ModelCapabilitiesSchema.optional(),
-  pricing: ModelPricingSchema.nullable().optional(),
-  enabled: z.boolean().optional(),
-  sort: z.number().int().optional(),
-})
-export type ModelInput = z.infer<typeof ModelInputSchema>
 
 /** One interface submitted as part of an atomic provider write. It never carries a credential. */
 const ProviderInterfaceInputBaseSchema = {
@@ -60,7 +37,7 @@ export const ModelsDevProviderAssociationInputSchema = z.discriminatedUnion('sou
 ])
 export type ModelsDevProviderAssociationInput = z.infer<typeof ModelsDevProviderAssociationInputSchema>
 
-/** New atomic provider input, introduced alongside the legacy ProviderInput during the staged cutover. */
+/** Atomic provider input shares one credential across all configured interfaces. */
 export const ProviderWriteInputSchema = z.strictObject({
   name: z.string().min(1).max(100),
   /** Plaintext key on input only; the API encrypts it before persistence. */
@@ -80,7 +57,7 @@ export const ProviderWriteInputSchema = z.strictObject({
 })
 export type ProviderWriteInput = z.infer<typeof ProviderWriteInputSchema>
 
-/** New model input retaining only user intent; catalog metadata never creates model membership. */
+/** Model input retains only user intent; catalog metadata never creates model membership. */
 export const ModelWriteInputSchema = z.strictObject({
   model_id: z.string().min(1),
   interface_id: z.number().int().nullable().optional(),

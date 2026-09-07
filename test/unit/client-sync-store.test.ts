@@ -33,7 +33,7 @@ import {
   useSyncStore,
 } from '@/client/stores/sync'
 import type { ModelRef } from '@/shared/api'
-import type { Message, ModelCapabilities, Project, Session } from '@/shared/models'
+import type { Message, Project, Session } from '@/shared/models'
 import type { Part } from '@/shared/parts'
 import { parseCommand } from '@/shared/ws'
 
@@ -334,43 +334,20 @@ describe('reasoning control', () => {
     expect(choiceFromParams({ reasoning_effort: 'low' })).toBe('low')
   })
 
-  const ALL_STRENGTHS = ['auto', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']
-
-  it('treats an undeclared effort list as unrestricted, matching the server', () => {
-    // A model that never declared reasoning gets no control at all.
-    expect(reasoningStopsFor({}, 'anthropic')).toEqual([])
-    expect(reasoningStopsFor(undefined, 'anthropic')).toEqual([])
-    // Undeclared is not a restriction (spec §3.3): `buildProviderOptions` reads `!declared?.length`
-    // the same way, and a gateway that advertises no levels degrades on one it cannot honour.
-    expect(reasoningStopsFor({ reasoning: true }, 'anthropic')).toEqual(ALL_STRENGTHS)
-    // An empty array is the same "undeclared" state as an absent key, never "nothing allowed".
-    expect(reasoningStopsFor({ reasoning: true, reasoning_efforts: [] }, 'anthropic')).toEqual(ALL_STRENGTHS)
-    // 立即 is not part of the relaxation: it still needs an explicit `reasoning_can_disable`.
-    expect(reasoningStopsFor({ reasoning: true, reasoning_can_disable: true }, 'anthropic'))
-      .toEqual(['off', ...ALL_STRENGTHS])
+  it('keeps undeclared reasoning options conservative without inventing effort levels', () => {
+    expect(reasoningStopsFor({})).toEqual([])
+    expect(reasoningStopsFor(undefined)).toEqual([])
+    expect(reasoningStopsFor({ reasoning: true })).toEqual(['auto'])
+    expect(reasoningStopsFor({ reasoning: true, reasoning_options: [] })).toEqual(['auto'])
+    expect(reasoningStopsFor({ reasoning: true, reasoning_options: [{ type: 'effort', values: [null, 'default'] }] })).toEqual(['auto'])
   })
 
-  it('lets a declared effort list restrict the strengths', () => {
-    // The declared efforts follow the canonical order, not the declaration order.
-    expect(reasoningStopsFor({ reasoning: true, reasoning_efforts: ['ultra', 'low', 'medium'] }, 'vertex'))
-      .toEqual(['auto', 'low', 'medium', 'ultra'])
-    // A declaration still excludes everything it leaves out.
-    expect(reasoningStopsFor({ reasoning: true, reasoning_efforts: ['high'] }, 'openai-responses')).toEqual(['auto', 'high'])
-    // Declaring levels does not by itself unlock 立即.
-    expect(reasoningStopsFor({ reasoning: true, reasoning_efforts: ['low'] }, 'anthropic')).toEqual(['auto', 'low'])
-    expect(reasoningStopsFor({ reasoning: true, reasoning_efforts: ['low'], reasoning_can_disable: true }, 'anthropic'))
-      .toEqual(['off', 'auto', 'low'])
-  })
-
-  it('hides Off on a protocol that has no disable value to send', () => {
-    // spec §5.4 defines no off value for openai-completions, and `buildProviderOptions` sends
-    // nothing for it, so the stop would be a dead affordance.
-    const caps: ModelCapabilities = { reasoning: true, reasoning_can_disable: true, reasoning_efforts: ['low'] }
-    expect(reasoningStopsFor(caps, 'openai-completions')).toEqual(['auto', 'low'])
-    expect(reasoningStopsFor(caps, 'openai-responses')).toEqual(['off', 'auto', 'low'])
-    expect(reasoningStopsFor(caps, 'vertex-compatible')).toEqual(['off', 'auto', 'low'])
-    // An unknown protocol (a provider registered by a plugin) keeps the declared capability.
-    expect(reasoningStopsFor(caps, undefined)).toEqual(['off', 'auto', 'low'])
+  it('derives exact efforts and disable support from reasoning_options', () => {
+    expect(reasoningStopsFor({ reasoning: true, reasoning_options: [{ type: 'effort', values: ['ultra', 'low', 'medium', 'default', null] }] })).toEqual(['auto', 'low', 'medium', 'ultra'])
+    expect(reasoningStopsFor({ reasoning: true, reasoning_options: [{ type: 'toggle' }, { type: 'effort', values: ['high'] }] })).toEqual(['off', 'auto', 'high'])
+    expect(reasoningStopsFor({ reasoning: true, reasoning_options: [{ type: 'effort', values: ['none', 'low'] }] })).toEqual(['off', 'auto', 'low'])
+    expect(reasoningStopsFor({ reasoning: true, reasoning_options: [{ type: 'budget_tokens', min: 1024, max: 10000 }] })).toEqual(['auto'])
+    expect(reasoningStopsFor({ reasoning: false, reasoning_options: [{ type: 'toggle' }] })).toEqual([])
   })
 })
 
@@ -634,7 +611,7 @@ describe('reasoningControlModel', () => {
   // The stranding path from the review, end to end: a Project stores 思考关, a session inherits it,
   // and the session's model declares `reasoning` but not `reasoning_can_disable`.
   it('leaves the slider reachable for a session that inherited off from a Project', () => {
-    const stops = reasoningStopsFor({ reasoning: true }, 'openai-responses')
+    const stops = reasoningStopsFor({ reasoning: true, reasoning_options: [{ type: 'effort', values: ['low', 'medium', 'high'] }] })
     const m = reasoningControlModel(stops, choiceFromParams({ reasoning_enabled: false }))
     expect(m.canDisable).toBe(false)
     expect(m.enabled).toBe(true)
@@ -722,12 +699,12 @@ describe('reasoningChoiceFor', () => {
 // that let the Project page render live-looking controls for a model that cannot reason at all.
 describe('reasoningDisabledReason', () => {
   it('names the reason when the model declares no reasoning at all', () => {
-    expect(reasoningDisabledReason(reasoningStopsFor({}, 'openai-responses'))).toBe('该模型不支持推理')
+    expect(reasoningDisabledReason(reasoningStopsFor({}))).toBe('该模型不支持推理')
     expect(reasoningDisabledReason([])).toBe('该模型不支持推理')
   })
 
   it('stays silent whenever there is something to control', () => {
-    expect(reasoningDisabledReason(reasoningStopsFor({ reasoning: true }, 'openai-responses'))).toBeNull()
+    expect(reasoningDisabledReason(reasoningStopsFor({ reasoning: true }))).toBeNull()
     // Auto-only is still a working control: 思考 and 自动 both act, there is just no axis.
     expect(reasoningDisabledReason(['auto'])).toBeNull()
     expect(reasoningDisabledReason([...REASONING_ORDER])).toBeNull()

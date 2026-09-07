@@ -4,6 +4,9 @@ import { DownloadIcon, PlusIcon, Settings2Icon, Trash2Icon } from '@lucide/vue'
 import { useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
 import ModelEditor from '@/client/components/model-editor.vue'
+import LabAvatar from '@/client/components/lab-avatar.vue'
+import ModelFilterBar from '@/client/components/model-filter-bar.vue'
+import ModelGroupList from '@/client/components/model-group-list.vue'
 import UnsavedChangesGuard from '@/client/components/unsaved-changes-guard.vue'
 import SettingsBackButton from '@/client/components/layout/settings-back-button.vue'
 import { useFormChanges } from '@/client/composables/use-form-changes'
@@ -11,7 +14,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/client/ui/alert'
 import ProviderNavigation from '@/client/components/provider-navigation.vue'
 import ProviderInterfaceList from '@/client/components/provider-interface-list.vue'
 import { api } from '@/client/lib/api'
-import { legacyModelView, legacyModelWrite } from '@/client/lib/legacy-catalog-ui'
+import { modelBadges, modelName } from '@/client/lib/ui-models'
 import { createModelWriteQueue } from '@/client/lib/settings'
 import { useConfigStore } from '@/client/stores/config'
 import { Badge } from '@/client/ui/badge'
@@ -30,8 +33,8 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from '@/client/ui/alert-dialog'
-import { type Model, type ModelQuery } from '@/shared/models'
-import { ProviderWriteInputSchema, type CatalogProviderSummary, type ModelInput, type ProviderWriteInput } from '@/shared/api'
+import { type ModelWithMetadata, type ModelQuery } from '@/shared/models'
+import { ProviderWriteInputSchema, type CatalogProviderSummary, type ModelWriteInput, type ProviderWriteInput } from '@/shared/api'
 
 const props = defineProps<{ providerId: number | null }>()
 const router = useRouter()
@@ -44,9 +47,12 @@ const savedName = computed(() => savedProvider.value?.name || '供应商设置')
 const catalogProviders = ref<CatalogProviderSummary[]>([])
 const associationWarning = ref<string | null>(null)
 const { dirty, markSaved } = useFormChanges(() => form)
-const models = ref<Model[]>([])
-const modelQuery = ref('')
+const models = ref<ModelWithMetadata[]>([])
+const modelFilters = ref<Partial<ModelQuery>>({})
+const modelQuery = computed(() => modelFilters.value.search ?? '')
+const hasModelFilters = computed(() => Object.values(modelFilters.value).some(value => value !== undefined && value !== ''))
 const visibleModels = computed(() => models.value)
+const modelEntries = computed(() => savedProvider.value ? models.value.map(model => ({ provider: savedProvider.value!, model })) : [])
 const nextCursor = ref<string | null>(null)
 const modelLoadError = ref<string | null>(null)
 const newModelId = ref('')
@@ -60,18 +66,14 @@ const modelAction = ref(false)
 const pendingWrites = reactive(new Map<number, number>())
 const deletingProvider = ref(false)
 const providerDeleteOpen = ref(false)
-const editingModel = ref<Model | null>(null)
+const editingModel = ref<ModelWithMetadata | null>(null)
 const modelEditor = ref<InstanceType<typeof ModelEditor> | null>(null)
 const editorOpen = ref(false)
-const modelToDelete = ref<Model | null>(null)
+const modelToDelete = ref<ModelWithMetadata | null>(null)
 const modelDeleteOpen = ref(false)
 const busyModels = computed(() => modelAction.value || (pendingWrites.get(providerId.value ?? -1) ?? 0) > 0)
 const canFetchModels = computed(() => savedProvider.value?.interfaces.find(endpoint => endpoint.id === savedProvider.value?.default_interface_id)?.protocol !== 'vertex-compatible' && !!savedProvider.value?.default_interface_id)
 const hasKey = computed(() => config.providers.find(provider => provider.id === providerId.value)?.has_key)
-const capabilityLabels = [
-  { key: 'vision', label: '视觉' }, { key: 'reasoning', label: '推理' },
-  { key: 'tools', label: '工具' }, { key: 'image_output', label: '图片输出' },
-] as const
 
 function requireId(): number {
   if (providerId.value === null) throw new Error('missing provider id')
@@ -88,12 +90,25 @@ let loadController: AbortController | undefined
 let modelLoadToken = 0
 function queryFor(id: number): Partial<ModelQuery> {
   const search = id === providerId.value ? modelQuery.value.trim() : ''
-  return search ? { search } : {}
+  return id === providerId.value ? { ...modelFilters.value, search: search || undefined } : {}
 }
 async function readModels(id: number) {
-  const page = await config.loadProviderPage(id, queryFor(id))
-  if (id === providerId.value) nextCursor.value = page.next_cursor
-  return page.models.map(legacyModelView)
+  if (id !== providerId.value) return null
+  const token = ++modelLoadToken
+  const navigation = loadToken
+  loadController?.abort()
+  const controller = new AbortController()
+  loadController = controller
+  refreshing.value = true
+  try {
+    const page = await config.loadProviderPage(id, queryFor(id), controller.signal)
+    if (id !== providerId.value || token !== modelLoadToken || navigation !== loadToken) return null
+    nextCursor.value = page.next_cursor
+    return page.models.map(model => JSON.parse(JSON.stringify(model)) as ModelWithMetadata)
+  } catch (error) {
+    if (controller.signal.aborted || token !== modelLoadToken || navigation !== loadToken) return null
+    throw error
+  } finally { if (token === modelLoadToken && navigation === loadToken) refreshing.value = false }
 }
 async function loadModelPage(append = false) {
   const id = providerId.value
@@ -104,10 +119,11 @@ async function loadModelPage(append = false) {
   const controller = new AbortController()
   loadController = controller
   const search = modelQuery.value.trim()
-  if (search && Array.from(search).length < 3) {
+  const invalidContext = modelFilters.value.min_context !== undefined && (!Number.isInteger(modelFilters.value.min_context) || modelFilters.value.min_context < 0)
+  if ((search && Array.from(search).length < 3) || invalidContext) {
     models.value = []
     nextCursor.value = null
-    modelLoadError.value = '搜索模型至少需要 3 个字符。'
+    modelLoadError.value = invalidContext ? '最小上下文需要填写非负整数。' : '搜索模型至少需要 3 个字符。'
     refreshing.value = false
     return
   }
@@ -116,14 +132,19 @@ async function loadModelPage(append = false) {
   try {
     const page = await config.loadProviderPage(id, { ...queryFor(id), ...(append && nextCursor.value ? { cursor: nextCursor.value } : {}) }, controller.signal)
     if (token !== modelLoadToken || navigation !== loadToken) return
-    const result = page.models.map(legacyModelView)
+    const result = page.models.map(model => JSON.parse(JSON.stringify(model)) as ModelWithMetadata)
     models.value = append ? [...models.value, ...result.filter(model => !models.value.some(existing => existing.id === model.id))] : result
     nextCursor.value = page.next_cursor
   } catch (error) {
     if (token === modelLoadToken && navigation === loadToken && !controller.signal.aborted) modelLoadError.value = error instanceof Error ? error.message : String(error)
   } finally { if (token === modelLoadToken && navigation === loadToken) refreshing.value = false }
 }
-watch(modelQuery, () => { if (ready.value) void loadModelPage() })
+watch(modelFilters, () => {
+  if (!ready.value) return
+  models.value = []
+  nextCursor.value = null
+  void loadModelPage()
+}, { deep: true })
 async function load() {
   const id = providerId.value
   const token = ++loadToken
@@ -146,8 +167,8 @@ async function load() {
         models_dev_provider: provider.models_dev_provider_source === 'manual' && provider.models_dev_provider_id ? { source: 'manual', provider_id: provider.models_dev_provider_id } : { source: 'endpoint' },
       })
       markSaved()
-      models.value = config.modelsByProvider[provider.id] ?? []
-      modelQuery.value = ''
+      models.value = JSON.parse(JSON.stringify(config.modelsByProvider[provider.id] ?? []))
+      modelFilters.value = {}
       newModelId.value = ''
       editorOpen.value = false
       saving.value = modelAction.value = deletingProvider.value = false
@@ -223,9 +244,10 @@ async function fetchModels() {
   try {
     const result = await api.fetchModels(id)
     const loadedModels = await readModels(id)
+    const modelToken = modelLoadToken
     await config.load()
     if (token !== loadToken) return
-    models.value = loadedModels
+    if (loadedModels && modelToken === modelLoadToken) models.value = loadedModels
     toast.success(`导入 ${result.imported} 个新模型`)
   } catch (error) { report(error) }
   finally { if (token === loadToken) modelAction.value = false }
@@ -240,10 +262,11 @@ async function addModel() {
   try {
     await api.createModel(id, { model_id })
     const loadedModels = await readModels(id)
+    const modelToken = modelLoadToken
     await config.load()
     if (token !== loadToken) return
     newModelId.value = ''
-    models.value = loadedModels
+    if (loadedModels && modelToken === modelLoadToken) models.value = loadedModels
     toast.success('已添加模型')
   } catch (error) { report(error) }
   finally { if (token === loadToken) modelAction.value = false }
@@ -257,14 +280,15 @@ function queueFor(id: number) {
       write: async (modelId, patch) => {
         const record = Object.values(config.modelsByRef).find(model => model.id === modelId && model.provider_id === id)
         if (!record) throw new Error('missing model record')
-        const result = await api.updateModel(id, modelId, legacyModelWrite(record, patch))
+        const result = await api.updateModel(id, modelId, patch)
         if (record.model_id !== result.model_id) config.forgetModel(record)
         config.retainModels([result])
       },
       read: async () => {
         const result = await readModels(id)
+        const token = modelLoadToken
         await config.load()
-        return result
+        return token === modelLoadToken ? result : null
       },
       apply: result => { if (providerId.value === id) models.value = result },
       onError: report,
@@ -274,12 +298,13 @@ function queueFor(id: number) {
   return queue
 }
 
-async function applyModel(model: Model, patch: Partial<ModelInput>) {
+async function applyModel(model: ModelWithMetadata, patch: Partial<ModelWriteInput>) {
   modelLoadToken++
   loadController?.abort()
   refreshing.value = false
-  // Apply intent before enqueueing: the next edit must build on the latest capabilities.
+  // Keep the local row's pending intent isolated from the authoritative Pinia cache.
   Object.assign(model, patch)
+  if (patch.metadata_override?.name !== undefined) model.metadata = { ...model.metadata, name: patch.metadata_override.name }
   const id = model.provider_id
   pendingWrites.set(id, (pendingWrites.get(id) ?? 0) + 1)
   try {
@@ -289,12 +314,12 @@ async function applyModel(model: Model, patch: Partial<ModelInput>) {
   } finally { pendingWrites.set(id, (pendingWrites.get(id) ?? 1) - 1) }
 }
 
-function openModel(model: Model) {
+function openModel(model: ModelWithMetadata) {
   editingModel.value = model
   editorOpen.value = true
 }
 
-async function saveModel(patch: Partial<ModelInput>) {
+async function saveModel(patch: Partial<ModelWriteInput>) {
   const editor = modelEditor.value
   if (!editingModel.value || !editor) return
   const current = models.value.find(model => model.id === editingModel.value?.id)
@@ -323,9 +348,10 @@ async function removeModel() {
     await api.deleteModel(id, modelId)
     if (modelToDelete.value) config.forgetModel(modelToDelete.value)
     const loadedModels = await readModels(id)
+    const modelToken = modelLoadToken
     await config.load()
     if (token !== loadToken) return
-    models.value = loadedModels
+    if (loadedModels && modelToken === modelLoadToken) models.value = loadedModels
     toast.success('已删除模型')
   } catch (error) { report(error) }
   finally { if (token === loadToken) modelAction.value = false }
@@ -403,11 +429,7 @@ async function removeModel() {
             h2#provider-models-title.text-lg.font-semibold 模型
             Badge(variant="secondary") {{ models.length }}
           p.text-sm.text-muted-foreground 通过供应商拉取或手动添加模型。目录只提供元数据。
-          FieldGroup
-            Field
-              FieldLabel.sr-only(for="provider-model-search") 搜索模型
-              Input#provider-model-search(v-model="modelQuery" type="search" aria-label="搜索模型" placeholder="搜索模型 ID 或名称…" class="min-h-10")
-              FieldDescription 至少输入 3 个字符搜索全部已添加模型。
+          ModelFilterBar(v-model="modelFilters" :providers="savedProvider ? [savedProvider] : []")
           p.min-h-5.text-sm.text-muted-foreground(role="status") {{ modelLoadError ?? '' }}
           form(@submit.prevent="addModel")
             FieldGroup
@@ -419,31 +441,35 @@ async function removeModel() {
                     PlusIcon(data-icon="inline-start")
                     | 添加
           ItemGroup(class="gap-2")
-            Item(v-for="model in visibleModels" :key="model.id" variant="outline")
-              ItemContent(class="min-w-0")
-                ItemTitle {{ model.display_name }}
-                ItemDescription(class="break-all") {{ model.model_id }}
-                .flex.flex-wrap.gap-1
-                  template(v-for="capability in capabilityLabels" :key="capability.key")
-                    Badge(v-if="model.capabilities[capability.key]" variant="secondary") {{ capability.label }}
-              ItemActions(class="gap-4")
-                Switch(:model-value="model.enabled" :aria-label="`启用 ${model.display_name}`" class="after:-inset-y-3" :disabled="modelAction || deletingProvider" @update:model-value="applyModel(model, { enabled: $event })")
-                Button(variant="ghost" size="icon" class="size-10" :aria-label="`编辑 ${model.display_name}`" :disabled="modelAction || deletingProvider" @click="openModel(model)")
-                  Settings2Icon
-            Empty(v-if="!visibleModels.length")
+            ModelGroupList(:entries="modelEntries" :catalog-providers="catalogProviders" :show-providers="false")
+              template(#default="{ entry: { model, provider } }")
+                Item(variant="outline")
+                  LabAvatar(:lab-id="model.lab_id" :provider-name="provider.name" size="sm")
+                  ItemContent(class="min-w-0")
+                    ItemTitle {{ modelName(model) }}
+                    ItemDescription(class="break-all") {{ model.model_id }}
+                    .flex.flex-wrap.gap-1
+                      Badge(v-for="badge in modelBadges(model)" :key="badge.key" variant="secondary") {{ badge.label }}
+                  ItemActions(class="gap-4")
+                    Switch(:model-value="model.enabled" :aria-label="`启用 ${modelName(model)}`" class="after:-inset-y-3" :disabled="modelAction || deletingProvider" @update:model-value="applyModel(model, { enabled: $event })")
+                    Button(variant="ghost" size="icon" class="size-10" :aria-label="`编辑 ${modelName(model)}`" :disabled="modelAction || deletingProvider" @click="openModel(model)")
+                      Settings2Icon
+            template(v-if="refreshing && !visibleModels.length")
+              Skeleton(v-for="index in 3" :key="index" class="h-16 w-full")
+            Empty(v-else-if="!visibleModels.length")
               EmptyHeader
-                EmptyTitle {{ modelQuery.trim() ? '没有匹配的模型' : '尚未添加模型' }}
-                EmptyDescription {{ modelQuery.trim() ? '试试其他模型 ID 或名称。' : canFetchModels ? '从供应商拉取模型，或输入模型 ID 手动添加。' : '输入模型 ID，添加此供应商支持的模型。' }}
+                EmptyTitle {{ hasModelFilters ? '没有匹配的模型' : '尚未添加模型' }}
+                EmptyDescription {{ hasModelFilters ? '试试其他筛选条件。' : canFetchModels ? '从供应商拉取模型，或输入模型 ID 手动添加。' : '输入模型 ID，添加此供应商支持的模型。' }}
               EmptyContent
-                Button(v-if="modelQuery.trim()" variant="outline" class="min-h-10" @click="modelQuery = ''") 清除搜索
+                Button(v-if="hasModelFilters" variant="outline" class="min-h-10" @click="modelFilters = {}") 清除筛选
                 Button(v-else-if="canFetchModels" variant="outline" class="min-h-10" :disabled="dirty || busyModels || deletingProvider" @click="fetchModels") 拉取模型
                 Button(v-else variant="outline" class="min-h-10" @click="focusNewModel") 输入模型 ID
           Button(v-if="nextCursor" variant="outline" :disabled="refreshing || busyModels" @click="loadModelPage(true)") 加载更多模型
-  ModelEditor(v-if="editorOpen && editingModel && providerId !== null" ref="modelEditor" v-model:open="editorOpen" :key="editingModel.id" :provider-id="providerId" :model="editingModel" :saving="busyModels" @save="saveModel" @delete="confirmModelDelete")
+  ModelEditor(v-if="editorOpen && editingModel && savedProvider && providerId !== null" ref="modelEditor" v-model:open="editorOpen" :key="editingModel.id" :provider-id="providerId" :model="editingModel" :interfaces="savedProvider.interfaces" :default-interface-id="savedProvider.default_interface_id" :saving="busyModels" @save="saveModel" @delete="confirmModelDelete")
   AlertDialog(v-model:open="modelDeleteOpen")
     AlertDialogContent
       AlertDialogHeader
-        AlertDialogTitle 删除 {{ modelToDelete?.display_name }}？
+        AlertDialogTitle 删除 {{ modelToDelete ? modelName(modelToDelete) : '' }}？
         AlertDialogDescription 此模型将从当前供应商中移除。
       AlertDialogFooter
         AlertDialogCancel(class="min-h-10") 取消

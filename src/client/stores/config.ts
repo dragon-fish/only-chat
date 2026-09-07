@@ -1,17 +1,17 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { api } from '@/client/lib/api'
-import { legacyModelView, legacyProviderView } from '@/client/lib/legacy-catalog-ui'
-import type { ModelRef } from '@/shared/api'
-import type { Model, ModelQuery, ModelWithMetadata, ProviderWithInterfaces } from '@/shared/models'
+import type { CatalogProviderSummary, ModelRef } from '@/shared/api'
+import type { ModelQuery, ModelWithMetadata, ProviderWithInterfaces } from '@/shared/models'
 
 export const useConfigStore = defineStore('config', () => {
   const providerRecords = ref<ProviderWithInterfaces[]>([])
   const modelsByRef = ref<Record<string, ModelWithMetadata>>({})
-  const providers = computed(() => providerRecords.value.map(legacyProviderView))
+  const providers = computed(() => providerRecords.value)
+  const catalogProviders = ref<CatalogProviderSummary[]>([])
   const modelsByProvider = computed(() => {
-    const grouped: Record<number, Model[]> = {}
-    for (const model of Object.values(modelsByRef.value)) (grouped[model.provider_id] ??= []).push(legacyModelView(model))
+    const grouped: Record<number, ModelWithMetadata[]> = {}
+    for (const model of Object.values(modelsByRef.value)) (grouped[model.provider_id] ??= []).push(model)
     return grouped
   })
   const loaded = ref(false)
@@ -19,9 +19,13 @@ export const useConfigStore = defineStore('config', () => {
   const pickerRefs = ref<string[]>([])
   const pickerCursor = ref<string | null>(null)
   const pickerLoaded = ref(false)
+  const pickerLoading = ref(false)
+  const pickerError = ref<string | null>(null)
   const keyFor = (model: ModelRef) => `${model.provider_id}:${model.model_id}`
   let loadToken = 0
   let pickerToken = 0
+  let pickerController: AbortController | undefined
+  let pickerQuery = ''
   const pageTokens = new Map<number, number>()
   const pendingRefs = new Map<string, Promise<void>>()
   const selectedRefs = new Map<string, ModelRef>()
@@ -64,15 +68,41 @@ export const useConfigStore = defineStore('config', () => {
       throw error
     }
   }
-  async function loadEnabledModels(append = false) {
+  async function loadEnabledModels(append = false, query: Partial<ModelQuery> = {}) {
     const token = ++pickerToken
+    pickerController?.abort()
+    const controller = new AbortController()
+    pickerController = controller
+    const filters = { ...query, enabled: true, limit: 100, cursor: undefined }
+    const queryKey = JSON.stringify(Object.entries(filters).sort(([a], [b]) => a.localeCompare(b)))
+    append = append && queryKey === pickerQuery && pickerCursor.value !== null
+    pickerQuery = queryKey
+    if (!append) { pickerRefs.value = []; pickerCursor.value = null; pickerLoaded.value = false }
+    pickerLoading.value = true
+    pickerError.value = null
     const started = new Map(revisions)
-    const page = await api.queryModels({ enabled: true, limit: 100, ...(append && pickerCursor.value ? { cursor: pickerCursor.value } : {}) })
-    if (token !== pickerToken) return
-    const records = retainRead(page.models, started)
-    pickerRefs.value = [...new Set([...(append ? pickerRefs.value : []), ...records.map(keyFor)])]
-    pickerCursor.value = page.next_cursor
-    pickerLoaded.value = true
+    try {
+      const page = await api.queryModels({ ...filters, ...(append ? { cursor: pickerCursor.value! } : {}) }, controller.signal)
+      if (token !== pickerToken || controller.signal.aborted) return
+      const records = retainRead(page.models, started)
+      pickerRefs.value = [...new Set([...(append ? pickerRefs.value : []), ...records.map(keyFor)])]
+      pickerCursor.value = page.next_cursor
+      pickerLoaded.value = true
+    } catch (error) {
+      if (token === pickerToken && !controller.signal.aborted) {
+        pickerError.value = error instanceof Error ? error.message : String(error)
+        throw error
+      }
+    } finally { if (token === pickerToken) pickerLoading.value = false }
+  }
+  function cancelPickerQuery() {
+    pickerToken++
+    pickerController?.abort()
+    pickerLoading.value = false
+  }
+  async function loadCatalogProviders() {
+    try { catalogProviders.value = await api.catalogProviders() }
+    catch { /* Existing model metadata remains usable when catalog names are unavailable. */ }
   }
   async function loadProviderPage(providerId: number, query: Partial<ModelQuery> = {}, signal?: AbortSignal) {
     const token = (pageTokens.get(providerId) ?? 0) + 1
@@ -107,7 +137,8 @@ export const useConfigStore = defineStore('config', () => {
     if (!model) return undefined
     const provider = providers.value.find(item => item.id === model.provider_id)
     const record = modelsByRef.value[keyFor(model)]
-    return provider && record ? { provider, model: legacyModelView(record) } : undefined
+    const endpoint = provider?.interfaces.find(endpoint => endpoint.id === (record?.interface_id ?? provider.default_interface_id))
+    return provider && record ? { provider, model: record, interface: endpoint } : undefined
   }
   function enabledModels() {
     return pickerRefs.value.flatMap(key => {
@@ -121,7 +152,7 @@ export const useConfigStore = defineStore('config', () => {
     return found !== undefined && found.provider.enabled && found.model.enabled
   }
   return {
-    providerRecords, providers, modelsByRef, modelsByProvider, loaded, loadError, pickerRefs, pickerCursor, pickerLoaded,
-    load, loadEnabledModels, loadProviderPage, ensureModel, refreshSelectedModels, retainModels, forgetModel, enabledModels, modelFor, isAvailable,
+    providerRecords, providers, catalogProviders, modelsByRef, modelsByProvider, loaded, loadError, pickerRefs, pickerCursor, pickerLoaded, pickerLoading, pickerError,
+    load, loadCatalogProviders, loadEnabledModels, cancelPickerQuery, loadProviderPage, ensureModel, refreshSelectedModels, retainModels, forgetModel, enabledModels, modelFor, isAvailable,
   }
 })

@@ -63,7 +63,7 @@ const defaultModel = computed(() => config.modelFor(form.model))
  * model there is nothing to validate against, so every level stays reachable and the note says so.
  */
 const stops = computed(() => form.model
-  ? reasoningStopsFor(defaultModel.value?.model.capabilities, defaultModel.value?.provider.protocol)
+  ? reasoningStopsFor(defaultModel.value?.model.metadata)
   : [...REASONING_ORDER])
 const chatCount = computed(() => (props.projectId === null ? 0 : sync.sessionsInProject(props.projectId).length))
 
