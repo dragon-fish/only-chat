@@ -1,6 +1,9 @@
 <script setup lang="ts">
-import { computed, reactive } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { RotateCcw, Settings2 } from '@lucide/vue'
+import ResponsiveOverlay from '@/client/components/layout/responsive-overlay.vue'
+import { Badge } from '@/client/ui/badge'
+import { Button } from '@/client/ui/button'
 import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/client/ui/field'
 import { Input } from '@/client/ui/input'
 import {
@@ -10,7 +13,6 @@ import {
   NumberFieldIncrement,
   NumberFieldInput,
 } from '@/client/ui/number-field'
-import { Popover, PopoverContent, PopoverTrigger } from '@/client/ui/popover'
 import { Textarea } from '@/client/ui/textarea'
 import { fieldLooksBlank, optionalNumber, type SessionSettingSources, type SessionSettingsForm, type SettingSource } from '@/client/stores/sync'
 import type { Project } from '@/shared/models'
@@ -29,6 +31,7 @@ const props = defineProps<{
   hasSession: boolean
 }>()
 const emit = defineEmits<{ commit: [] }>()
+const open = ref(false)
 
 const inherited = computed(() => props.project?.params)
 
@@ -70,7 +73,7 @@ function onSettle(field: ParamKey) {
   typing[field] = null
 }
 /**
- * Escape closes this panel without ever firing `blur` — `PopoverContent` is `Presence`-gated, so the
+ * Escape closes this panel without ever firing `blur` — the responsive overlay is presence-gated, so the
  * focused input is detached rather than blurred, and Chrome fires nothing for a removed element.
  * Without this the tracker would outlive the box it describes: text typed and then escaped away
  * would still report the field as filled next time the panel opened, re-enabling the steppers over
@@ -78,6 +81,10 @@ function onSettle(field: ParamKey) {
  */
 function resetTyping() {
   Object.assign(typing, { temperature: null, top_p: null, max_tokens: null })
+}
+function setOpen(next: boolean) {
+  open.value = next
+  if (!next) resetTyping()
 }
 /** Blank is `''` in the form and `undefined` through `optionalNumber` — never `0` (spec §7.3). */
 function blank(field: ParamKey): boolean {
@@ -111,17 +118,12 @@ function restore(field: 'system_prompt' | 'temperature' | 'top_p' | 'max_tokens'
 </script>
 
 <template lang="pug">
-Popover(@update:open="resetTyping")
-  PopoverTrigger.inline-flex.items-center.gap-1.rounded-md.border.px-2.py-1.text-xs.text-muted-foreground(
-    title="会话设置" class="hover:bg-accent hover:text-foreground")
-    Settings2(class="size-3.5")
-    span 会话设置
-  //- Spec §8: the panel caps itself against the viewport and scrolls its own body. The primitive
-  //- (Popper-backed, like Select) owns positioning: it opens toward whichever side has room and
-  //- shifts to stay on-screen, so the trigger no longer needs to know it now lives in the top bar.
-  PopoverContent(
-    align="end" :side-offset="8"
-    class="w-80 max-w-[85vw] max-h-(--reka-popover-content-available-height) p-3 overflow-y-auto oc-scroll")
+Button(
+  type="button" variant="ghost" size="sm" class="size-10 md:w-auto"
+  aria-label="会话设置" :aria-expanded="open" aria-haspopup="dialog" @click="setOpen(true)")
+  Settings2(data-icon="inline-start")
+  span.hidden(class="md:inline") 会话设置
+ResponsiveOverlay(:open="open" title="会话设置" @update:open="setOpen")
     FieldGroup(class="gap-4")
       Field(v-if="hasSession")
         FieldLabel(for="oc-session-title" class="text-xs") 标题
@@ -132,11 +134,11 @@ Popover(@update:open="resetTyping")
       Field
         .flex.items-center.gap-2
           FieldLabel(for="oc-session-prompt" class="text-xs") 会话提示词
-          span.ml-auto.text-xs.text-muted-foreground {{ BADGES[sources.system_prompt] }}
-          button.text-muted-foreground(
-            v-if="sources.system_prompt === 'session'" type="button" title="恢复继承"
-            class="hover:text-foreground" @click="restore('system_prompt')")
-            RotateCcw(class="size-3.5")
+          Badge.ml-auto(variant="secondary") {{ BADGES[sources.system_prompt] }}
+          Button(
+            v-if="sources.system_prompt === 'session'" type="button" variant="ghost" size="icon-xs"
+            title="恢复继承" aria-label="恢复继承会话提示词" @click="restore('system_prompt')")
+            RotateCcw(data-icon="inline-start")
         Textarea(
           id="oc-session-prompt" v-model="form.system_prompt" rows="4" class="text-sm"
           placeholder="留空则只使用项目提示词" @change="emit('commit')")
@@ -148,11 +150,11 @@ Popover(@update:open="resetTyping")
       Field
         .flex.items-center.gap-2
           FieldLabel(for="oc-session-temperature" class="text-xs") temperature
-          span.ml-auto.text-xs.text-muted-foreground {{ BADGES[sources.temperature] }}
-          button.text-muted-foreground(
-            v-if="sources.temperature === 'session'" type="button" title="恢复继承"
-            class="hover:text-foreground" @click="restore('temperature')")
-            RotateCcw(class="size-3.5")
+          Badge.ml-auto(variant="secondary") {{ BADGES[sources.temperature] }}
+          Button(
+            v-if="sources.temperature === 'session'" type="button" variant="ghost" size="icon-xs"
+            title="恢复继承" aria-label="恢复继承 temperature" @click="restore('temperature')")
+            RotateCcw(data-icon="inline-start")
         //- `step` sizes the +/- buttons only: `step-snapping` off is what lets a typed 0.85 stay
         //- 0.85 instead of being rewritten to the nearest 0.1, which is how the raw box behaved.
         //- `maximumFractionDigits` is 20, not a guess at what people type: a double carries at most
@@ -174,11 +176,11 @@ Popover(@update:open="resetTyping")
       Field
         .flex.items-center.gap-2
           FieldLabel(for="oc-session-top-p" class="text-xs") top_p
-          span.ml-auto.text-xs.text-muted-foreground {{ BADGES[sources.top_p] }}
-          button.text-muted-foreground(
-            v-if="sources.top_p === 'session'" type="button" title="恢复继承"
-            class="hover:text-foreground" @click="restore('top_p')")
-            RotateCcw(class="size-3.5")
+          Badge.ml-auto(variant="secondary") {{ BADGES[sources.top_p] }}
+          Button(
+            v-if="sources.top_p === 'session'" type="button" variant="ghost" size="icon-xs"
+            title="恢复继承" aria-label="恢复继承 top_p" @click="restore('top_p')")
+            RotateCcw(data-icon="inline-start")
         NumberField(
           id="oc-session-top-p" :model-value="optionalNumber(form.top_p)"
           :min="0" :max="1" :step="0.05" :step-snapping="false" :disable-wheel-change="true"
@@ -195,11 +197,11 @@ Popover(@update:open="resetTyping")
       Field
         .flex.items-center.gap-2
           FieldLabel(for="oc-session-max-tokens" class="text-xs") 最大 tokens
-          span.ml-auto.text-xs.text-muted-foreground {{ BADGES[sources.max_tokens] }}
-          button.text-muted-foreground(
-            v-if="sources.max_tokens === 'session'" type="button" title="恢复继承"
-            class="hover:text-foreground" @click="restore('max_tokens')")
-            RotateCcw(class="size-3.5")
+          Badge.ml-auto(variant="secondary") {{ BADGES[sources.max_tokens] }}
+          Button(
+            v-if="sources.max_tokens === 'session'" type="button" variant="ghost" size="icon-xs"
+            title="恢复继承" aria-label="恢复继承最大 tokens" @click="restore('max_tokens')")
+            RotateCcw(data-icon="inline-start")
         NumberField(
           id="oc-session-max-tokens" :model-value="optionalNumber(form.max_tokens)"
           :min="1" :step="1" :step-snapping="false" :disable-wheel-change="true" :format-options="{ useGrouping: false }"
@@ -212,5 +214,6 @@ Popover(@update:open="resetTyping")
             NumberFieldIncrement(:disabled="blank('max_tokens')")
         FieldDescription(class="text-xs") {{ inheritHint('max_tokens', inherited?.max_tokens) }}
 
-      FieldDescription(v-if="!hasSession" class="text-xs") 这些设置会随第一条消息一起创建会话。
+      Field(v-if="!hasSession")
+        FieldDescription(class="text-xs") 这些设置会随第一条消息一起创建会话。
 </template>

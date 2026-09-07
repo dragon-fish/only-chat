@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { Button } from '@/client/ui/button'
+import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/client/ui/field'
 import { Separator } from '@/client/ui/separator'
 import { Slider } from '@/client/ui/slider'
 import { Switch } from '@/client/ui/switch'
@@ -19,7 +20,7 @@ import type { ModelCapabilities, Protocol } from '@/shared/models'
 /**
  * The three reasoning controls themselves: the 思考 switch, the 自动 switch and the strength
  * slider. Rendered inline wherever there is room for them — a settings form — and wrapped in a chip
- * and a popover by `reasoning-control.vue` where there is not, which is the Composer's toolbar.
+ * and responsive overlay by `reasoning-control.vue` where there is not, which is the Composer's toolbar.
  *
  * A caller supplies the axis one of two ways: the resolved model's declarations, which is what the
  * chat page has, or a ready-made `stops` list, which is what the Project page needs — a Project
@@ -120,56 +121,56 @@ function onLoneStop(on: boolean) {
 </script>
 
 <template>
-  <!-- One spacing scale for both hosts: a 320px popover and a settings form several hundred px
-       wide. `gap-3` on the column is what separates the rows, so no child carries its own margin. -->
-  <div class="flex flex-col gap-3">
+  <FieldGroup class="gap-3">
     <!-- Nothing here can act, so the panel states why instead of rendering dead widgets (§5.1).
          The 默认 button survives: clearing an override that can no longer be edited is the one
          action still worth having. -->
-    <div v-if="disabledReason" class="flex items-center justify-between gap-2">
-      <p class="text-muted-foreground text-sm">
+    <Field v-if="disabledReason" orientation="horizontal">
+      <FieldDescription>
         {{ disabledReason }}
-      </p>
+      </FieldDescription>
       <Button v-if="overridden" variant="ghost" size="xs" type="button" @click="emit('update', 'inherit')">
         默认
       </Button>
-    </div>
+    </Field>
 
     <template v-else>
-      <div class="flex items-center justify-between">
-        <div class="flex items-center gap-2">
-          <span class="text-sm font-medium">思考</span>
-          <Switch
-            :model-value="model.enabled"
-            :disabled="!model.canDisable"
-            @update:model-value="(on: boolean) => act({ kind: 'enable', on })"
-          />
-        </div>
+      <Field orientation="horizontal" :data-disabled="!model.canDisable || undefined">
+        <FieldLabel for="oc-reasoning-enabled">思考</FieldLabel>
+        <Switch
+          id="oc-reasoning-enabled"
+          :model-value="model.enabled"
+          :disabled="!model.canDisable"
+          @update:model-value="(on: boolean) => act({ kind: 'enable', on })"
+        />
         <Button v-if="overridden" variant="ghost" size="xs" type="button" @click="emit('update', 'inherit')">
           默认
         </Button>
-      </div>
+      </Field>
 
       <!-- The reason for the lock, as text. It used to be the Switch's `title`, which a disabled
            button can never show: browsers suppress pointer events on disabled form controls, so
            the tooltip never fires — the same trap ruling R7 fixed in the Composer. -->
-      <p v-if="!model.canDisable" class="text-muted-foreground text-xs">
-        该模型无法关闭思考，开关锁定在「开」。
-      </p>
+      <Field v-if="!model.canDisable">
+        <FieldDescription>该模型无法关闭思考，开关锁定在「开」。</FieldDescription>
+      </Field>
 
       <Separator />
 
-      <div class="flex items-center gap-2">
-        <span class="text-sm">自动</span>
+      <Field orientation="horizontal" :data-disabled="!model.enabled || undefined">
+        <FieldLabel for="oc-reasoning-auto">自动</FieldLabel>
         <Switch
+          id="oc-reasoning-auto"
           :model-value="model.auto"
           :disabled="!model.enabled"
           @update:model-value="(on: boolean) => act({ kind: 'auto', on })"
         />
-      </div>
+      </Field>
 
-      <div v-if="model.strengths.length > 1">
+      <Field v-if="model.strengths.length > 1" :data-disabled="!model.enabled || undefined">
+        <FieldLabel class="sr-only" for="oc-reasoning-strength">推理强度</FieldLabel>
         <Slider
+          id="oc-reasoning-strength"
           v-model="sliderValue"
           :min="0"
           :max="model.strengths.length - 1"
@@ -193,33 +194,38 @@ function onLoneStop(on: boolean) {
             )"
           >{{ REASONING_LABELS[stop] }}</span>
         </div>
-      </div>
+      </Field>
 
       <!-- A lone stop is not a scale. reka's `convertValueToPercentage` divides by `max - min`,
            which is 0 here, so the thumb's `left` computes to `calc(NaN% + NaNpx)`; the browser
            drops the invalid declaration and the thumb collapses onto the track's left edge while
            its label centres at 50%. There is also nothing to slide between: the only choices are
            "this level" and "let the provider decide", which is exactly a toggle. -->
-      <Toggle
-        v-else-if="loneStop"
-        :model-value="model.index === 0"
-        :disabled="!model.enabled"
-        variant="outline"
-        class="w-full"
-        @update:model-value="onLoneStop"
-      >
-        {{ REASONING_LABELS[loneStop] }}
-      </Toggle>
+      <Field v-else-if="loneStop" :data-disabled="!model.enabled || undefined">
+        <FieldLabel class="sr-only" for="oc-reasoning-lone-stop">推理强度</FieldLabel>
+        <Toggle
+          id="oc-reasoning-lone-stop"
+          :model-value="model.index === 0"
+          :disabled="!model.enabled"
+          variant="outline"
+          class="w-full"
+          @update:model-value="onLoneStop"
+        >
+          {{ REASONING_LABELS[loneStop] }}
+        </Toggle>
+      </Field>
 
       <!-- A reasoning model that declares no strengths at all: 思考 and 自动 still mean something,
            there is simply no axis to draw. -->
-      <p v-else class="text-muted-foreground text-xs">
-        该模型未声明可选档位，强度由供应商决定。
-      </p>
+      <Field v-else>
+        <FieldDescription>该模型未声明可选档位，强度由供应商决定。</FieldDescription>
+      </Field>
 
-      <p v-if="unsupportedLabel" class="text-muted-foreground text-xs">
-        当前档位「{{ unsupportedLabel }}」（不适用）：该模型未声明这一档，值按原样保留，未被改写。
-      </p>
+      <Field v-if="unsupportedLabel">
+        <FieldDescription>
+          当前档位「{{ unsupportedLabel }}」（不适用）：该模型未声明这一档，值按原样保留，未被改写。
+        </FieldDescription>
+      </Field>
     </template>
-  </div>
+  </FieldGroup>
 </template>

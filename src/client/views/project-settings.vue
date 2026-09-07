@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onUnmounted, reactive, ref, watch, watchEffect } from 'vue'
-import { RouterLink, useRouter } from 'vue-router'
+import { useRouter } from 'vue-router'
+import ResponsiveOverlay from '@/client/components/layout/responsive-overlay.vue'
 import { Button } from '@/client/ui/button'
 import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/client/ui/field'
 import { Input } from '@/client/ui/input'
@@ -12,6 +13,7 @@ import {
   NumberFieldInput,
 } from '@/client/ui/number-field'
 import { Textarea } from '@/client/ui/textarea'
+import { Spinner } from '@/client/ui/spinner'
 import ModelPicker from '@/client/components/model-picker.vue'
 import ReasoningControls from '@/client/components/reasoning-controls.vue'
 import { DISCONNECTED_MESSAGE, fieldLooksBlank, optionalNumber, projectFormFrom, projectUpdateCommand, reasoningStopsFor, REASONING_ORDER, useSyncStore, type ProjectFormState } from '@/client/stores/sync'
@@ -22,7 +24,7 @@ const router = useRouter()
 const sync = useSyncStore()
 const config = useConfigStore()
 
-/** v1 renders only the sections that exist; the nav column is the growth slot (spec §7.2). */
+/** v1 renders only the sections that exist; Task 8 owns any further settings-page expansion. */
 const sections = [
   { key: 'basic', label: '基本' },
   { key: 'model', label: '模型与参数' },
@@ -30,6 +32,7 @@ const sections = [
 type SectionKey = (typeof sections)[number]['key']
 
 const section = ref<SectionKey>('basic')
+const overlayOpen = ref(true)
 const form = reactive<ProjectFormState>(projectFormFrom(undefined))
 const loaded = ref(false)
 const missing = ref(false)
@@ -79,6 +82,7 @@ async function initialize(): Promise<void> {
   saving.value = false
   savedAgainst = 0
   section.value = 'basic'
+  overlayOpen.value = true
   if (!config.loaded) await config.load()
   if (token !== initToken) return
   // Direct URL loads can beat the boot fetch, so make sure the row really is absent before giving up.
@@ -124,6 +128,11 @@ function save() {
     saving.value = false
     sync.lastError = DISCONNECTED_MESSAGE
   }
+}
+
+function setOverlayOpen(next: boolean) {
+  overlayOpen.value = next
+  if (!next) void router.push('/')
 }
 
 function clearPending() {
@@ -197,19 +206,15 @@ onUnmounted(clearPending)
 </script>
 
 <template lang="pug">
-//- Spec §8: the page root owns the height, the form body is the only vertical scroller.
-.flex.h-full.min-h-0.overflow-hidden
-  Teleport(to="#page-header")
-    RouterLink.shrink-0.text-muted-foreground(to="/" class="hover:text-foreground") ←
-    span.truncate.text-sm.font-medium {{ project?.name ?? '项目设置' }}
-  nav.flex.w-32.shrink-0.flex-col.gap-1.border-r.p-2(class="sm:w-44 sm:p-3")
-    button.rounded-md.px-2.py-1.text-left.text-sm(
-      v-for="s in sections" :key="s.key"
-      :class="section === s.key ? 'bg-accent font-medium' : 'hover:bg-accent'"
-      @click="section = s.key") {{ s.label }}
-  .flex.min-h-0.min-w-0.flex-1.flex-col(v-if="project")
-    .oc-scroll.flex.min-h-0.flex-1.flex-col.gap-4.overflow-y-auto.p-4
-      FieldGroup(v-if="section === 'basic'" class="max-w-2xl")
+ResponsiveOverlay(
+  :open="overlayOpen" :title="project?.name ?? '项目设置'" @update:open="setOverlayOpen")
+  template(v-if="project")
+    nav.flex.gap-1.pb-4(aria-label="项目设置分区")
+      Button(
+        v-for="item in sections" :key="item.key" type="button" size="sm"
+        :variant="section === item.key ? 'secondary' : 'ghost'"
+        @click="section = item.key") {{ item.label }}
+    FieldGroup(v-if="section === 'basic'")
         Field
           FieldLabel(for="oc-project-name") 名称
           Input(id="oc-project-name" v-model="form.name" placeholder="项目名称")
@@ -219,12 +224,12 @@ onUnmounted(clearPending)
             id="oc-project-prompt" v-model="form.system_prompt" class="min-h-40"
             placeholder="留空表示不附加项目提示词")
           FieldDescription 会话开始生成时，项目提示词在前、会话提示词在后，中间固定两个换行。
-      FieldGroup(v-else class="max-w-2xl")
+    FieldGroup(v-else)
         Field
           FieldLabel 默认模型
           .flex.items-center.gap-2
             ModelPicker(v-model="form.model")
-            button.text-xs.text-muted-foreground(v-if="form.model" class="hover:text-foreground" @click="form.model = null") 清除
+            Button(v-if="form.model" type="button" variant="ghost" size="xs" @click="form.model = null") 清除
           FieldDescription 留空表示不设置默认模型，由会话或发送时的选择决定。
         Field
           FieldLabel(for="oc-project-temperature") temperature
@@ -274,7 +279,7 @@ onUnmounted(clearPending)
           FieldDescription {{ paramHint('max_tokens') }}
         Field
           FieldLabel 推理强度
-          //- Rendered inline, not behind a chip and a popover. That shape belongs to the Composer's
+          //- Rendered inline, not behind a chip and an overlay. That shape belongs to the Composer's
           //- toolbar, which is one row with no space for two switches and a slider; a settings page
           //- has the room, and every field beside this one is laid out plainly.
           ReasoningControls(
@@ -286,14 +291,17 @@ onUnmounted(clearPending)
           FieldDescription(v-if="!form.model") 未设置默认模型时无法校验档位，实际可用范围由发送时的模型决定。
           FieldDescription(v-else-if="stops.length === 0") 该默认模型未声明推理能力，此处没有可设置的档位；改用其他默认模型才能设置。
           FieldDescription(v-else) 只显示该默认模型声明支持的档位；「默认」表示项目不设置推理档位。
-    .flex.items-center.gap-3.border-t.p-3
-      p.min-w-0.truncate.text-xs.text-muted-foreground
-        | {{ chatCount }} 个聊天 · 创建于 {{ formatTime(project.created_at) }} · 更新于 {{ formatTime(project.updated_at) }}
-      button.ml-auto.shrink-0.text-xs(class="text-destructive" @click="onDelete")
+  .flex.min-h-32.items-center.justify-center.text-sm.text-muted-foreground(v-else)
+    | {{ missing ? '项目不存在或已被删除。' : '加载中…' }}
+  template(#footer v-if="project")
+    p.text-xs.text-muted-foreground
+      | {{ chatCount }} 个聊天 · 创建于 {{ formatTime(project.created_at) }} · 更新于 {{ formatTime(project.updated_at) }}
+    .flex.items-center.justify-end.gap-2
+      Button(type="button" size="sm" variant="destructive" @click="onDelete")
         | {{ pendingDelete ? '确认删除项目' : '删除项目' }}
       Button(
         size="sm" :disabled="!form.name.trim() || saving || !connected"
-        :title="connected ? undefined : DISCONNECTED_MESSAGE" @click="save") {{ saving ? '保存中…' : '保存' }}
-  .flex.min-h-0.flex-1.items-center.justify-center.p-4.text-sm.text-muted-foreground(v-else)
-    | {{ missing ? '项目不存在或已被删除。' : '加载中…' }}
+        :title="connected ? undefined : DISCONNECTED_MESSAGE" @click="save")
+        Spinner(v-if="saving" data-icon="inline-start")
+        | {{ saving ? '保存中…' : '保存' }}
 </template>

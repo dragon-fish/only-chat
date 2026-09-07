@@ -1,6 +1,7 @@
 import path from 'node:path'
 import { defineConfig } from 'vitest/config'
 import { cloudflareTest, readD1Migrations } from '@cloudflare/vitest-plugin'
+import vue from '@vitejs/plugin-vue'
 
 export default defineConfig({
   test: {
@@ -25,6 +26,7 @@ export default defineConfig({
         },
       },
       {
+        plugins: [vue()],
         resolve: { alias: { '@': path.resolve(import.meta.dirname, './src') } },
         test: {
           name: 'unit',

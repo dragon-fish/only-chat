@@ -4,6 +4,7 @@ import { ImagePlus, Send, Square, X } from '@lucide/vue'
 import { Attachment, AttachmentAction, AttachmentActions, AttachmentGroup, AttachmentMedia } from '@/client/ui/attachment'
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } from '@/client/ui/input-group'
 import { Spinner } from '@/client/ui/spinner'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/client/ui/tooltip'
 import { uploadImage } from '@/client/lib/image-prep'
 import { mergeRestoredText } from '@/client/stores/sync'
 import type { Part } from '@/shared/parts'
@@ -25,6 +26,14 @@ const images = ref<Attached[]>([])
 // A counter, not a flag: concurrent uploads must not let the first one to finish clear `busy`.
 const pending = ref(0)
 const busy = computed(() => pending.value > 0)
+const hasContent = computed(() => text.value.trim() !== '' || images.value.some((image) => image.state === 'done'))
+const sendBlockedReason = computed(() => {
+  if (busy.value) return '图片上传完成后即可发送'
+  if (!props.connected) return '未连接'
+  if (!props.canSend) return props.hint ?? '当前无法发送'
+  if (!hasContent.value) return '输入消息或添加图片'
+  return null
+})
 const fileInput = ref<HTMLInputElement | null>(null)
 const box = ref<{ $el?: HTMLTextAreaElement } | HTMLTextAreaElement | null>(null)
 /**
@@ -158,34 +167,41 @@ onBeforeUnmount(() => { releasePreviews(images.value); dropSent() })
         //- `AttachmentActions` is what lifts the button onto the thumbnail; without it the X
         //- lands in flow under the image and stretches the chip.
         AttachmentActions
-          AttachmentAction(title="移除" @click="removeImage(i)")
-            X
+          AttachmentAction(title="移除" aria-label="移除图片" @click="removeImage(i)")
+            X(data-icon="inline-start")
     InputGroupTextarea(
       ref="box" v-model="text" rows="2" placeholder="输入消息…"
-      class="max-h-[40vh]"
+      class="max-h-[40vh] text-base md:text-sm"
       @keydown="onKeydown" @paste="onPaste" @input="autoGrow")
     //- `align="block-end"` is what makes InputGroup lay out as a column with this row last.
     InputGroupAddon(align="block-end")
       input.hidden(ref="fileInput" type="file" accept="image/*" multiple @change="onFileChange")
-      //- `aria-disabled`, not `disabled`, throughout this row: `InputGroup` carries
-      //- `has-disabled:opacity-50`, which keys off the `:disabled` pseudo-class and would grey out
-      //- the whole card whenever a send is blocked. A real `disabled` button also stops firing
-      //- pointer events, which hides the `title` explaining why. Both handlers guard themselves.
-      InputGroupButton(
-        size="icon-xs" title="添加图片" class="aria-disabled:opacity-50"
-        :aria-disabled="busy" @click="pickFiles")
-        ImagePlus
-      slot(name="controls")
-      .ml-auto.flex.items-center.gap-2
-        span.text-xs.text-muted-foreground(v-if="!connected") 未连接
-        span.text-xs(v-else-if="hint" class="text-destructive") {{ hint }}
-        InputGroupButton(
-          v-if="streaming" size="icon-sm" variant="destructive"
-          class="rounded-full" title="停止" @click="emit('stop')")
-          Square
-        InputGroupButton(
-          v-else size="icon-sm" variant="default"
-          class="rounded-full aria-disabled:opacity-50" title="发送"
-          :aria-disabled="!connected || !canSend || busy" @click="submit")
-          Send
+      .flex.items-center.gap-1
+        Tooltip
+          TooltipTrigger(as-child)
+            InputGroupButton(
+              size="icon-xs" aria-label="添加图片" :disabled="busy" @click="pickFiles")
+              ImagePlus(data-icon="inline-start")
+          TooltipContent 添加图片
+        //- Reserved for future left-side tools without moving the reasoning control out of the
+        //- right action cluster.
+        slot(name="left-controls")
+      .ml-auto.flex.items-center.gap-1
+        slot(name="controls")
+        Tooltip(v-if="streaming")
+          TooltipTrigger(as-child)
+            InputGroupButton(
+              size="icon-sm" variant="destructive" class="rounded-full"
+              aria-label="停止生成" @click="emit('stop')")
+              Square(data-icon="inline-start")
+          TooltipContent 停止生成
+        Tooltip(v-else)
+          TooltipTrigger(as-child)
+            //- The tooltip must remain reachable while blocked, so this one control uses
+            //- `aria-disabled`; `submit` keeps the same hard guard as the keyboard path.
+            InputGroupButton(
+              size="icon-sm" variant="default" class="rounded-full aria-disabled:opacity-50"
+              aria-label="发送消息" :aria-disabled="sendBlockedReason !== null" @click="submit")
+              Send(data-icon="inline-start")
+          TooltipContent {{ sendBlockedReason ?? '发送消息' }}
 </template>

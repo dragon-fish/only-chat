@@ -3,7 +3,8 @@ import { computed, ref } from 'vue'
 import { Brain } from '@lucide/vue'
 import { Button } from '@/client/ui/button'
 import type { ButtonVariants } from '@/client/ui/button'
-import { Popover, PopoverContent, PopoverTrigger } from '@/client/ui/popover'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/client/ui/tooltip'
+import ResponsiveOverlay from '@/client/components/layout/responsive-overlay.vue'
 import ReasoningControls from '@/client/components/reasoning-controls.vue'
 import {
   reasoningChipLabel,
@@ -15,14 +16,14 @@ import type { ReasoningChoice, ReasoningStop } from '@/client/stores/sync'
 import type { ModelCapabilities, Protocol } from '@/shared/models'
 
 /**
- * The reasoning controls as a chip that opens a popover. This shape exists for the Composer's
- * toolbar, which has no room for three controls in a row. Anywhere with vertical space to spare —
- * a settings form — should render `reasoning-controls.vue` directly instead of making the user
- * open a layer to reach a single setting.
+ * The reasoning controls as a chip that opens a responsive secondary overlay. This shape exists
+ * for the Composer's toolbar, which has no room for three controls in a row. Anywhere with vertical
+ * space to spare — a settings form — should render `reasoning-controls.vue` directly instead of
+ * making the user open a layer to reach a single setting.
  */
 const props = withDefaults(defineProps<{
-  /** The chip's Button variant. Ghost suits the Composer's toolbar; a bordered form needs
-   *  `outline`, and a fallthrough `class` cannot supply it because `Popover` is renderless. */
+  /** The chip's Button variant. Ghost suits the Composer's toolbar; a bordered host may use
+   *  `outline` without styling the control through fallthrough attributes. */
   variant?: ButtonVariants['variant']
   capabilities?: ModelCapabilities | null
   protocol?: Protocol | null
@@ -54,9 +55,8 @@ const disabledReason = computed(() => (
 const chipLabel = computed(() => reasoningChipLabel(model.value, props.active))
 
 /**
- * The chip is `aria-disabled`, never `disabled`: `InputGroup` carries `has-disabled:opacity-50`,
- * which compiles to `:has(*:disabled)` and would grey the entire Composer card around it. So the
- * popover is opened through a guarded handler rather than by the trigger alone.
+ * The chip is `aria-disabled`, never `disabled`: the explanatory tooltip has to remain reachable,
+ * and `InputGroup` would also grey the entire Composer card around a native disabled descendant.
  */
 const open = ref(false)
 function setOpen(next: boolean) {
@@ -66,29 +66,33 @@ function setOpen(next: boolean) {
 </script>
 
 <template>
-  <Popover :open="open" @update:open="setOpen">
-    <PopoverTrigger as-child>
+  <Tooltip>
+    <TooltipTrigger as-child>
       <Button
         type="button"
         :variant="variant"
         size="xs"
         class="gap-1.5 aria-disabled:opacity-50"
         :aria-disabled="disabledReason !== null"
-        :title="disabledReason ?? '思考强度'"
+        :aria-expanded="open"
+        aria-haspopup="dialog"
+        @click="setOpen(true)"
       >
         <Brain data-icon="inline-start" />
         <span class="text-xs">{{ chipLabel }}</span>
       </Button>
-    </PopoverTrigger>
-    <PopoverContent align="start" class="w-80">
-      <ReasoningControls
-        :capabilities="capabilities"
-        :protocol="protocol"
-        :stops="stops"
-        :active="active"
-        :overridden="overridden"
-        @update="emit('update', $event)"
-      />
-    </PopoverContent>
-  </Popover>
+    </TooltipTrigger>
+    <TooltipContent>{{ disabledReason ?? '思考强度' }}</TooltipContent>
+  </Tooltip>
+
+  <ResponsiveOverlay :open="open" title="思考强度" @update:open="setOpen">
+    <ReasoningControls
+      :capabilities="capabilities"
+      :protocol="protocol"
+      :stops="stops"
+      :active="active"
+      :overridden="overridden"
+      @update="emit('update', $event)"
+    />
+  </ResponsiveOverlay>
 </template>
