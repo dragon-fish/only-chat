@@ -1,5 +1,6 @@
 import type { TextStreamPart, ToolSet } from 'ai'
 import type { Part, ProviderOptions, ReasoningPart, TextPart, ToolCallPart, ToolResultPart } from '@/shared/parts'
+import { completedResponsesReasoningText } from './responses-reasoning'
 
 export type AccEvent =
   | { kind: 'delta'; part_index: number; part_kind: 'text' | 'reasoning'; delta: string }
@@ -58,6 +59,8 @@ export class PartAccumulator {
       case 'reasoning-end': {
         const idx = this._ensure(part.id, { type: 'reasoning', text: '' })
         this._setMeta(idx, part.providerMetadata)
+        const reasoning = this.parts[idx] as ReasoningPart
+        reasoning.text = completedResponsesReasoningText(reasoning.text, reasoning.providerOptions)
         return [this._partEvent(idx)]
       }
       case 'tool-input-start': {

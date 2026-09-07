@@ -1,7 +1,7 @@
 import type { Context } from 'cordis'
 import { createOpenResponses } from '@ai-sdk/open-responses'
 import { createOpenAI } from '@ai-sdk/openai'
-import { RESPONSES_PROVIDER_NAME } from '../messages'
+import { RESPONSES_PROVIDER_NAME } from '../responses-reasoning'
 
 export const responsesProtocol = {
   name: 'llm-responses',

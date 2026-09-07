@@ -172,9 +172,92 @@ describe('responses protocol', () => {
       } finally { vi.unstubAllGlobals() }
     })
   })
+
+  it('replays streamed reasoning when completion metadata omits optional content', async () => {
+    await inHub(async ctx => {
+      const lm = await ctx.llm.createModel(await provider('k'), providerInterface('responses'), model)
+      const requests: Array<{ input: unknown[] }> = []
+      vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+        requests.push(await new Request(input as RequestInfo, init).json())
+        return deepseekResponsesStream({ omitReasoningContent: true })
+      })
+      try {
+        const acc = new PartAccumulator()
+        for await (const part of streamText({ model: lm, prompt: 'fixture' }).stream) {
+          if (part.type === 'error') throw part.error
+          acc.apply(part)
+        }
+        const persisted = JSON.parse(JSON.stringify(acc.parts[0])) as Part
+        expect(persisted).toMatchObject({ type: 'reasoning', text: 'complete reasoning', providerOptions: { responses: {
+          reasoningContent: null, reasoningSummary: [], itemId: 'rs_fixture', reasoningEncryptedContent: 'fixture-encrypted-state',
+        } } })
+        const message: Message = { id: 1, session_id: 1, parent_id: null, seq: 1, role: 'assistant', parts: [persisted], provider_id: 1, model_id: model.model_id, usage: null, status: 'done', error: null, created_at: 0 }
+        const messages = buildModelMessages({ protocol: 'responses', systemPrompt: null, path: [message], attachments: new Map() })
+        for await (const part of streamText({ model: lm, messages }).stream) if (part.type === 'error') throw part.error
+        expect(requests[1]!.input).toEqual([{
+          type: 'reasoning', id: 'rs_fixture', summary: [],
+          content: [{ type: 'reasoning_text', text: 'complete reasoning' }], encrypted_content: 'fixture-encrypted-state',
+        }])
+        expect(message.parts[0]).toMatchObject({ providerOptions: { responses: { reasoningContent: null } } })
+      } finally { vi.unstubAllGlobals() }
+    })
+  })
+
+  it.each([
+    { text: 'fixture summary', summary: [{ type: 'summary_text', text: 'fixture summary' }], hasContentSentinel: true },
+    { text: 'fixture summary', summary: [{ type: 'summary_text', text: 'fixture summary' }], hasContentSentinel: false },
+    { text: '', summary: [], hasContentSentinel: true },
+    { text: '', summary: [], hasContentSentinel: false },
+  ])('keeps summary/encrypted-only Responses items free of invented full content (%j)', async ({ text, summary, hasContentSentinel }) => {
+    await inHub(async ctx => {
+      const lm = await ctx.llm.createModel(await provider('k'), providerInterface('responses'), model)
+      let requestBody: unknown
+      vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+        requestBody = await new Request(input as RequestInfo, init).json()
+        return deepseekResponsesStream()
+      })
+      try {
+        const part: Part = { type: 'reasoning', text, providerOptions: { responses: {
+          itemId: 'rs_fixture', reasoningSummary: summary, ...(hasContentSentinel ? { reasoningContent: null } : {}), reasoningEncryptedContent: 'fixture-encrypted-state',
+        } } }
+        const message: Message = { id: 1, session_id: 1, parent_id: null, seq: 1, role: 'assistant', parts: [part], provider_id: 1, model_id: model.model_id, usage: null, status: 'done', error: null, created_at: 0 }
+        const messages = buildModelMessages({ protocol: 'responses', systemPrompt: null, path: [message], attachments: new Map() })
+        for await (const chunk of streamText({ model: lm, messages }).stream) if (chunk.type === 'error') throw chunk.error
+        expect(requestBody).toMatchObject({ input: [{ type: 'reasoning', id: 'rs_fixture', summary, encrypted_content: 'fixture-encrypted-state' }] })
+        expect((requestBody as { input: object[] }).input[0]).not.toHaveProperty('content')
+      } finally { vi.unstubAllGlobals() }
+    })
+  })
 })
 
 describe('chat-completions reasoning', () => {
+  it('replays the canonical full Responses body without concatenated summary deltas', async () => {
+    await inHub(async ctx => {
+      const responses = await ctx.llm.createModel(await provider('k'), providerInterface('responses'), model)
+      const chat = await ctx.llm.createModel(await provider('k'), providerInterface('chat-completions'), model)
+      let chatRequest: unknown
+      vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request = new Request(input as RequestInfo, init)
+        if (request.url.endsWith('/responses')) return deepseekResponsesStream()
+        chatRequest = await request.json()
+        const reply = { id: 'chat_fixture', object: 'chat.completion.chunk', created: 1, model: 'test-model', choices: [{ index: 0, delta: { role: 'assistant', content: 'fixture answer' }, finish_reason: 'stop' }] }
+        return new Response(`data: ${JSON.stringify(reply)}\n\ndata: [DONE]\n\n`, { headers: { 'content-type': 'text/event-stream' } })
+      })
+      try {
+        const acc = new PartAccumulator()
+        for await (const part of streamText({ model: responses, prompt: 'fixture' }).stream) {
+          if (part.type === 'error') throw part.error
+          acc.apply(part)
+        }
+        const persisted = JSON.parse(JSON.stringify(acc.parts[0])) as Part
+        const message: Message = { id: 1, session_id: 1, parent_id: null, seq: 1, role: 'assistant', parts: [persisted], provider_id: 1, model_id: model.model_id, usage: null, status: 'done', error: null, created_at: 0 }
+        const messages = buildModelMessages({ protocol: 'chat-completions', systemPrompt: null, path: [message], attachments: new Map() })
+        for await (const part of streamText({ model: chat, messages }).stream) if (part.type === 'error') throw part.error
+        expect(chatRequest).toMatchObject({ messages: [{ role: 'assistant', reasoning_content: 'complete reasoning' }] })
+      } finally { vi.unstubAllGlobals() }
+    })
+  })
+
   it('receives reasoning_content and replays it when the next request disables new reasoning', async () => {
     await inHub(async ctx => {
       const lm = await ctx.llm.createModel(await provider('k'), providerInterface('chat-completions'), model)

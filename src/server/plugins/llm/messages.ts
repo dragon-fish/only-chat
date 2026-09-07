@@ -7,9 +7,9 @@ import type { OpenAICompatibleProviderOptions } from '@ai-sdk/openai-compatible'
 import type { Message, InterfaceProtocol, ReasoningEffort, SessionParams } from '@/shared/models'
 import type { ModelMetadata } from '@/shared/model-metadata'
 import type { Part, ProviderOptions } from '@/shared/parts'
+import { RESPONSES_PROVIDER_NAME, responsesReasoningReplayOptions } from './responses-reasoning'
 
 export const COMPAT_PROVIDER_NAME = 'compat'
-export const RESPONSES_PROVIDER_NAME = 'responses'
 
 /**
  * How one attachment travels to the model: as the provider's own short-lived file pointer, or as
@@ -55,8 +55,8 @@ function userParts(parts: Part[], attachments: ReadonlyMap<number, AttachmentInp
 export type SdkProviderOptions = NonNullable<AssistantModelMessage['providerOptions']>
 
 /**
- * Adds the stored metadata verbatim, and only when there is some, so parts stay byte-comparable.
- * The one cast is honest: stored metadata is opaque provider JSON we never author or inspect.
+ * Adds the selected metadata only when present, keeping deterministic message shapes.
+ * The cast carries opaque provider JSON after any protocol-specific replay normalization.
  */
 function withOptions<T extends object>(
   part: T,
@@ -100,14 +100,16 @@ function assistantMessages(parts: Part[], protocol: InterfaceProtocol): Array<As
         if (p.text.length === 0 && !options) break
         appendAssistant(withOptions({ type: 'text', text: p.text }, options))
         break
-      case 'reasoning':
+      case 'reasoning': {
         if (p.text.length === 0 && !options) break
+        const reasoningOptions = protocol === 'responses' ? responsesReasoningReplayOptions(p.text, options) : options
         // Anthropic drops unsigned thinking. Foreign reasoning remains plain historical context;
         // never manufacture a signature or attach another protocol's opaque state.
         appendAssistant(protocol === 'anthropic' && !options?.anthropic
           ? { type: 'text', text: p.text }
-          : withOptions({ type: 'reasoning', text: p.text }, options))
+          : withOptions({ type: 'reasoning', text: p.text }, reasoningOptions))
         break
+      }
       case 'tool_call':
         appendAssistant(withOptions({ type: 'tool-call', toolCallId: p.id, toolName: p.name, input: p.args }, options))
         break

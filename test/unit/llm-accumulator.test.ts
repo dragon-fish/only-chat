@@ -135,6 +135,26 @@ describe('PartAccumulator', () => {
     expect(ended).toEqual([{ kind: 'part', part_index: 0, part: { type: 'reasoning', text: '', providerOptions: { responses: { itemId: 'r1', reasoningEncryptedContent: 'ENC' } } } }])
   })
 
+  it.each([
+    {
+      content: [{ type: 'reasoning_text', text: 'full ' }, { type: 'reasoning_text', text: 'body' }],
+      summary: [{ type: 'summary_text', text: 'summary' }], expected: 'full body',
+    },
+    {
+      content: null, summary: [{ type: 'summary_text', text: 'short ' }, { type: 'summary_text', text: 'summary' }], expected: 'short summary',
+    },
+    { content: [], summary: [{ type: 'summary_text', text: 'summary' }], expected: 'summary' },
+    { content: null, summary: [], expected: 'streamed text' },
+  ])('uses the final Responses representation and emits corrected text ($expected)', ({ content, summary, expected }) => {
+    const acc = new PartAccumulator()
+    acc.apply({ type: 'reasoning-start', id: 'r1' })
+    acc.apply({ type: 'reasoning-delta', id: 'r1', text: 'streamed text' })
+    const providerMetadata = { responses: { itemId: 'r1', reasoningContent: content, reasoningSummary: summary, reasoningEncryptedContent: 'ENC' } }
+    const events = acc.apply({ type: 'reasoning-end', id: 'r1', providerMetadata })
+    expect(acc.parts).toEqual([{ type: 'reasoning', text: expected, providerOptions: providerMetadata }])
+    expect(events).toEqual([{ kind: 'part', part_index: 0, part: { type: 'reasoning', text: expected, providerOptions: providerMetadata } }])
+  })
+
   it('never lets a later event without metadata clear what was already captured', () => {
     const acc = new PartAccumulator()
     acc.apply({ type: 'reasoning-start', id: 'r1' })
