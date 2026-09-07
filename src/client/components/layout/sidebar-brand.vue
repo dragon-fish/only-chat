@@ -17,7 +17,7 @@ const statusLabel = computed(() => ({
 
 const statusColor = computed(() => ({
   open: 'bg-success',
-  connecting: 'bg-yellow-500',
+  connecting: 'bg-warning',
   closed: 'bg-destructive',
 }[props.status]))
 </script>
