@@ -29,7 +29,7 @@ function useDesktopViewport() {
   }))
 }
 
-async function mountSidebar(path: string, status: 'connecting' | 'open' | 'closed' = 'open') {
+async function mountSidebar(path: string, status: 'connecting' | 'open' | 'closed' = 'open', defaultOpen = true) {
   useDesktopViewport()
   const router = createRouter({
     history: createMemoryHistory(),
@@ -51,7 +51,7 @@ async function mountSidebar(path: string, status: 'connecting' | 'open' | 'close
   const host = document.createElement('div')
   document.body.append(host)
   const app = createApp({
-    render: () => h(SidebarProvider, null, () => h(AppSidebar)),
+    render: () => h(SidebarProvider, { defaultOpen }, () => h(AppSidebar)),
   }).use(pinia).use(router)
   app.mount(host)
   cleanup = () => app.unmount()
@@ -114,16 +114,45 @@ it('keeps settings navigation contextual and activates the global settings link'
   expect(settingsContent!.querySelectorAll('[data-global-settings]')).toHaveLength(0)
 })
 
-it('keeps the global settings link active on every settings route', async () => {
+it('keeps the global settings link active on the plugins settings route', async () => {
   await mountSidebar('/settings/plugins')
 
   expect(document.querySelector('[data-global-settings]')?.getAttribute('data-active')).toBe('true')
 })
+
+for (const collapsed of [false, true]) {
+  it.each([
+    ['open', '服务器已连接'],
+    ['connecting', '正在连接服务器'],
+    ['closed', '服务器连接已断开，正在重试'],
+  ] as const)(`reveals the %s status on keyboard focus and hover when ${collapsed ? 'collapsed' : 'expanded'}`, async (status, label) => {
+    await mountSidebar('/settings/providers', status, !collapsed)
+
+    const connection = document.querySelector<HTMLElement>('[data-connection-status]')!
+    connection.focus()
+    await vi.waitFor(() => {
+      const content = document.querySelector<HTMLElement>('[data-slot="tooltip-content"]:not([hidden])')
+      expect(content).not.toBeNull()
+      expect(content!.textContent).toContain(label)
+    })
+    expect(connection.closest('a')).toBeNull()
+    expect(document.getElementById(connection.getAttribute('aria-describedby')!)?.textContent).toContain(label)
+
+    connection.blur()
+    await vi.waitFor(() => expect(document.querySelector('[data-slot="tooltip-content"]:not([hidden])')).toBeNull())
+    connection.dispatchEvent(new PointerEvent('pointermove', { pointerType: 'mouse', bubbles: true }))
+    await vi.waitFor(() => {
+      const content = document.querySelector<HTMLElement>('[data-slot="tooltip-content"]:not([hidden])')
+      expect(content).not.toBeNull()
+      expect(content!.textContent).toContain(label)
+    })
+  })
+}
 
 it('uses the warning token while reconnecting', async () => {
   await mountSidebar('/new', 'connecting')
 
   const connection = document.querySelector('[data-connection-status]')
   expect(connection?.getAttribute('data-status')).toBe('connecting')
-  expect(connection?.classList.contains('bg-warning')).toBe(true)
+  expect(connection?.querySelector('.bg-warning')).not.toBeNull()
 })

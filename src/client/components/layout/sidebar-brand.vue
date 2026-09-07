@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { MessageCircleIcon } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 import { SidebarHeader, SidebarMenu, SidebarMenuButton, SidebarMenuItem } from '@/client/ui/sidebar'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/client/ui/tooltip'
 import type { WsStatus } from '@/client/lib/ws-client'
 
 const props = defineProps<{
@@ -26,22 +27,26 @@ const statusColor = computed(() => ({
   <SidebarHeader data-sidebar-brand>
     <SidebarMenu>
       <SidebarMenuItem>
-        <SidebarMenuButton as-child size="lg" tooltip="Only Chat" class="relative">
+        <SidebarMenuButton as-child size="lg" tooltip="Only Chat" class="pr-10">
           <RouterLink to="/new">
             <div class="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
               <MessageCircleIcon />
             </div>
             <span class="font-semibold">Only Chat</span>
-            <span
-              data-connection-status
-              :data-status="status"
-              :aria-label="statusLabel"
-              :title="statusLabel"
-              tabindex="0"
-              :class="[statusColor, 'ml-auto size-2 shrink-0 rounded-full ring-2 ring-sidebar group-data-[collapsible=icon]:absolute group-data-[collapsible=icon]:right-0.5 group-data-[collapsible=icon]:bottom-0.5']"
-            />
           </RouterLink>
         </SidebarMenuButton>
+        <Tooltip>
+          <TooltipTrigger
+            data-connection-status
+            :data-status="status"
+            :aria-label="statusLabel"
+            type="button"
+            class="ring-sidebar-ring absolute top-1/2 right-1 flex size-8 -translate-y-1/2 items-center justify-center rounded-md outline-hidden focus-visible:ring-2 group-data-[collapsible=icon]:top-auto group-data-[collapsible=icon]:right-0 group-data-[collapsible=icon]:bottom-0 group-data-[collapsible=icon]:size-4 group-data-[collapsible=icon]:translate-y-0"
+          >
+            <span aria-hidden="true" :class="[statusColor, 'size-2 shrink-0 rounded-full ring-2 ring-sidebar']" />
+          </TooltipTrigger>
+          <TooltipContent side="right" :side-offset="4">{{ statusLabel }}</TooltipContent>
+        </Tooltip>
       </SidebarMenuItem>
     </SidebarMenu>
   </SidebarHeader>
