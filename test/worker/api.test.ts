@@ -8,11 +8,40 @@ import { DEFAULT_USER_ID } from '@/shared/constants'
 import { ProviderWithInterfacesSchema } from '@/shared/models'
 import { catalogApp } from './provider-catalog-fixture'
 import { decryptSecret } from '@/server/plugins/llm/crypto'
+import { createApp } from '@/server/app'
 
 const json = (method: string, path: string, body?: unknown) =>
   exports.default.fetch(new Request(`https://x${path}`, { method, headers: { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) }))
 
 describe('atomic provider interface API', () => {
+  it.each([false, true])('protects credentials when an older provider write resumes (writesKey=%s)', async writesKey => {
+    const { request, createProvider } = await catalogApp()
+    const provider = await createProvider({ api_key: 'original-key' })
+    let release!: () => void
+    let arrive!: () => void
+    const resume = new Promise<void>(resolve => { release = resolve })
+    const arrived = new Promise<void>(resolve => { arrive = resolve })
+    const delayedDB = new Proxy(env.DB, {
+      get(target, property) {
+        if (property === 'batch') return async (statements: D1PreparedStatement[]) => { arrive(); await resume; return target.batch(statements) }
+        const member = Reflect.get(target, property)
+        return typeof member === 'function' ? member.bind(target) : member
+      },
+    })
+    const delayed = await createApp({ env: { ...env, DB: delayedDB }, side: 'worker' })
+    const input = { name: 'Concurrent rename', default_protocol: 'responses', interfaces: [{ protocol: 'responses', base_url: 'https://gateway.test/v1' }] }
+    const pending = delayed.api.request(`/api/providers/${provider.id}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...input, ...(writesKey ? { api_key: 'stale-key' } : {}) }) })
+    await arrived
+    try {
+      expect((await request('PUT', `/providers/${provider.id}`, { ...input, api_key: 'current-key' })).status).toBe(200)
+    } finally { release() }
+    const stale = await pending
+    expect(stale.status).toBe(writesKey ? 409 : 200)
+    const row = await env.DB.prepare('SELECT api_key, credential_version FROM providers WHERE id = ?').bind(provider.id).first<{ api_key: string; credential_version: number }>()
+    expect(row?.credential_version).toBe(2)
+    expect(await decryptSecret(env.KEY_ENCRYPTION_SECRET, row!.api_key)).toBe('current-key')
+  })
+
   it('uses the default endpoint first, then same-origin siblings, and reports conflicts without blocking save', async () => {
     const { request, createProvider } = await catalogApp()
     const sibling = await createProvider({ interfaces: [

@@ -53,24 +53,30 @@ export async function writeProvider(ctx: Context, input: ProviderWriteInput, id?
     modelsDevProviderSource: association?.source ?? before?.models_dev_provider_source,
     modelsDevProviderId: association?.source === 'manual' ? association.provider_id : before?.models_dev_provider_id,
   }, index)
-  const previousKey = before?.api_key ? await decryptSecret(ctx.env.KEY_ENCRYPTION_SECRET, before.api_key) : null
+  const previousKey = input.api_key !== undefined && before?.api_key ? await decryptSecret(ctx.env.KEY_ENCRYPTION_SECRET, before.api_key) : null
   const requestedKey = input.api_key === undefined ? previousKey : input.api_key || null
   const keyChanged = requestedKey !== previousKey
   const encryptedKey = keyChanged && requestedKey ? await encryptSecret(ctx.env.KEY_ENCRYPTION_SECRET, requestedKey) : keyChanged ? null : before?.api_key ?? null
   const selected = input.interfaces.find(endpoint => endpoint.protocol === input.default_protocol)!
   const now = Date.now()
   const fields = {
-    name: input.name, enabled: input.enabled ?? before?.enabled ?? true, api_key: encryptedKey,
-    credential_version: before ? before.credential_version + Number(keyChanged) : 1,
+    name: input.name, ...(input.enabled === undefined ? {} : { enabled: input.enabled }),
     models_dev_provider_id: match.id, models_dev_provider_source: match.source,
   }
   const operations: BatchItem<'sqlite'>[] = []
   // MAX(id) refers to the just-inserted AUTOINCREMENT row inside this single atomic D1 batch.
   // Never split creation and interface/default writes into separate batches.
   const providerId = id ?? sql<number>`(SELECT MAX(id) FROM providers)`
-  if (before) operations.push(db.update(providers).set(fields).where(eq(providers.id, before.id)))
+  if (before) operations.push(db.update(providers).set({
+    ...fields,
+    ...(input.api_key === undefined ? {} : {
+      api_key: encryptedKey,
+      // A stale credential edit must abort the whole batch. Never reuse a version for another key.
+      credential_version: sql`CASE WHEN ${providers.credential_version} = ${before.credential_version} THEN ${providers.credential_version} + ${Number(keyChanged)} ELSE NULL END`,
+    }),
+  }).where(eq(providers.id, before.id)))
   else operations.push(db.insert(providers).values({
-    ...fields, user_id: DEFAULT_USER_ID, created_at: now,
+    ...fields, enabled: input.enabled ?? true, api_key: encryptedKey, credential_version: 1, user_id: DEFAULT_USER_ID, created_at: now,
     protocol: legacyProtocol[selected.protocol], base_url: selected.base_url, native_files: selected.native_files ?? false,
   }))
   operations.push(db.delete(providerInterfaces).where(and(eq(providerInterfaces.provider_id, providerId), notInArray(providerInterfaces.protocol, protocols))))
@@ -92,7 +98,17 @@ export async function writeProvider(ctx: Context, input: ProviderWriteInput, id?
   }
   operations.push(db.select().from(providers).where(eq(providers.id, providerId)))
   operations.push(db.select().from(providerInterfaces).where(eq(providerInterfaces.provider_id, providerId)).orderBy(providerInterfaces.id))
-  const results = await db.batch(operations as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]])
+  const results = await db.batch(operations as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]]).catch((error: unknown) => {
+    let cause = error
+    while (cause instanceof Error) {
+      if (cause.message.includes('NOT NULL constraint failed: providers.credential_version')) {
+        throw new ProviderWriteError('Credentials changed concurrently; reload and retry', 409)
+      }
+      cause = cause.cause
+    }
+    // Database errors can embed bound ciphertext in their query text; never return them over REST.
+    throw new Error('Provider write failed')
+  })
   const row = (results[results.length - 2] as ProviderRow[])[0]!
   const interfaces = results[results.length - 1] as ProviderInterfaceRow[]
   return { provider: toProviderDto(row, interfaces), warning: match.warning }
