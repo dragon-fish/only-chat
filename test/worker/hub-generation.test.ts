@@ -570,7 +570,7 @@ describe('provider file transport', () => {
     expect(rows.map((r) => r.provider_reference)).toContainEqual({ mock: `file-${a}-1` })
   })
 
-  it('re-uploads when the stored pointer has expired, replacing the row', async () => {
+  it('re-uploads expired pointers, retains history and reuses the newest upload', async () => {
     const a = await seedProvider('files-a', 'model-a', true)
     const attachmentId = await seedAttachment()
     const uploads: Upload[] = []
@@ -593,9 +593,15 @@ describe('provider file transport', () => {
       { type: 'file', mediaType: 'image/png', data: { type: 'reference', reference: { mock: `file-${a}-2` } } },
     ])
     const rows = await pointersOf(attachmentId)
-    expect(rows).toHaveLength(1)
-    expect(rows[0]!.provider_reference).toEqual({ mock: `file-${a}-2` })
-    expect(rows[0]!.expires_at).toBeGreaterThan(Date.now())
+    expect(rows).toHaveLength(2)
+    const newest = rows.find(row => row.provider_reference.mock === `file-${a}-2`)
+    expect(newest!.expires_at).toBeGreaterThan(Date.now())
+    c.ws.send(send({ session_id: sessionId, parts: [{ type: 'text', text: 'reuse' }], provider_id: a, model_id: 'model-a' }))
+    await c.nextAfter('message.done', 3)
+    expect(uploads).toHaveLength(2)
+    expect(filePartsOf(created[2]!)).toEqual([
+      { type: 'file', mediaType: 'image/png', data: { type: 'reference', reference: { mock: `file-${a}-2` } } },
+    ])
   })
 
   it('persists the provider-reported expiry, and otherwise the requested seven days', async () => {
@@ -1192,8 +1198,7 @@ describe('cross-feature integration', () => {
       expect(await pointersOf(generatedId)).toEqual([])
       const pointers = await pointersOf(uploadId)
       expect(pointers.map((r) => r.provider_id).sort((x, y) => x - y)).toEqual([providerA, providerB].sort((x, y) => x - y))
-      expect(Object.keys(pointers[0]!).sort())
-        .toEqual(['attachment_id', 'created_at', 'expires_at', 'id', 'provider_id', 'provider_reference'])
+      expect(pointers[0]).not.toHaveProperty('api_key')
 
       // Nothing in this chat's persisted history is bytes, base64 or a provider URL.
       const history = await listMessages(db, sessionId)

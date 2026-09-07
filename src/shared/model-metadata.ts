@@ -43,7 +43,7 @@ export const ReasoningOptionSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('toggle') }),
   z.strictObject({
     type: z.literal('effort'),
-    values: z.array(z.enum(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'default']).nullable()),
+    values: z.array(z.enum(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra', 'default']).nullable()),
   }),
   z.strictObject({
     type: z.literal('budget_tokens'),

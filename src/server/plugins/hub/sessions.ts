@@ -129,22 +129,19 @@ export async function getAttachment(db: DB, id: number): Promise<AttachmentRow |
 }
 
 /**
- * The provider-scoped file pointer for one attachment. Keyed by `(attachment_id, provider_id)` and
- * nothing else, so the same R2 image keeps one pointer per provider across sessions and models
- * (spec §4.6). Expiry is the caller's to check — an expired row is still a row.
+ * Return the latest upload for this attachment/provider. Expiry is the caller's to check;
+ * historical rows must not shadow a newer upload when timestamps are equal.
  */
 export async function getProviderFile(db: DB, attachmentId: number, providerId: number): Promise<AttachmentProviderFileRow | undefined> {
   return db.query.attachmentProviderFiles.findFirst({
     where: and(eq(attachmentProviderFiles.attachment_id, attachmentId), eq(attachmentProviderFiles.provider_id, providerId)),
+    orderBy: [desc(attachmentProviderFiles.created_at), desc(attachmentProviderFiles.id)],
   })
 }
 
-/** Replaces the pointer for that pair, so a re-upload after expiry leaves exactly one row behind. */
-export async function upsertProviderFile(db: DB, row: Omit<AttachmentProviderFileRow, 'id'>): Promise<void> {
-  await db.insert(attachmentProviderFiles).values(row).onConflictDoUpdate({
-    target: [attachmentProviderFiles.attachment_id, attachmentProviderFiles.provider_id],
-    set: { provider_reference: row.provider_reference, expires_at: row.expires_at, created_at: row.created_at },
-  })
+/** Append each upload so older remote references remain available for cleanup. */
+export async function upsertProviderFile(db: DB, row: typeof attachmentProviderFiles.$inferInsert): Promise<void> {
+  await db.insert(attachmentProviderFiles).values(row)
 }
 
 /**

@@ -6,6 +6,11 @@ import {
 } from '@/shared/model-metadata'
 
 describe('model metadata schemas', () => {
+  it('preserves all legacy user reasoning efforts, including ultra', () => {
+    const metadata = { reasoning_options: [{ type: 'effort', values: ['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'] }] }
+    expect(ModelMetadataOverrideSchema.parse(metadata)).toEqual(metadata)
+    expect(ModelMetadataSchema.parse(metadata)).toEqual(metadata)
+  })
   it('preserves explicit false and zero overrides', () => {
     expect(ModelMetadataOverrideSchema.parse({
       reasoning: false,

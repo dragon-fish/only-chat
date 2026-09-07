@@ -15,6 +15,13 @@
       "when": 1788646808709,
       "tag": "0001_projects-media",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1788787290277,
+      "tag": "0002_provider-catalog",
+      "breakpoints": true
     }
   ]
 }
