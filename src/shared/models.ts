@@ -144,14 +144,19 @@ export const ModelSchema = z.object({
 export type Model = z.infer<typeof ModelSchema>
 
 /** New provider interface DTO. Credentials remain solely on the server-side provider record. */
-export const ProviderInterfaceSchema = z.strictObject({
+const ProviderInterfaceBaseSchema = {
   id: z.number().int(),
   provider_id: z.number().int(),
-  protocol: InterfaceProtocolSchema,
   base_url: z.string().url(),
-  native_files: z.boolean(),
   created_at: z.number().int(),
-})
+}
+
+export const ProviderInterfaceSchema = z.discriminatedUnion('protocol', [
+  z.strictObject({ ...ProviderInterfaceBaseSchema, protocol: z.literal('responses'), native_files: z.boolean() }),
+  z.strictObject({ ...ProviderInterfaceBaseSchema, protocol: z.literal('chat-completions'), native_files: z.boolean() }),
+  z.strictObject({ ...ProviderInterfaceBaseSchema, protocol: z.literal('anthropic'), native_files: z.boolean() }),
+  z.strictObject({ ...ProviderInterfaceBaseSchema, protocol: z.literal('vertex-compatible'), native_files: z.literal(false) }),
+])
 export type ProviderInterface = z.infer<typeof ProviderInterfaceSchema>
 
 /** Additive replacement for the legacy Provider DTO, retained beside it until the vertical cutover. */

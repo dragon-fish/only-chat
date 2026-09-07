@@ -4,6 +4,7 @@ import {
   ProjectSchema, ProtocolSchema, ProviderInterfaceSchema, ProviderSchema,
   SessionParamsSchema, UsageSchema, UserSettingsSchema,
 } from '@/shared/models'
+import { ModelWriteInputSchema, ProviderInterfaceInputSchema, ProviderWriteInputSchema } from '@/shared/api'
 
 describe('models schemas', () => {
   it('distinguishes undefined and 0 in usage', () => {
@@ -65,6 +66,56 @@ describe('models schemas', () => {
       native_files: true,
       created_at: 0,
       api_key: 'leak',
+    }).success).toBe(false)
+  })
+
+  it('rejects native Files for vertex-compatible response interfaces', () => {
+    expect(ProviderInterfaceSchema.safeParse({
+      id: 4,
+      provider_id: 2,
+      protocol: 'vertex-compatible',
+      base_url: 'https://vertex.example.test/v1',
+      native_files: true,
+      created_at: 0,
+    }).success).toBe(false)
+  })
+
+  it('uses a submitted protocol as the atomic provider default', () => {
+    expect(ProviderWriteInputSchema.parse({
+      name: 'Gateway',
+      interfaces: [
+        { protocol: 'responses', base_url: 'https://api.example.test/responses' },
+        { protocol: 'anthropic', base_url: 'https://api.example.test/anthropic' },
+      ],
+      default_protocol: 'anthropic',
+    })).toMatchObject({ default_protocol: 'anthropic' })
+  })
+
+  it('validates strict atomic provider and model inputs', () => {
+    expect(ProviderInterfaceInputSchema.safeParse({
+      protocol: 'responses',
+      base_url: 'https://api.example.test/v1',
+      ignored: true,
+    }).success).toBe(false)
+    expect(ProviderInterfaceInputSchema.safeParse({
+      protocol: 'vertex-compatible',
+      base_url: 'https://vertex.example.test/v1',
+      native_files: true,
+    }).success).toBe(false)
+    expect(ProviderWriteInputSchema.safeParse({
+      name: 'Gateway',
+      interfaces: [{ protocol: 'responses', base_url: 'https://api.example.test/v1' }],
+      default_protocol: 'responses',
+      ignored: true,
+    }).success).toBe(false)
+    expect(ModelWriteInputSchema.parse({
+      model_id: 'gpt-5',
+      metadata_override: { reasoning: false, cost: { input: 0 } },
+    })).toMatchObject({ model_id: 'gpt-5', metadata_override: { reasoning: false, cost: { input: 0 } } })
+    expect(ModelWriteInputSchema.safeParse({
+      model_id: 'gpt-5',
+      metadata_override: { reasoning: false, cost: { input: 0 } },
+      ignored: true,
     }).success).toBe(false)
   })
 

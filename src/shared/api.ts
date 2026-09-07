@@ -41,12 +41,17 @@ export const ModelInputSchema = z.object({
 export type ModelInput = z.infer<typeof ModelInputSchema>
 
 /** One interface submitted as part of an atomic provider write. It never carries a credential. */
-export const ProviderInterfaceInputSchema = z.strictObject({
+const ProviderInterfaceInputBaseSchema = {
   id: z.number().int().optional(),
-  protocol: InterfaceProtocolSchema,
   base_url: z.string().url(),
-  native_files: z.boolean().optional(),
-})
+}
+
+export const ProviderInterfaceInputSchema = z.discriminatedUnion('protocol', [
+  z.strictObject({ ...ProviderInterfaceInputBaseSchema, protocol: z.literal('responses'), native_files: z.boolean().optional() }),
+  z.strictObject({ ...ProviderInterfaceInputBaseSchema, protocol: z.literal('chat-completions'), native_files: z.boolean().optional() }),
+  z.strictObject({ ...ProviderInterfaceInputBaseSchema, protocol: z.literal('anthropic'), native_files: z.boolean().optional() }),
+  z.strictObject({ ...ProviderInterfaceInputBaseSchema, protocol: z.literal('vertex-compatible'), native_files: z.literal(false).optional() }),
+])
 export type ProviderInterfaceInput = z.infer<typeof ProviderInterfaceInputSchema>
 
 export const ModelsDevProviderAssociationInputSchema = z.discriminatedUnion('source', [
@@ -62,8 +67,16 @@ export const ProviderWriteInputSchema = z.strictObject({
   api_key: z.string().optional(),
   enabled: z.boolean().optional(),
   interfaces: z.array(ProviderInterfaceInputSchema).min(1),
-  default_interface_id: z.number().int().nullable().optional(),
+  default_protocol: InterfaceProtocolSchema,
   models_dev_provider: ModelsDevProviderAssociationInputSchema.optional(),
+}).superRefine((value, context) => {
+  const protocols = value.interfaces.map(entry => entry.protocol)
+  if (new Set(protocols).size !== protocols.length) {
+    context.addIssue({ code: 'custom', message: 'Provider interface protocols must be unique', path: ['interfaces'] })
+  }
+  if (!protocols.includes(value.default_protocol)) {
+    context.addIssue({ code: 'custom', message: 'Default protocol must be included in interfaces', path: ['default_protocol'] })
+  }
 })
 export type ProviderWriteInput = z.infer<typeof ProviderWriteInputSchema>
 

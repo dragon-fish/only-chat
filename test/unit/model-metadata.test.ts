@@ -7,12 +7,29 @@ import {
 
 describe('model metadata schemas', () => {
   it('preserves explicit false and zero overrides', () => {
-    expect(ModelMetadataOverrideSchema.parse({ reasoning: false, cost: { input: 0 } }))
-      .toEqual({ reasoning: false, cost: { input: 0 } })
+    expect(ModelMetadataOverrideSchema.parse({
+      reasoning: false,
+      cost: { input: 0, tiers: [{ tier: { size: 200_000 } }] },
+    })).toEqual({
+      reasoning: false,
+      cost: { input: 0, tiers: [{ tier: { size: 200_000 } }] },
+    })
   })
 
   it('allows an explicit null to clear nullable inherited metadata', () => {
     expect(ModelMetadataOverrideSchema.parse({ cost: null })).toEqual({ cost: null })
+  })
+
+  it('allows nested override objects to inherit omitted sibling fields', () => {
+    expect(ModelMetadataOverrideSchema.parse({
+      modalities: { input: ['image'] },
+      limit: { context: 262144 },
+      interleaved: {},
+    })).toEqual({
+      modalities: { input: ['image'] },
+      limit: { context: 262144 },
+      interleaved: {},
+    })
   })
 
   it('parses catalog-aligned nested metadata', () => {
