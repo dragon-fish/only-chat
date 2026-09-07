@@ -77,14 +77,16 @@
 - `聊天`：回到聊天首页。
 - `＋`：始终开始无 Project 的“随心聊”，含义不随当前页面变化。
 - `设置`：进入设置首页。
-- Project 页面另有“Project 内新对话”按钮，继续沿用 `{ path: '/', query: { project: project.id } }` 的现有草稿语义。
+- Project 页面另有“Project 内新对话”按钮，进入 `/project/:projectId/new`。
 - 进入具体聊天后隐藏底部导航，由 Composer 占据底部；返回来源列表后恢复导航。
 
-移动端聊天首页使用 `/chats`，中央 `＋` 使用现有 `/` 无 Project 草稿路由，因此“查看列表”和“开始新会话”不会落在同一个 URL。桌面访问 `/chats` 时仍显示外层侧栏与一个引导选择/新建会话的空内容区。
+移动端聊天首页使用 `/chats`，中央 `＋` 进入 `/new` 无 Project 草稿；`/` 静态重定向到 `/chats`。桌面访问 `/chats` 时显示外层侧栏与引导选择/新建会话的空内容区。
+
+路由结构为 `/chats`、`/new`、`/c/:sessionId`、`/projects`，以及 `/project/:projectId` 下的首页、`settings`、`new`、`c/:sessionId`。Project 父布局通过嵌套 `RouterView` 向子页面传递 Project 上下文。移除 `/projects/:id`、`/settings/projects/:id` 和查询参数草稿，不保留兼容路由，也不根据会话所属 Project 重定向 `/c/:sessionId`。
 
 聊天首页依次显示 Projects 和随心聊。Project 会话列表为独立页面。设置区把桌面三栏摊平成“设置项 → 供应商列表 → 供应商详情”三级页面。
 
-桌面右侧 `Sheet` 在手机上转换为底部 `Drawer`，覆盖模型选择、模型编辑、会话设置和 Project 编辑等较长浮层。删除等短确认继续使用居中的 `AlertDialog`。
+模型编辑、会话设置和 reasoning 使用桌面右侧 `Sheet` / 手机底部 `Drawer`；模型选择使用桌面 `Popover` / 手机 `Drawer`。Project 设置使用桌面居中 `Dialog` / 手机全屏 `Dialog`，关闭或保存后返回 `/project/:projectId`。删除和放弃未保存更改使用居中的 `AlertDialog`。
 
 ## 5. Projects 与随心聊
 
@@ -161,7 +163,7 @@ Composer 继续使用 `InputGroup`、`Attachment`、`InputGroupTextarea` 与圆�
 
 ### 7.2 Project、插件与外观
 
-Project 设置与会话设置改用一致的 Field 与响应式 Sheet/Drawer 结构，继承、覆盖和恢复默认的业务语义不变。
+Project 设置与会话设置使用一致的 Field 结构；Project 使用居中/手机全屏 Dialog，会话使用 Sheet/Drawer。继承、覆盖和恢复默认的业务语义不变。
 
 插件页使用 `Item`、`Switch`、`Badge`、`Alert` 和 `Empty`。外观页提供跟随系统、浅色、深色三项 `ToggleGroup`，并预览当前语义色。
 
@@ -179,7 +181,7 @@ Project 设置与会话设置改用一致的 Field 与响应式 Sheet/Drawer 结
 现有 `useSyncStore` 和 `useConfigStore` 仍是唯一业务状态来源。新布局组件只消费派生的展示数据并发出现有命令，不复制服务端状态。
 
 - Project 排序、列表截取和搜索实现为纯函数或纯 computed，便于定向测试。
-- 新会话仍在发送第一条消息时创建；中央 `＋` 只导航到无 Project 草稿，Project 内按钮导航到带 `project` query 的草稿。
+- 新会话仍在发送第一条消息时创建；中央 `＋` 导航到 `/new`，Project 内按钮导航到 `/project/:projectId/new`，创建后进入对应范围的会话路由。
 - 模型选择、会话更新、Project 更新与供应商更新继续沿用现有 API/WS 写入路径。
 - 不把视觉状态写进服务端；Sidebar 折叠、主题和最近使用模型等客户端偏好保存在本地。
 
@@ -204,8 +206,8 @@ Project 设置与会话设置改用一致的 Field 与响应式 Sheet/Drawer 结
 
 人工浏览器验收：
 
-- 桌面：外层侧栏、Project 动态替换、设置三栏、模型 Popover、右侧 Sheet。
-- 手机：底部导航、Project/随心聊列表、具体聊天 Composer、设置三级下钻、底部 Drawer。
+- 桌面：外层侧栏、Project 嵌套工作区、设置三栏、模型 Popover、次级编辑 Sheet、Project 设置 Dialog。
+- 手机：底部导航、Project/随心聊列表、具体聊天 Composer、设置三级下钻、底部 Drawer、Project 设置全屏 Dialog。
 - 浅色、深色与跟随系统；刷新后主题不闪烁且选择保持。
 - 长 Project/会话/供应商/模型名称、空列表、长列表和窄屏滚动。
 - 加载、断线、保存失败、删除确认、发送失败恢复和无可用模型。

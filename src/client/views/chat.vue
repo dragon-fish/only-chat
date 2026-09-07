@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, reactive, ref, watch, watchEffect } from 'vue'
-import { RouterLink, useRoute, useRouter } from 'vue-router'
+import { useMediaQuery } from '@vueuse/core'
+import { RouterLink, useRouter } from 'vue-router'
 import { ArrowLeftIcon, RotateCcwIcon } from '@lucide/vue'
 import MessageList from '@/client/components/message-list.vue'
 import Composer from '@/client/components/composer.vue'
@@ -9,7 +10,7 @@ import ProjectAvatar from '@/client/components/project-avatar.vue'
 import ReasoningControl from '@/client/components/reasoning-control.vue'
 import SessionSettings from '@/client/components/session-settings.vue'
 import CollectionState from '@/client/components/collection-state.vue'
-import { routeParamToId } from '@/client/lib/route-params'
+import { sessionPath } from '@/client/lib/ui-models'
 import {
   choiceFromParams, DISCONNECTED_MESSAGE, effectiveModelFor, modelOverrideAfterPick, nextSendState,
   paramsFromFields, sendCommandFor, sessionFormFrom, sessionSettingSources, useSyncStore,
@@ -22,11 +23,11 @@ import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from '
 import type { ModelRef } from '@/shared/api'
 import type { Part } from '@/shared/parts'
 
-const props = defineProps<{ sessionId: number | null }>()
-const route = useRoute()
+const props = withDefaults(defineProps<{ sessionId: number | null; projectId?: number | null }>(), { projectId: null })
 const router = useRouter()
 const sync = useSyncStore()
 const config = useConfigStore()
+const isDesktop = useMediaQuery('(min-width: 768px)')
 
 const sid = computed(() => props.sessionId)
 const session = computed(() => (sid.value === null ? undefined : sync.sessions.get(sid.value)))
@@ -37,14 +38,13 @@ const composer = ref<InstanceType<typeof Composer> | null>(null)
 // ---- draft and session settings
 
 /**
- * A new chat started from a Project row carries it in the query; no session is created yet
+ * The nested Project workspace supplies the draft context; no session is created yet
  * (spec §5.2). A Project deleted between opening the page and sending is dropped rather than sent:
  * the foreign key would reject the whole message over a container that no longer exists. Before the
  * Projects list has loaded nothing is known to be missing, so the id is kept.
  */
 const draftProjectId = computed(() => {
-  const raw = route.query.project
-  const id = routeParamToId(typeof raw === 'string' ? raw : undefined)
+  const id = props.projectId
   if (id === null) return null
   return !sync.projectsLoaded || sync.projects.has(id) ? id : null
 })
@@ -59,7 +59,7 @@ const project = computed(() => {
 })
 const backTarget = computed(() => {
   const projectId = project.value?.id ?? draftProjectId.value
-  return projectId === null ? '/chats' : `/projects/${projectId}`
+  return projectId === null ? '/chats' : `/project/${projectId}`
 })
 /** The session's own model override; for a draft it is the one held locally. */
 const override = computed<ModelRef | null>(() => {
@@ -179,7 +179,8 @@ watch(sid, () => dispatch('abandoned'))
 watch(() => sync.sessionList[0]?.id, (newest) => {
   if (outstanding.value === 'outstanding' && newest !== undefined && sid.value === null) {
     dispatch('abandoned')
-    void router.push(`/c/${newest}`)
+    const created = sync.sessions.get(newest)
+    if (created) void router.push(sessionPath(created))
   }
 })
 watch(() => path.value.length, () => dispatch('landed'))
@@ -283,8 +284,16 @@ function onReasoningChange(choice: ReasoningChoice) {
 <template lang="pug">
 .flex.h-full.flex-col
   Teleport(to="#page-header")
-    .hidden.min-w-0.flex-1.items-center.gap-1(class="md:flex")
-      ModelPicker(:model-value="effective.model" @update:model-value="onModelChange")
+    .flex.min-w-0.flex-1.items-center.gap-1
+      template(v-if="!isDesktop")
+        Button(as-child variant="ghost" size="icon-sm" class="size-10")
+          RouterLink(:to="backTarget" aria-label="返回聊天")
+            ArrowLeftIcon
+        template(v-if="project")
+          ProjectAvatar(:name="project.name" size="sm")
+          span.min-w-0.flex-1.truncate.text-sm.font-medium {{ project.name }}
+        span.min-w-0.flex-1.truncate.text-sm.font-medium(v-else) 随心聊
+      ModelPicker(:compact="!isDesktop" :model-value="effective.model" @update:model-value="onModelChange")
       Button(
         v-if="sources.model === 'session'" variant="ghost" size="icon-xs"
         class="min-h-10 min-w-10 md:min-h-6 md:min-w-6"
@@ -294,27 +303,9 @@ function onReasoningChange(choice: ReasoningChoice) {
         SessionSettings(
           :form="form" :sources="sources" :project="project" :has-session="sid !== null"
           @commit="commitSettings")
-
-    .flex.min-w-0.flex-1.items-center.gap-1(class="md:hidden")
-      Button(as-child variant="ghost" size="icon-sm" class="size-10")
-        RouterLink(:to="backTarget" aria-label="返回聊天")
-          ArrowLeftIcon
-      template(v-if="project")
-        ProjectAvatar(:name="project.name" size="sm")
-        span.min-w-0.flex-1.truncate.text-sm.font-medium {{ project.name }}
-      span.min-w-0.flex-1.truncate.text-sm.font-medium(v-else) 随心聊
-      ModelPicker(compact :model-value="effective.model" @update:model-value="onModelChange")
-      Button(
-        v-if="sources.model === 'session'" variant="ghost" size="icon-xs"
-        class="min-h-10 min-w-10 md:min-h-6 md:min-w-6"
-        title="恢复继承模型" aria-label="恢复继承模型" @click="setOverride(null)")
-        RotateCcwIcon
-      SessionSettings(
-        :form="form" :sources="sources" :project="project" :has-session="sid !== null"
-        @commit="commitSettings")
   .min-h-0.flex-1
-    CollectionState(:loaded="sid === null || (sync.sessionsLoaded && sync.loadedMessageSessions.has(sid))" :error="messageLoadError || (sid !== null ? sync.sessionsError : null)" :retry="retryChat")
-      MessageList(v-if="path.length" :messages="path" :project="project")
+    CollectionState(:loaded="path.length > 0 || sid === null || (sync.sessionsLoaded && sync.loadedMessageSessions.has(sid))" :error="messageLoadError || (sid !== null ? sync.sessionsError : null)" :retry="retryChat")
+      MessageList(v-if="path.length" :key="sid ?? 'draft'" :messages="path" :project="project")
       Empty(v-else class="h-full")
         EmptyHeader
           EmptyTitle 开始一段新对话

@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import ChatView from '@/client/views/chat.vue'
+definePage({ redirect: '/chats' })
 </script>
 
 <template lang="pug">
-ChatView(:session-id="null")
+div
 </template>

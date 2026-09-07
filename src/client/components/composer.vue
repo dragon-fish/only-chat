@@ -167,7 +167,7 @@ onBeforeUnmount(() => { releasePreviews(images.value); dropSent() })
         //- `AttachmentActions` is what lifts the button onto the thumbnail; without it the X
         //- lands in flow under the image and stretches the chip.
         AttachmentActions
-          AttachmentAction(title="移除" aria-label="移除图片" @click="removeImage(i)")
+          AttachmentAction(class="size-10 md:size-6" title="移除" aria-label="移除图片" @click="removeImage(i)")
             X(data-icon="inline-start")
     InputGroupTextarea(
       ref="box" v-model="text" rows="2" placeholder="输入消息…"

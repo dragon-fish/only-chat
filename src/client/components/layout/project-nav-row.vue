@@ -34,7 +34,7 @@ function remove() {
       active ? 'bg-sidebar-accent text-sidebar-accent-foreground' : 'hover:bg-sidebar-accent',
     )"
   >
-    <RouterLink class="flex min-h-10 min-w-0 flex-1 items-center gap-2 px-2 text-sm" :to="`/projects/${project.id}`" @click="emit('navigate')">
+    <RouterLink class="flex min-h-10 min-w-0 flex-1 items-center gap-2 px-2 text-sm" :to="`/project/${project.id}`" @click="emit('navigate')">
       <ProjectAvatar :name="project.name" size="sm" />
       <span class="truncate">{{ project.name }}</span>
     </RouterLink>

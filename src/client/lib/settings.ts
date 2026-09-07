@@ -4,7 +4,9 @@ import { ReasoningEffortSchema, type Model, type ModelCapabilities, type Reasoni
 export function isChatHistoryRoute(path: unknown): boolean {
   if (typeof path !== 'string') return false
   const pathname = path.split(/[?#]/)[0]
-  return pathname === '/' || pathname === '/chats' || /^\/c\/[^/]+$/.test(pathname ?? '')
+  return pathname === '/chats' || pathname === '/new' || pathname === '/projects'
+    || /^\/c\/[^/]+$/.test(pathname ?? '')
+    || /^\/project\/[^/]+(?:\/(?:new|c\/[^/]+))?$/.test(pathname ?? '')
 }
 
 export function modelCapabilitiesWithEfforts(capabilities: ModelCapabilities, efforts: readonly ReasoningEffort[]): ModelCapabilities {

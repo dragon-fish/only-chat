@@ -5,10 +5,12 @@ import AppSidebar from '@/client/components/layout/app-sidebar.vue'
 import MobileBottomNav from '@/client/components/layout/mobile-bottom-nav.vue'
 import RouteHeader from '@/client/components/layout/route-header.vue'
 import { cn } from '@/client/lib/utils'
+import { provideSettingsReturn } from '@/client/composables/use-settings-return'
 import { SidebarInset, SidebarProvider, SidebarTrigger } from '@/client/ui/sidebar'
 
 const route = useRoute()
-const hasComposer = computed(() => route.path === '/' || /^\/c\/[^/]+$/.test(route.path))
+provideSettingsReturn()
+const hasComposer = computed(() => /^\/(?:project\/[^/]+\/)?(?:new|c\/[^/]+)$/.test(route.path))
 const showMobileNav = computed(() => !hasComposer.value)
 const routeRegionClass = computed(() => cn(
   'min-h-0 flex-1 overflow-hidden',

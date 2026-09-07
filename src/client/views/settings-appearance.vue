@@ -50,5 +50,5 @@ function selectTheme(value: unknown) {
             p.text-sm.text-muted-foreground 次要信息保持轻盈，正文清楚易读。
         CardFooter
           Button(as-child variant="outline" class="min-h-10")
-            RouterLink(to="/") 开始聊天
+            RouterLink(to="/new") 开始聊天
 </template>

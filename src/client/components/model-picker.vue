@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { useMediaQuery } from '@vueuse/core'
 import { ChevronDownIcon } from '@lucide/vue'
 import ModelPickerContent from '@/client/components/model-picker-content.vue'
 import ProviderAvatar from '@/client/components/provider-avatar.vue'
 import { useConfigStore } from '@/client/stores/config'
+import { cn } from '@/client/lib/utils'
 import { Button } from '@/client/ui/button'
 import { Drawer, DrawerContent, DrawerDescription, DrawerHeader, DrawerTitle, DrawerTrigger } from '@/client/ui/drawer'
 import { Popover, PopoverContent, PopoverTrigger } from '@/client/ui/popover'
@@ -18,40 +20,33 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{ 'update:modelValue': [ModelRef | null] }>()
 const config = useConfigStore()
 
-const popoverOpen = ref(false)
-const drawerOpen = ref(false)
+const open = ref(false)
+const isDesktop = useMediaQuery('(min-width: 768px)')
 const selected = computed(() => config.modelFor(props.modelValue))
 const selectedName = computed(() => selected.value?.model.display_name ?? props.modelValue?.model_id ?? '选择模型')
 const selectedProviderName = computed(() => selected.value?.provider.name ?? '模型')
 
 function onSelect(value: ModelRef) {
   emit('update:modelValue', value)
-  popoverOpen.value = false
-  drawerOpen.value = false
+  open.value = false
 }
 </script>
 
 <template lang="pug">
-Popover(v-if="!compact" v-model:open="popoverOpen")
-  PopoverTrigger(as-child)
+component(:is="isDesktop ? Popover : Drawer" v-model:open="open")
+  component(:is="isDesktop ? PopoverTrigger : DrawerTrigger" as-child)
     Button(
-      variant="outline" size="sm" :title="`${selectedProviderName} · ${selectedName}`"
-      class="min-w-44 max-w-64 justify-start" aria-label="选择模型")
+      :variant="compact ? 'ghost' : 'outline'" size="sm" :title="`${selectedProviderName} · ${selectedName}`"
+      :class="cn('min-h-10 md:min-h-7', compact ? 'min-w-10 px-1' : 'min-w-44 max-w-64 justify-start')"
+      :aria-label="`选择模型，当前为 ${selectedName}`")
       ProviderAvatar(:name="selectedProviderName" size="sm")
-      span.min-w-0.flex-1.truncate.text-left {{ selectedName }}
+      span.min-w-0.flex-1.truncate.text-left(v-if="!compact") {{ selectedName }}
       ChevronDownIcon(data-icon="inline-end")
-  PopoverContent(align="start" :side-offset="8" class="w-96 max-w-[calc(100vw-1.5rem)] p-0")
-    ModelPickerContent(:model-value="modelValue" @select="onSelect")
-
-Drawer(v-else v-model:open="drawerOpen")
-  DrawerTrigger(as-child)
-    Button(
-      variant="ghost" size="sm" :title="`${selectedProviderName} · ${selectedName}`"
-      class="min-h-10 min-w-10 px-1" :aria-label="`选择模型，当前为 ${selectedName}`")
-      ProviderAvatar(:name="selectedProviderName" size="sm")
-      ChevronDownIcon(data-icon="inline-end")
-  DrawerContent
-    DrawerHeader
+  component(
+    :is="isDesktop ? PopoverContent : DrawerContent"
+    :align="isDesktop ? 'start' : undefined" :side-offset="isDesktop ? 8 : undefined"
+    :class="cn(isDesktop ? 'w-96 max-w-[calc(100vw-1.5rem)] p-0' : 'overflow-hidden pb-[max(1rem,env(safe-area-inset-bottom))]')")
+    DrawerHeader(v-if="!isDesktop")
       DrawerTitle 选择模型
       DrawerDescription 搜索模型，或按已声明的能力筛选。
     ModelPickerContent(:model-value="modelValue" @select="onSelect")

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ArrowLeftIcon, PaletteIcon, PlugIcon, ServerIcon } from '@lucide/vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
-import { isChatHistoryRoute } from '@/client/lib/settings'
+import { useSettingsReturn } from '@/client/composables/use-settings-return'
 import {
   SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarHeader,
   SidebarMenu, SidebarMenuButton, SidebarMenuItem,
@@ -9,6 +9,7 @@ import {
 
 const route = useRoute()
 const router = useRouter()
+const returnTo = useSettingsReturn()
 const categories = [
   { label: '模型服务', to: '/settings/providers', icon: ServerIcon },
   { label: '插件', to: '/settings/plugins', icon: PlugIcon },
@@ -16,8 +17,7 @@ const categories = [
 ]
 
 function backToChat() {
-  if (isChatHistoryRoute(router.options.history.state.back)) router.back()
-  else void router.push('/')
+  void router.push(returnTo.value)
 }
 </script>
 

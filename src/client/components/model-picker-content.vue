@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import ProviderAvatar from '@/client/components/provider-avatar.vue'
 import CollectionState from '@/client/components/collection-state.vue'
 import { Button } from '@/client/ui/button'
+import { Badge } from '@/client/ui/badge'
 import { RouterLink } from 'vue-router'
 import { filterModelEntries, type EnabledModelEntry, type ModelCapabilityFilter } from '@/client/lib/ui-models'
 import { useConfigStore } from '@/client/stores/config'
@@ -93,5 +94,8 @@ Command(:key="searchKey" :model-value="currentKey" :should-filter="false" class=
           .min-w-0.flex-1
             p.truncate {{ entry.model.display_name }}
             p.truncate.text-xs.text-muted-foreground {{ entry.model.model_id }}
+            .mt-1.flex.flex-wrap.gap-1
+              template(v-for="filter in CAPABILITY_FILTERS" :key="filter.value")
+                Badge(v-if="filter.value !== 'all' && entry.model.capabilities[filter.value] === true" variant="secondary") {{ filter.label }}
           span.sr-only {{ entry.provider.name }}
 </template>

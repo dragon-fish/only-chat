@@ -81,7 +81,7 @@ function clearSearch() {
               <DropdownMenuLabel>切换 Project</DropdownMenuLabel>
               <DropdownMenuGroup>
                 <DropdownMenuItem v-for="item in allProjectsByActivity" :key="item.id" class="min-h-10" as-child>
-                  <RouterLink :to="`/projects/${item.id}`">
+                  <RouterLink :to="`/project/${item.id}`">
                     <ProjectAvatar :name="item.name" size="sm" />
                     <span class="truncate">{{ item.name }}</span>
                   </RouterLink>
@@ -95,7 +95,7 @@ function clearSearch() {
       <SidebarMenu>
         <SidebarMenuItem>
           <SidebarMenuButton as-child class="min-h-10">
-            <RouterLink :to="{ path: '/', query: { project: project.id } }">
+            <RouterLink :to="`/project/${project.id}/new`">
               <PlusIcon />
               <span>Project 新对话</span>
             </RouterLink>
@@ -109,7 +109,7 @@ function clearSearch() {
       <SidebarMenu>
         <SidebarMenuItem>
           <SidebarMenuButton as-child class="min-h-10">
-            <RouterLink :to="`/settings/projects/${project.id}`">
+            <RouterLink :to="`/project/${project.id}/settings`">
               <SlidersHorizontalIcon />
               <span>Project 设置</span>
             </RouterLink>
@@ -126,7 +126,7 @@ function clearSearch() {
             <CollectionState :loaded="sync.sessionsLoaded" :error="sync.sessionsError" :retry="sync.loadSessions" :empty="projectSessions.length === 0" :empty-title="query ? '没有匹配的对话' : '这个 Project 还没有对话'">
               <template #empty-action>
                 <Button v-if="query" variant="outline" class="min-h-10" @click="clearSearch">清除搜索</Button>
-                <Button v-else as-child variant="outline" class="min-h-10"><RouterLink :to="{ path: '/', query: { project: project.id } }">开始对话</RouterLink></Button>
+                <Button v-else as-child variant="outline" class="min-h-10"><RouterLink :to="`/project/${project.id}/new`">开始对话</RouterLink></Button>
               </template>
               <SidebarMenu>
                 <SidebarMenuItem v-for="session in projectSessions" :key="session.id">
@@ -157,7 +157,7 @@ function clearSearch() {
         </SidebarMenuItem>
         <SidebarMenuItem>
           <SidebarMenuButton as-child class="min-h-10">
-            <RouterLink to="/">
+            <RouterLink to="/new">
               <PlusIcon />
               <span>新建随心聊</span>
             </RouterLink>
@@ -212,7 +212,7 @@ function clearSearch() {
                 <CollectionState :loaded="sync.sessionsLoaded" :error="sync.sessionsError" :retry="sync.loadSessions" :empty="outerSessions.length === 0" :empty-title="query ? '没有匹配的对话' : '还没有随心聊'">
                   <template #empty-action>
                     <Button v-if="query" variant="outline" class="min-h-10" @click="clearSearch">清除搜索</Button>
-                    <Button v-else as-child variant="outline" class="min-h-10"><RouterLink to="/">开始对话</RouterLink></Button>
+                    <Button v-else as-child variant="outline" class="min-h-10"><RouterLink to="/new">开始对话</RouterLink></Button>
                   </template>
                   <SidebarMenu>
                     <SidebarMenuItem v-for="session in outerSessions" :key="session.id">

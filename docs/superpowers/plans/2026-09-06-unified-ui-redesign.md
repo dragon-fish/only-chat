@@ -14,8 +14,8 @@
 
 - Do not change D1 schema, Worker APIs, WebSocket schemas, LLM protocol behavior, or server-side data semantics.
 - `project_id = null` is shown as “随心聊”; do not create a default Project record.
-- The mobile Chat tab navigates to `/chats`; the global `＋` always navigates to the no-Project draft route `/`; a separate Project action navigates with `{ path: '/', query: { project: project.id } }`.
-- Desktop secondary editors use right `Sheet`; mobile secondary editors use bottom `Drawer`; destructive confirmation uses `AlertDialog`.
+- `/` statically redirects to `/chats`. The global `＋` opens `/new`; unprojected sessions use `/c/:sessionId`. `/project/:projectId` owns a nested RouterView with index, `settings`, `new`, and `c/:sessionId` children. Remove old Project/query routes without aliases or redirects based on session membership.
+- Model/session/reasoning editors use desktop `Sheet` and mobile `Drawer`. Project settings uses desktop `Dialog` and mobile full-screen `Dialog`, returning to its workspace on close/save. Destructive and unsaved-change confirmations use `AlertDialog`.
 - Desktop chat header shows the full model selector. Mobile Project chat header shows Project identity plus an icon-only model selector; reasoning appears only in the Composer.
 - Project assistant messages use the Project placeholder avatar/name with the actual model as secondary text. 随心聊 assistant messages use the model identity.
 - Theme values are exactly `system | light | dark`, default to `system`, and use semantic CSS tokens only.
@@ -38,7 +38,7 @@
 - `src/client/components/layout/settings-sidebar-content.vue` — first-level desktop settings navigation.
 - `src/client/components/layout/mobile-bottom-nav.vue` — mobile `[聊天][＋][设置]` navigation.
 - `src/client/components/layout/route-header.vue` — shared desktop/mobile header slots.
-- `src/client/components/layout/responsive-overlay.vue` — one controlled API that renders desktop Sheet or mobile bottom Drawer.
+- `src/client/components/layout/responsive-overlay.vue` — a controlled Sheet/Drawer host with a Dialog mode for desktop/mobile-full-screen Project settings.
 - `src/client/components/project-avatar.vue` — deterministic Project initial/fallback avatar.
 - `src/client/components/provider-avatar.vue` — deterministic provider/model initial fallback avatar.
 - `src/client/components/provider-navigation.vue` — searchable configured-provider list used by desktop settings and mobile model-service page.
@@ -49,7 +49,9 @@
 - `src/client/views/settings-index.vue` — mobile settings-category page and desktop blank/default state.
 - `src/client/views/settings-appearance.vue` — theme selector.
 - `src/client/pages/projects/index.vue` — `/projects` route adapter.
-- `src/client/pages/projects/[projectId].vue` — `/projects/:projectId` route adapter.
+- `src/client/pages/new.vue` — unprojected draft.
+- `src/client/pages/project/[projectId].vue` — Project parent with nested RouterView and Project context.
+- `src/client/pages/project/[projectId]/{index,new,settings}.vue`, `src/client/pages/project/[projectId]/c/[sessionId].vue` — Project child route adapters.
 - `src/client/pages/chats/index.vue` — `/chats` route adapter.
 - `src/client/pages/settings/index.vue` — `/settings` route adapter.
 - `src/client/pages/settings/appearance.vue` — `/settings/appearance` route adapter.
@@ -62,7 +64,7 @@
 - `src/client/app.vue`, `src/client/components/app-shell.vue` — block-derived application chassis and global feedback.
 - `src/client/views/chat.vue`, `model-picker.vue`, `message-list.vue`, `message-item.vue`, `composer.vue`, `session-settings.vue`, `reasoning-control.vue` — chat experience.
 - `src/client/views/settings-providers.vue`, `settings-provider-edit.vue`, `settings-plugins.vue`, `project-settings.vue` — unified settings surfaces.
-- `src/client/pages/settings/providers/index.vue`, `src/client/pages/settings/providers/[id].vue`, `src/client/pages/settings/plugins.vue`, `src/client/pages/settings/projects/[id].vue` — route adapters that select the correct desktop/mobile workspace.
+- `src/client/pages/settings/providers/index.vue`, `src/client/pages/settings/providers/[id].vue`, `src/client/pages/settings/plugins.vue`, `src/client/pages/project/[projectId]/settings.vue` — route adapters that select the correct desktop/mobile workspace.
 
 ---
 
@@ -279,7 +281,7 @@ git commit -m "feat(ui): add navigation view models"
 **Interfaces:**
 - `AppSidebar` consumes the current route plus `useSyncStore()` and renders a named slot/content component selected by route context.
 - `RouteHeader` exposes `leading`, default, and `actions` slots and owns the fixed header height.
-- `MobileBottomNav` emits no business events; it navigates to `/chats`, `/`, and `/settings`, with the center `/` link carrying no `project` query.
+- `MobileBottomNav` emits no business events; it navigates to `/chats`, `/new`, and `/settings`. The center link always starts an unprojected draft.
 - `AppShell` keeps `bootError?: string | null` and remains the sole viewport-height owner.
 
 - [ ] **Step 1: Inspect the official block without mutating the project**
@@ -309,7 +311,7 @@ Open the returned official documentation URLs and verify the installed Nova/Reka
 
 - [ ] **Step 3: Replace `app-shell.vue` with the block chassis**
 
-Compose `SidebarProvider`, `AppSidebar`, `SidebarInset`, `RouteHeader`, route content, and `MobileBottomNav`. Desktop sidebar is hidden below `md`; mobile bottom navigation is hidden at `md` and above. A concrete `/c/:sessionId` chat and the draft `/` chat view suppress `MobileBottomNav` only while the page is displaying the Composer; list/settings routes keep it.
+Compose `SidebarProvider`, `AppSidebar`, `SidebarInset`, `RouteHeader`, route content, and `MobileBottomNav`. Desktop sidebar is hidden below `md`; mobile bottom navigation is hidden at `md` and above. Draft and session routes (`/new`, `/c/:sessionId`, and their nested Project equivalents) suppress `MobileBottomNav` while displaying the Composer; list/settings routes keep it.
 
 Keep the boot error and `sync.lastError` in the shell, replacing raw paragraphs with `Alert` and a dismiss `Button`. Add one `Toaster` host in `app.vue`.
 
@@ -345,7 +347,7 @@ git commit -m "feat(ui): rebuild the application chassis"
 - Create: `src/client/views/project-sessions.vue`
 - Create: `src/client/views/chat-index.vue`
 - Create: `src/client/pages/projects/index.vue`
-- Create: `src/client/pages/projects/[projectId].vue`
+- Create: `src/client/pages/project/[projectId].vue` and its index/new/settings/chat children
 - Create: `src/client/pages/chats/index.vue`
 - Modify: `src/client/components/layout/app-sidebar.vue`
 - Replace/remove usage: `src/client/components/session-list.vue`, `src/client/components/project-tree.vue`
@@ -354,8 +356,8 @@ git commit -m "feat(ui): rebuild the application chassis"
 - Consumes: `recentProjects`, `searchProjects`, and `searchSessions` from Task 2.
 - `ChatSidebarContent` accepts `projectId?: number | null`; `undefined` renders the outer Project-first navigation, a number renders that Project’s replacement navigation.
 - `ProjectAvatar` accepts `{ name: string; size?: 'sm' | 'default' }` and always renders `AvatarFallback`.
-- `/projects` renders all Projects; `/projects/:projectId` renders current Project sessions on mobile and may redirect a missing Project to `/projects` after projects finish loading.
-- `/chats` renders the Project-first chat home; the mobile Chat tab targets it, while `/` remains the no-Project draft with a Composer.
+- `/projects` renders all Projects; `/project/:projectId` renders the Project workspace with a nested RouterView. Its index lists scoped sessions and redirects a confirmed missing Project to `/projects`.
+- `/chats` renders the mobile Project-first chat home and desktop selection guidance; `/new` is the no-Project draft. `/` declares `definePage({ redirect: '/chats' })`.
 
 - [ ] **Step 1: Implement the outer desktop navigation**
 
@@ -365,11 +367,11 @@ Order is fixed: new 随心聊, search, five recent Projects, “查看全部 Pro
 
 - [ ] **Step 2: Implement Project replacement navigation**
 
-Header: back to the outer navigation, Project avatar/name, Project switcher. Body: Project new chat (`{ path: '/', query: { project: id } }`), scoped search, Project settings, Project sessions. Moving sessions uses `DropdownMenu` and existing `moveSessionCommand`.
+Header: back to the outer navigation, Project avatar/name, Project switcher. Body: Project new chat (`/project/:projectId/new`), scoped search, Project settings, Project sessions. Moving sessions uses `DropdownMenu` and existing `moveSessionCommand`.
 
 - [ ] **Step 3: Implement mobile Project pages**
 
-`chat-index.vue` shows the recent five Projects first and 随心聊 sessions second. `projects-index.vue` shows searchable Projects and create action. `project-sessions.vue` shows back, Project identity, Project settings, explicit Project-new-chat action, and scoped sessions. All three pages keep `MobileBottomNav`; opening a draft `/` or session `/c/:sessionId` replaces the nav with the Composer.
+`chat-index.vue` shows the recent five Projects first and 随心聊 sessions second. `projects-index.vue` shows searchable Projects and create action. `project-sessions.vue` shows back, Project identity, Project settings, explicit Project-new-chat action, and scoped sessions. All three pages keep `MobileBottomNav`; opening `/new`, `/c/:sessionId`, or their nested Project equivalents replaces the nav with the Composer.
 
 - [ ] **Step 4: Remove the old tree from the live shell**
 
@@ -388,7 +390,7 @@ Expected: PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/client/components/layout src/client/components/project-avatar.vue src/client/views/chat-index.vue src/client/views/projects-index.vue src/client/views/project-sessions.vue src/client/pages/chats src/client/pages/projects src/client/components/app-shell.vue
+git add src/client/components/layout src/client/components/project-avatar.vue src/client/views/chat-index.vue src/client/views/projects-index.vue src/client/views/project-sessions.vue src/client/pages/chats src/client/pages/projects src/client/pages/project src/client/pages/new.vue src/client/components/app-shell.vue
 git add -u src/client/components/session-list.vue src/client/components/project-tree.vue
 git commit -m "feat(navigation): add dynamic Project navigation"
 ```
@@ -423,7 +425,7 @@ Use the returned official APIs. `CommandItem` must remain inside `CommandGroup`;
 
 - [ ] **Step 2: Replace the Select model picker**
 
-Desktop trigger shows provider/model avatar and full model display name, opening a Popover containing Command search, a `ToggleGroup` capability filter, and provider `CommandGroup`s. Mobile `compact` trigger shows only avatar plus chevron and opens the same selector body in a bottom Drawer.
+Desktop trigger shows provider/model avatar and full model display name, opening a Popover containing Command search, a `ToggleGroup` capability filter, and provider `CommandGroup`s. The viewport selects Popover or Drawer through one open state; `compact` controls only the trigger appearance. Chat headers mount one picker across breakpoints.
 
 Search provider name, model id, and display name through Task 2’s pure helper. Capability filters use only declared capabilities.
 
@@ -473,7 +475,7 @@ git commit -m "feat(chat): redesign model and message surfaces"
 - Modify: `src/client/views/project-settings.vue`
 
 **Interfaces:**
-- `ResponsiveOverlay` uses `v-model:open`, `title: string`, and default/footer slots; it renders Sheet at `md` and above and Drawer below `md` without mounting both open copies simultaneously.
+- `ResponsiveOverlay` uses `v-model:open`, `title`, default/footer slots, and `mode`. Side mode renders Sheet at `md` and above and Drawer below; Dialog mode renders one Dialog with a full-screen mobile layout. Preserve opener focus and bottom safe areas.
 - Existing Composer emits remain `send(parts)` and `stop()`; exposed `confirmSend()` and `restoreSend()` remain unchanged.
 - Existing reasoning choice/store interfaces remain unchanged.
 
@@ -499,7 +501,7 @@ Retain upload concurrency, object URL cleanup, paste/drop, optimistic clear, rej
 
 - [ ] **Step 4: Move secondary forms into responsive overlays**
 
-Session settings and Project editing use `ResponsiveOverlay` plus `FieldGroup`/`Field`. Reasoning keeps its current pure state model and slider semantics; the Composer remains its only chat-page trigger.
+Session settings uses side-mode `ResponsiveOverlay`; Project editing uses its Dialog mode. Both compose `FieldGroup`/`Field`. Reasoning keeps its current pure state model and slider semantics; the Composer remains its only chat-page trigger.
 
 - [ ] **Step 5: Run focused verification**
 
@@ -541,12 +543,12 @@ git commit -m "feat(chat): unify responsive composer controls"
 **Interfaces:**
 - `SettingsSidebarContent` renders model services, plugins, and appearance plus “返回聊天”.
 - `ProviderNavigation` accepts `selectedProviderId?: number | null` and emits/navigates only through existing provider routes.
-- `ModelEditor` accepts `{ providerId: number; model: Model }`, emits `save(patch: Partial<ModelInput>)` and `delete()`, and contains no protocol override field.
+- `ModelEditor` accepts `{ open: boolean; providerId: number; model: Model; saving?: boolean }`, owns its draft above the responsive branches, and emits `update:open`, `save(patch)` and `delete()`. It contains no protocol override field.
 - Provider detail retains every existing API call and write-serialization guarantee from `settings-provider-edit.vue`.
 
 - [ ] **Step 1: Rebuild desktop settings workspace**
 
-On settings routes, `AppSidebar` renders first-level settings navigation. Provider routes render a fixed-width `ProviderNavigation` beside the route detail inside `SidebarInset`, producing the approved three-pane layout. “返回聊天” uses router history when the previous route is a chat route, otherwise `/`.
+On settings routes, `AppSidebar` renders first-level settings navigation. Provider routes render a fixed-width `ProviderNavigation` beside the route detail inside `SidebarInset`, producing the approved three-pane layout. “返回聊天” retains the chat/Project route that entered settings across internal settings navigation, with `/chats` as the initial fallback.
 
 - [ ] **Step 2: Rebuild mobile settings routes**
 
@@ -560,7 +562,7 @@ Use Sonner for save/fetch/add failures and successes. Use `AlertDialog` for prov
 
 - [ ] **Step 4: Add responsive model editing**
 
-The model row gear opens `ModelEditor` inside Task 6’s `ResponsiveOverlay`: right Sheet on desktop and bottom Drawer on mobile. Fields cover id, display name, enabled, existing capability flags, and reasoning efforts. Do not render multi-endpoint, per-model protocol, or model-purpose controls.
+The model row gear opens `ModelEditor`, which owns the draft and Task 6’s responsive host: right Sheet on desktop and bottom Drawer on mobile. Fields cover id, display name, enabled, existing capability flags, and reasoning efforts. Do not render multi-endpoint, per-model protocol, or model-purpose controls.
 
 - [ ] **Step 5: Run focused verification**
 
@@ -593,7 +595,7 @@ git commit -m "feat(settings): rebuild provider management"
 - Modify: `src/client/views/project-settings.vue`
 - Modify: `src/client/views/settings-plugins.vue`
 - Modify: `src/client/pages/settings/plugins.vue`
-- Modify: `src/client/pages/settings/projects/[id].vue`
+- Modify: `src/client/pages/project/[projectId]/settings.vue`
 - Modify: `src/client/components/layout/settings-sidebar-content.vue`
 - Modify: `src/client/app.vue`
 - Modify: `package.json`
@@ -612,7 +614,7 @@ If `vue-sonner` and the shadcn Sonner host are not installed, inspect them with 
 
 - [ ] **Step 2: Recompose Project settings**
 
-Use the same FieldGroup, model picker, numeric fields, inheritance badges, reasoning controls, save feedback, and AlertDialog conventions as session/provider settings. Keep the existing `projectUpdateCommand` and deletion semantics.
+Use the same FieldGroup, model picker, numeric fields, inheritance badges, reasoning controls, save feedback, and AlertDialog conventions as session/provider settings inside a desktop Dialog/mobile full-screen Dialog. Close/save returns to `/project/:projectId`; dirty dismissal requires confirmation. Keep the existing `projectUpdateCommand` and deletion semantics.
 
 - [ ] **Step 3: Recompose plugin settings**
 
@@ -645,7 +647,7 @@ Expected: PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add package.json pnpm-lock.yaml src/client/ui/sonner src/client/views/settings-appearance.vue src/client/pages/settings/appearance.vue src/client/views/project-settings.vue src/client/views/settings-plugins.vue src/client/pages/settings/plugins.vue src/client/pages/settings/projects src/client/components/layout/settings-sidebar-content.vue src/client/app.vue
+git add package.json pnpm-lock.yaml src/client/ui/sonner src/client/views/settings-appearance.vue src/client/pages/settings/appearance.vue src/client/views/project-settings.vue src/client/views/settings-plugins.vue src/client/pages/settings/plugins.vue src/client/pages/project src/client/components/layout/settings-sidebar-content.vue src/client/app.vue
 git commit -m "feat(settings): unify remaining settings pages"
 ```
 
@@ -676,7 +678,7 @@ At a viewport at least 1280px wide, verify:
 - Project assistant identity and secondary actual model;
 - Composer reasoning as the only reasoning trigger;
 - settings three-pane layout;
-- provider/model edits in a right Sheet;
+- inline provider detail, model editor in a right Sheet, and Project settings in a centered Dialog;
 - empty/loading/error/delete states;
 - every fixed-height region owns its intended scrollbar.
 
@@ -686,11 +688,11 @@ At a viewport around 390×844, verify:
 
 - `[聊天][＋][设置]` on functional pages;
 - center `＋` always opens a no-Project draft;
-- Project-specific new-chat action preserves the Project query;
+- Project-specific new-chat action opens `/project/:projectId/new`;
 - concrete chat hides bottom nav and shows Composer;
 - Project name in mobile header, icon-only model trigger, accessible full model name;
 - settings three-level navigation;
-- model/session/Project edit opens a bottom Drawer;
+- model/session edits open bottom Drawers; Project settings opens a full-screen Dialog;
 - keyboard, safe-area, 16px textarea, and 40px touch targets.
 
 - [ ] **Step 4: Verify all theme modes**

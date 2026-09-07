@@ -4,6 +4,7 @@ import { FolderInputIcon, Trash2Icon } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 import { DISCONNECTED_MESSAGE, moveSessionCommand, useSyncStore } from '@/client/stores/sync'
 import { cn } from '@/client/lib/utils'
+import { sessionPath } from '@/client/lib/ui-models'
 import { Button } from '@/client/ui/button'
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
@@ -54,7 +55,7 @@ function send(command: Parameters<typeof sync.send>[0]): boolean {
       active ? 'bg-sidebar-accent text-sidebar-accent-foreground' : 'hover:bg-sidebar-accent',
     )"
   >
-    <RouterLink class="flex min-h-10 min-w-0 flex-1 items-center px-2 text-sm" :to="`/c/${session.id}`" @click="emit('navigate')">
+    <RouterLink class="flex min-h-10 min-w-0 flex-1 items-center px-2 text-sm" :to="sessionPath(session)" @click="emit('navigate')">
       <span class="truncate">{{ session.title }}</span>
     </RouterLink>
 

@@ -31,10 +31,7 @@ const projectId = computed<number | undefined>(() => {
   )
   if (routeProjectId !== null) return routeProjectId
 
-  const draftProjectId = routeParamToId(typeof route.query.project === 'string' ? route.query.project : undefined)
-  if (draftProjectId !== null) return draftProjectId
-
-  return activeSession.value?.project_id ?? undefined
+  return undefined
 })
 </script>
 

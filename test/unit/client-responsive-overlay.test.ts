@@ -1,89 +1,70 @@
-// @ts-ignore Vitest runs this file in Node, while tsconfig.app intentionally excludes Node globals.
-import { createRequire } from 'node:module'
-import { createSSRApp } from 'vue'
-import { describe, expect, it, vi } from 'vitest'
-
-const media = vi.hoisted(() => ({ __v_isRef: true, value: false }))
-
-vi.mock('@vueuse/core', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@vueuse/core')>()
-  return { ...actual, useMediaQuery: () => media }
-})
-
-async function overlayStubs(rootName: string, prefix: string) {
-  const { defineComponent, h } = await import('vue')
-  const Root = defineComponent({
-    props: { open: Boolean },
-    emits: ['update:open'],
-    setup(props, { emit, slots }) {
-      if (props.open) emit('update:open', false)
-      return () => h(rootName, null, slots.default?.())
-    },
-  })
-  return {
-    Root,
-    Content: `${prefix}-content`,
-    Footer: `${prefix}-footer`,
-    Header: `${prefix}-header`,
-    Title: `${prefix}-title`,
-  }
-}
-
-vi.mock('@/client/ui/sheet', async () => {
-  const stubs = await overlayStubs('sheet-root', 'sheet')
-  return {
-    Sheet: stubs.Root,
-    SheetContent: stubs.Content,
-    SheetFooter: stubs.Footer,
-    SheetHeader: stubs.Header,
-    SheetTitle: stubs.Title,
-  }
-})
-
-vi.mock('@/client/ui/drawer', async () => {
-  const stubs = await overlayStubs('drawer-root', 'drawer')
-  return {
-    Drawer: stubs.Root,
-    DrawerContent: stubs.Content,
-    DrawerFooter: stubs.Footer,
-    DrawerHeader: stubs.Header,
-    DrawerTitle: stubs.Title,
-  }
-})
-
+// @vitest-environment happy-dom
+import { createApp, defineComponent, h, nextTick, ref } from 'vue'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import ResponsiveOverlay from '@/client/components/layout/responsive-overlay.vue'
 
-const requireFromVue = createRequire(import.meta.resolve('vue'))
-const { renderToString } = requireFromVue('@vue/server-renderer') as {
-  renderToString: (app: ReturnType<typeof createSSRApp>) => Promise<string>
+const desktop = ref(false)
+vi.mock('@vueuse/core', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@vueuse/core')>(),
+  useMediaQuery: () => desktop,
+}))
+
+let cleanup = () => {}
+afterEach(() => {
+  cleanup()
+  document.body.innerHTML = ''
+})
+
+function mountOverlay(isDesktop: boolean) {
+  desktop.value = isDesktop
+  const open = ref(false)
+  const host = document.createElement('div')
+  document.body.append(host)
+  const app = createApp(defineComponent(() => () => [
+    h('button', { onClick: () => { open.value = true } }, 'Edit settings'),
+    h(ResponsiveOverlay, {
+      open: open.value,
+      title: 'Settings',
+      'onUpdate:open': (value: boolean) => { open.value = value },
+    }, {
+      default: () => h('input', { 'aria-label': 'Draft' }),
+      footer: () => h('button', { onClick: () => { open.value = false } }, 'Save'),
+    }),
+  ]))
+  app.mount(host)
+  cleanup = () => app.unmount()
+  return { open, opener: host.querySelector('button')! }
 }
 
 describe('ResponsiveOverlay', () => {
-  it('mounts only the current overlay branch and preserves the controlled open contract', async () => {
-    // Rendering both branches with CSS hiding would duplicate the live form and focus trap; dropping
-    // the update handler would make the close affordance ineffective.
-    const onOpen = vi.fn()
+  it.each([false, true])('restores the external opener after Escape (desktop=%s)', async (isDesktop) => {
+    // Losing the opener when the portalled input is removed breaks the next keyboard action.
+    const { open, opener } = mountOverlay(isDesktop)
+    opener.focus()
+    opener.click()
+    await vi.waitFor(() => expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(1))
+    const input = document.querySelector<HTMLInputElement>('input')!
+    input.focus()
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await vi.waitFor(() => expect(open.value).toBe(false))
+    await vi.waitFor(() => expect(document.activeElement).toBe(opener))
+  })
 
-    media.value = false
-    const mobile = await renderToString(createSSRApp(ResponsiveOverlay, {
-      open: true,
-      title: '会话设置',
-      'onUpdate:open': onOpen,
-    }))
-    expect(mobile).toContain('<drawer-root')
-    expect(mobile).not.toContain('<sheet-root')
-
-    media.value = true
-    const desktop = await renderToString(createSSRApp(ResponsiveOverlay, {
-      open: true,
-      title: '会话设置',
-      'onUpdate:open': onOpen,
-    }))
-    expect(desktop).toContain('<sheet-root')
-    expect(desktop).not.toContain('<drawer-root')
-    expect(desktop.match(/<(?:sheet|drawer)-content/g)).toHaveLength(1)
-    expect(onOpen).toHaveBeenCalledTimes(2)
-    expect(onOpen).toHaveBeenNthCalledWith(1, false)
-    expect(onOpen).toHaveBeenNthCalledWith(2, false)
+  it('keeps one live form and footer while changing modality, then restores focus after save', async () => {
+    // CSS-hidden duplicates create two live forms; branch changes must retain the original opener.
+    const { open, opener } = mountOverlay(false)
+    opener.focus()
+    opener.click()
+    await vi.waitFor(() => expect(document.querySelector('input')).not.toBeNull())
+    document.querySelector<HTMLInputElement>('input')!.focus()
+    desktop.value = true
+    await nextTick()
+    await vi.waitFor(() => expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(1))
+    expect(document.querySelectorAll('input[aria-label="Draft"]')).toHaveLength(1)
+    const save = [...document.querySelectorAll('button')].find(button => button.textContent === 'Save')!
+    expect(save).toBeDefined()
+    save.click()
+    await vi.waitFor(() => expect(open.value).toBe(false))
+    await vi.waitFor(() => expect(document.activeElement).toBe(opener))
   })
 })

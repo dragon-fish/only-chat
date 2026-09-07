@@ -16,7 +16,7 @@ import { Button } from '@/client/ui/button'
       </RouterLink>
     </Button>
     <Button as-child size="icon-lg" class="size-10 rounded-full">
-      <RouterLink :to="{ path: '/' }" aria-label="开始随心聊">
+      <RouterLink to="/new" aria-label="开始随心聊">
         <PlusIcon />
       </RouterLink>
     </Button>

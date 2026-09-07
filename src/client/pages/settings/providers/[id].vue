@@ -9,5 +9,5 @@ const providerId = computed(() => routeParamToId(route.params.id))
 </script>
 
 <template lang="pug">
-SettingsProviderEditView(:key="providerId ?? 'invalid'" :provider-id="providerId")
+SettingsProviderEditView(:provider-id="providerId")
 </template>

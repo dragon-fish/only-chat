@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { ArrowLeftIcon, ChevronRightIcon, PaletteIcon, PlugIcon, ServerIcon } from '@lucide/vue'
 import { RouterLink, useRouter } from 'vue-router'
-import { isChatHistoryRoute } from '@/client/lib/settings'
+import { useSettingsReturn } from '@/client/composables/use-settings-return'
 import { Button } from '@/client/ui/button'
 import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle } from '@/client/ui/item'
 
 const router = useRouter()
+const returnTo = useSettingsReturn()
 const categories = [
   { label: '模型服务', description: '连接供应商，管理模型与能力', to: '/settings/providers', icon: ServerIcon },
   { label: '插件', description: '管理聊天中的工具与扩展', to: '/settings/plugins', icon: PlugIcon },
@@ -13,8 +14,7 @@ const categories = [
 ]
 
 function backToChat() {
-  if (isChatHistoryRoute(router.options.history.state.back)) router.back()
-  else void router.push('/')
+  void router.push(returnTo.value)
 }
 </script>
 

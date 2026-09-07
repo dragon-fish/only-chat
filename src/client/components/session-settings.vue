@@ -19,7 +19,7 @@ import type { Project } from '@/shared/models'
 
 const props = defineProps<{
   /**
-   * The live form the chat view owns. Both this popover and the Composer's reasoning slider edit
+   * The live form the chat view owns. Both this overlay and the Composer's reasoning slider edit
    * fields of one session, so the state is shared by reference and edits are written in place;
    * `commit` asks the owner to persist the whole form.
    */
@@ -54,7 +54,7 @@ type ParamKey = 'temperature' | 'top_p' | 'max_tokens'
  * to disable: reka routes ArrowUp/ArrowDown, PageUp/PageDown, Home/End and the wheel through the
  * same handlers. It runs in the capture phase on the field root, which is before reka's own
  * listeners on the input, and it only calls `stopPropagation` — never `preventDefault`, because
- * the caret and the popover's scrolling are the browser's business and only reka's listener has
+ * the caret and the overlay's scrolling are the browser's business and only reka's listener has
  * to be kept away from an empty box.
  */
 const STEP_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End'])

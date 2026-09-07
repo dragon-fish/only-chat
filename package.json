@@ -57,6 +57,7 @@
     "@vue/language-plugin-pug": "^3.3.11",
     "@vue/tsconfig": "^0.8.1",
     "drizzle-kit": "^0.31.10",
+    "happy-dom": "^20.14.0",
     "pug": "^3.0.4",
     "sass-embedded": "^1.104.0",
     "typescript": "~6.0.2",

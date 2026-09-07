@@ -129,21 +129,22 @@ function onLoneStop(on: boolean) {
       <FieldDescription>
         {{ disabledReason }}
       </FieldDescription>
-      <Button v-if="overridden" variant="ghost" size="xs" type="button" @click="emit('update', 'inherit')">
+      <Button v-if="overridden" variant="ghost" size="xs" class="min-h-10 md:min-h-6" type="button" @click="emit('update', 'inherit')">
         默认
       </Button>
     </Field>
 
     <template v-else>
-      <Field orientation="horizontal" :data-disabled="!model.canDisable || undefined">
+      <Field orientation="horizontal" class="min-h-10" :data-disabled="!model.canDisable || undefined">
         <FieldLabel for="oc-reasoning-enabled">思考</FieldLabel>
         <Switch
           id="oc-reasoning-enabled"
+          class="after:-inset-y-3"
           :model-value="model.enabled"
           :disabled="!model.canDisable"
           @update:model-value="(on: boolean) => act({ kind: 'enable', on })"
         />
-        <Button v-if="overridden" variant="ghost" size="xs" type="button" @click="emit('update', 'inherit')">
+        <Button v-if="overridden" variant="ghost" size="xs" class="min-h-10 md:min-h-6" type="button" @click="emit('update', 'inherit')">
           默认
         </Button>
       </Field>
@@ -157,10 +158,11 @@ function onLoneStop(on: boolean) {
 
       <Separator />
 
-      <Field orientation="horizontal" :data-disabled="!model.enabled || undefined">
+      <Field orientation="horizontal" class="min-h-10" :data-disabled="!model.enabled || undefined">
         <FieldLabel for="oc-reasoning-auto">自动</FieldLabel>
         <Switch
           id="oc-reasoning-auto"
+          class="after:-inset-y-3"
           :model-value="model.auto"
           :disabled="!model.enabled"
           @update:model-value="(on: boolean) => act({ kind: 'auto', on })"
@@ -208,7 +210,7 @@ function onLoneStop(on: boolean) {
           :model-value="model.index === 0"
           :disabled="!model.enabled"
           variant="outline"
-          class="w-full"
+          class="min-h-10 w-full"
           @update:model-value="onLoneStop"
         >
           {{ REASONING_LABELS[loneStop] }}

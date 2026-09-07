@@ -53,7 +53,7 @@ function toggle(key: string, value: boolean) {
       CollectionState(:loaded="sync.settingsLoaded" :error="sync.settingsError" :retry="sync.loadSettings" :empty="!plugins.length" empty-title="暂无可用插件" empty-description="当前版本尚未内置功能插件。")
         template(#empty-action)
           Button(as-child variant="outline" class="min-h-10")
-            RouterLink(to="/") 返回聊天
+            RouterLink(to="/chats") 返回聊天
         ItemGroup(class="gap-2")
           Item(v-for="[key, on] in plugins" :key="key" variant="outline")
             ItemMedia(variant="icon")

@@ -6,6 +6,8 @@ import { Alert, AlertDescription, AlertTitle } from '@/client/ui/alert'
 import { Badge } from '@/client/ui/badge'
 import { ToggleGroup, ToggleGroupItem } from '@/client/ui/toggle-group'
 import ResponsiveOverlay from '@/client/components/layout/responsive-overlay.vue'
+import UnsavedChangesGuard from '@/client/components/unsaved-changes-guard.vue'
+import { useFormChanges } from '@/client/composables/use-form-changes'
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
@@ -50,6 +52,7 @@ const deleting = ref(false)
 const loadError = ref<string | null>(null)
 /** The `updated_at` we saved against; the round trip ends when the store's row moves off it. */
 let savedAgainst = 0
+let savedSnapshot = ''
 
 const project = computed(() => (props.projectId === null ? undefined : sync.projects.get(props.projectId)))
 /** 保存 is gated on the socket exactly as the Composer gates 发送: no round trip, no wait to latch. */
@@ -70,6 +73,12 @@ const chatCount = computed(() => (props.projectId === null ? 0 : sync.sessionsIn
  * the user is looking at is empty — see `fieldLooksBlank`.
  */
 const typing = reactive<Record<ParamKey, string | null>>({ temperature: null, top_p: null, max_tokens: null })
+const { dirty, capture, markSaved } = useFormChanges(() => ({
+  ...form,
+  temperature: typing.temperature ?? String(form.temperature),
+  top_p: typing.top_p ?? String(form.top_p),
+  max_tokens: typing.max_tokens ?? String(form.max_tokens),
+}))
 // Declared above `initialize` on purpose: an immediate watcher calls that function synchronously
 // during setup, so a `const` declared further down would still be in its temporal dead zone.
 
@@ -111,14 +120,15 @@ watch(() => props.projectId, initialize, { immediate: true })
 // being typed. `initialize` clears `loaded` first, so the next Project refills the form.
 watchEffect(() => {
   const p = project.value
-  if (p && !loaded.value) { Object.assign(form, projectFormFrom(p)); loaded.value = true }
+  if (p && !loaded.value) { Object.assign(form, projectFormFrom(p)); loaded.value = true; markSaved() }
 })
 
 // Leaving is driven by the server: `project.deleted` (ours or another device's) removes the row.
 watchEffect(() => {
   if (loaded.value && !project.value) {
     if (deleting.value) toast.success('已删除项目，对话已移到随心聊')
-    router.push('/')
+    markSaved()
+    void router.push('/chats')
   }
 })
 
@@ -127,8 +137,9 @@ watchEffect(() => {
   const p = project.value
   if (saving.value && p && p.updated_at !== savedAgainst) {
     saving.value = false
+    markSaved(savedSnapshot)
     toast.success('已保存项目')
-    router.push('/')
+    void router.push(`/project/${p.id}`)
   }
 })
 
@@ -151,6 +162,7 @@ function save() {
   const p = project.value
   if (!p || !form.name.trim() || saving.value || deleting.value) return
   savedAgainst = p.updated_at
+  savedSnapshot = capture()
   saving.value = true
   sync.lastError = null
   // A command that never reaches an open socket is never answered by `project.updated`, and there
@@ -163,8 +175,7 @@ function save() {
 }
 
 function setOverlayOpen(next: boolean) {
-  overlayOpen.value = next
-  if (!next) void router.push('/')
+  if (!next) void router.push(props.projectId === null ? '/projects' : `/project/${props.projectId}`)
 }
 
 function onDelete() {
@@ -231,7 +242,9 @@ function formatTime(ms: number): string {
 
 <template lang="pug">
 ResponsiveOverlay(
-  :open="overlayOpen" :title="project?.name ?? '项目设置'" @update:open="setOverlayOpen")
+  mode="dialog" :open="overlayOpen" :title="project?.name ?? '项目设置'" @update:open="setOverlayOpen")
+  .mb-4.flex.justify-end
+    UnsavedChangesGuard(:dirty="dirty")
   Alert(v-if="loadError" variant="destructive")
     AlertTitle 无法加载项目设置
     AlertDescription

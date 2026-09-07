@@ -52,18 +52,56 @@ declare module 'vue-router/auto-routes' {
       Record<never, never>,
       | never
     >,
+    '/new': RouteRecordInfo<
+      '/new',
+      '/new',
+      Record<never, never>,
+      Record<never, never>,
+      | never
+    >,
+    '/project/[projectId]': RouteRecordInfo<
+      '/project/[projectId]',
+      '/project/:projectId',
+      { projectId: ParamValue<true> },
+      { projectId: ParamValue<false> },
+      | '/project/[projectId]/'
+      | '/project/[projectId]/c/[sessionId]'
+      | '/project/[projectId]/new'
+      | '/project/[projectId]/settings'
+    >,
+    '/project/[projectId]/': RouteRecordInfo<
+      '/project/[projectId]/',
+      '/project/:projectId',
+      { projectId: ParamValue<true> },
+      { projectId: ParamValue<false> },
+      | never
+    >,
+    '/project/[projectId]/c/[sessionId]': RouteRecordInfo<
+      '/project/[projectId]/c/[sessionId]',
+      '/project/:projectId/c/:sessionId',
+      { projectId: ParamValue<true>, sessionId: ParamValue<true> },
+      { projectId: ParamValue<false>, sessionId: ParamValue<false> },
+      | never
+    >,
+    '/project/[projectId]/new': RouteRecordInfo<
+      '/project/[projectId]/new',
+      '/project/:projectId/new',
+      { projectId: ParamValue<true> },
+      { projectId: ParamValue<false> },
+      | never
+    >,
+    '/project/[projectId]/settings': RouteRecordInfo<
+      '/project/[projectId]/settings',
+      '/project/:projectId/settings',
+      { projectId: ParamValue<true> },
+      { projectId: ParamValue<false> },
+      | never
+    >,
     '/projects/': RouteRecordInfo<
       '/projects/',
       '/projects',
       Record<never, never>,
       Record<never, never>,
-      | never
-    >,
-    '/projects/[projectId]': RouteRecordInfo<
-      '/projects/[projectId]',
-      '/projects/:projectId',
-      { projectId: ParamValue<true> },
-      { projectId: ParamValue<false> },
       | never
     >,
     '/settings/': RouteRecordInfo<
@@ -85,13 +123,6 @@ declare module 'vue-router/auto-routes' {
       '/settings/plugins',
       Record<never, never>,
       Record<never, never>,
-      | never
-    >,
-    '/settings/projects/[id]': RouteRecordInfo<
-      '/settings/projects/[id]',
-      '/settings/projects/:id',
-      { id: ParamValue<true> },
-      { id: ParamValue<false> },
       | never
     >,
     '/settings/providers/': RouteRecordInfo<
@@ -145,6 +176,58 @@ declare module 'vue-router/auto-routes' {
       pathParamNames:
         | never
     }
+    'src/client/pages/new.vue': {
+      routes:
+        | '/new'
+      views:
+        | never
+      pathParamNames:
+        | never
+    }
+    'src/client/pages/project/[projectId].vue': {
+      routes:
+        | '/project/[projectId]'
+        | '/project/[projectId]/'
+        | '/project/[projectId]/c/[sessionId]'
+        | '/project/[projectId]/new'
+        | '/project/[projectId]/settings'
+      views:
+        | 'default'
+      pathParamNames:
+        | 'projectId'
+    }
+    'src/client/pages/project/[projectId]/index.vue': {
+      routes:
+        | '/project/[projectId]/'
+      views:
+        | never
+      pathParamNames:
+        | never
+    }
+    'src/client/pages/project/[projectId]/c/[sessionId].vue': {
+      routes:
+        | '/project/[projectId]/c/[sessionId]'
+      views:
+        | never
+      pathParamNames:
+        | 'sessionId'
+    }
+    'src/client/pages/project/[projectId]/new.vue': {
+      routes:
+        | '/project/[projectId]/new'
+      views:
+        | never
+      pathParamNames:
+        | never
+    }
+    'src/client/pages/project/[projectId]/settings.vue': {
+      routes:
+        | '/project/[projectId]/settings'
+      views:
+        | never
+      pathParamNames:
+        | never
+    }
     'src/client/pages/projects/index.vue': {
       routes:
         | '/projects/'
@@ -152,14 +235,6 @@ declare module 'vue-router/auto-routes' {
         | never
       pathParamNames:
         | never
-    }
-    'src/client/pages/projects/[projectId].vue': {
-      routes:
-        | '/projects/[projectId]'
-      views:
-        | never
-      pathParamNames:
-        | 'projectId'
     }
     'src/client/pages/settings/index.vue': {
       routes:
@@ -184,14 +259,6 @@ declare module 'vue-router/auto-routes' {
         | never
       pathParamNames:
         | never
-    }
-    'src/client/pages/settings/projects/[id].vue': {
-      routes:
-        | '/settings/projects/[id]'
-      views:
-        | never
-      pathParamNames:
-        | 'id'
     }
     'src/client/pages/settings/providers/index.vue': {
       routes:

@@ -61,7 +61,7 @@ function regenerate() {
 
 <template lang="pug">
 MessageRoot(:align="message.role === 'user' ? 'end' : 'start'")
-  MessageAvatar(v-if="message.role === 'assistant'")
+  MessageAvatar(v-if="message.role === 'assistant'" class="self-start group-has-data-[slot=message-footer]/message:translate-y-0")
     ProjectAvatar(v-if="project" :name="project.name")
     ProviderAvatar(v-else :name="assistantProviderName ?? assistantName ?? '助手'")
 
@@ -80,8 +80,8 @@ MessageRoot(:align="message.role === 'user' ? 'end' : 'start'")
           .flex.flex-col.gap-2(v-else)
             Textarea(v-model="draft" class="min-w-64")
             .flex.justify-end.gap-2
-              Button(size="sm" variant="secondary" @click="editing = false") 取消
-              Button(size="sm" @click="submitEdit") 发送
+              Button(size="sm" class="min-h-10 md:min-h-7" variant="secondary" @click="editing = false") 取消
+              Button(size="sm" class="min-h-10 md:min-h-7" @click="submitEdit") 发送
         template(v-else)
           //- Expanded while it is the only thing to show, collapsed once the reply starts.
           details.mb-2.rounded.border.px-2.py-1.text-xs.text-muted-foreground(v-if="wait.showReasoning" :open="wait.reasoningOpen")

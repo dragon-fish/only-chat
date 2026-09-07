@@ -9,6 +9,10 @@ export type EnabledModelEntry = {
 
 const normalizeQuery = (query: string) => query.trim().toLocaleLowerCase()
 
+export function sessionPath(session: Pick<Session, 'id' | 'project_id'>): string {
+  return session.project_id === null ? `/c/${session.id}` : `/project/${session.project_id}/c/${session.id}`
+}
+
 /** Builds a stable avatar fallback without depending on the host's default locale. */
 export function displayInitials(name: string, fallback = 'AI'): string {
   const value = name.trim()

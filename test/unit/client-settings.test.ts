@@ -25,8 +25,8 @@ describe('settings navigation and model editing', () => {
   })
   it('only returns through history for chat routes, including their query strings', () => {
     // A settings or external history entry must never be treated as the chat return destination.
-    for (const path of ['/', '/?project=3', '/chats', '/c/12?foo=bar']) expect(isChatHistoryRoute(path)).toBe(true)
-    for (const path of [null, '/settings', '/projects/3', '/c/12/edit', 'https://example.com/c/12']) expect(isChatHistoryRoute(path)).toBe(false)
+    for (const path of ['/new', '/chats', '/projects', '/c/12?foo=bar', '/project/7', '/project/7/new', '/project/7/c/8']) expect(isChatHistoryRoute(path)).toBe(true)
+    for (const path of [null, '/settings', '/projects/3', '/project/7/settings', '/c/12/edit', 'https://example.com/c/12']) expect(isChatHistoryRoute(path)).toBe(false)
   })
 
   it('clears undeclared reasoning efforts without erasing other capability flags', () => {
