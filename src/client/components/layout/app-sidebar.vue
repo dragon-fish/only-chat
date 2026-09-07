@@ -2,6 +2,7 @@
 import { computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import ChatSidebarContent from '@/client/components/layout/chat-sidebar-content.vue'
+import SettingsSidebarContent from '@/client/components/layout/settings-sidebar-content.vue'
 import { routeParamToId } from '@/client/lib/route-params'
 import { useSyncStore } from '@/client/stores/sync'
 import { Sidebar } from '@/client/ui/sidebar'
@@ -9,6 +10,7 @@ import { Sidebar } from '@/client/ui/sidebar'
 const route = useRoute()
 const router = useRouter()
 const sync = useSyncStore()
+const isSettings = computed(() => route.path.startsWith('/settings'))
 
 const activeSessionId = computed(() => routeParamToId(
   'sessionId' in route.params && typeof route.params.sessionId === 'string' ? route.params.sessionId : undefined,
@@ -40,9 +42,10 @@ const projectId = computed<number | undefined>(() => {
   <Sidebar
     collapsible="offcanvas"
     class="h-full"
-    :data-sidebar-context="projectId === undefined ? 'chat' : 'project'"
+    :data-sidebar-context="isSettings ? 'settings' : projectId === undefined ? 'chat' : 'project'"
     :data-connection="sync.status"
   >
-    <ChatSidebarContent :project-id="projectId" />
+    <SettingsSidebarContent v-if="isSettings" />
+    <ChatSidebarContent v-else :project-id="projectId" />
   </Sidebar>
 </template>
