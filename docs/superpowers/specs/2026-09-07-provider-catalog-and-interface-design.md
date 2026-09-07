@@ -73,7 +73,8 @@
 | `name` | 用户可见名称 |
 | `api_key` | AES-GCM 密文；不返回客户端 |
 | `enabled` | 供应商总开关 |
-| `catalog_provider_id` | 可空的 models.dev provider ID |
+| `models_dev_provider_id` | 可空的 models.dev provider ID |
+| `models_dev_provider_source` | `manual` 或 `endpoint`；决定后续保存时是否自动重新匹配 |
 | `default_interface_id` | 默认接口；创建过程可短暂为空 |
 | `credential_version` | Key 变更时递增，用于阻止旧文件指针复用 |
 | `created_at` | 创建时间 |
@@ -233,6 +234,8 @@ R2 原始附件不受 provider 文件清理影响。
 
 推荐 SDK 只用于推断新建供应商的初始接口，不动态加载代码，也不视为该供应商支持的完整接口集合。已知映射可在本地维护；无法映射时要求用户选择格式。
 
+models.dev 永远不是运营商模型可用性的权威来源。只有运营商 `/models` 返回或用户手工添加的模型才进入 D1；catalog 中单独存在的模型不能自动显示、导入、启用或删除运营商模型。
+
 ### 8.2 KV 布局
 
 KV 使用不可变版本分片：
@@ -263,6 +266,22 @@ models-dev:active
 - 设置页显示上次成功时间、当前版本和最近一次错误。
 - 从未成功缓存时，供应商和模型功能仍工作，metadata 使用保守默认值。
 
+### 8.4 供应商关联
+
+`models_dev_provider_id` 有两种来源：
+
+- `manual`：用户从 models.dev Providers 选择供应商。后续修改 endpoint 不自动覆盖该选择；用户可以切回自动识别或清除关联。
+- `endpoint`：保存供应商时由服务端根据接口 Base URL 自动识别。后续每次相关 endpoint 变化都重新计算。
+
+Endpoint 自动识别规则：
+
+1. 仅移除 URL 末尾 `/`，不改写 scheme、host、port、`/v1` 或其他 path。
+2. 将每个接口的规范化 Base URL 与 models.dev `provider.api` 逐字比较。
+3. 所有唯一命中必须指向同一个 provider ID，才保存该 `models_dev_provider_id`。
+4. 无命中时保存 null；不同接口命中不同 provider 时不选择任何一方，并向设置 UI 返回非阻塞提示。
+
+模型 metadata 解析只在已保存的 `models_dev_provider_id` 下查 provider-specific catalog；endpoint 不在每次模型读取时重复匹配。
+
 ## 9. Catalog 匹配与 metadata 合并
 
 ### 9.1 匹配规则
@@ -275,7 +294,7 @@ models-dev:active
 4. 双方都有斜杠但完整 ID 不同，不匹配。
 5. 不转换大小写、点号、连字符、下划线或版本号。
 
-Provider-specific 精确或 basename 匹配用于价格和该网关实际能力。Provider-agnostic 匹配用于模型自身事实与 Lab。匹配结果和种类写入模型解析缓存，方便 UI 解释来源。
+Provider-specific 精确或 basename 匹配只在供应商已保存的 `models_dev_provider_id` 下执行，用于价格和该网关实际能力。Provider-agnostic 匹配用于模型自身事实与 Lab。匹配结果和种类写入模型解析缓存，方便 UI 解释来源。
 
 ### 9.2 合并顺序
 
@@ -333,7 +352,7 @@ Catalog 刷新、模型新增、metadata override 修改或接口调整时重新
 
 ### 11.1 Provider API
 
-Provider DTO 返回共享字段、`has_key`、默认接口和接口列表，绝不返回密文或明文 Key。创建与更新输入允许原子提交供应商字段、接口列表和默认接口。
+Provider DTO 返回共享字段、`has_key`、默认接口、接口列表和 models.dev 关联及其来源，绝不返回密文或明文 Key。创建与更新输入允许原子提交供应商字段、接口列表、默认接口，以及手动关联或自动识别模式。Endpoint 模式的匹配只在服务端执行，客户端不能直接提交推断结果。
 
 服务端验证：
 
@@ -355,7 +374,7 @@ Provider 列表和详情继续使用 AbortSignal/请求序列避免快速切换�
 - `catalog_match`：provider/global ID 和匹配种类。
 - 有效接口摘要。
 
-远端“获取模型列表”只同步模型 ID：存在则保留用户状态，不存在则插入最小模型行并立即从当前 catalog 计算解析缓存。它不把 catalog 字段写入 `metadata_override`。
+远端“获取模型列表”始终以运营商 `/models` 响应为准，只同步其中的模型 ID：存在则保留用户状态，不存在则插入最小模型行并立即从当前 catalog 计算解析缓存。它不从 models.dev catalog 增加模型，也不把 catalog 字段写入 `metadata_override`。用户手工添加的模型不会仅因 `/models` 未返回而自动删除。
 
 ### 11.3 Catalog API
 
@@ -382,7 +401,7 @@ Session 与 Project 行尾操作使用官方 `SidebarMenuAction`，桌面点击�
 ### 12.2 新建供应商
 
 - 默认入口搜索 models.dev Providers。
-- 选中后填写名称、catalog provider ID、已知 API 地址和推荐的初始格式。
+- 选中后填写名称、`models_dev_provider_id`、已知 API 地址和推荐的初始格式，并将关联来源记为 `manual`。
 - 推荐 SDK 不能映射时要求用户选择格式。
 - 用户可继续添加其他支持格式。
 - 保留“自定义供应商”，不要求 catalog 匹配。
@@ -428,7 +447,7 @@ Session 与 Project 行尾操作使用官方 `SidebarMenuAction`，桌面点击�
 2. 旧 `openai-responses` 映射为 `responses`；旧 `openai-completions` 映射为 `chat-completions`。
 3. 旧 `anthropic` 和 `vertex-compatible` 保持对应格式。
 4. 原生 `vertex` 记录不自动猜测转换；本地开发数据必须删除或由用户重新配置。
-5. Provider API Key、名称、启用状态和 catalog preset 映射保留。
+5. Provider API Key、名称和启用状态保留；已知 preset 的 models.dev 关联迁移为 `manual`，其余供应商根据迁移后的 endpoint 计算 `endpoint` 关联。
 6. `display_name !== model_id` 时迁移为 `metadata_override.name`。
 7. 旧 `capabilities` 映射到对应 models.dev 字段；空对象不产生覆写。
 8. 旧 `pricing` 映射为 `metadata_override.cost`；null 不产生覆写。
