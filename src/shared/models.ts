@@ -1,8 +1,13 @@
 import { z } from 'zod'
+import { CatalogMatchesSchema, ModelMetadataSchema, ModelMetadataOverrideSchema } from './model-metadata'
 import { PartsSchema } from './parts'
 
 export const ProtocolSchema = z.enum(['openai-completions', 'openai-responses', 'anthropic', 'vertex', 'vertex-compatible'])
 export type Protocol = z.infer<typeof ProtocolSchema>
+
+/** Protocols available to new provider-interface records. Legacy Protocol remains until the API cutover. */
+export const InterfaceProtocolSchema = z.enum(['responses', 'chat-completions', 'anthropic', 'vertex-compatible'])
+export type InterfaceProtocol = z.infer<typeof InterfaceProtocolSchema>
 
 /** undefined = provider did not report; 0 = reported zero. Never collapse the two. */
 export const UsageSchema = z.object({
@@ -137,6 +142,71 @@ export const ModelSchema = z.object({
   sort: z.number().int(),
 })
 export type Model = z.infer<typeof ModelSchema>
+
+/** New provider interface DTO. Credentials remain solely on the server-side provider record. */
+export const ProviderInterfaceSchema = z.strictObject({
+  id: z.number().int(),
+  provider_id: z.number().int(),
+  protocol: InterfaceProtocolSchema,
+  base_url: z.string().url(),
+  native_files: z.boolean(),
+  created_at: z.number().int(),
+})
+export type ProviderInterface = z.infer<typeof ProviderInterfaceSchema>
+
+/** Additive replacement for the legacy Provider DTO, retained beside it until the vertical cutover. */
+export const ProviderWithInterfacesSchema = z.strictObject({
+  id: z.number().int(),
+  user_id: z.number().int(),
+  name: z.string(),
+  has_key: z.boolean(),
+  enabled: z.boolean(),
+  models_dev_provider_id: z.string().nullable(),
+  models_dev_provider_source: z.enum(['manual', 'endpoint']).nullable(),
+  default_interface_id: z.number().int().nullable(),
+  credential_version: z.number().int(),
+  interfaces: z.array(ProviderInterfaceSchema),
+  created_at: z.number().int(),
+})
+export type ProviderWithInterfaces = z.infer<typeof ProviderWithInterfacesSchema>
+
+/** Additive replacement for the legacy Model DTO, carrying resolved metadata and its override layer. */
+export const ModelWithMetadataSchema = z.strictObject({
+  id: z.number().int(),
+  provider_id: z.number().int(),
+  model_id: z.string(),
+  interface_id: z.number().int().nullable(),
+  metadata: ModelMetadataSchema,
+  metadata_override: ModelMetadataOverrideSchema,
+  catalog_matches: CatalogMatchesSchema,
+  lab_id: z.string().nullable(),
+  enabled: z.boolean(),
+  sort: z.number().int(),
+})
+export type ModelWithMetadata = z.infer<typeof ModelWithMetadataSchema>
+
+/** Filters map directly to indexed model columns; cursor values remain opaque to callers. */
+export const ModelQuerySchema = z.strictObject({
+  provider_id: z.number().int().optional(),
+  enabled: z.boolean().optional(),
+  interface_id: z.number().int().optional(),
+  lab_id: z.string().min(1).optional(),
+  vision: z.boolean().optional(),
+  reasoning: z.boolean().optional(),
+  tools: z.boolean().optional(),
+  image_output: z.boolean().optional(),
+  min_context: z.number().int().nonnegative().optional(),
+  search: z.string().min(1).optional(),
+  cursor: z.string().min(1).optional(),
+  limit: z.number().int().min(1).max(100).default(50),
+})
+export type ModelQuery = z.infer<typeof ModelQuerySchema>
+
+export const ModelPageSchema = z.strictObject({
+  models: z.array(ModelWithMetadataSchema),
+  next_cursor: z.string().nullable(),
+})
+export type ModelPage = z.infer<typeof ModelPageSchema>
 
 export const AttachmentSchema = z.object({
   id: z.number().int(),

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
-  MessageSchema, ModelCapabilitiesSchema, ProjectSchema, ProtocolSchema, ProviderSchema,
+  InterfaceProtocolSchema, MessageSchema, ModelCapabilitiesSchema, ModelPageSchema, ModelQuerySchema,
+  ProjectSchema, ProtocolSchema, ProviderInterfaceSchema, ProviderSchema,
   SessionParamsSchema, UsageSchema, UserSettingsSchema,
 } from '@/shared/models'
 
@@ -36,6 +37,41 @@ describe('models schemas', () => {
 
   it('accepts the vertex-compatible protocol', () => {
     expect(ProtocolSchema.parse('vertex-compatible')).toBe('vertex-compatible')
+  })
+
+  it('defines only the four supported provider interface protocols', () => {
+    expect(InterfaceProtocolSchema.options).toEqual([
+      'responses', 'chat-completions', 'anthropic', 'vertex-compatible',
+    ])
+  })
+
+  it('parses a provider interface without any credential field', () => {
+    expect(ProviderInterfaceSchema.parse({
+      id: 4,
+      provider_id: 2,
+      protocol: 'responses',
+      base_url: 'https://api.example.test/v1',
+      native_files: true,
+      created_at: 0,
+    })).toMatchObject({ id: 4, protocol: 'responses', native_files: true })
+  })
+
+  it('rejects an API key on a provider interface DTO', () => {
+    expect(ProviderInterfaceSchema.safeParse({
+      id: 4,
+      provider_id: 2,
+      protocol: 'responses',
+      base_url: 'https://api.example.test/v1',
+      native_files: true,
+      created_at: 0,
+      api_key: 'leak',
+    }).success).toBe(false)
+  })
+
+  it('parses indexed model query filters and a cursor page', () => {
+    expect(ModelQuerySchema.parse({ vision: true, min_context: 262144, limit: 50 }))
+      .toMatchObject({ vision: true, min_context: 262144, limit: 50 })
+    expect(ModelPageSchema.parse({ models: [], next_cursor: null })).toEqual({ models: [], next_cursor: null })
   })
 
   it('treats explicit null reasoning_effort as Auto, independent of reasoning_enabled', () => {
