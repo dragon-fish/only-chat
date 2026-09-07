@@ -301,6 +301,8 @@ Provider-specific 精确或 basename 匹配用于价格和该网关实际能力�
 - `lab_id`：唯一匹配的 provider-agnostic ID 第一段。
 - `search_name`：有效 name、model ID、Lab 名称组成的搜索文本。
 
+模型 catalog 匹配与 Lab 识别是两条独立链路。模型匹配成功时，provider-agnostic ID 的第一段是 Lab ID；模型未匹配时，如果原始 model ID 的第一段能逐字匹配已知 Lab ID，仍可仅用它确定分组、Lab 名称和图标。精确 Lab 前缀不能触发模型名称、能力、限制或价格 fallback。
+
 Lab 人类可读名称优先取同 ID 的 models.dev provider 名称；没有对应 provider 时将 Lab ID 转为标题格式。图标直接使用 models.dev 的 `/logos/labs/{lab_id}.svg`，加载失败时回退供应商占位头像，不抓取或解析 `/labs/` HTML 页面。
 
 Reasoning UI 直接读取 `reasoning_options`；是否可关闭和可用 effort 不再由手写字段维护。
@@ -401,7 +403,8 @@ Session 与 Project 行尾操作使用官方 `SidebarMenuAction`，桌面点击�
 - Metadata 编辑区显示当前有效值、来源和覆写；每个字段或整组可恢复 models.dev 默认。
 - 多 Lab 网关按 Lab 分组，使用 `https://models.dev/logos/labs/{lab_id}.svg`。
 - 单一 Lab 的官方供应商不显示冗余分组。
-- 无匹配模型进入“其他”，使用供应商占位头像。
+- 模型 catalog 未匹配但具有已知精确 Lab 前缀时，仍进入对应 Lab 分组；此时不显示未经匹配的模型 fallback 数据。
+- Lab 也无法识别的模型进入“其他”，使用供应商占位头像。
 - 模型名称使用有效 `metadata.name`；未提供时显示原始 model ID。
 
 全局模型选择器保留桌面 Popover/手机 Drawer，但搜索和筛选改用新的服务端模型查询。已选择模型的有效 metadata 由 Pinia 缓存，不能因分页而丢失当前选择。
