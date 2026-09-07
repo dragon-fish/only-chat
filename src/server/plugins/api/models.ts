@@ -66,7 +66,7 @@ export function modelRoutes(ctx: Context) {
         const [, rows] = await db.batch([
           providerSourceFence(db, currentProvider, catalog.version),
           db.insert(models).values({
-            ...input, provider_id: provider.id, display_name: input.model_id, capabilities: {}, metadata_override: override,
+            ...input, provider_id: provider.id, metadata_override: override,
             ...resolveModelFields(catalog, currentProvider.models_dev_provider_id, input.model_id, override),
           }).onConflictDoNothing().returning(),
         ])

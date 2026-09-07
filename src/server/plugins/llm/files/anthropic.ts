@@ -2,7 +2,7 @@ import { createAnthropic } from '@ai-sdk/anthropic'
 import { APICallError, type FilesV4 } from '@ai-sdk/provider'
 import { combineHeaders, createJsonResponseHandler, deleteFromApi, type FetchFunction } from '@ai-sdk/provider-utils'
 import { z } from 'zod'
-import { filesOperation, normalizeFilesBaseURL } from './shared'
+import { FilesReferenceError, filesOperation, normalizeFilesBaseURL } from './shared'
 import { PROVIDER_FILE_TTL_SECONDS, type FilesClientSettings, type ScopedFilesClient } from './types'
 
 /** URL parsers collapse even encoded dot segments; double-encode these as the OpenAI SDK does. */
@@ -11,9 +11,7 @@ function encodeFileId(id: string): string {
 }
 
 export function createAnthropicFiles(settings: FilesClientSettings): ScopedFilesClient {
-  const normalized = normalizeFilesBaseURL(settings.baseURL)
-  // Match the Anthropic SDK's official-host normalization for the application-owned DELETE too.
-  const baseURL = normalized === 'https://api.anthropic.com' ? `${normalized}/v1` : normalized
+  const baseURL = normalizeFilesBaseURL(settings.baseURL, 'anthropic')
   const uploadFetch: FetchFunction = (input, init) => {
     if (init?.method !== 'POST' || String(input) !== `${baseURL}/files` || !(init.body instanceof FormData)) {
       throw new Error('Unexpected Anthropic Files upload request')
@@ -28,7 +26,7 @@ export function createAnthropicFiles(settings: FilesClientSettings): ScopedFiles
     uploadFile: options => filesOperation('upload', baseURL, () => sdk.uploadFile(options)),
     deleteFile: options => filesOperation('delete', baseURL, async () => {
       const id = options.file.anthropic
-      if (typeof id !== 'string' || id.trim() === '') throw new Error('Missing Anthropic file reference')
+      if (typeof id !== 'string' || id.trim() === '') throw new FilesReferenceError()
       const { value } = await deleteFromApi({
         url: `${baseURL}/files/${encodeFileId(id)}`,
         headers: combineHeaders({

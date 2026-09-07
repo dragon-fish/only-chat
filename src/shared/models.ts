@@ -2,10 +2,7 @@ import { z } from 'zod'
 import { CatalogMatchesSchema, ModelMetadataSchema, ModelMetadataOverrideSchema } from './model-metadata'
 import { PartsSchema } from './parts'
 
-export const ProtocolSchema = z.enum(['openai-completions', 'openai-responses', 'anthropic', 'vertex', 'vertex-compatible'])
-export type Protocol = z.infer<typeof ProtocolSchema>
-
-/** Supported provider interfaces. Legacy Protocol remains only for the pending runtime adapter cutover. */
+/** Supported provider interfaces. */
 export const InterfaceProtocolSchema = z.enum(['responses', 'chat-completions', 'anthropic', 'vertex-compatible'])
 export type InterfaceProtocol = z.infer<typeof InterfaceProtocolSchema>
 
@@ -37,24 +34,6 @@ export const SessionParamsSchema = z.object({
   reasoning_effort: ReasoningEffortSchema.nullable().optional(),
 })
 export type SessionParams = z.infer<typeof SessionParamsSchema>
-
-export const ModelCapabilitiesSchema = z.object({
-  vision: z.boolean().optional(),
-  reasoning: z.boolean().optional(),
-  tools: z.boolean().optional(),
-  image_output: z.boolean().optional(),
-  /** Whether the model accepts an explicit "off" reasoning state. */
-  reasoning_can_disable: z.boolean().optional(),
-  reasoning_efforts: z.array(ReasoningEffortSchema).optional(),
-})
-export type ModelCapabilities = z.infer<typeof ModelCapabilitiesSchema>
-
-export const ModelPricingSchema = z.object({
-  input: z.number().optional(),
-  output: z.number().optional(),
-  cached: z.number().optional(),
-})
-export type ModelPricing = z.infer<typeof ModelPricingSchema>
 
 export const UserSettingsSchema = z.object({
   plugins: z.record(z.string(), z.boolean()).default({}),

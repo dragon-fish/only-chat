@@ -45,8 +45,8 @@ function pauseStaging() {
 
 async function seedLeasedModel() {
   const ctx = await createApp({ env, side: 'worker' })
-  const [provider] = await ctx.db.orm.insert(providers).values({ user_id: 1, name: 'lease', protocol: 'openai-responses', base_url: 'https://acme.test/v1', models_dev_provider_id: 'acme', models_dev_provider_source: 'manual', created_at: 0 }).returning()
-  const [model] = await ctx.db.orm.insert(models).values({ provider_id: provider!.id, model_id: 'acme/model', display_name: 'lease', capabilities: {} }).returning()
+  const [provider] = await ctx.db.orm.insert(providers).values({ user_id: 1, name: 'lease', models_dev_provider_id: 'acme', models_dev_provider_source: 'manual', created_at: 0 }).returning()
+  const [model] = await ctx.db.orm.insert(models).values({ provider_id: provider!.id, model_id: 'acme/model' }).returning()
   return { ctx, model: model! }
 }
 
@@ -254,10 +254,10 @@ describe('model catalog', () => {
 
   it('materializes only stored models, respecting overrides and enabled state', async () => {
     const ctx = await createApp({ env, side: 'worker' })
-    const [provider] = await ctx.db.orm.insert(providers).values({ user_id: 1, name: 'catalog-test', protocol: 'openai-responses', base_url: 'https://acme.test/v1', created_at: 0 }).returning()
+    const [provider] = await ctx.db.orm.insert(providers).values({ user_id: 1, name: 'catalog-test', created_at: 0 }).returning()
     const [endpoint] = await ctx.db.orm.insert(providerInterfaces).values({ provider_id: provider!.id, protocol: 'responses', base_url: 'https://acme.test/v1', created_at: 0 }).returning()
     await ctx.db.orm.update(providers).set({ default_interface_id: endpoint!.id }).where(eq(providers.id, provider!.id))
-    await ctx.db.orm.insert(models).values({ provider_id: provider!.id, model_id: 'acme/model', display_name: 'legacy', capabilities: {}, metadata_override: { name: 'My name', reasoning: false }, enabled: false })
+    await ctx.db.orm.insert(models).values({ provider_id: provider!.id, model_id: 'acme/model', metadata_override: { name: 'My name', reasoning: false }, enabled: false })
     serve()
     await ctx.modelCatalog.refresh('manual')
     const rows = await ctx.db.orm.select().from(models).where(eq(models.provider_id, provider!.id))
@@ -281,8 +281,8 @@ describe('model catalog', () => {
     const ctx = await createApp({ env, side: 'worker' })
     serve()
     const first = await ctx.modelCatalog.refresh('manual')
-    const [provider] = await ctx.db.orm.insert(providers).values({ user_id: 1, name: 'fail', protocol: 'openai-responses', base_url: 'https://acme.test/v1', created_at: 0 }).returning()
-    await ctx.db.orm.insert(models).values({ provider_id: provider!.id, model_id: 'acme/model', display_name: 'unchanged', capabilities: {} })
+    const [provider] = await ctx.db.orm.insert(providers).values({ user_id: 1, name: 'fail', created_at: 0 }).returning()
+    await ctx.db.orm.insert(models).values({ provider_id: provider!.id, model_id: 'acme/model' })
     await env.DB.exec("CREATE TRIGGER fail_catalog_materialize BEFORE UPDATE OF metadata_resolved ON models BEGIN SELECT RAISE(ABORT, 'materialization failed'); END")
     serve(catalog('Changed'))
     try {

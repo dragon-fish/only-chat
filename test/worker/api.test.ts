@@ -1,8 +1,8 @@
 import { env, exports } from 'cloudflare:workers'
 import { eq } from 'drizzle-orm'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createDb } from '@/server/db/client'
-import { attachmentProviderFiles, attachments } from '@/server/db/schema'
+import { attachmentProviderFiles, attachments, providers } from '@/server/db/schema'
 import { createProject } from '@/server/plugins/hub/projects'
 import { DEFAULT_USER_ID } from '@/shared/constants'
 import { ProviderWithInterfacesSchema } from '@/shared/models'
@@ -12,6 +12,72 @@ import { createApp } from '@/server/app'
 
 const json = (method: string, path: string, body?: unknown) =>
   exports.default.fetch(new Request(`https://x${path}`, { method, headers: { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) }))
+
+describe('provider file cleanup before configuration changes', () => {
+  afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
+
+  it.each(['key', 'clear-key', 'endpoint', 'interface', 'provider'] as const)('attempts old-scope deletes before a %s change and commits despite remote auth failure', async change => {
+    const { ctx, request, createProvider } = await catalogApp()
+    const inputs = [
+      { protocol: 'responses' as const, base_url: 'https://gateway.test/v1', native_files: true },
+      { protocol: 'anthropic' as const, base_url: 'https://gateway.test/messages', native_files: true },
+    ]
+    const provider = await createProvider({ api_key: 'original-key', interfaces: inputs })
+    const [attachment] = await ctx.db.orm.insert(attachments).values({ user_id: 1, sha256: crypto.randomUUID(), mime: 'text/plain', size: 1, r2_key: crypto.randomUUID(), origin: 'upload', created_at: 0 }).returning()
+    for (const [family, base_url] of [['openai', 'https://gateway.test/v1'], ['anthropic', 'https://gateway.test/messages']] as const) {
+      await ctx.db.orm.insert(attachmentProviderFiles).values({
+        attachment_id: attachment!.id, provider_id: provider.id, credential_version: 1, file_family: family, base_url,
+        provider_reference: { [family]: 'file-live' }, expires_at: Date.now() + 86_400_000, cleanup_after: Date.now() + 86_400_000, created_at: 0,
+      })
+    }
+    const visited: string[] = []
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+      const remote = new Request(input, init)
+      expect(remote.method).toBe('DELETE')
+      expect(remote.headers.get('authorization') ?? remote.headers.get('x-api-key')).toMatch(/original-key/)
+      const stored = await ctx.db.orm.query.providers.findFirst({ where: eq(providers.id, provider.id) })
+      expect(await decryptSecret(env.KEY_ENCRYPTION_SECRET, stored!.api_key!)).toBe('original-key')
+      expect(await env.DB.prepare('SELECT base_url FROM provider_interfaces WHERE id = ?').bind(provider.interfaces[0]!.id).first('base_url')).toBe('https://gateway.test/v1')
+      visited.push(remote.url)
+      return Response.json({ error: { message: 'Bearer original-key private-body', type: 'error' } }, { status: 401 })
+    })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const response = change === 'provider'
+      ? await request('DELETE', `/providers/${provider.id}`)
+      : await request('PUT', `/providers/${provider.id}`, {
+        name: 'Changed', default_protocol: change === 'interface' ? 'anthropic' : 'responses',
+        interfaces: change === 'interface' ? inputs.slice(1) : change === 'endpoint' ? [{ ...inputs[0], base_url: 'https://new.test/v1' }, inputs[1]] : inputs,
+        ...(change === 'key' ? { api_key: 'new-key' } : change === 'clear-key' ? { api_key: '' } : {}),
+      })
+    expect(response.status).toBe(change === 'provider' ? 204 : 200)
+    expect(visited).toHaveLength(['endpoint', 'interface'].includes(change) ? 1 : 2)
+    const remaining = await ctx.db.orm.select().from(attachmentProviderFiles).where(eq(attachmentProviderFiles.provider_id, provider.id))
+    expect(remaining.map(row => row.file_family)).toEqual(['endpoint', 'interface'].includes(change) ? ['anthropic'] : [])
+    const stored = await ctx.db.orm.query.providers.findFirst({ where: eq(providers.id, provider.id) })
+    if (change === 'key') {
+      expect(stored!.credential_version).toBe(2)
+      expect(await decryptSecret(env.KEY_ENCRYPTION_SECRET, stored!.api_key!)).toBe('new-key')
+    } else if (change === 'clear-key') expect(stored!.api_key).toBeNull()
+    else if (change === 'provider') expect(stored).toBeUndefined()
+    expect(warn).toHaveBeenCalled()
+    expect(JSON.stringify(warn.mock.calls)).not.toMatch(/original-key|private-body/)
+  })
+
+  it('retains the shared OpenAI scope when one interface is removed and the key stays unchanged', async () => {
+    const { ctx, request, createProvider } = await catalogApp()
+    const provider = await createProvider({ api_key: 'original-key', interfaces: [
+      { protocol: 'responses', base_url: 'https://gateway.test/v1/', native_files: true },
+      { protocol: 'chat-completions', base_url: 'https://gateway.test/v1', native_files: true },
+    ] })
+    const [attachment] = await ctx.db.orm.insert(attachments).values({ user_id: 1, sha256: crypto.randomUUID(), mime: 'text/plain', size: 1, r2_key: crypto.randomUUID(), origin: 'upload', created_at: 0 }).returning()
+    await ctx.db.orm.insert(attachmentProviderFiles).values({ attachment_id: attachment!.id, provider_id: provider.id, credential_version: 1, file_family: 'openai', base_url: 'https://gateway.test/v1', provider_reference: { openai: 'file-shared' }, expires_at: Date.now() + 86_400_000, cleanup_after: Date.now() + 86_400_000, created_at: 0 })
+    const remote = vi.fn()
+    vi.stubGlobal('fetch', remote)
+    expect((await request('PUT', `/providers/${provider.id}`, { name: 'Shared', api_key: 'original-key', default_protocol: 'chat-completions', interfaces: [{ protocol: 'chat-completions', base_url: 'https://gateway.test/v1', native_files: true }] })).status).toBe(200)
+    expect(remote).not.toHaveBeenCalled()
+    expect(await ctx.db.orm.select().from(attachmentProviderFiles).where(eq(attachmentProviderFiles.provider_id, provider.id))).toHaveLength(1)
+  })
+})
 
 describe('atomic provider interface API', () => {
   it.each(['stale-key', '', undefined])('retains the original credential guard across source retries (api_key=%s)', async api_key => {
@@ -282,7 +348,7 @@ describe('REST api', () => {
     expect(back.interfaces[0]?.native_files).toBe(false)
   })
 
-  it('retains historical file references for cleanup and versions new credentials', async () => {
+  it('retains file references on rename and invalidates them when credentials change', async () => {
     const db = createDb(env.DB)
     const input = { name: 'FP', interfaces: [{ protocol: 'responses', base_url: 'https://api.openai.com/v1' }], default_protocol: 'responses' }
     const created = await json('POST', '/api/providers', { ...input, api_key: 'sk-one' })
@@ -294,7 +360,8 @@ describe('REST api', () => {
 
     const seed = async () => {
       await db.insert(attachmentProviderFiles).values({
-        attachment_id: a!.id, provider_id: p.id, provider_reference: { file_id: 'file-1' }, expires_at: 1, created_at: 0,
+        attachment_id: a!.id, provider_id: p.id, file_family: 'openai', base_url: 'https://api.openai.com/v1',
+        provider_reference: { file_id: 'unusable-reference' }, expires_at: 1, created_at: 0,
       }).onConflictDoNothing()
     }
     const pointers = async () => (await db.select().from(attachmentProviderFiles).where(eq(attachmentProviderFiles.provider_id, p.id))).length
@@ -304,6 +371,6 @@ describe('REST api', () => {
     expect(await pointers()).toBe(1)
     const changed = ProviderWithInterfacesSchema.parse(await (await json('PUT', `/api/providers/${p.id}`, { ...input, api_key: 'sk-two' })).json())
     expect(changed.credential_version).toBe(2)
-    expect(await pointers()).toBe(1)
+    expect(await pointers()).toBe(0)
   })
 })

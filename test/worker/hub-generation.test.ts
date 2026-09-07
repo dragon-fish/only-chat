@@ -58,13 +58,12 @@ async function seedProvider(name = 'mock', modelId = 'mock-1', nativeFiles = fal
   const db = createDb(env.DB)
   await ensureDefaultUser(db)
   const [p] = await db.insert(providers).values({
-    user_id: DEFAULT_USER_ID, name, protocol: 'mock' as never, base_url: 'https://mock',
-    api_key: await encryptSecret(env.KEY_ENCRYPTION_SECRET, 'k'), extra: null, enabled: true,
-    native_files: nativeFiles, created_at: 0,
+    user_id: DEFAULT_USER_ID, name,
+    api_key: await encryptSecret(env.KEY_ENCRYPTION_SECRET, 'k'), enabled: true, created_at: 0,
   }).returning()
   const [selected] = await db.insert(providerInterfaces).values({ provider_id: p!.id, protocol: 'responses', base_url: 'https://mock.example/responses-api', native_files: nativeFiles, created_at: 0 }).returning()
   await db.update(providers).set({ default_interface_id: selected!.id }).where(eq(providers.id, p!.id))
-  await db.insert(models).values({ provider_id: p!.id, model_id: modelId, display_name: 'Mock', capabilities: {}, metadata_resolved: metadata, pricing: null, enabled: true, sort: 0 })
+  await db.insert(models).values({ provider_id: p!.id, model_id: modelId, metadata_resolved: metadata, enabled: true, sort: 0 })
   return p!.id
 }
 
@@ -662,7 +661,7 @@ describe('provider file transport', () => {
     const providerId = await seedProvider('shared-files', 'responses-model', true)
     const db = createDb(env.DB)
     const [chat] = await db.insert(providerInterfaces).values({ provider_id: providerId, protocol: 'chat-completions', base_url: 'https://mock.example/responses-api/', native_files: true, created_at: 0 }).returning()
-    await db.insert(models).values({ provider_id: providerId, model_id: 'chat-model', display_name: 'Chat', interface_id: chat!.id, capabilities: {}, enabled: true })
+    await db.insert(models).values({ provider_id: providerId, model_id: 'chat-model', interface_id: chat!.id, enabled: true })
     const attachmentId = await seedAttachment()
     const uploads: Upload[] = []
     const files = recordingFiles(uploads)

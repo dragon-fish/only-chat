@@ -3,7 +3,7 @@ import { check, index, integer, sqliteTable, text, uniqueIndex, type AnySQLiteCo
 import type { CatalogMatches, ModelMetadata, ModelMetadataOverride } from '@/shared/model-metadata'
 import type { Part } from '@/shared/parts'
 import type {
-  InterfaceProtocol, ModelCapabilities, ModelPricing, PersistedStatus, Protocol, SessionParams, Usage, UserSettings,
+  InterfaceProtocol, PersistedStatus, SessionParams, Usage, UserSettings,
 } from '@/shared/models'
 
 export const users = sqliteTable('users', {
@@ -27,14 +27,9 @@ export const providers = sqliteTable('providers', {
   id: integer().primaryKey({ autoIncrement: true }),
   user_id: integer().notNull().references(() => users.id, { onDelete: 'cascade' }),
   name: text().notNull(),
-  protocol: text().$type<Protocol>().notNull(),
-  base_url: text().notNull(),
   /** AES-GCM ciphertext, base64 "iv.ct"; null when no key stored. */
   api_key: text(),
-  extra: text({ mode: 'json' }).$type<Record<string, unknown>>(),
   enabled: integer({ mode: 'boolean' }).notNull().default(true),
-  /** Supports this provider's native Files API with upload-time expiry. Custom providers default false. */
-  native_files: integer({ mode: 'boolean' }).notNull().default(false),
   default_interface_id: integer().references((): AnySQLiteColumn => providerInterfaces.id, { onDelete: 'set null' }),
   credential_version: integer().notNull().default(1),
   models_dev_provider_id: text(),
@@ -59,9 +54,6 @@ export const models = sqliteTable('models', {
   id: integer().primaryKey({ autoIncrement: true }),
   provider_id: integer().notNull().references(() => providers.id, { onDelete: 'cascade' }),
   model_id: text().notNull(),
-  display_name: text().notNull(),
-  capabilities: text({ mode: 'json' }).$type<ModelCapabilities>().notNull(),
-  pricing: text({ mode: 'json' }).$type<ModelPricing>(),
   // Check after the statement so deleting a provider can cascade through both models and interfaces.
   interface_id: integer().references(() => providerInterfaces.id, { onDelete: 'no action' }),
   metadata_override: text({ mode: 'json' }).$type<ModelMetadataOverride>().notNull().default({}),
@@ -152,15 +144,15 @@ export const attachments = sqliteTable('attachments', {
 
 /**
  * One upload per row, including expired pointers awaiting cleanup. Never overwrite historical
- * references. A null family identifies legacy pointers that allow local cleanup only.
+ * references or keep upload credentials on a pointer.
  */
 export const attachmentProviderFiles = sqliteTable('attachment_provider_files', {
   id: integer().primaryKey({ autoIncrement: true }),
   attachment_id: integer().notNull().references(() => attachments.id, { onDelete: 'cascade' }),
   provider_id: integer().notNull().references(() => providers.id, { onDelete: 'cascade' }),
   credential_version: integer().notNull().default(1),
-  file_family: text().$type<'openai' | 'anthropic'>(),
-  base_url: text(),
+  file_family: text().$type<'openai' | 'anthropic'>().notNull(),
+  base_url: text().notNull(),
   provider_reference: text({ mode: 'json' }).$type<Record<string, string>>().notNull(),
   expires_at: integer().notNull(),
   cleanup_after: integer().notNull().default(0),
@@ -170,7 +162,8 @@ export const attachmentProviderFiles = sqliteTable('attachment_provider_files', 
 }, (t) => [
   index('attachment_provider_files_reuse_idx').on(t.attachment_id, t.provider_id, t.credential_version, t.file_family, t.base_url, t.expires_at),
   index('attachment_provider_files_cleanup_idx').on(t.cleanup_after, t.expires_at),
-  index('attachment_provider_files_expiry_idx').on(t.expires_at),
+  index('attachment_provider_files_provider_idx').on(t.provider_id, t.id),
+  check('attachment_provider_files_family_check', sql`${t.file_family} IN ('openai', 'anthropic')`),
 ])
 
 export type UserRow = typeof users.$inferSelect

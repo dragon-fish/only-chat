@@ -1,6 +1,6 @@
 import { createOpenAI } from '@ai-sdk/openai'
 import type { FilesV4 } from '@ai-sdk/provider'
-import { filesOperation, normalizeFilesBaseURL } from './shared'
+import { FilesReferenceError, filesOperation, normalizeFilesBaseURL } from './shared'
 import { PROVIDER_FILE_TTL_SECONDS, type FilesClientSettings, type ScopedFilesClient } from './types'
 
 export function createOpenAIFiles(settings: FilesClientSettings): ScopedFilesClient {
@@ -15,7 +15,10 @@ export function createOpenAIFiles(settings: FilesClientSettings): ScopedFilesCli
         purpose: 'user_data', ...options.providerOptions?.openai, expiresAfter: PROVIDER_FILE_TTL_SECONDS,
       } },
     })),
-    ...(sdk.deleteFile && { deleteFile: options => filesOperation('delete', baseURL, () => sdk.deleteFile!(options)) }),
+    ...(sdk.deleteFile && { deleteFile: options => filesOperation('delete', baseURL, () => {
+      if (typeof options.file.openai !== 'string' || !options.file.openai.trim()) throw new FilesReferenceError()
+      return sdk.deleteFile!(options)
+    }) }),
     ...(sdk.getFileMetadata && { getFileMetadata: options => filesOperation('metadata lookup', baseURL, () => sdk.getFileMetadata!(options)) }),
     ...(sdk.downloadFile && { downloadFile: options => filesOperation('download', baseURL, () => sdk.downloadFile!(options)) }),
   }

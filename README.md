@@ -2,8 +2,9 @@
 
 Personal AI chat on Cloudflare Workers. Every device sees the same sessions and live streams.
 
-- Five provider protocols: `openai-completions`, `openai-responses`, `anthropic`, `vertex`,
-  `vertex-compatible`. A provider is a protocol plus an endpoint and a key.
+- Four interface formats: `chat-completions`, `responses`, `anthropic`, `vertex-compatible`.
+  Each provider shares one API key across its interfaces and selects one default; models can select
+  another interface belonging to the same provider.
 - **Projects**: an optional container carrying a prompt, a default model and default params. Nothing
   is copied into a chat — the effective configuration is recomputed from the latest Project state at
   the start of every generation, and each field can be overridden per chat.
@@ -21,8 +22,8 @@ Personal AI chat on Cloudflare Workers. Every device sees the same sessions and 
     pnpm db:migrate:local
     pnpm dev                          # http://localhost:5173
 
-Then open `/settings/providers`, add a provider (from a preset or blank), paste a base URL and
-API key, add a model, and start a chat.
+Then open `/settings/providers`, choose a catalog provider or a custom provider, configure its
+interfaces and shared API key, add a model, and start a chat.
 
     pnpm typecheck                    # vue-tsc + both tsc projects
     pnpm test                         # vitest (unit + worker pool)
@@ -46,91 +47,77 @@ the model never receives a link back to this deployment.
 
 ## Upgrading an existing deployment
 
-**Migrate first, deploy second. Always.**
+Apply migrations and deploy the matching Worker as one coordinated upgrade:
 
     pnpm db:migrate:remote            # 1. schema
     pnpm deploy                       # 2. code
 
-Drizzle names every column it reads — there is no `SELECT *` anywhere in `src/server` — so a new
-Worker talking to an unmigrated database does not degrade, it fails outright: every `/api/*` call
-and every WebSocket command answers `no such column: project_id`. That is a full outage until the
-migration runs. Migrating first is safe; the schema simply carries columns the running Worker does
-not ask for yet.
+`0002_provider-catalog.sql` creates provider interfaces and model metadata. `0003_provider-files-cleanup.sql`
+removes the old provider protocol/address fields and model display-name/capability/pricing fields,
+and requires each file pointer to have a file family and endpoint. Back up D1 and pause access during
+this upgrade: the previous Worker cannot run against the final schema, and a Worker-only rollback
+across this migration boundary is unsupported.
 
-This release's migration (`migrations/0001_projects-media.sql`) adds the `projects` and
-`attachment_provider_files` tables plus two columns:
-
-- `sessions.project_id` — nullable with no default, so every existing chat lands `project_id = NULL`
-  and simply belongs to no Project.
-- `providers.native_files` — `NOT NULL DEFAULT false`, so every existing provider keeps inlining
-  image bytes until it is turned on by hand.
-
-Neither column is read by the previous Worker, and neither has to be written by it, so **a
-Worker-only rollback is safe**: an old Worker against the new schema ignores the extra columns, and
-its inserts still satisfy the schema because both columns are nullable or defaulted. The migration
-itself is not designed to be rolled back — leave the schema forward.
+Provider credentials, model overrides and scoped upload history are preserved. Native Vertex
+providers remain disabled with no interface; their model data is retained for explicit
+reconfiguration. Legacy pointers without an addressable scope are removed locally. R2 originals
+are unchanged.
 
 Locally the same ordering applies: run `pnpm db:migrate:local` before `pnpm dev` after a pull.
 
 ## Providers
 
-### Google: two separate protocols
+### Interfaces and Vertex-compatible gateways
 
-`vertex` — **real Google Vertex AI**. Authenticates with a service-account JSON, pasted whole into
-the API Key field, plus a Project and a Location under Extra:
+A provider owns its name, shared API key and enabled state. Each configured format owns its Base URL
+and Files setting. Models follow the provider default unless they explicitly select another owned
+interface. API addresses and keys cannot be overridden on an individual model.
 
-    服务账号 JSON   {"client_email": "...", "private_key": "-----BEGIN PRIVATE KEY-----\n...", "private_key_id": "..."}
-    Project        my-gcp-project
-    Location       us-central1  (or global)
-
-Project and Location appear on the edit page only for this protocol and are stored in the
-provider's `extra`. The Base URL field is still filled in, but the `vertex` protocol ignores it —
-the SDK derives the endpoint from Project and Location.
-
-`vertex-compatible` — **a Vertex-shaped gateway that is not Google**. Takes an ordinary Base URL and
+`vertex-compatible` takes an ordinary Base URL and
 a plain API key sent as `Authorization: Bearer <key>`; Google's own `x-goog-api-key` header is
 stripped. Requests are addressed as `{base_url}/v1/publishers/{publisher}/models/{model}`, so model
 ids are entered as **`{publisher}/{model}`** (for example `google/gemini-3-pro-preview`). Only the
 first slash separates the two halves, so a model name containing slashes survives intact.
 
-Neither Google protocol can import models remotely. A Vertex-style gateway keeps its catalogue on a
-different base than the one generation uses, and guessing at it would be wrong, so **"从 /models
-拉取" is disabled for both and model ids are entered by hand**.
+Remote model import is disabled when the default interface is Vertex-compatible. Native Google
+Vertex service-account authentication, Project and Location configuration are unsupported.
 
-### Model capabilities are declared, never inferred
+### Model metadata
 
-`vision`, `reasoning`, `tools`, `reasoning_can_disable`, `reasoning_efforts` and `image_output` are
-set in each model's editor, opened from its settings button in the provider detail. The editor is a
-right-side Sheet on desktop and a bottom Drawer on mobile. Nothing is guessed from a model id.
+models.dev supplies fallback names, capabilities, reasoning options, limits and prices. Per-model
+metadata overrides take precedence, including explicit false, zero and nullable values. Catalog
+refreshes never add models: remote `/models` results and manual entries determine membership.
 
-- `reasoning` gates the whole reasoning control. `reasoning_can_disable` decides whether an explicit
-  "off" is ever sent — a model that cannot be turned off simply receives no reasoning field.
-- `reasoning_efforts` is a **restriction, not a menu**: an empty or absent list means *undeclared*,
-  which is unrestricted, and every strength stays selectable. Declare levels only to narrow them.
-- `image_output` is what asks a Gemini model for the image modality.
+`reasoning_options` controls available effort levels and whether explicit reasoning disablement is
+supported. `modalities` describes image input and output; `tool_call` describes tool support.
+Reasoning settings affect the current request only. Returned reasoning and its provider metadata
+are stored and replayed regardless of the toggle or capability metadata.
 
 Reasoning strength itself is three-state everywhere: absent means *inherit* from the Project,
 `null` means *explicit Auto* (reasoning on, no effort sent), and a string is an explicit strength.
 
-### `native_files`: provider file pointers
+### `native_files`: scoped uploads and remote cleanup
 
-Off for a blank provider; only the OpenAI preset, which is known to implement one, ships with it on.
-Turn it on **only for an endpoint that really implements a Files API with upload-time expiry** — an
-OpenAI-compatible gateway that does not implement `/files` will fail the turn with the auth,
-rate-limit or server error it got, rather than quietly falling back to inline bytes. With it off,
-image bytes are inlined into every request, which is correct but re-sends the same image on every
-turn of a long chat.
+Files is configured per interface and defaults off. Enable it for endpoints that implement the
+corresponding Files API. Responses and Chat Completions use OpenAI Files; Anthropic uses Anthropic
+Files. Vertex-compatible interfaces have no Files API. Without native Files, attachment transport
+uses supported URLs or inline bytes.
 
 With it on:
 
-- Each image is uploaded once per provider and the pointer is stored keyed by
-  `(attachment_id, provider_id)` — no session and no model. Switching a chat A → B → A reuses A's
-  original pointer instead of minting a second one.
+- Upload reuse is scoped to the attachment, provider, credential version, Files family and normalized
+  Base URL. Responses and Chat Completions share pointers when they use the same file endpoint.
+  Each upload creates a new row; expired historical references remain available for remote cleanup.
 - Uploads ask for a **seven-day** expiry. If the provider reports its own `expires_at`, that value is
   what gets stored; otherwise the local pointer dies on the deadline the upload asked for.
-- A **daily cron** (`0 3 * * *`) deletes lapsed pointer rows from D1 and nothing else. It never calls
-  a provider DELETE — the remote copy expires on its own — and never touches R2. A failed run is safe
-  to retry, because generation already refuses an expired pointer whether or not the sweep ran.
+- The daily cron (`0 3 * * *`) independently refreshes the catalog and deletes expired remote files.
+  Cleanup reads indexed due pointers in pages, with bounded concurrency and a per-run limit.
+  Success and HTTP 404/410 remove the pointer. Network errors, HTTP 401/403/429 and server errors
+  defer it by a day; unrecoverable references are logged without sensitive data and removed locally.
+- Provider deletion, interface removal, key replacement and endpoint changes attempt affected
+  remote deletes before changing the configuration. The operation proceeds despite remote failure;
+  invalidated pointers are removed and old credentials are never retained for retries.
+- Expired pointers never participate in generation. Cleanup never deletes R2 originals.
 
 ## Images
 
@@ -154,15 +141,13 @@ orphan row, no half-written R2 object and no file content anywhere.
 Design notes: `docs/superpowers/specs/2026-09-05-only-chat-mvp-design.md` and
 `docs/superpowers/specs/2026-09-06-projects-ui-reasoning-design.md`.
 `docs/superpowers/specs/2026-09-06-unified-ui-redesign.md` supersedes their UI layout decisions.
+`docs/superpowers/specs/2026-09-07-provider-catalog-and-interface-design.md` defines provider
+interfaces, catalog metadata, reasoning and file lifecycle behavior.
 
 ## Known gaps
 
-- **Real Vertex is untested.** Both Google protocols are wired and covered by tests that build the
-  model, but no live Google call has been made from this deployment.
 - **No authentication.** `user_id` is hard-coded to `1`. Cloudflare Access is the intended gate and
   is already configured in front of `chat.epb.wiki`.
-- **The Vertex OAuth token is not cached.** Each generation re-signs the service-account JWT and
-  exchanges it for an access token.
 - **Feature plugins: mechanism reserved, not wired up.** Settings carry a per-user plugin toggle
   map and there's a toggle UI for it, but the DO does not yet load or dispose feature plugins from
   that map, and no feature plugin ships yet, so the page is empty.

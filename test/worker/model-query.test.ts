@@ -246,8 +246,8 @@ describe('catalog-backed model membership and queries', () => {
     const { createProvider } = await catalogApp()
     const provider = await createProvider()
     await env.DB.prepare(`WITH RECURSIVE ids(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM ids WHERE n < 2000)
-      INSERT INTO models (provider_id, model_id, display_name, capabilities, enabled, supports_image_input, search_name)
-      SELECT ?, 'scale-' || n, 'Scale ' || n, '{}', 1, n % ? = 0, 'scale model ' || n FROM ids`).bind(provider.id, interval).run()
+      INSERT INTO models (provider_id, model_id, enabled, supports_image_input, search_name)
+      SELECT ?, 'scale-' || n, 1, n % ? = 0, 'scale model ' || n FROM ids`).bind(provider.id, interval).run()
     let cursor: string | undefined
     for (const pageNumber of [1, 2]) {
       const query = buildModelQuery({ provider_id: provider.id, enabled: true, vision: true, limit, cursor })

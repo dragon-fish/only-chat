@@ -7,6 +7,7 @@ import { ProviderWriteInputSchema } from '@/shared/api'
 import { models, providerInterfaces, providers } from '../../db/schema'
 import { decryptSecret } from '../llm/crypto'
 import { listRemoteModels } from '../llm/list-models'
+import { cleanupProviderFilesBeforeChange, invalidatedProviderFiles } from '../files-cleanup'
 import { parseId } from './params'
 import { ProviderWriteError, toProviderDto, writeProvider } from './provider-write'
 import { catalogForModels, materializationUpdates, ModelSourceConflict, modelSourceColumns, providerSourceFence, resolveModelFields, retryModelSource } from './model-write'
@@ -42,6 +43,11 @@ export function providerRoutes(ctx: Context) {
   r.delete('/providers/:id', async c => {
     const id = parseId(c.req.param('id'))
     if (id === null) return c.json({ error: 'not found' }, 404)
+    const provider = await db.query.providers.findFirst({ where: owned(id) })
+    if (provider) {
+      const interfaces = await db.select().from(providerInterfaces).where(eq(providerInterfaces.provider_id, id))
+      await cleanupProviderFilesBeforeChange(ctx, provider, interfaces, invalidatedProviderFiles(provider))
+    }
     await db.delete(providers).where(owned(id))
     return c.body(null, 204)
   })
@@ -69,7 +75,7 @@ export function providerRoutes(ctx: Context) {
         const missing = ids.filter(modelId => !existingIds.has(modelId))
         for (const model_id of missing) {
           operations.push(db.insert(models).values({
-            provider_id: id, model_id, display_name: model_id, capabilities: {},
+            provider_id: id, model_id,
             ...resolveModelFields(catalog, currentProvider.models_dev_provider_id, model_id, {}),
           }).onConflictDoNothing().returning({ id: models.id }))
         }

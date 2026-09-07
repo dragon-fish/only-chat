@@ -3,10 +3,11 @@ import { and, eq, inArray, notInArray, sql } from 'drizzle-orm'
 import type { BatchItem } from 'drizzle-orm/batch'
 import { DEFAULT_USER_ID } from '@/shared/constants'
 import type { ProviderWriteInput } from '@/shared/api'
-import { ProviderWithInterfacesSchema, type InterfaceProtocol, type Protocol } from '@/shared/models'
-import { models, providerInterfaces, providers, type ProviderRow, type ProviderInterfaceRow } from '@/server/db/schema'
+import { ProviderWithInterfacesSchema } from '@/shared/models'
+import { attachmentProviderFiles, models, providerInterfaces, providers, type ProviderRow, type ProviderInterfaceRow } from '@/server/db/schema'
 import { decryptSecret, encryptSecret } from '../llm/crypto'
 import { matchProviderByEndpoints } from '../model-catalog/match'
+import { cleanupProviderFilesBeforeChange, invalidatedProviderFiles } from '../files-cleanup'
 import { catalogForModels, isModelSourceConflict, materializationUpdates, ModelSourceConflict, modelSourceColumns, providerSourceFence, retryModelSource } from './model-write'
 
 export class ProviderWriteError extends Error {
@@ -20,10 +21,6 @@ export function toProviderDto(row: ProviderRow, interfaces: ProviderInterfaceRow
     models_dev_provider_id: row.models_dev_provider_id, models_dev_provider_source: row.models_dev_provider_source,
     interfaces, created_at: row.created_at,
   })
-}
-
-const legacyProtocol: Record<InterfaceProtocol, Protocol> = {
-  responses: 'openai-responses', 'chat-completions': 'openai-completions', anthropic: 'anthropic', 'vertex-compatible': 'vertex-compatible',
 }
 
 type CredentialExpectation = Readonly<Pick<ProviderRow, 'api_key' | 'credential_version'>>
@@ -78,7 +75,6 @@ async function writeProviderAttempt(ctx: Context, input: ProviderWriteInput, id:
   const requestedKey = input.api_key === undefined ? previousKey : input.api_key || null
   const keyChanged = requestedKey !== previousKey
   const encryptedKey = keyChanged && requestedKey ? await encryptSecret(ctx.env.KEY_ENCRYPTION_SECRET, requestedKey) : keyChanged ? null : before?.api_key ?? null
-  const selected = input.interfaces.find(endpoint => endpoint.protocol === input.default_protocol)!
   const now = Date.now()
   const fields = {
     name: input.name, ...(input.enabled === undefined ? {} : { enabled: input.enabled }),
@@ -101,7 +97,6 @@ async function writeProviderAttempt(ctx: Context, input: ProviderWriteInput, id:
   }).where(eq(providers.id, before.id)))
   else operations.push(db.insert(providers).values({
     ...fields, enabled: input.enabled ?? true, api_key: encryptedKey, credential_version: 1, user_id: DEFAULT_USER_ID, created_at: now,
-    protocol: legacyProtocol[selected.protocol], base_url: selected.base_url, native_files: selected.native_files ?? false,
   }))
   operations.push(db.delete(providerInterfaces).where(and(eq(providerInterfaces.provider_id, providerId), notInArray(providerInterfaces.protocol, protocols))))
   for (const endpoint of input.interfaces) {
@@ -120,6 +115,13 @@ async function writeProviderAttempt(ctx: Context, input: ProviderWriteInput, id:
     operations.push(...materializationUpdates(db, rows, await catalogForModels(ctx, match.id, rows.map(model => model.model_id), version), {
       id: before.id, models_dev_provider_id: match.id, models_dev_provider_source: match.source,
     }))
+  }
+  if (before) {
+    const invalidated = invalidatedProviderFiles(before, input.interfaces, keyChanged)
+    await cleanupProviderFilesBeforeChange(ctx, before, existing, invalidated)
+    // Prune invalidated pointers in the same transaction as the new configuration, including
+    // uploads that completed during remote cleanup. Never store the previous credentials.
+    operations.push(db.delete(attachmentProviderFiles).where(invalidated))
   }
   operations.push(db.select().from(providers).where(eq(providers.id, providerId)))
   operations.push(db.select().from(providerInterfaces).where(eq(providerInterfaces.provider_id, providerId)).orderBy(providerInterfaces.id))

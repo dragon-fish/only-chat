@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, isNotNull, isNull, lte, sql } from 'drizzle-orm'
+import { and, desc, eq, gt, isNotNull, isNull, sql } from 'drizzle-orm'
 import type { ScopedFilesClient } from '../llm/files/types'
 import type { DB } from '../../db/client'
 import { attachmentProviderFiles, attachments, messages, models, providerInterfaces, providers, sessions, users } from '../../db/schema'
@@ -153,13 +153,4 @@ export async function findReusableProviderFile(db: DB, scope: ProviderFileScope,
 /** Append each upload so older remote references remain available for cleanup. */
 export async function insertProviderFile(db: DB, row: typeof attachmentProviderFiles.$inferInsert): Promise<void> {
   await db.insert(attachmentProviderFiles).values(row)
-}
-
-/**
- * The whole of the daily cron job (spec §5.7): local pointers that have lapsed are dropped, and the
- * remote copies are left for the provider to expire on the deadline the upload asked for. R2
- * originals are untouched — the next turn that needs one re-uploads it.
- */
-export async function cleanupExpiredProviderFiles(db: DB, now: number): Promise<void> {
-  await db.delete(attachmentProviderFiles).where(lte(attachmentProviderFiles.expires_at, now))
 }

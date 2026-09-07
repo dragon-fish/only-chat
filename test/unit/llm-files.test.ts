@@ -133,7 +133,7 @@ describe.each([
     expect((result as Error).cause).toBeUndefined()
   })
 
-  it.each(['ftp://files.example/v1', 'https://user:secret-files-key@files.example/v1', 'https://files.example/v1?key=secret-files-key', 'https://files.example/v1#fragment', 'not-a-url'])('rejects an invalid Files base URL before making a request (%s)', baseURL => {
+  it.each(['ftp://files.example/v1', 'https://user:secret-files-key@files.example/v1', 'https://files.example/v1?key=secret-files-key', 'https://files.example/v1#fragment', 'https://files.example/v1?', 'https://files.example/v1#', 'not-a-url'])('rejects an invalid Files base URL before making a request (%s)', baseURL => {
     const remote = vi.fn()
     vi.stubGlobal('fetch', remote)
     expect(() => create({ ...settings, baseURL })).toThrow()

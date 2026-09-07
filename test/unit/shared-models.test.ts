@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
-  InterfaceProtocolSchema, MessageSchema, ModelCapabilitiesSchema, ModelPageSchema, ModelQuerySchema,
-  ProjectSchema, ProtocolSchema, ProviderInterfaceSchema, ProviderWithInterfacesSchema,
+  InterfaceProtocolSchema, MessageSchema, ModelPageSchema, ModelQuerySchema,
+  ProjectSchema, ProviderInterfaceSchema, ProviderWithInterfacesSchema,
   SessionParamsSchema, UsageSchema, UserSettingsSchema,
 } from '@/shared/models'
 import { ModelWriteInputSchema, ProviderInterfaceInputSchema, ProviderWriteInputSchema } from '@/shared/api'
@@ -33,10 +33,6 @@ describe('models schemas', () => {
 
   it('accepts partial session params', () => {
     expect(SessionParamsSchema.parse({ temperature: 0.7 })).toEqual({ temperature: 0.7 })
-  })
-
-  it('accepts the vertex-compatible protocol', () => {
-    expect(ProtocolSchema.parse('vertex-compatible')).toBe('vertex-compatible')
   })
 
   it('defines only the four supported provider interface protocols', () => {
@@ -135,11 +131,6 @@ describe('models schemas', () => {
 
   it('rejects an out-of-enum reasoning_effort', () => {
     expect(SessionParamsSchema.safeParse({ reasoning_effort: 'turbo' }).success).toBe(false)
-  })
-
-  it('accepts expanded reasoning efforts and image_output on model capabilities', () => {
-    expect(ModelCapabilitiesSchema.parse({ image_output: true, reasoning_efforts: ['low', 'xhigh'] }))
-      .toEqual({ image_output: true, reasoning_efforts: ['low', 'xhigh'] })
   })
 
   it('parses a Project with only name required', () => {

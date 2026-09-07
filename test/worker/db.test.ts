@@ -3,7 +3,7 @@ import { applyD1Migrations } from 'cloudflare:test'
 import { eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
 import { createDb } from '@/server/db/client'
-import { attachmentProviderFiles, attachments, messages, projects, providers, sessions, users } from '@/server/db/schema'
+import { attachmentProviderFiles, attachments, messages, projects, providerInterfaces, providers, sessions, users } from '@/server/db/schema'
 import { findReusableProviderFile, insertProviderFile } from '@/server/plugins/hub/sessions'
 
 describe('D1 schema', () => {
@@ -42,7 +42,7 @@ describe('D1 schema', () => {
     await expect(db.insert(messages).values(row)).rejects.toThrow()
   })
 
-  it('creates a project with only name required, and defaults provider native_files to false', async () => {
+  it('creates a project with only name required, and defaults interface native_files to false', async () => {
     const db = createDb(env.DB)
     await db.insert(users).values({ id: 1, name: 'owner', settings: { plugins: {} }, created_at: 0 }).onConflictDoNothing()
     const [p] = await db.insert(projects).values({
@@ -52,9 +52,10 @@ describe('D1 schema', () => {
     expect(p!.name).toBe('Design')
 
     const [provider] = await db.insert(providers).values({
-      user_id: 1, name: 'p1', protocol: 'openai-completions', base_url: 'https://api.example.com', created_at: 0,
+      user_id: 1, name: 'p1', created_at: 0,
     }).returning()
-    expect(provider!.native_files).toBe(false)
+    const [endpoint] = await db.insert(providerInterfaces).values({ provider_id: provider!.id, protocol: 'responses', base_url: 'https://api.example.com', created_at: 0 }).returning()
+    expect(endpoint!.native_files).toBe(false)
   })
 
   it('sets session.project_id to null when its Project is deleted', async () => {
@@ -83,10 +84,10 @@ describe('D1 schema', () => {
       r2_key: 'k1', origin: 'upload', created_at: 0,
     }).returning()
     const [p1] = await db.insert(providers).values({
-      user_id: 1, name: 'p1', protocol: 'openai-completions', base_url: 'https://api.example.com', created_at: 0,
+      user_id: 1, name: 'p1', created_at: 0,
     }).returning()
     const [p2] = await db.insert(providers).values({
-      user_id: 1, name: 'p2', protocol: 'anthropic', base_url: 'https://api.example.com', created_at: 0,
+      user_id: 1, name: 'p2', created_at: 0,
     }).returning()
 
     const scope = { providerId: p1!.id, credentialVersion: 1, family: 'openai' as const, baseURL: 'https://api.example.com' }
@@ -128,7 +129,7 @@ describe('D1 schema', () => {
   it('stores two interfaces and rejects duplicate protocols and dangling interface references', async () => {
     const db = createDb(env.DB)
     await db.insert(users).values({ id: 1, name: 'owner', settings: { plugins: {} }, created_at: 0 }).onConflictDoNothing()
-    const [p] = await db.insert(providers).values({ user_id: 1, name: 'interfaces', protocol: 'openai-responses', base_url: 'https://example.com/v1', created_at: 0 }).returning()
+    const [p] = await db.insert(providers).values({ user_id: 1, name: 'interfaces', created_at: 0 }).returning()
     const insert = (protocol: string) => env.DB.prepare('INSERT INTO provider_interfaces (provider_id, protocol, base_url, created_at) VALUES (?, ?, ?, 0)').bind(p!.id, protocol, 'https://example.com/v1').run()
     const response = await insert('responses')
     await insert('chat-completions')
@@ -137,8 +138,8 @@ describe('D1 schema', () => {
     await expect(env.DB.prepare("INSERT INTO provider_interfaces (provider_id, protocol, base_url, native_files, created_at) VALUES (?, 'vertex-compatible', 'https://example.com', 1, 0)").bind(p!.id).run()).rejects.toThrow()
     await env.DB.prepare('UPDATE providers SET default_interface_id = ? WHERE id = ?').bind(response.meta.last_row_id, p!.id).run()
     await expect(env.DB.prepare('UPDATE providers SET default_interface_id = -1 WHERE id = ?').bind(p!.id).run()).rejects.toThrow()
-    await expect(env.DB.prepare("INSERT INTO models (provider_id, model_id, display_name, capabilities, interface_id) VALUES (?, 'dangling', 'Dangling', '{}', -1)").bind(p!.id).run()).rejects.toThrow()
-    await env.DB.prepare("INSERT INTO models (provider_id, model_id, display_name, capabilities, interface_id) VALUES (?, 'valid', 'Valid', '{}', ?)").bind(p!.id, response.meta.last_row_id).run()
+    await expect(env.DB.prepare("INSERT INTO models (provider_id, model_id, interface_id) VALUES (?, 'dangling', -1)").bind(p!.id).run()).rejects.toThrow()
+    await env.DB.prepare("INSERT INTO models (provider_id, model_id, interface_id) VALUES (?, 'valid', ?)").bind(p!.id, response.meta.last_row_id).run()
     await expect(env.DB.prepare('DELETE FROM provider_interfaces WHERE id = ?').bind(response.meta.last_row_id).run()).rejects.toThrow()
     await db.delete(providers).where(eq(providers.id, p!.id))
     expect(await env.DB.prepare('SELECT count(*) AS n FROM provider_interfaces WHERE provider_id = ?').bind(p!.id).first('n')).toBe(0)
@@ -160,8 +161,8 @@ describe('D1 schema', () => {
     }
     const db = createDb(env.DB)
     await db.insert(users).values({ id: 1, name: 'owner', settings: { plugins: {} }, created_at: 0 }).onConflictDoNothing()
-    const [p] = await db.insert(providers).values({ user_id: 1, name: 'fts', protocol: 'anthropic', base_url: 'https://example.com', created_at: 0 }).returning()
-    const inserted = await env.DB.prepare("INSERT INTO models (provider_id, model_id, display_name, capabilities, search_name, metadata_resolved, metadata_override) VALUES (?, 'search-model', 'Search', '{}', 'claude opus', ?, ?)")
+    const [p] = await db.insert(providers).values({ user_id: 1, name: 'fts', created_at: 0 }).returning()
+    const inserted = await env.DB.prepare("INSERT INTO models (provider_id, model_id, search_name, metadata_resolved, metadata_override) VALUES (?, 'search-model', 'claude opus', ?, ?)")
       .bind(p!.id, JSON.stringify({ reasoning: false, cost: { input: 0 } }), JSON.stringify({ cost: null })).run()
     const modelId = inserted.meta.last_row_id
     expect(await env.DB.prepare("SELECT rowid FROM models_fts WHERE models_fts MATCH 'laud'").first('rowid')).toBe(modelId)
@@ -184,6 +185,9 @@ describe('D1 schema', () => {
       .bind(JSON.stringify({ vision: false, reasoning: false, tools: true, image_output: true, reasoning_can_disable: true, reasoning_efforts: ['low', 'high', 'ultra'] }), JSON.stringify({ input: 0, output: 2, cached: 0 })).run()
     await legacy.prepare("INSERT INTO attachments (id, user_id, sha256, mime, size, r2_key, origin, created_at) VALUES (1, 1, 'legacy', 'image/png', 1, 'legacy', 'upload', 0)").run()
     await legacy.prepare("INSERT INTO attachment_provider_files (attachment_id, provider_id, provider_reference, expires_at, created_at) VALUES (1, 1, '{}', 1000, 0), (1, 2, '{}', 2000, 0)").run()
+    await applyD1Migrations(legacy, env.TEST_MIGRATIONS.slice(0, 3))
+    await legacy.prepare("INSERT INTO attachment_provider_files (id, attachment_id, provider_id, credential_version, file_family, base_url, provider_reference, expires_at, cleanup_after, cleanup_attempts, last_cleanup_error, created_at) VALUES (3, 1, 1, 2, 'openai', 'https://api.openai.com/v1', '{\"openai\":\"pending-old-upload\"}', 2000, 5000, 4, 'Provider file deletion failed (HTTP 503)', 1000)").run()
+    await legacy.prepare("UPDATE models SET metadata_override = '{\"cost\":null,\"reasoning\":false}', metadata_resolved = '{\"cost\":null,\"reasoning\":false}', search_name = 'vertex preserved', enabled = 1 WHERE id = 2").run()
     await applyD1Migrations(legacy, env.TEST_MIGRATIONS)
     const db = createDb(legacy)
     const migrated = await db.select().from(providers).where(eq(providers.id, 1))
@@ -201,10 +205,17 @@ describe('D1 schema', () => {
     expect(JSON.parse(model!.metadata_override)).toEqual({ name: 'Custom Name', reasoning: false, tool_call: true, modalities: { input: ['text'], output: ['text', 'image'] }, reasoning_options: [{ type: 'toggle' }, { type: 'effort', values: ['low', 'high', 'ultra'] }], cost: { input: 0, output: 2, cache_read: 0 } })
     expect(JSON.parse(model!.metadata_resolved)).toEqual(JSON.parse(model!.metadata_override))
     expect(model).toMatchObject({ supports_image_input: 0, supports_image_output: 1, supports_reasoning: 0, supports_tools: 1 })
-    expect(await legacy.prepare("SELECT metadata_override FROM models WHERE id = 2").first('metadata_override')).toBe('{}')
+    expect(await legacy.prepare("SELECT metadata_override, metadata_resolved, enabled, interface_id FROM models WHERE id = 2").first()).toEqual({ metadata_override: '{"cost":null,"reasoning":false}', metadata_resolved: '{"cost":null,"reasoning":false}', enabled: 1, interface_id: null })
     expect(await legacy.prepare("SELECT rowid FROM models_fts WHERE models_fts MATCH 'ustom'").first('rowid')).toBe(1)
-    expect(await legacy.prepare('SELECT file_family, base_url, cleanup_after, credential_version FROM attachment_provider_files WHERE provider_id = 1').first()).toEqual({ file_family: 'openai', base_url: 'https://api.openai.com/v1', cleanup_after: 1000, credential_version: 1 })
-    expect(await legacy.prepare('SELECT file_family, expires_at, cleanup_after FROM attachment_provider_files WHERE provider_id = 2').first()).toEqual({ file_family: null, expires_at: 0, cleanup_after: 0 })
+    expect(await legacy.prepare('SELECT file_family, base_url, cleanup_after, credential_version FROM attachment_provider_files WHERE id = 1').first()).toEqual({ file_family: 'openai', base_url: 'https://api.openai.com/v1', cleanup_after: 1000, credential_version: 1 })
+    expect(await legacy.prepare('SELECT credential_version, provider_reference, expires_at, cleanup_after, cleanup_attempts, last_cleanup_error FROM attachment_provider_files WHERE id = 3').first()).toEqual({ credential_version: 2, provider_reference: '{"openai":"pending-old-upload"}', expires_at: 2000, cleanup_after: 5000, cleanup_attempts: 4, last_cleanup_error: 'Provider file deletion failed (HTTP 503)' })
+    expect(await legacy.prepare("SELECT rowid FROM models_fts WHERE models_fts MATCH 'reserved'").first('rowid')).toBe(2)
+    expect(await legacy.prepare('SELECT id FROM attachment_provider_files WHERE provider_id = 2').first()).toBeNull()
+    const providerColumns = (await legacy.prepare('PRAGMA table_info(providers)').all<{ name: string }>()).results.map(row => row.name)
+    for (const column of ['protocol', 'base_url', 'extra', 'native_files']) expect(providerColumns).not.toContain(column)
+    const modelColumns = (await legacy.prepare('PRAGMA table_info(models)').all<{ name: string }>()).results.map(row => row.name)
+    for (const column of ['display_name', 'capabilities', 'pricing']) expect(modelColumns).not.toContain(column)
+    await expect(legacy.prepare("INSERT INTO attachment_provider_files (attachment_id, provider_id, provider_reference, expires_at, created_at) VALUES (1, 1, '{}', 1000, 0)").run()).rejects.toThrow()
     expect((await legacy.prepare('PRAGMA foreign_key_check').all()).results).toEqual([])
   })
 })
