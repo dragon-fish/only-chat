@@ -69,7 +69,7 @@ function send(command: Parameters<typeof sync.send>[0]): boolean {
 
     <DropdownMenu>
       <DropdownMenuTrigger as-child>
-        <SidebarMenuAction ref="action" data-row-action show-on-hover type="button" class="size-8 w-8 h-8 max-md:size-10 [&>svg]:size-4" :aria-label="`对话操作：${session.title}`">
+        <SidebarMenuAction ref="action" data-row-action show-on-hover type="button" class="top-1/2 -translate-y-1/2 size-8 w-8 h-8 max-md:size-10 after:inset-0 [&>svg]:size-4" :aria-label="`对话操作：${session.title}`">
           <EllipsisIcon class="size-4" />
         </SidebarMenuAction>
       </DropdownMenuTrigger>

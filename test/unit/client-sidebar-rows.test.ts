@@ -57,6 +57,9 @@ it.each([
     expect(action.classList).toContain('w-8')
     expect(action.classList).toContain('h-8')
     expect(action.classList).toContain('max-md:size-10')
+    expect(action.classList).toContain('top-1/2')
+    expect(action.classList).toContain('-translate-y-1/2')
+    expect(action.classList).toContain('after:inset-0')
     expect(action.querySelector('svg')?.classList).toContain('size-4')
   }
 })
