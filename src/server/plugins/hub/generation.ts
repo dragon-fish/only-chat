@@ -3,7 +3,7 @@ import { DEFAULT_USER_ID, INFLIGHT_FLUSH_INTERVAL_MS } from '@/shared/constants'
 import type { Message, PersistedStatus, SessionParams, Usage } from '@/shared/models'
 import type { Part } from '@/shared/parts'
 import type { SendCommand, WsCommand } from '@/shared/ws'
-import type { ModelRow, ProviderRow, SessionRow } from '../../db/schema'
+import type { ModelRow, ProviderInterfaceRow, ProviderRow, SessionRow } from '../../db/schema'
 import { PartAccumulator } from '../llm/accumulator'
 import { buildModelMessages, buildProviderOptions, requiredAttachmentIds, type AttachmentInput } from '../llm/messages'
 import { toUsage } from '../llm/usage'
@@ -15,7 +15,7 @@ import {
 import { persistGeneratedImage } from './generated-images'
 import { getProject } from './projects'
 import {
-  createSession, finalizeMessage, getMessage, getModel, getProvider, getSession,
+  createSession, finalizeMessage, getMessage, getModel, getProvider, getProviderInterface, getSession,
   insertMessage, lastGenerationModel, listMessages, maxSeq, toMessage, updateSession,
 } from './sessions'
 import { resolveAttachmentInputs } from './attachment-transport'
@@ -32,6 +32,7 @@ export interface BeforeSendPayload {
 interface Target {
   session: SessionRow
   provider: ProviderRow
+  providerInterface: ProviderInterfaceRow
   model: ModelRow
   /**
    * Snapshot taken once, at generation start; never re-read while the stream runs (spec §3.2).
@@ -89,6 +90,9 @@ async function resolveTarget(hub: Hub, args: ResolveArgs): Promise<Target> {
   const provider = await getProvider(hub.db, effectiveModel.provider_id)
   const model = provider ? await getModel(hub.db, provider.id, effectiveModel.model_id) : undefined
   if (!provider || !provider.enabled || !model || !model.enabled) throw modelUnavailable(effectiveModel.source)
+  const interfaceId = model.interface_id ?? provider.default_interface_id
+  const providerInterface = interfaceId === null ? undefined : await getProviderInterface(hub.db, interfaceId)
+  if (!providerInterface || providerInterface.provider_id !== provider.id) throw new Error('model interface is unavailable')
 
   // The persisted override is the draft's, never this generation's model: copying the latter down
   // would silently end the session's Project inheritance.
@@ -102,7 +106,7 @@ async function resolveTarget(hub: Hub, args: ResolveArgs): Promise<Target> {
     model_id: draft.model_id,
   })
   if (!existing) hub.emitSessionCreated(session)
-  return { session, provider, model, config }
+  return { session, provider, providerInterface, model, config }
 }
 
 // ---- stage 2: persist a user message
@@ -145,9 +149,9 @@ async function assembleContext(hub: Hub, target: Target, leafUserId: number): Pr
   // Which ids the request needs is the message builder's own answer, not a second one kept in step
   // by convention: a part it drops must never be resolved here.
   const ids = requiredAttachmentIds(path)
-  // How those attachments travel is the transport's call, and it depends on the provider alone.
+  // Attachment transport shares this generation's resolved interface and credentials snapshot.
   const deps = { db: hub.db, assets: hub.app.assets, llm: hub.app.llm }
-  return { path, attachments: await resolveAttachmentInputs(deps, target.provider, ids) }
+  return { path, attachments: await resolveAttachmentInputs(deps, target.provider, target.providerInterface, ids) }
 }
 
 // ---- stage 5/6: stream + finalize
@@ -169,9 +173,9 @@ async function generate(hub: Hub, target: Target, shell: Message, leafUserId: nu
     const payload: BeforeSendPayload = { sessionId: target.session.id, systemPrompt: target.config.systemPrompt, path }
     hub.app.emit('message/before-send', payload)
 
-    const messages = buildModelMessages({ protocol: target.provider.protocol, systemPrompt: payload.systemPrompt, path: payload.path, attachments })
+    const messages = buildModelMessages({ protocol: target.providerInterface.protocol, systemPrompt: payload.systemPrompt, path: payload.path, attachments })
     const params: SessionParams = target.config.params
-    const model: LanguageModel = await hub.app.llm.createModel(target.provider, target.model)
+    const model: LanguageModel = await hub.app.llm.createModel(target.provider, target.providerInterface, target.model)
 
     const result = streamText({
       model,
@@ -182,7 +186,7 @@ async function generate(hub: Hub, target: Target, shell: Message, leafUserId: nu
       temperature: params.temperature,
       topP: params.top_p,
       maxOutputTokens: params.max_tokens,
-      providerOptions: buildProviderOptions(target.provider.protocol, params, target.model.capabilities),
+      providerOptions: buildProviderOptions(target.providerInterface.protocol, params, target.model.metadata_resolved),
     })
 
     let lastFlush = Date.now()

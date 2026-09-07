@@ -6,8 +6,8 @@ export const anthropicProtocol = {
   inject: ['llm'],
   apply(ctx: Context) {
     ctx.llm.register('anthropic', {
-      createModel(provider, model, apiKey) {
-        const p = createAnthropic({ baseURL: provider.base_url, apiKey })
+      createModel(_provider, providerInterface, model, apiKey) {
+        const p = createAnthropic({ baseURL: providerInterface.base_url, apiKey })
         return p(model.model_id)
       },
     })

@@ -8,7 +8,7 @@ describe('PartSchema', () => {
       { type: 'image', attachment_id: 7 },
       { type: 'reasoning', text: 'thinking', providerOptions: { anthropic: { signature: 'SIG' } } },
       { type: 'tool_call', id: 'c1', name: 'get_weather', args: { city: 'Tokyo' } },
-      { type: 'tool_result', call_id: 'c1', name: 'get_weather', content: { tempC: 21 } },
+      { type: 'tool_result', call_id: 'c1', name: 'get_weather', content: { tempC: 21 }, providerOptions: { responses: { opaque: ['state', null, 0] } } },
     ]
     expect(PartsSchema.parse(JSON.parse(JSON.stringify(parts)))).toEqual(parts)
   })

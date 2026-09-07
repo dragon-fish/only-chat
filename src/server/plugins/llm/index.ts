@@ -1,12 +1,11 @@
 import { Context, Service } from 'cordis'
 import type { FilesV4 } from '@ai-sdk/provider'
 import type { LanguageModel } from 'ai'
-import type { ModelRow, ProviderRow } from '../../db/schema'
+import type { ModelRow, ProviderInterfaceRow, ProviderRow } from '../../db/schema'
 import { decryptSecret } from './crypto'
-import { openaiCompletionsProtocol } from './protocols/openai-completions'
-import { openaiResponsesProtocol } from './protocols/openai-responses'
+import { chatCompletionsProtocol } from './protocols/chat-completions'
+import { responsesProtocol } from './protocols/responses'
 import { anthropicProtocol } from './protocols/anthropic'
-import { vertexProtocol } from './protocols/vertex'
 import { vertexCompatibleProtocol } from './protocols/vertex-compatible'
 
 /**
@@ -14,8 +13,8 @@ import { vertexCompatibleProtocol } from './protocols/vertex-compatible'
  * capability, and a protocol that has none simply never offers one (spec §4.8).
  */
 export interface LlmProtocolAdapter {
-  createModel(provider: ProviderRow, model: ModelRow, apiKey: string): LanguageModel
-  createFiles?: (provider: ProviderRow, apiKey: string) => FilesV4
+  createModel(provider: ProviderRow, providerInterface: ProviderInterfaceRow, model: ModelRow, apiKey: string): LanguageModel
+  createFiles?: (provider: ProviderRow, providerInterface: ProviderInterfaceRow, apiKey: string) => FilesV4
 }
 
 export class Llm extends Service {
@@ -47,30 +46,32 @@ export class Llm extends Service {
    * provider with the capability switched off is never probed — it falls straight through to the
    * next attachment transport instead of surfacing an error (spec §5.6).
    */
-  hasFiles(provider: ProviderRow): boolean {
-    return provider.native_files && this._adapters.get(provider.protocol)?.createFiles !== undefined
+  hasFiles(providerInterface: ProviderInterfaceRow): boolean {
+    return providerInterface.native_files && this._adapters.get(providerInterface.protocol)?.createFiles !== undefined
   }
 
   async decryptKey(provider: ProviderRow): Promise<string | null> {
     return provider.api_key ? decryptSecret(this._secret, provider.api_key) : null
   }
 
-  async createModel(provider: ProviderRow, model: ModelRow): Promise<LanguageModel> {
-    const adapter = this._adapters.get(provider.protocol)
-    if (!adapter) throw new Error(`no adapter for protocol ${provider.protocol}`)
+  async createModel(provider: ProviderRow, providerInterface: ProviderInterfaceRow, model: ModelRow): Promise<LanguageModel> {
+    if (providerInterface.provider_id !== provider.id || model.provider_id !== provider.id) throw new Error('model and interface must belong to the provider')
+    const adapter = this._adapters.get(providerInterface.protocol)
+    if (!adapter) throw new Error(`no adapter for protocol ${providerInterface.protocol}`)
     const key = await this.decryptKey(provider)
     if (key === null) throw new Error(`provider ${provider.id} has no API key`)
-    return adapter.createModel(provider, model, key)
+    return adapter.createModel(provider, providerInterface, model, key)
   }
 
-  async createFiles(provider: ProviderRow): Promise<FilesV4> {
-    const adapter = this._adapters.get(provider.protocol)
-    if (!adapter) throw new Error(`no adapter for protocol ${provider.protocol}`)
-    if (!provider.native_files) throw new Error(`provider ${provider.id} has native files disabled`)
-    if (!adapter.createFiles) throw new Error(`protocol ${provider.protocol} has no Files API`)
+  async createFiles(provider: ProviderRow, providerInterface: ProviderInterfaceRow): Promise<FilesV4> {
+    if (providerInterface.provider_id !== provider.id) throw new Error('interface must belong to the provider')
+    const adapter = this._adapters.get(providerInterface.protocol)
+    if (!adapter) throw new Error(`no adapter for protocol ${providerInterface.protocol}`)
+    if (!providerInterface.native_files) throw new Error(`interface ${providerInterface.id} has native files disabled`)
+    if (!adapter.createFiles) throw new Error(`protocol ${providerInterface.protocol} has no Files API`)
     const key = await this.decryptKey(provider)
     if (key === null) throw new Error(`provider ${provider.id} has no API key`)
-    return adapter.createFiles(provider, key)
+    return adapter.createFiles(provider, providerInterface, key)
   }
 }
 
@@ -78,10 +79,9 @@ export const LlmPlugin = {
   name: 'llm',
   async apply(ctx: Context) {
     await ctx.plugin(Llm)
-    await ctx.plugin(openaiCompletionsProtocol)
-    await ctx.plugin(openaiResponsesProtocol)
+    await ctx.plugin(chatCompletionsProtocol)
+    await ctx.plugin(responsesProtocol)
     await ctx.plugin(anthropicProtocol)
-    await ctx.plugin(vertexProtocol)
     await ctx.plugin(vertexCompatibleProtocol)
   },
 }

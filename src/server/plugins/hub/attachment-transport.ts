@@ -1,6 +1,6 @@
 import type { FilesV4, SharedV4ProviderReference } from '@ai-sdk/provider'
 import type { DB } from '../../db/client'
-import type { AttachmentRow, ProviderRow } from '../../db/schema'
+import type { AttachmentRow, ProviderInterfaceRow, ProviderRow } from '../../db/schema'
 import type { Assets } from '../assets'
 import type { Llm } from '../llm'
 import type { AttachmentInput } from '../llm/messages'
@@ -49,10 +49,11 @@ function filenameFor(attachment: AttachmentRow): string {
 export async function resolveAttachmentInputs(
   deps: TransportDeps,
   provider: ProviderRow,
+  providerInterface: ProviderInterfaceRow,
   attachmentIds: Iterable<number>,
 ): Promise<Map<number, AttachmentInput>> {
   const out = new Map<number, AttachmentInput>()
-  const useFiles = deps.llm.hasFiles(provider)
+  const useFiles = deps.llm.hasFiles(providerInterface)
   // One Files client serves the whole turn; building it is deferred until an upload is actually due.
   let files: FilesV4 | undefined
 
@@ -78,7 +79,7 @@ export async function resolveAttachmentInputs(
       continue
     }
 
-    files ??= await deps.llm.createFiles(provider)
+    files ??= await deps.llm.createFiles(provider, providerInterface)
     const result = await files.uploadFile({
       data: { type: 'data', data: stored.bytes },
       mediaType: attachment.mime,

@@ -32,13 +32,13 @@ export const vertexCompatibleProtocol = {
   apply(ctx: Context) {
     // No `createFiles`: a Vertex-compatible gateway exposes no Files API of its own (spec §5.6).
     ctx.llm.register('vertex-compatible', {
-      createModel(provider, model, apiKey) {
+      createModel(_provider, providerInterface, model, apiKey) {
         // Express Mode is what routes requests through `bearerFetch`; without a key the SDK would
         // silently fall back to Google Cloud IAM, which this protocol never uses.
         if (!apiKey) throw new Error('vertex-compatible requires an API key')
         const { publisher, model: modelId } = splitVertexCompatibleModelId(model.model_id)
         // The Base URL is the deployer's to choose in full; only trailing slashes are removed.
-        const baseURL = `${provider.base_url.replace(/\/+$/, '')}/v1/publishers/${publisher}`
+        const baseURL = `${providerInterface.base_url.replace(/\/+$/, '')}/v1/publishers/${publisher}`
         const p = createGoogleVertex({ apiKey, baseURL, fetch: bearerFetch(apiKey) })
         // The SDK prefixes `models/` only for a slash-free id, treating anything else as a resource
         // path. Spec §5.5 fixes the shape at `/models/{model}`, so prefix it ourselves when the model

@@ -43,31 +43,17 @@ exports[`buildModelMessages > matches the golden snapshot (anthropic) 1`] = `
             "redactedData": "RED",
             "signature": "SIG",
           },
-          "openai": {
-            "itemId": "rs_1",
-            "reasoningEncryptedContent": "ENC",
-          },
         },
         "text": "hmm",
         "type": "reasoning",
       },
       {
-        "providerOptions": {
-          "google": {
-            "thoughtSignature": "TS_TEXT",
-          },
-        },
         "text": "a cat",
         "type": "text",
       },
       {
         "input": {
           "q": "cat",
-        },
-        "providerOptions": {
-          "google": {
-            "thoughtSignature": "TS_TOOL",
-          },
         },
         "toolCallId": "call_1",
         "toolName": "lookup",
@@ -111,7 +97,7 @@ exports[`buildModelMessages > matches the golden snapshot (anthropic) 1`] = `
 ]
 `;
 
-exports[`buildModelMessages > matches the golden snapshot (openai-completions) 1`] = `
+exports[`buildModelMessages > matches the golden snapshot (chat-completions) 1`] = `
 [
   {
     "content": "be brief",
@@ -142,16 +128,6 @@ exports[`buildModelMessages > matches the golden snapshot (openai-completions) 1
   {
     "content": [
       {
-        "providerOptions": {
-          "anthropic": {
-            "redactedData": "RED",
-            "signature": "SIG",
-          },
-          "openai": {
-            "itemId": "rs_1",
-            "reasoningEncryptedContent": "ENC",
-          },
-        },
         "text": "hmm",
         "type": "reasoning",
       },
@@ -208,7 +184,7 @@ exports[`buildModelMessages > matches the golden snapshot (openai-completions) 1
 ]
 `;
 
-exports[`buildModelMessages > matches the golden snapshot (openai-responses) 1`] = `
+exports[`buildModelMessages > matches the golden snapshot (responses) 1`] = `
 [
   {
     "content": "be brief",
@@ -240,11 +216,7 @@ exports[`buildModelMessages > matches the golden snapshot (openai-responses) 1`]
     "content": [
       {
         "providerOptions": {
-          "anthropic": {
-            "redactedData": "RED",
-            "signature": "SIG",
-          },
-          "openai": {
+          "responses": {
             "itemId": "rs_1",
             "reasoningEncryptedContent": "ENC",
           },
@@ -253,119 +225,12 @@ exports[`buildModelMessages > matches the golden snapshot (openai-responses) 1`]
         "type": "reasoning",
       },
       {
-        "providerOptions": {
-          "google": {
-            "thoughtSignature": "TS_TEXT",
-          },
-        },
         "text": "a cat",
         "type": "text",
       },
       {
         "input": {
           "q": "cat",
-        },
-        "providerOptions": {
-          "google": {
-            "thoughtSignature": "TS_TOOL",
-          },
-        },
-        "toolCallId": "call_1",
-        "toolName": "lookup",
-        "type": "tool-call",
-      },
-    ],
-    "role": "assistant",
-  },
-  {
-    "content": [
-      {
-        "output": {
-          "type": "json",
-          "value": {
-            "ok": true,
-          },
-        },
-        "toolCallId": "call_1",
-        "toolName": "lookup",
-        "type": "tool-result",
-      },
-    ],
-    "role": "tool",
-  },
-  {
-    "content": [
-      {
-        "text": "and now?",
-        "type": "text",
-      },
-    ],
-    "role": "user",
-  },
-]
-`;
-
-exports[`buildModelMessages > matches the golden snapshot (vertex) 1`] = `
-[
-  {
-    "content": "be brief",
-    "role": "system",
-  },
-  {
-    "content": [
-      {
-        "text": "look",
-        "type": "text",
-      },
-      {
-        "data": {
-          "data": Uint8Array [
-            137,
-            80,
-            78,
-            71,
-          ],
-          "type": "data",
-        },
-        "mediaType": "image/png",
-        "type": "file",
-      },
-    ],
-    "role": "user",
-  },
-  {
-    "content": [
-      {
-        "providerOptions": {
-          "anthropic": {
-            "redactedData": "RED",
-            "signature": "SIG",
-          },
-          "openai": {
-            "itemId": "rs_1",
-            "reasoningEncryptedContent": "ENC",
-          },
-        },
-        "text": "hmm",
-        "type": "reasoning",
-      },
-      {
-        "providerOptions": {
-          "google": {
-            "thoughtSignature": "TS_TEXT",
-          },
-        },
-        "text": "a cat",
-        "type": "text",
-      },
-      {
-        "input": {
-          "q": "cat",
-        },
-        "providerOptions": {
-          "google": {
-            "thoughtSignature": "TS_TOOL",
-          },
         },
         "toolCallId": "call_1",
         "toolName": "lookup",
@@ -433,16 +298,6 @@ exports[`buildModelMessages > matches the golden snapshot (vertex-compatible) 1`
   {
     "content": [
       {
-        "providerOptions": {
-          "anthropic": {
-            "redactedData": "RED",
-            "signature": "SIG",
-          },
-          "openai": {
-            "itemId": "rs_1",
-            "reasoningEncryptedContent": "ENC",
-          },
-        },
         "text": "hmm",
         "type": "reasoning",
       },

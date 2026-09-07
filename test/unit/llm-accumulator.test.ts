@@ -14,7 +14,7 @@ describe('PartAccumulator', () => {
       ...acc.apply({ type: 'text-delta', id: 't1', text: 'lo' }),
       ...acc.apply({ type: 'text-end', id: 't1' }),
     ]
-    expect(events).toEqual([
+    expect(events.filter(event => event.kind === 'delta')).toEqual([
       { kind: 'delta', part_index: 0, part_kind: 'reasoning', delta: 'thi' },
       { kind: 'delta', part_index: 0, part_kind: 'reasoning', delta: 'nk' },
       { kind: 'delta', part_index: 1, part_kind: 'text', delta: 'Hel' },
@@ -45,6 +45,51 @@ describe('PartAccumulator', () => {
     expect(acc.parts).toEqual([
       { type: 'reasoning', text: 'why' },
       { type: 'text', text: 'because' },
+    ])
+  })
+
+  it('routes late deltas and metadata to the original part when two kinds share an id', () => {
+    const acc = new PartAccumulator()
+    acc.apply({ type: 'reasoning-start', id: 'shared', providerMetadata: { responses: { itemId: 'rs_1' } } })
+    acc.apply({ type: 'reasoning-delta', id: 'shared', text: 'first' })
+    acc.apply({ type: 'text-start', id: 'shared' })
+    acc.apply({ type: 'text-delta', id: 'shared', text: 'answer' })
+    acc.apply({ type: 'reasoning-delta', id: 'shared', text: ' last', providerMetadata: { responses: { signature: 'SIG' } } })
+    acc.apply({ type: 'reasoning-end', id: 'shared', providerMetadata: { responses: { reasoningEncryptedContent: 'ENC' } } })
+    expect(acc.parts).toEqual([
+      { type: 'reasoning', text: 'first last', providerOptions: { responses: { itemId: 'rs_1', signature: 'SIG', reasoningEncryptedContent: 'ENC' } } },
+      { type: 'text', text: 'answer' },
+    ])
+  })
+
+  it('keeps tools in their original stream position and retains metadata from each stage', () => {
+    const acc = new PartAccumulator()
+    acc.apply({ type: 'tool-input-start', id: 'c1', toolName: 'lookup', providerMetadata: { responses: { itemId: 'fc_1' } } })
+    acc.apply({ type: 'tool-input-delta', id: 'c1', delta: '{"q":', providerMetadata: { responses: { signature: 'SIG' } } })
+    acc.apply({ type: 'text-delta', id: 't1', text: 'after tool' })
+    acc.apply({ type: 'tool-input-end', id: 'c1', providerMetadata: { responses: { opaque: { state: ['A', null, 0] } } } })
+    acc.apply({ type: 'tool-call', toolCallId: 'c1', toolName: 'lookup', input: { q: 1 } } as never)
+    expect(acc.parts).toEqual([
+      { type: 'tool_call', id: 'c1', name: 'lookup', args: { q: 1 }, providerOptions: { responses: { itemId: 'fc_1', signature: 'SIG', opaque: { state: ['A', null, 0] } } } },
+      { type: 'text', text: 'after tool' },
+    ])
+  })
+
+  it('starts fresh id bindings at the next model step', () => {
+    const acc = new PartAccumulator()
+    acc.apply({ type: 'text-delta', id: 'reused', text: 'first' })
+    acc.apply({ type: 'start-step', request: {}, warnings: [] })
+    acc.apply({ type: 'text-delta', id: 'reused', text: 'second' })
+    expect(acc.parts).toEqual([{ type: 'text', text: 'first' }, { type: 'text', text: 'second' }])
+  })
+
+  it('preserves a tool result and its opaque metadata before subsequent reasoning', () => {
+    const acc = new PartAccumulator()
+    acc.apply({ type: 'tool-result', toolCallId: 'c1', toolName: 'lookup', input: {}, output: { ok: true }, providerMetadata: { responses: { opaque: ['state', null, 0] } } } as never)
+    acc.apply({ type: 'reasoning-delta', id: 'r2', text: 'next' })
+    expect(acc.parts).toEqual([
+      { type: 'tool_result', call_id: 'c1', name: 'lookup', content: { ok: true }, providerOptions: { responses: { opaque: ['state', null, 0] } } },
+      { type: 'reasoning', text: 'next' },
     ])
   })
 
@@ -80,6 +125,14 @@ describe('PartAccumulator', () => {
     expect(acc.parts).toEqual([
       { type: 'reasoning', text: '', providerOptions: { openai: { itemId: 'rs_1', reasoningEncryptedContent: 'ENC' } } },
     ])
+  })
+
+  it('emits metadata-only reasoning and closing updates so live clients match persisted parts', () => {
+    const acc = new PartAccumulator()
+    const started = acc.apply({ type: 'reasoning-start', id: 'r1', providerMetadata: { responses: { itemId: 'r1' } } })
+    const ended = acc.apply({ type: 'reasoning-end', id: 'r1', providerMetadata: { responses: { reasoningEncryptedContent: 'ENC' } } })
+    expect(started).toEqual([{ kind: 'part', part_index: 0, part: { type: 'reasoning', text: '', providerOptions: { responses: { itemId: 'r1' } } } }])
+    expect(ended).toEqual([{ kind: 'part', part_index: 0, part: { type: 'reasoning', text: '', providerOptions: { responses: { itemId: 'r1', reasoningEncryptedContent: 'ENC' } } } }])
   })
 
   it('never lets a later event without metadata clear what was already captured', () => {

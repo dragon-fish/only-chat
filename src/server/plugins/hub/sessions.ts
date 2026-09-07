@@ -1,8 +1,8 @@
 import { and, desc, eq, isNotNull, isNull, lte, sql } from 'drizzle-orm'
 import type { DB } from '../../db/client'
-import { attachmentProviderFiles, attachments, messages, models, providers, sessions, users } from '../../db/schema'
+import { attachmentProviderFiles, attachments, messages, models, providerInterfaces, providers, sessions, users } from '../../db/schema'
 import type {
-  AttachmentProviderFileRow, AttachmentRow, MessageRow, ModelRow, ProviderRow, SessionRow, UserRow,
+  AttachmentProviderFileRow, AttachmentRow, MessageRow, ModelRow, ProviderInterfaceRow, ProviderRow, SessionRow, UserRow,
 } from '../../db/schema'
 import type { Message, MessageStatus, PersistedStatus, SessionParams, Usage, UserSettings } from '@/shared/models'
 import type { Part } from '@/shared/parts'
@@ -122,6 +122,10 @@ export async function getProvider(db: DB, id: number): Promise<ProviderRow | und
 
 export async function getModel(db: DB, providerId: number, modelId: string): Promise<ModelRow | undefined> {
   return db.query.models.findFirst({ where: and(eq(models.provider_id, providerId), eq(models.model_id, modelId)) })
+}
+
+export async function getProviderInterface(db: DB, id: number): Promise<ProviderInterfaceRow | undefined> {
+  return db.query.providerInterfaces.findFirst({ where: eq(providerInterfaces.id, id) })
 }
 
 export async function getAttachment(db: DB, id: number): Promise<AttachmentRow | undefined> {
