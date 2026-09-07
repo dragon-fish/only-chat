@@ -56,6 +56,7 @@ it('keeps a collapsed desktop sidebar as an expandable icon rail', async () => {
 
   const sidebar = document.querySelector<HTMLElement>('[data-slot="sidebar"][data-state="collapsed"]')
   expect(sidebar?.dataset.collapsible).toBe('icon')
+  expect(document.querySelector('[data-connection-status]')).not.toBeNull()
 
   const rail = document.querySelector<HTMLButtonElement>('[data-slot="sidebar-rail"]')
   expect(rail).not.toBeNull()
