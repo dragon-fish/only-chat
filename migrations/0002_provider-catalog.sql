@@ -4,6 +4,8 @@ CREATE TABLE `model_catalog_refresh` (
 	`expires_at` integer DEFAULT 0 NOT NULL,
 	`current_version` text,
 	`previous_version` text,
+	`last_success_at` integer,
+	`last_error` text,
 	CONSTRAINT "model_catalog_refresh_singleton_check" CHECK("model_catalog_refresh"."id" = 1)
 );
 --> statement-breakpoint

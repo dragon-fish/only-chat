@@ -243,7 +243,6 @@ models-dev:{version}:providers
 models-dev:{version}:models
 models-dev:{version}:provider:{providerId}
 models-dev:{version}:manifest
-models-dev:active
 ```
 
 - `providers` 是轻量供应商索引。
@@ -251,17 +250,18 @@ models-dev:active
 - Provider-specific catalog 每个供应商一个分片。
 - `version` 包含抓取时间和内容 hash；内容 hash 未变化时不生成新版本。
 - Manifest 记录分片、抓取时间、上游 hash 和 schema version。
-- `active` 保存当前与上一成功版本。
-- 所有分片和 D1 物化结果成功后才激活新版本。
-- 读取当前版本缺失时回退上一版本。
+- D1 `model_catalog_refresh` 单例保存唯一权威的当前／上一版本以及刷新状态；KV 只保存不可变分片与 manifest，不保存可变指针或状态。
+- 所有分片写入成功后，在同一个 D1 事务内提交模型物化结果、当前／上一版本和成功状态。
+- 读取目录时先从 D1 取得当前／上一版本，再读取对应 KV 分片；当前分片缺失时回退上一版本。
 - 当前与上一版本不清理；其他超过 48 小时的版本和失败 staging 由 daily cron 删除。
 
 ### 8.3 刷新行为
 
 - 下载、JSON 解析和最小 schema 校验全部成功后才写新版本。
-- KV 写入或 D1 物化失败时不切换 active。
-- 手动刷新与 cron 使用同一服务函数。D1 单例租约使用 owner token、有效期和原子条件获取来串行化跨 Worker 发布，并在物化与 KV 发布前续期；手动竞争返回 409，cron 竞争跳过。
-- 租约表保留写入侧权威 `current_version` / `previous_version`，与 D1 模型物化在同一事务中提交；KV active 从提交后的 D1 状态发布，不能用可能过期的 KV 指针推导版本链。租约释放只允许当前 owner，过期 owner 的事务须整体失败。
+- KV 分片写入或 D1 物化失败时不切换 D1 发布指针。
+- 手动刷新与 cron 使用同一服务函数。D1 单例租约使用 owner token、有效期和原子条件获取来串行化跨 Worker 发布，并在 D1 物化与发布前续期；手动竞争返回 409，cron 竞争跳过。
+- `current_version` / `previous_version` 与 D1 模型物化和成功状态在同一事务中提交。租约释放只允许当前 owner，过期 owner 的事务须整体失败；非事务工作后的状态更新必须同时匹配 owner、有效期和当前版本，旧持有者不能覆盖新发布状态。
+- 内容 hash 未变化时不写 KV，D1 成功状态仍须按上述条件更新。GC 只保护 D1 指定的当前／上一版本。
 - 租约表加入尚未部署的 `0002` migration 及其 snapshot；`0003` 保留给后续旧字段清理。
 - 设置页显示上次成功时间、当前版本和最近一次错误。
 - 从未成功缓存时，供应商和模型功能仍工作，metadata 使用保守默认值。

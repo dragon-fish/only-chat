@@ -56,10 +56,63 @@ async function clearCatalog() {
   await Promise.all(listed.keys.map(key => env.MODEL_CATALOG.delete(key.name)))
 }
 
+async function publication() {
+  return env.DB.prepare('SELECT current_version AS current, previous_version AS previous FROM model_catalog_refresh WHERE current_version IS NOT NULL').first<{ current: string; previous: string | null }>()
+}
+
 beforeEach(clearCatalog)
 afterEach(() => vi.unstubAllGlobals())
 
 describe('model catalog', () => {
+  it('keeps the newer publication when an expired publisher resumes after the publication boundary', async () => {
+    const { ctx, model } = await seedLeasedModel()
+    serve()
+    await ctx.modelCatalog.refresh('manual')
+    let release!: () => void
+    let signal!: () => void
+    const resume = new Promise<void>(resolve => { release = resolve })
+    const paused = new Promise<void>(resolve => { signal = resolve })
+    const delayedDB = new Proxy(env.DB, {
+      get(target, property) {
+        if (property === 'batch') return async (statements: D1PreparedStatement[]) => {
+          const committed = await target.batch(statements)
+          signal()
+          await resume
+          return committed
+        }
+        const member = Reflect.get(target, property)
+        return typeof member === 'function' ? member.bind(target) : member
+      },
+    })
+    const delayed = await createApp({ env: { ...env, DB: delayedDB }, side: 'worker' })
+    serve(catalog('Delayed'))
+    const pending = delayed.modelCatalog.refresh('manual')
+    await paused
+    const previous = await publication()
+    let winner
+    let winnerStatus
+    try {
+      await env.DB.exec('UPDATE model_catalog_refresh SET expires_at = 0 WHERE id = 1')
+      const winningCatalog = catalog('Winner')
+      winningCatalog.providers.acme.name = 'Winner provider'
+      winningCatalog.models['acme/model'].name = 'Winner global'
+      serve(winningCatalog)
+      winner = await ctx.modelCatalog.refresh('manual')
+      winnerStatus = await ctx.modelCatalog.status()
+    } finally {
+      release()
+      await pending
+    }
+    expect((await ctx.db.orm.select().from(models).where(eq(models.id, model.id)))[0]?.metadata_resolved.name).toBe('Winner')
+    expect(await publication()).toEqual({ current: winner.version, previous: previous!.current })
+    expect(await delayed.modelCatalog.status()).toEqual(winnerStatus)
+    expect((await delayed.modelCatalog.providerIndex()).acme?.name).toBe('Winner provider')
+    expect((await delayed.modelCatalog.globalModels(winner.version))['acme/model']?.name).toBe('Winner global')
+    expect((await delayed.modelCatalog.providerModels('acme', winner.version))['acme/model']?.name).toBe('Winner')
+    expect(await env.MODEL_CATALOG.get('models-dev:active')).toBeNull()
+    expect(await env.MODEL_CATALOG.get('models-dev:status')).toBeNull()
+  })
+
   it('reclaims an expired lease and fences commits and release by its previous owner', async () => {
     const ctx = await createApp({ env, side: 'worker' })
     const stale = await CatalogLease.acquire(ctx.db.orm)
@@ -71,7 +124,9 @@ describe('model catalog', () => {
       await stale.release()
       await expect(CatalogLease.acquire(ctx.db.orm)).rejects.toThrow('already in progress')
       await replacement.commit([], { current: 'replacement', previous: null })
-      expect(await env.DB.prepare('SELECT current_version FROM model_catalog_refresh').first()).toEqual({ current_version: 'replacement' })
+      await expect(stale.recordUnchangedSuccess()).rejects.toThrow('lease expired')
+      await stale.recordFailure('Stale failure')
+      expect(await env.DB.prepare('SELECT current_version, last_error FROM model_catalog_refresh').first()).toEqual({ current_version: 'replacement', last_error: null })
     } finally {
       await replacement.release()
     }
@@ -94,9 +149,9 @@ describe('model catalog', () => {
       try {
         gate.release()
         await expect(pending).rejects.toThrow('lease expired')
-        expect(await successor.isOwner()).toBe(true)
+        await expect(CatalogLease.acquire(ctx.db.orm)).rejects.toThrow('already in progress')
         expect((await ctx.db.orm.select().from(models).where(eq(models.id, model.id)))[0]?.metadata_resolved.name).toBe('Replacement owner')
-        expect(await env.MODEL_CATALOG.get('models-dev:active', 'json')).toMatchObject({ current: replacement.version })
+        expect(await publication()).toMatchObject({ current: replacement.version })
         expect((await ctx.modelCatalog.status()).lastError).toBeNull()
       } finally {
         await successor.release()
@@ -134,16 +189,16 @@ describe('model catalog', () => {
       expect(await conflict.json()).toEqual({ error: 'Catalog refresh already in progress' })
       expect(await contender.modelCatalog.refresh('cron')).toBeNull()
       expect((await ctx.db.orm.select().from(models).where(eq(models.id, model.id)))[0]?.metadata_resolved.name).toBe('Catalog model')
-      expect(await env.MODEL_CATALOG.get('models-dev:active', 'json')).toEqual({ current: initial.version, previous: null })
+      expect(await publication()).toEqual({ current: initial.version, previous: null })
     } finally {
       gate.release()
       published = await publishing
     }
     expect((await ctx.db.orm.select().from(models).where(eq(models.id, model.id)))[0]?.metadata_resolved.name).toBe('Owner version')
-    expect(await env.MODEL_CATALOG.get('models-dev:active', 'json')).toEqual({ current: published.version, previous: initial.version })
+    expect(await publication()).toEqual({ current: published.version, previous: initial.version })
     const last = await contender.modelCatalog.refresh('manual')
     expect((await ctx.db.orm.select().from(models).where(eq(models.id, model.id)))[0]?.metadata_resolved.name).toBe('Contender version')
-    expect(await env.MODEL_CATALOG.get('models-dev:active', 'json')).toEqual({ current: last.version, previous: published.version })
+    expect(await publication()).toEqual({ current: last.version, previous: published.version })
   })
 
   it('publishes immutable shards and keeps current plus previous', async () => {
@@ -155,7 +210,7 @@ describe('model catalog', () => {
     serve(catalog('Changed'))
     const second = await ctx.modelCatalog.refresh('manual')
     expect(second.version).not.toBe(first.version)
-    expect(await env.MODEL_CATALOG.get('models-dev:active', 'json')).toEqual({ current: second.version, previous: first.version })
+    expect(await publication()).toEqual({ current: second.version, previous: first.version })
     expect(await env.MODEL_CATALOG.get(`models-dev:${first.version}:provider:acme`)).toBe(oldShard)
     expect((await ctx.modelCatalog.providerIndex()).acme).toEqual({ id: 'acme', name: 'Acme', api: 'https://acme.test/v1' })
     expect((await ctx.modelCatalog.globalModels(second.version))['acme/model']?.name).toBe('Global model')
@@ -199,7 +254,7 @@ describe('model catalog', () => {
     const previousStatus = await ctx.modelCatalog.status()
     serve(body, status as number)
     await expect(ctx.modelCatalog.refresh('manual')).rejects.toThrow()
-    expect(await env.MODEL_CATALOG.get('models-dev:active', 'json')).toEqual({ current: first.version, previous: null })
+    expect(await publication()).toEqual({ current: first.version, previous: null })
     expect(await ctx.modelCatalog.status()).toMatchObject({ version: first.version, lastSuccessAt: previousStatus.lastSuccessAt, lastError: expect.any(String) })
   })
 
@@ -216,7 +271,7 @@ describe('model catalog', () => {
     } finally {
       await env.DB.exec('DROP TRIGGER fail_catalog_materialize')
     }
-    expect(await env.MODEL_CATALOG.get('models-dev:active', 'json')).toEqual({ current: first.version, previous: null })
+    expect(await publication()).toEqual({ current: first.version, previous: null })
     expect((await ctx.db.orm.select().from(models).where(eq(models.provider_id, provider!.id)))[0]?.metadata_resolved).toEqual({})
   })
 
@@ -237,32 +292,36 @@ describe('model catalog', () => {
     const failing = await createApp({ env: { ...env, MODEL_CATALOG: failingKV }, side: 'worker' })
     serve(catalog('Changed'))
     await expect(failing.modelCatalog.refresh('manual')).rejects.toThrow('storage')
-    expect(await env.MODEL_CATALOG.get('models-dev:active', 'json')).toEqual({ current: first.version, previous: null })
+    expect(await publication()).toEqual({ current: first.version, previous: null })
     expect((await ctx.modelCatalog.providerModels('acme', first.version))['acme/model']?.name).toBe('Catalog model')
   })
 
-  it('republishes committed D1 state after a KV activation failure without losing the previous version', async () => {
+  it('publishes and reads the catalog using only immutable KV records', async () => {
     const ctx = await createApp({ env, side: 'worker' })
     serve()
     const first = await ctx.modelCatalog.refresh('manual')
-    const failingKV = new Proxy(env.MODEL_CATALOG, {
+    const immutableKV = new Proxy(env.MODEL_CATALOG, {
       get(target, property) {
         if (property === 'put') return async (key: string, value: string, options?: KVNamespacePutOptions) => {
-          if (key === 'models-dev:active') throw new Error('KV unavailable')
+          if (!/^models-dev:[^:]+:/u.test(key)) throw new Error('Unversioned KV write')
           return target.put(key, value, options)
+        }
+        if (property === 'get') return async (key: string, type: 'json') => {
+          if (!/^models-dev:[^:]+:/u.test(key)) throw new Error('Unversioned KV read')
+          return target.get(key, type)
         }
         const member = Reflect.get(target, property)
         return typeof member === 'function' ? member.bind(target) : member
       },
     })
-    const failing = await createApp({ env: { ...env, MODEL_CATALOG: failingKV }, side: 'worker' })
+    const isolated = await createApp({ env: { ...env, MODEL_CATALOG: immutableKV }, side: 'worker' })
     serve(catalog('Committed'))
-    await expect(failing.modelCatalog.refresh('manual')).rejects.toThrow('activation')
-    expect(await env.MODEL_CATALOG.get('models-dev:active', 'json')).toEqual({ current: first.version, previous: null })
-    const recovered = await ctx.modelCatalog.refresh('manual')
-    expect(recovered.changed).toBe(false)
-    expect(await env.MODEL_CATALOG.get('models-dev:active', 'json')).toEqual({ current: recovered.version, previous: first.version })
-    expect((await ctx.modelCatalog.status()).lastError).toBeNull()
+    const committed = await isolated.modelCatalog.refresh('manual')
+    expect(await publication()).toEqual({ current: committed.version, previous: first.version })
+    expect(await isolated.modelCatalog.status()).toMatchObject({ version: committed.version, previousVersion: first.version, lastError: null })
+    expect((await isolated.modelCatalog.providerIndex()).acme?.name).toBe('Acme')
+    expect((await isolated.modelCatalog.providerModels('acme', committed.version))['acme/model']?.name).toBe('Committed')
+    expect((await isolated.modelCatalog.globalModels(committed.version))['acme/model']?.name).toBe('Global model')
   })
 
   it('falls back to previous when current shards are missing, and returns empty before first refresh', async () => {

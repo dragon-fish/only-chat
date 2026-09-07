@@ -19,11 +19,6 @@ export interface CatalogManifest extends CatalogCounts {
   shards: string[]
 }
 
-export interface CatalogRefreshState {
-  lastSuccessAt: number | null
-  lastError: string | null
-}
-
 export function projectProviderIndex(catalog: ModelCatalog): CatalogProviderIndex {
   return Object.fromEntries(Object.entries(catalog.providers).map(([id, provider]) => {
     const { models: _models, ...metadata } = provider
@@ -34,20 +29,8 @@ export function projectProviderIndex(catalog: ModelCatalog): CatalogProviderInde
 export class CatalogStorage {
   constructor(private readonly kv: KVNamespace) {}
 
-  pointer() {
-    return this.kv.get<CatalogPointer>('models-dev:active', 'json')
-  }
-
   manifest(version: string) {
     return this.kv.get<CatalogManifest>(`models-dev:${version}:manifest`, 'json')
-  }
-
-  refreshState() {
-    return this.kv.get<CatalogRefreshState>('models-dev:status', 'json')
-  }
-
-  recordRefresh(state: CatalogRefreshState) {
-    return this.kv.put('models-dev:status', JSON.stringify(state))
   }
 
   async stage(catalog: ModelCatalog, hash: string, fetchedAt: number): Promise<CatalogManifest> {
@@ -72,12 +55,7 @@ export class CatalogStorage {
     return manifest
   }
 
-  activate(pointer: CatalogPointer) {
-    return this.kv.put('models-dev:active', JSON.stringify(pointer))
-  }
-
-  async readShard<T>(shard: string, version?: string): Promise<T | null> {
-    const pointer = await this.pointer()
+  async readShard<T>(shard: string, pointer: CatalogPointer | null, version?: string): Promise<T | null> {
     const requested = version ?? pointer?.current
     if (!requested) return null
     const key = `models-dev:${requested}:${shard}`
@@ -92,14 +70,13 @@ export class CatalogStorage {
     return this.kv.get<T>(`models-dev:${pointer.previous}:${shard}`, 'json')
   }
 
-  async collectGarbage(now: number, committed?: CatalogPointer | null): Promise<void> {
+  async collectGarbage(now: number, committed: CatalogPointer | null): Promise<void> {
     let cursor: string | undefined
     do {
       const page = await this.kv.list<{ fetchedAt: number }>({ prefix: 'models-dev:', cursor })
-      const pointer = await this.pointer()
       for (const key of page.keys) {
         const generation = /^models-dev:([^:]+):/u.exec(key.name)?.[1]
-        if (!generation || [pointer?.current, pointer?.previous, committed?.current, committed?.previous].includes(generation)) continue
+        if (!generation || [committed?.current, committed?.previous].includes(generation)) continue
         if (typeof key.metadata?.fetchedAt !== 'number' || now - key.metadata.fetchedAt <= 48 * 60 * 60 * 1000) continue
         await this.kv.delete(key.name)
       }

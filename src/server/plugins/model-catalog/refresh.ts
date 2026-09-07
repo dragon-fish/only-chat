@@ -73,6 +73,7 @@ async function refreshWithLease(storage: CatalogStorage, db: DB, lease: CatalogL
     const pointer = lease.pointer
     const active = pointer ? await storage.manifest(pointer.current) : null
     if (active?.hash === hash) {
+      await lease.recordUnchangedSuccess()
       result = { version: active.version, changed: false, providers: active.providers, globalModels: active.globalModels, providerModels: active.providerModels }
     } else {
       const manifest = await storage.stage(catalog, hash, Date.now())
@@ -81,32 +82,16 @@ async function refreshWithLease(storage: CatalogStorage, db: DB, lease: CatalogL
       await lease.commit(await materialize(db, catalog), { current: manifest.version, previous: pointer?.current ?? null })
       result = { version: manifest.version, changed: true, providers: manifest.providers, globalModels: manifest.globalModels, providerModels: manifest.providerModels }
     }
-    stage = 'activation'
-    const distributed = await storage.pointer()
-    await lease.renew()
-    // Writers use the committed D1 state, never an eventually consistent KV read, to form the chain.
-    if (lease.pointer && (distributed?.current !== lease.pointer.current || distributed?.previous !== lease.pointer.previous)) {
-      await storage.activate(lease.pointer)
-    }
   } catch (error) {
     if (error instanceof CatalogLeaseLostError) throw error
     // Keep status/API errors bounded and free of upstream payloads, DB values or credentials.
     const message = `Catalog refresh failed during ${stage}`
     try {
-      if (await lease.isOwner()) {
-        const previous = await storage.refreshState()
-        await storage.recordRefresh({ lastSuccessAt: previous?.lastSuccessAt ?? null, lastError: message })
-      }
+      await lease.recordFailure(message)
     } catch (error) {
       console.error('Could not record catalog refresh failure', error)
     }
     throw new Error(message)
-  }
-  // Publishing has succeeded; a status write failure must not report that activation failed.
-  try {
-    await storage.recordRefresh({ lastSuccessAt: Date.now(), lastError: null })
-  } catch (error) {
-    console.error('Could not record catalog refresh success', error)
   }
   return result
 }

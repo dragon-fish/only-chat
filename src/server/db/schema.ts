@@ -19,6 +19,8 @@ export const modelCatalogRefresh = sqliteTable('model_catalog_refresh', {
   expires_at: integer().notNull().default(0),
   current_version: text(),
   previous_version: text(),
+  last_success_at: integer(),
+  last_error: text(),
 }, t => [check('model_catalog_refresh_singleton_check', sql`${t.id} = 1`)])
 
 export const providers = sqliteTable('providers', {

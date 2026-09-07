@@ -264,7 +264,7 @@ git commit -m "feat(catalog): resolve provider and model metadata"
 - Modify: `test/worker/app.test.ts`
 
 **Interfaces:**
-- Produces: Cordis service `ctx.modelCatalog`; methods `refresh(source: 'cron' | 'manual'): Promise<CatalogRefreshResult>`, `status(): Promise<CatalogStatus>`, `providerIndex()`, `globalModels(version)`, and `providerModels(id, version)`.
+- Produces: Cordis service `ctx.modelCatalog`; methods `refresh('manual'): Promise<CatalogRefreshResult>`, `refresh('cron'): Promise<CatalogRefreshResult | null>` (null when another publisher holds the lease), `status(): Promise<CatalogStatus>`, `providerIndex()`, `globalModels(version)`, and `providerModels(id, version)`. Status and reader publication pointers come only from D1.
 - Consumes: `Env.MODEL_CATALOG: KVNamespace`, D1 models, and pure resolver functions from Task 3.
 
 - [ ] **Step 1: Add the KV test binding and failing service tests**
@@ -272,9 +272,9 @@ git commit -m "feat(catalog): resolve provider and model metadata"
 Add `kv_namespaces: [{ "binding": "MODEL_CATALOG" }]` for local/test configuration, regenerate Worker types with `pnpm types`, and expose the binding in the test environment. Test immutable shard writes, unchanged hash no-op, active/previous pointer, failed fetch/validation preserving active, missing-current fallback, and 48-hour garbage collection.
 
 ```ts
-expect(await env.MODEL_CATALOG.get('models-dev:active', 'json')).toEqual({
-  current: second.version,
-  previous: first.version,
+expect(await ctx.modelCatalog.status()).toMatchObject({
+  version: second.version,
+  previousVersion: first.version,
 })
 ```
 
@@ -303,7 +303,7 @@ export interface CatalogRefreshResult {
 }
 ```
 
-Activate only after D1 model materialization succeeds. If the current shard is absent at a PoP, readers try `previous`. Delete only non-current/non-previous generations older than 48 hours.
+After immutable KV shards are written, atomically commit materialized models, current/previous versions, and success status in the D1 singleton. Acquire/renew a shared owner-token lease and fence that transaction against expired ownership. Readers and status use D1 as the sole publication authority; there is no mutable KV pointer or status. If a current KV shard is absent at a PoP, readers try the D1 previous version. Delete only generations older than 48 hours outside the D1 current/previous pair. Extend the unreleased 0002 migration/schema/snapshot for the singleton and retain 0003 for later legacy cleanup.
 
 - [ ] **Step 4: Provision the production KV binding**
 

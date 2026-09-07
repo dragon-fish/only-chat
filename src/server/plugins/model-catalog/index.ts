@@ -2,7 +2,7 @@ import { Context, Service } from 'cordis'
 import { refreshCatalog, type CatalogRefreshResult } from './refresh'
 import { CatalogStorage } from './storage'
 import type { CatalogModel, CatalogProviderIndex } from './types'
-import { CatalogRefreshBusyError, publicationPointer } from './lease'
+import { CatalogRefreshBusyError, publicationPointer, publicationState } from './lease'
 
 export type { CatalogRefreshResult } from './refresh'
 
@@ -50,25 +50,24 @@ export class ModelCatalog extends Service {
   }
 
   async status(): Promise<CatalogStatus> {
-    const [pointer, state] = await Promise.all([this.storage.pointer(), this.storage.refreshState()])
-    const manifest = pointer ? await this.storage.manifest(pointer.current) : null
+    const state = await publicationState(this.ctx.db.orm)
     return {
-      version: pointer?.current ?? null,
-      previousVersion: pointer?.previous ?? null,
-      lastSuccessAt: state?.lastSuccessAt ?? manifest?.fetchedAt ?? null,
-      lastError: state?.lastError ?? null,
+      version: state?.current_version ?? null,
+      previousVersion: state?.previous_version ?? null,
+      lastSuccessAt: state?.last_success_at ?? null,
+      lastError: state?.last_error ?? null,
     }
   }
 
   async providerIndex(): Promise<CatalogProviderIndex> {
-    return await this.storage.readShard<CatalogProviderIndex>('providers') ?? {}
+    return await this.storage.readShard<CatalogProviderIndex>('providers', await publicationPointer(this.ctx.db.orm)) ?? {}
   }
 
   async globalModels(version: string): Promise<Record<string, CatalogModel>> {
-    return await this.storage.readShard<Record<string, CatalogModel>>('models', version) ?? {}
+    return await this.storage.readShard<Record<string, CatalogModel>>('models', await publicationPointer(this.ctx.db.orm), version) ?? {}
   }
 
   async providerModels(id: string, version: string): Promise<Record<string, CatalogModel>> {
-    return await this.storage.readShard<Record<string, CatalogModel>>(`provider:${id}`, version) ?? {}
+    return await this.storage.readShard<Record<string, CatalogModel>>(`provider:${id}`, await publicationPointer(this.ctx.db.orm), version) ?? {}
   }
 }

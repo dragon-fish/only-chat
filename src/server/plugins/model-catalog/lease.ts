@@ -14,8 +14,13 @@ export class CatalogLeaseLostError extends Error {
   constructor() { super('Catalog refresh lease expired') }
 }
 
-export async function publicationPointer(db: DB): Promise<CatalogPointer | null> {
+export async function publicationState(db: DB) {
   const [state] = await db.select().from(modelCatalogRefresh).where(eq(modelCatalogRefresh.id, 1))
+  return state
+}
+
+export async function publicationPointer(db: DB): Promise<CatalogPointer | null> {
+  const state = await publicationState(db)
   return state?.current_version ? { current: state.current_version, previous: state.previous_version } : null
 }
 
@@ -39,10 +44,6 @@ export class CatalogLease {
     return and(eq(modelCatalogRefresh.id, 1), eq(modelCatalogRefresh.owner, this.owner), gt(modelCatalogRefresh.expires_at, now))
   }
 
-  async isOwner(): Promise<boolean> {
-    return (await this.db.select({ id: modelCatalogRefresh.id }).from(modelCatalogRefresh).where(this.ownership())).length === 1
-  }
-
   async renew(): Promise<void> {
     const now = Date.now()
     const renewed = await this.db.update(modelCatalogRefresh).set({ expires_at: now + LEASE_DURATION_MS }).where(this.ownership(now)).returning({ id: modelCatalogRefresh.id })
@@ -55,9 +56,30 @@ export class CatalogLease {
     const fence = this.db.update(modelCatalogRefresh).set({
       expires_at: sql`CASE WHEN ${this.ownership(now)} THEN ${now + LEASE_DURATION_MS} ELSE NULL END`,
     }).where(eq(modelCatalogRefresh.id, 1))
-    const publish = this.db.update(modelCatalogRefresh).set({ current_version: pointer.current, previous_version: pointer.previous }).where(eq(modelCatalogRefresh.id, 1))
+    const publish = this.db.update(modelCatalogRefresh).set({
+      current_version: pointer.current,
+      previous_version: pointer.previous,
+      last_success_at: now,
+      last_error: null,
+    }).where(eq(modelCatalogRefresh.id, 1))
     await this.db.batch([fence, ...updates, publish])
     this.pointer = pointer
+  }
+
+  private currentPublication() {
+    return and(this.ownership(), this.pointer
+      ? eq(modelCatalogRefresh.current_version, this.pointer.current)
+      : isNull(modelCatalogRefresh.current_version))
+  }
+
+  async recordUnchangedSuccess(): Promise<void> {
+    const updated = await this.db.update(modelCatalogRefresh).set({ last_success_at: Date.now(), last_error: null })
+      .where(this.currentPublication()).returning({ id: modelCatalogRefresh.id })
+    if (updated.length === 0) throw new CatalogLeaseLostError()
+  }
+
+  async recordFailure(message: string): Promise<void> {
+    await this.db.update(modelCatalogRefresh).set({ last_error: message }).where(this.currentPublication())
   }
 
   async release(): Promise<void> {

@@ -45,7 +45,7 @@ describe('scheduled provider file cleanup', () => {
     vi.stubGlobal('fetch', async () => Response.json({ providers: {}, models: {} }))
     try {
       await worker.scheduled!({ scheduledTime: Date.now(), cron: '0 3 * * *', noRetry: () => {} }, env, createExecutionContext())
-      expect(await env.MODEL_CATALOG.get('models-dev:active', 'json')).toMatchObject({ current: expect.any(String) })
+      expect(await env.DB.prepare('SELECT current_version FROM model_catalog_refresh WHERE id = 1').first()).toMatchObject({ current_version: expect.any(String) })
     } finally {
       await env.DB.exec('DROP TRIGGER fail_file_cleanup')
       vi.unstubAllGlobals()
