@@ -137,7 +137,8 @@ ResponsiveOverlay(:open="open" title="会话设置" @update:open="setOpen")
           Badge.ml-auto(variant="secondary") {{ BADGES[sources.system_prompt] }}
           Button(
             v-if="sources.system_prompt === 'session'" type="button" variant="ghost" size="icon-xs"
-            title="恢复继承" aria-label="恢复继承会话提示词" @click="restore('system_prompt')")
+            class="size-10 md:size-6" title="恢复继承"
+            aria-label="恢复继承会话提示词" @click="restore('system_prompt')")
             RotateCcw(data-icon="inline-start")
         Textarea(
           id="oc-session-prompt" v-model="form.system_prompt" rows="4" class="text-sm"
@@ -153,7 +154,8 @@ ResponsiveOverlay(:open="open" title="会话设置" @update:open="setOpen")
           Badge.ml-auto(variant="secondary") {{ BADGES[sources.temperature] }}
           Button(
             v-if="sources.temperature === 'session'" type="button" variant="ghost" size="icon-xs"
-            title="恢复继承" aria-label="恢复继承 temperature" @click="restore('temperature')")
+            class="size-10 md:size-6" title="恢复继承"
+            aria-label="恢复继承 temperature" @click="restore('temperature')")
             RotateCcw(data-icon="inline-start")
         //- `step` sizes the +/- buttons only: `step-snapping` off is what lets a typed 0.85 stay
         //- 0.85 instead of being rewritten to the nearest 0.1, which is how the raw box behaved.
@@ -179,7 +181,8 @@ ResponsiveOverlay(:open="open" title="会话设置" @update:open="setOpen")
           Badge.ml-auto(variant="secondary") {{ BADGES[sources.top_p] }}
           Button(
             v-if="sources.top_p === 'session'" type="button" variant="ghost" size="icon-xs"
-            title="恢复继承" aria-label="恢复继承 top_p" @click="restore('top_p')")
+            class="size-10 md:size-6" title="恢复继承"
+            aria-label="恢复继承 top_p" @click="restore('top_p')")
             RotateCcw(data-icon="inline-start")
         NumberField(
           id="oc-session-top-p" :model-value="optionalNumber(form.top_p)"
@@ -200,7 +203,8 @@ ResponsiveOverlay(:open="open" title="会话设置" @update:open="setOpen")
           Badge.ml-auto(variant="secondary") {{ BADGES[sources.max_tokens] }}
           Button(
             v-if="sources.max_tokens === 'session'" type="button" variant="ghost" size="icon-xs"
-            title="恢复继承" aria-label="恢复继承最大 tokens" @click="restore('max_tokens')")
+            class="size-10 md:size-6" title="恢复继承"
+            aria-label="恢复继承最大 tokens" @click="restore('max_tokens')")
             RotateCcw(data-icon="inline-start")
         NumberField(
           id="oc-session-max-tokens" :model-value="optionalNumber(form.max_tokens)"

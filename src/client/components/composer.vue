@@ -180,7 +180,8 @@ onBeforeUnmount(() => { releasePreviews(images.value); dropSent() })
         Tooltip
           TooltipTrigger(as-child)
             InputGroupButton(
-              size="icon-xs" aria-label="添加图片" :disabled="busy" @click="pickFiles")
+              size="icon-xs" class="size-10 md:size-6" aria-label="添加图片"
+              :disabled="busy" @click="pickFiles")
               ImagePlus(data-icon="inline-start")
           TooltipContent 添加图片
         //- Reserved for future left-side tools without moving the reasoning control out of the
@@ -191,7 +192,7 @@ onBeforeUnmount(() => { releasePreviews(images.value); dropSent() })
         Tooltip(v-if="streaming")
           TooltipTrigger(as-child)
             InputGroupButton(
-              size="icon-sm" variant="destructive" class="rounded-full"
+              size="icon-sm" variant="destructive" class="size-10 rounded-full md:size-8"
               aria-label="停止生成" @click="emit('stop')")
               Square(data-icon="inline-start")
           TooltipContent 停止生成
@@ -200,7 +201,8 @@ onBeforeUnmount(() => { releasePreviews(images.value); dropSent() })
             //- The tooltip must remain reachable while blocked, so this one control uses
             //- `aria-disabled`; `submit` keeps the same hard guard as the keyboard path.
             InputGroupButton(
-              size="icon-sm" variant="default" class="rounded-full aria-disabled:opacity-50"
+              size="icon-sm" variant="default"
+              class="size-10 rounded-full aria-disabled:opacity-50 md:size-8"
               aria-label="发送消息" :aria-disabled="sendBlockedReason !== null" @click="submit")
               Send(data-icon="inline-start")
           TooltipContent {{ sendBlockedReason ?? '发送消息' }}

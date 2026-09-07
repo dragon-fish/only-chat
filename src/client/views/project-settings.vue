@@ -1,8 +1,13 @@
 <script setup lang="ts">
-import { computed, onUnmounted, reactive, ref, watch, watchEffect } from 'vue'
+import { computed, reactive, ref, watch, watchEffect } from 'vue'
 import { useRouter } from 'vue-router'
 import ResponsiveOverlay from '@/client/components/layout/responsive-overlay.vue'
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
+  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
+} from '@/client/ui/alert-dialog'
 import { Button } from '@/client/ui/button'
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/client/ui/empty'
 import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/client/ui/field'
 import { Input } from '@/client/ui/input'
 import {
@@ -13,6 +18,7 @@ import {
   NumberFieldInput,
 } from '@/client/ui/number-field'
 import { Textarea } from '@/client/ui/textarea'
+import { Skeleton } from '@/client/ui/skeleton'
 import { Spinner } from '@/client/ui/spinner'
 import ModelPicker from '@/client/components/model-picker.vue'
 import ReasoningControls from '@/client/components/reasoning-controls.vue'
@@ -37,8 +43,6 @@ const form = reactive<ProjectFormState>(projectFormFrom(undefined))
 const loaded = ref(false)
 const missing = ref(false)
 const saving = ref(false)
-const pendingDelete = ref(false)
-let pendingTimer: ReturnType<typeof setTimeout> | undefined
 /** The `updated_at` we saved against; the round trip ends when the store's row moves off it. */
 let savedAgainst = 0
 
@@ -73,7 +77,6 @@ const typing = reactive<Record<ParamKey, string | null>>({ temperature: null, to
 let initToken = 0
 async function initialize(): Promise<void> {
   const token = ++initToken
-  clearPending()
   Object.assign(form, projectFormFrom(undefined))
   // The form is being replaced, so any in-flight box text belongs to the previous Project.
   Object.assign(typing, { temperature: null, top_p: null, max_tokens: null })
@@ -135,20 +138,9 @@ function setOverlayOpen(next: boolean) {
   if (!next) void router.push('/')
 }
 
-function clearPending() {
-  pendingDelete.value = false
-  clearTimeout(pendingTimer)
-}
-
 function onDelete() {
   const p = project.value
   if (!p) return
-  if (!pendingDelete.value) {
-    pendingDelete.value = true
-    pendingTimer = setTimeout(clearPending, 3000)
-    return
-  }
-  clearPending()
   // The Project's chats are not deleted with it; they reappear under Chats (spec §3.1).
   sync.send({ type: 'project.delete', project_id: p.id })
 }
@@ -201,8 +193,6 @@ function setParam(field: ParamKey, value: number | undefined) {
 function formatTime(ms: number): string {
   return new Date(ms).toLocaleString()
 }
-
-onUnmounted(clearPending)
 </script>
 
 <template lang="pug">
@@ -291,16 +281,31 @@ ResponsiveOverlay(
           FieldDescription(v-if="!form.model") 未设置默认模型时无法校验档位，实际可用范围由发送时的模型决定。
           FieldDescription(v-else-if="stops.length === 0") 该默认模型未声明推理能力，此处没有可设置的档位；改用其他默认模型才能设置。
           FieldDescription(v-else) 只显示该默认模型声明支持的档位；「默认」表示项目不设置推理档位。
-  .flex.min-h-32.items-center.justify-center.text-sm.text-muted-foreground(v-else)
-    | {{ missing ? '项目不存在或已被删除。' : '加载中…' }}
+  Empty(v-else-if="missing" class="min-h-32")
+    EmptyHeader
+      EmptyTitle 项目不存在
+      EmptyDescription 这个项目不存在或已被删除。
+  .flex.min-h-32.flex-col.gap-3(v-else role="status" aria-label="正在加载项目设置")
+    Skeleton(class="h-5 w-32")
+    Skeleton(class="h-8 w-full")
+    Skeleton(class="h-20 w-full")
+    span.sr-only 加载中…
   template(#footer v-if="project")
     p.text-xs.text-muted-foreground
       | {{ chatCount }} 个聊天 · 创建于 {{ formatTime(project.created_at) }} · 更新于 {{ formatTime(project.updated_at) }}
     .flex.items-center.justify-end.gap-2
-      Button(type="button" size="sm" variant="destructive" @click="onDelete")
-        | {{ pendingDelete ? '确认删除项目' : '删除项目' }}
+      AlertDialog
+        AlertDialogTrigger(as-child)
+          Button(type="button" size="sm" variant="destructive" class="min-h-10 md:min-h-7") 删除项目
+        AlertDialogContent
+          AlertDialogHeader
+            AlertDialogTitle 删除这个 Project？
+            AlertDialogDescription “{{ project.name }}”将被删除，其中的对话会移到随心聊。
+          AlertDialogFooter
+            AlertDialogCancel(class="min-h-10") 取消
+            AlertDialogAction(class="min-h-10" variant="destructive" @click="onDelete") 删除
       Button(
-        size="sm" :disabled="!form.name.trim() || saving || !connected"
+        size="sm" class="min-h-10 md:min-h-7" :disabled="!form.name.trim() || saving || !connected"
         :title="connected ? undefined : DISCONNECTED_MESSAGE" @click="save")
         Spinner(v-if="saving" data-icon="inline-start")
         | {{ saving ? '保存中…' : '保存' }}

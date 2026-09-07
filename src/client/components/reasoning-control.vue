@@ -72,7 +72,7 @@ function setOpen(next: boolean) {
         type="button"
         :variant="variant"
         size="xs"
-        class="gap-1.5 aria-disabled:opacity-50"
+        class="min-h-10 gap-1.5 aria-disabled:opacity-50 md:min-h-6"
         :aria-disabled="disabledReason !== null"
         :aria-expanded="open"
         aria-haspopup="dialog"
