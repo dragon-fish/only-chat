@@ -1,8 +1,41 @@
 import { describe, expect, it } from 'vitest'
-import { createModelDraft, modelWriteFromDraft, resetMetadataOverride, setMetadataOverride } from '@/client/lib/model-editor'
+import { createModelDraft, createModelEditorSession, modelWriteFromDraft, resetMetadataOverride, setMetadataOverride } from '@/client/lib/model-editor'
 import { modelRecords, provider } from './provider-fixtures'
 
 describe('metadata override editor', () => {
+  it('compares dirty state with the same normalized model ID sent in a write', () => {
+    const session = createModelEditorSession(modelRecords[0]!)
+    session.form.model_id = ' first-model '
+    expect(session.patch(provider.interfaces)).toEqual({})
+    expect(session.dirty).toBe(false)
+  })
+
+  it('keeps optimistic input separate from the acknowledged baseline until a successful write', () => {
+    const persisted = modelRecords[0]!
+    const pending = { ...persisted, metadata_override: { name: 'Pending name' } }
+    const session = createModelEditorSession(persisted, pending)
+    expect(session.dirty).toBe(true)
+    expect(session.patch(provider.interfaces)).toEqual({ metadata_override: { name: 'Pending name' } })
+    expect(session.model.metadata_override).toEqual({})
+    pending.metadata_override.name = 'Another row edit'
+    expect(session.form.metadata_override.name).toBe('Pending name')
+    session.acknowledge({ ...persisted, metadata_override: { name: 'Pending name' } })
+    expect(session.dirty).toBe(false)
+    expect(session.patch(provider.interfaces)).toEqual({})
+  })
+
+  it('advances only the acknowledged layer and keeps newer edits and the stable row target', () => {
+    const session = createModelEditorSession(modelRecords[0]!)
+    session.form.model_id = 'renamed-model'
+    session.form.metadata_override = { name: 'Newer draft' }
+    session.acknowledge({ ...modelRecords[0]!, model_id: 'renamed-model', metadata_override: { name: 'First submission' } })
+    expect(session.target).toEqual({ id: 2, provider_id: 1 })
+    expect(session.dirty).toBe(true)
+    expect(session.patch(provider.interfaces)).toEqual({ metadata_override: { name: 'Newer draft' } })
+    expect(() => session.acknowledge(modelRecords[1]!)).toThrow(/different model/i)
+    expect(session.model.metadata_override.name).toBe('First submission')
+  })
+
   it('writes only edited user intent without pinning any effective catalog fields', () => {
     const record = { ...modelRecords[0]!, metadata_override: { description: 'Existing override' } }
     const draft = createModelDraft(record)

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, reactive, ref, shallowRef, watch } from 'vue'
 import { DownloadIcon, PlusIcon, Settings2Icon, Trash2Icon } from '@lucide/vue'
 import { useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
@@ -16,6 +16,7 @@ import ProviderInterfaceList from '@/client/components/provider-interface-list.v
 import { api } from '@/client/lib/api'
 import { modelBadges, modelName } from '@/client/lib/ui-models'
 import { createModelWriteQueue } from '@/client/lib/settings'
+import { createModelEditorSession, type ModelEditorSession } from '@/client/lib/model-editor'
 import { useConfigStore } from '@/client/stores/config'
 import { Badge } from '@/client/ui/badge'
 import { Button } from '@/client/ui/button'
@@ -66,7 +67,7 @@ const modelAction = ref(false)
 const pendingWrites = reactive(new Map<number, number>())
 const deletingProvider = ref(false)
 const providerDeleteOpen = ref(false)
-const editingModel = ref<ModelWithMetadata | null>(null)
+const editingSession = shallowRef<ModelEditorSession | null>(null)
 const modelEditor = ref<InstanceType<typeof ModelEditor> | null>(null)
 const editorOpen = ref(false)
 const modelToDelete = ref<ModelWithMetadata | null>(null)
@@ -283,6 +284,8 @@ function queueFor(id: number) {
         const result = await api.updateModel(id, modelId, patch)
         if (record.model_id !== result.model_id) config.forgetModel(record)
         config.retainModels([result])
+        const session = editingSession.value
+        if (session?.target.provider_id === id && session.target.id === modelId) session.acknowledge(result)
       },
       read: async () => {
         const result = await readModels(id)
@@ -298,42 +301,46 @@ function queueFor(id: number) {
   return queue
 }
 
-async function applyModel(model: ModelWithMetadata, patch: Partial<ModelWriteInput>) {
+async function applyModel(target: Pick<ModelWithMetadata, 'id' | 'provider_id'>, patch: Partial<ModelWriteInput>) {
   modelLoadToken++
   loadController?.abort()
   refreshing.value = false
   // Keep the local row's pending intent isolated from the authoritative Pinia cache.
-  Object.assign(model, patch)
-  if (patch.metadata_override?.name !== undefined) model.metadata = { ...model.metadata, name: patch.metadata_override.name }
-  const id = model.provider_id
+  const model = models.value.find(model => model.id === target.id && model.provider_id === target.provider_id)
+  if (model) {
+    Object.assign(model, patch)
+    if (patch.metadata_override?.name !== undefined) model.metadata = { ...model.metadata, name: patch.metadata_override.name }
+  }
+  const id = target.provider_id
   pendingWrites.set(id, (pendingWrites.get(id) ?? 0) + 1)
   try {
-    const saved = await queueFor(id)(model.id, patch)
+    const saved = await queueFor(id)(target.id, patch)
     if (saved) toast.success('已保存模型')
     return saved
   } finally { pendingWrites.set(id, (pendingWrites.get(id) ?? 1) - 1) }
 }
 
 function openModel(model: ModelWithMetadata) {
-  editingModel.value = model
+  const authoritative = Object.values(config.modelsByRef).find(record => record.id === model.id && record.provider_id === model.provider_id)
+  if (!authoritative) { report(new Error('Missing model record')); return }
+  editingSession.value = createModelEditorSession(authoritative, model)
   editorOpen.value = true
 }
 
 async function saveModel(patch: Partial<ModelWriteInput>) {
   const editor = modelEditor.value
-  if (!editingModel.value || !editor) return
-  const current = models.value.find(model => model.id === editingModel.value?.id)
-  if (!current) return
+  const session = editingSession.value
+  if (!session || !editor) return
   const token = loadToken
   const snapshot = editor.captureSnapshot()
-  const saved = await applyModel(current, patch)
+  const saved = await applyModel(session.target, patch)
   // Reopening the same model creates a new draft owner that an earlier save must not close.
-  if (!saved || token !== loadToken || modelEditor.value !== editor) return
-  if (editor.acknowledgeSave(snapshot)) editorOpen.value = false
+  if (!saved || token !== loadToken || modelEditor.value !== editor || editingSession.value !== session) return
+  if (editor.matchesSnapshot(snapshot)) editorOpen.value = false
 }
 
 function confirmModelDelete() {
-  modelToDelete.value = editingModel.value
+  modelToDelete.value = editingSession.value?.model ?? null
   modelDeleteOpen.value = true
 }
 
@@ -465,7 +472,7 @@ async function removeModel() {
                 Button(v-else-if="canFetchModels" variant="outline" class="min-h-10" :disabled="dirty || busyModels || deletingProvider" @click="fetchModels") 拉取模型
                 Button(v-else variant="outline" class="min-h-10" @click="focusNewModel") 输入模型 ID
           Button(v-if="nextCursor" variant="outline" :disabled="refreshing || busyModels" @click="loadModelPage(true)") 加载更多模型
-  ModelEditor(v-if="editorOpen && editingModel && savedProvider && providerId !== null" ref="modelEditor" v-model:open="editorOpen" :key="editingModel.id" :provider-id="providerId" :model="editingModel" :interfaces="savedProvider.interfaces" :default-interface-id="savedProvider.default_interface_id" :saving="busyModels" @save="saveModel" @delete="confirmModelDelete")
+  ModelEditor(v-if="editorOpen && editingSession && savedProvider && providerId !== null" ref="modelEditor" v-model:open="editorOpen" :key="editingSession.target.id" :session="editingSession" :interfaces="savedProvider.interfaces" :default-interface-id="savedProvider.default_interface_id" :saving="busyModels" @save="saveModel" @delete="confirmModelDelete")
   AlertDialog(v-model:open="modelDeleteOpen")
     AlertDialogContent
       AlertDialogHeader

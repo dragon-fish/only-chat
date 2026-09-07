@@ -1,3 +1,4 @@
+import { computed, reactive, shallowRef } from 'vue'
 import { ModelWriteInputSchema, type ModelWriteInput } from '@/shared/api'
 import { ModelMetadataOverrideSchema, type ModelMetadataOverride } from '@/shared/model-metadata'
 import type { ModelWithMetadata, ProviderInterface } from '@/shared/models'
@@ -9,6 +10,26 @@ const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value))
 export function createModelDraft(model: ModelWithMetadata): ModelDraft {
   return { model_id: model.model_id, interface_id: model.interface_id, enabled: model.enabled, metadata_override: clone(model.metadata_override) }
 }
+
+/** A display row may contain pending writes; only a server acknowledgement can advance the baseline. */
+export function createModelEditorSession(authoritative: ModelWithMetadata, initial: ModelWithMetadata = authoritative) {
+  const target = Object.freeze({ id: authoritative.id, provider_id: authoritative.provider_id })
+  const acknowledged = shallowRef(clone(authoritative))
+  const form = reactive(createModelDraft(initial))
+  const dirty = computed(() => JSON.stringify({ ...form, model_id: form.model_id.trim() }) !== JSON.stringify(createModelDraft(acknowledged.value)))
+  return {
+    target,
+    form,
+    get model() { return acknowledged.value },
+    get dirty() { return dirty.value },
+    patch(interfaces: readonly ProviderInterface[]) { return modelWriteFromDraft(acknowledged.value, form, interfaces) },
+    acknowledge(model: ModelWithMetadata) {
+      if (model.id !== target.id || model.provider_id !== target.provider_id) throw new Error('Cannot acknowledge a different model')
+      acknowledged.value = clone(model)
+    },
+  }
+}
+export type ModelEditorSession = ReturnType<typeof createModelEditorSession>
 
 export function metadataValue(value: unknown, path: string): unknown {
   return path.split('.').reduce<unknown>((current, key) => current !== null && typeof current === 'object' ? (current as Record<string, unknown>)[key] : undefined, value)

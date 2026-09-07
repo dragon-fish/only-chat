@@ -54,15 +54,16 @@ async function type(input: HTMLInputElement, value: string) {
 function delayModelSave() {
   const persisted = structuredClone(models)
   let acknowledge!: () => void
-  vi.mocked(api.queryModels).mockImplementation(async () => ({ models: structuredClone(persisted), next_cursor: null }))
+  let reject!: (error: Error) => void
+  vi.mocked(api.queryModels).mockImplementation(async query => ({ models: structuredClone(persisted).filter(model => !query?.search || `${model.model_id} ${model.metadata.name}`.toLowerCase().includes(query.search.toLowerCase())), next_cursor: null }))
   const write = vi.spyOn(api, 'updateModel').mockImplementation(async (_providerId, modelId, patch) => {
-    await new Promise<void>(resolve => { acknowledge = resolve })
+    await new Promise<void>((resolve, fail) => { acknowledge = resolve; reject = fail })
     const model = persisted.find(model => model.id === modelId)!
     Object.assign(model, patch)
     model.metadata = { ...model.metadata, ...patch.metadata_override } as ModelWithMetadata['metadata']
     return structuredClone(model)
   })
-  return { write, acknowledge: () => acknowledge() }
+  return { write, acknowledge: () => acknowledge(), reject: () => reject(new Error('Save rejected')) }
 }
 
 async function submitModelName() {
@@ -75,6 +76,49 @@ async function submitModelName() {
 }
 
 describe('provider model editor', () => {
+  it('keeps a reopened pending override dirty and retryable after the save fails', async () => {
+    await mountEditor()
+    const save = delayModelSave()
+    await submitModelName()
+    await vi.waitFor(() => expect(save.write).toHaveBeenCalledTimes(1))
+    document.querySelector<HTMLInputElement>('#model-1-2-name')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await vi.waitFor(() => expect(document.querySelector('[role="alertdialog"]')).not.toBeNull())
+    ;[...document.querySelectorAll('button')].find(button => button.textContent?.trim() === '放弃更改')!.click()
+    await vi.waitFor(() => expect(document.querySelector('#model-1-2-name')).toBeNull())
+    document.querySelector<HTMLButtonElement>('[aria-label="编辑 Submitted model"]')!.click()
+    await vi.waitFor(() => expect(document.querySelector<HTMLInputElement>('#model-1-2-name')?.value).toBe('Submitted model'))
+    save.reject()
+    await vi.waitFor(() => expect(document.querySelector('[aria-label="编辑 First model"]')).not.toBeNull())
+    await vi.waitFor(() => expect([...document.querySelectorAll('button')].some(button => button.textContent?.trim() === '保存中…')).toBe(false))
+    expect(document.querySelector('[data-slot="sheet-content"] [role="status"]')?.textContent ?? '').toContain('未保存')
+    document.querySelector('#model-1-2-name')!.closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(save.write).toHaveBeenCalledTimes(2))
+    expect(save.write.mock.calls[1]).toEqual([1, 2, { metadata_override: { name: 'Submitted model' } }])
+    save.acknowledge()
+    await vi.waitFor(() => expect(document.querySelector('#model-1-2-name')).toBeNull())
+    expect(document.querySelector('[aria-label="编辑 Submitted model"]')).not.toBeNull()
+  })
+
+  it('saves newer edits by row identity after the first save removes the model from its filtered page', async () => {
+    const { config } = await mountEditor()
+    const save = delayModelSave()
+    await type(document.querySelector<HTMLInputElement>('[aria-label="搜索模型"]')!, 'First model')
+    await vi.waitFor(() => expect(document.querySelector('[aria-label="编辑 First model"]')).not.toBeNull())
+    await submitModelName()
+    await vi.waitFor(() => expect(save.write).toHaveBeenCalledTimes(1))
+    await type(document.querySelector<HTMLInputElement>('#model-1-2-name')!, 'Newer model draft')
+    save.acknowledge()
+    await vi.waitFor(() => expect([...document.querySelectorAll('button')].some(button => button.textContent?.trim() === '保存中…')).toBe(false))
+    expect(document.querySelectorAll('button[aria-label^="编辑 "]')).toHaveLength(0)
+    expect(document.querySelector<HTMLInputElement>('#model-1-2-name')?.value).toBe('Newer model draft')
+    document.querySelector('#model-1-2-name')!.closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(save.write).toHaveBeenCalledTimes(2))
+    expect(save.write.mock.calls[1]).toEqual([1, 2, { metadata_override: { name: 'Newer model draft' } }])
+    save.acknowledge()
+    await vi.waitFor(() => expect(document.querySelector('#model-1-2-name')).toBeNull())
+    expect(config.modelsByRef['1:first-model']?.metadata.name).toBe('Newer model draft')
+  })
+
   it('does not repaint a newer filter after a save reread waits for provider refresh', async () => {
     await mountEditor()
     vi.spyOn(api, 'updateModel').mockResolvedValue({ ...models[0]!, enabled: false })

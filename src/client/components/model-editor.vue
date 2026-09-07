@@ -3,8 +3,7 @@ import { computed, reactive, ref } from 'vue'
 import { Trash2Icon } from '@lucide/vue'
 import ResponsiveOverlay from '@/client/components/layout/responsive-overlay.vue'
 import UnsavedChangesGuard from '@/client/components/unsaved-changes-guard.vue'
-import { useFormChanges } from '@/client/composables/use-form-changes'
-import { catalogSource, createModelDraft, metadataValue, modelWriteFromDraft, resetMetadataOverride, setMetadataOverride, type ModelDraft } from '@/client/lib/model-editor'
+import { catalogSource, metadataValue, resetMetadataOverride, setMetadataOverride, type ModelEditorSession } from '@/client/lib/model-editor'
 import { Button } from '@/client/ui/button'
 import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel, FieldLegend, FieldSet } from '@/client/ui/field'
 import { Input } from '@/client/ui/input'
@@ -13,15 +12,15 @@ import { Separator } from '@/client/ui/separator'
 import { Switch } from '@/client/ui/switch'
 import { Textarea } from '@/client/ui/textarea'
 import type { ModelWriteInput } from '@/shared/api'
-import type { ModelWithMetadata, ProviderInterface } from '@/shared/models'
+import type { ProviderInterface } from '@/shared/models'
 
-const props = defineProps<{ open: boolean; providerId: number; model: ModelWithMetadata; interfaces: ProviderInterface[]; defaultInterfaceId: number | null; saving?: boolean }>()
+const props = defineProps<{ open: boolean; session: ModelEditorSession; interfaces: ProviderInterface[]; defaultInterfaceId: number | null; saving?: boolean }>()
 const emit = defineEmits<{ 'update:open': [value: boolean]; save: [patch: Partial<ModelWriteInput>]; delete: [] }>()
-const form = reactive(createModelDraft(props.model))
-let baseline = { ...props.model, ...createModelDraft(props.model) }
+const form = props.session.form
+const model = computed(() => props.session.model)
 const inputs = reactive<Record<string, string>>({})
 const errors = reactive<Record<string, string>>({})
-const prefix = `model-${props.providerId}-${props.model.id}`
+const prefix = `model-${props.session.target.provider_id}-${props.session.target.id}`
 type MetadataField = { path: string; label: string; kind: 'text' | 'number' | 'boolean' | 'json' }
 const fields = (kind: MetadataField['kind'], labels: Record<string, string>): MetadataField[] => Object.entries(labels).map(([path, label]) => ({ path, label, kind }))
 const groups = [
@@ -43,23 +42,18 @@ function format(value: unknown): string {
   return value === undefined ? '' : typeof value === 'object' ? JSON.stringify(value, null, 2) : String(value)
 }
 for (const field of groups.flatMap(group => group.fields)) inputs[field.path] = format(metadataValue(form.metadata_override, field.path))
-const ownInterfaces = computed(() => props.interfaces.filter(endpoint => endpoint.provider_id === props.model.provider_id))
+const ownInterfaces = computed(() => props.interfaces.filter(endpoint => endpoint.provider_id === props.session.target.provider_id))
 const defaultInterface = computed(() => ownInterfaces.value.find(endpoint => endpoint.id === props.defaultInterfaceId))
-const { dirty, capture, markSaved } = useFormChanges(() => ({ form, inputs }))
-function acknowledgeSave(snapshot: string): boolean {
-  const submitted = JSON.parse(snapshot) as { form: ModelDraft }
-  baseline = { ...baseline, ...submitted.form }
-  markSaved(snapshot)
-  return capture() === snapshot
-}
-defineExpose({ captureSnapshot: capture, acknowledgeSave })
+const dirty = computed(() => props.session.dirty || Object.keys(errors).length > 0)
+const capture = () => JSON.stringify({ form, inputs })
+defineExpose({ captureSnapshot: capture, matchesSnapshot: (snapshot: string) => capture() === snapshot && !dirty.value })
 const leaveGuard = ref<InstanceType<typeof UnsavedChangesGuard> | null>(null)
 async function setOpen(next: boolean) {
   if (next || await leaveGuard.value?.confirmLeave()) emit('update:open', next)
 }
 const valid = computed(() => {
   if (Object.keys(errors).length) return false
-  try { modelWriteFromDraft(baseline, form, ownInterfaces.value); return true }
+  try { props.session.patch(ownInterfaces.value); return true }
   catch { return false }
 })
 function reset(path: string) {
@@ -85,14 +79,14 @@ function clearCost() {
 }
 function source(path: string) {
   if (metadataValue(form.metadata_override, path) !== undefined || (path.startsWith('cost.') && form.metadata_override.cost === null)) return '用户覆写'
-  return metadataValue(baseline.metadata_override, path) !== undefined ? '继承（保存后恢复目录默认值）' : '继承'
+  return metadataValue(model.value.metadata_override, path) !== undefined ? '继承（保存后恢复目录默认值）' : '继承'
 }
 function placeholder(path: string) {
-  if (metadataValue(baseline.metadata_override, path) !== undefined && metadataValue(form.metadata_override, path) === undefined) return '保存后恢复目录默认值'
-  return format(metadataValue(props.model.metadata, path)) || '未提供'
+  if (metadataValue(model.value.metadata_override, path) !== undefined && metadataValue(form.metadata_override, path) === undefined) return '保存后恢复目录默认值'
+  return format(metadataValue(model.value.metadata, path)) || '未提供'
 }
 function save() {
-  if (valid.value && !props.saving) emit('save', modelWriteFromDraft(baseline, form, ownInterfaces.value))
+  if (valid.value && !props.saving) emit('save', props.session.patch(ownInterfaces.value))
 }
 </script>
 
