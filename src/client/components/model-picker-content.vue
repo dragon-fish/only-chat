@@ -70,7 +70,7 @@ function onSelect(value: unknown) {
 </script>
 
 <template lang="pug">
-Command(:key="searchKey" :model-value="currentKey" class="min-h-0" @update:model-value="onSelect")
+Command(:key="searchKey" :model-value="currentKey" :should-filter="false" class="min-h-0" @update:model-value="onSelect")
   CommandInput(placeholder="搜索提供商或模型…" @input="onSearch")
   .px-3.py-2
     ToggleGroup(
