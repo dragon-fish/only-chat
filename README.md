@@ -100,7 +100,8 @@ different base than the one generation uses, and guessing at it would be wrong, 
 ### Model capabilities are declared, never inferred
 
 `vision`, `reasoning`, `tools`, `reasoning_can_disable`, `reasoning_efforts` and `image_output` are
-set per model on the provider edit page. Nothing is guessed from a model id.
+set in each model's editor, opened from its settings button in the provider detail. The editor is a
+right-side Sheet on desktop and a bottom Drawer on mobile. Nothing is guessed from a model id.
 
 - `reasoning` gates the whole reasoning control. `reasoning_can_disable` decides whether an explicit
   "off" is ever sent — a model that cannot be turned off simply receives no reasoning field.
@@ -152,6 +153,7 @@ orphan row, no half-written R2 object and no file content anywhere.
 
 Design notes: `docs/superpowers/specs/2026-09-05-only-chat-mvp-design.md` and
 `docs/superpowers/specs/2026-09-06-projects-ui-reasoning-design.md`.
+`docs/superpowers/specs/2026-09-06-unified-ui-redesign.md` supersedes their UI layout decisions.
 
 ## Known gaps
 

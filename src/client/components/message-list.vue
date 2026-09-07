@@ -45,5 +45,5 @@ MessageScrollerProvider(:auto-scroll="true" default-scroll-position="last-anchor
           MessageItem(
             :message="row.message" :project="project" :assistant-name="row.assistantName"
             :assistant-model-name="row.assistantModelName" :assistant-provider-name="row.assistantProviderName")
-    MessageScrollerButton(direction="end")
+    MessageScrollerButton(direction="end" class="size-10 md:size-7")
 </template>
