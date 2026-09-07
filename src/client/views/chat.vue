@@ -17,6 +17,7 @@ import {
 } from '@/client/stores/sync'
 import { useConfigStore } from '@/client/stores/config'
 import { Button } from '@/client/ui/button'
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/client/ui/empty'
 import type { ModelRef } from '@/shared/api'
 import type { Part } from '@/shared/parts'
 
@@ -267,6 +268,7 @@ function onReasoningChange(choice: ReasoningChoice) {
       ModelPicker(:model-value="effective.model" @update:model-value="onModelChange")
       Button(
         v-if="sources.model === 'session'" variant="ghost" size="icon-xs"
+        class="min-h-10 min-w-10 md:min-h-6 md:min-w-6"
         title="恢复继承模型" aria-label="恢复继承模型" @click="setOverride(null)")
         RotateCcwIcon
       .ml-auto.shrink-0
@@ -285,6 +287,7 @@ function onReasoningChange(choice: ReasoningChoice) {
       ModelPicker(compact :model-value="effective.model" @update:model-value="onModelChange")
       Button(
         v-if="sources.model === 'session'" variant="ghost" size="icon-xs"
+        class="min-h-10 min-w-10 md:min-h-6 md:min-w-6"
         title="恢复继承模型" aria-label="恢复继承模型" @click="setOverride(null)")
         RotateCcwIcon
       SessionSettings(
@@ -292,7 +295,10 @@ function onReasoningChange(choice: ReasoningChoice) {
         @commit="commitSettings")
   .min-h-0.flex-1
     MessageList(v-if="path.length" :messages="path" :project="project")
-    .flex.h-full.items-center.justify-center.text-muted-foreground(v-else) 开始一段新对话
+    Empty(v-else class="h-full")
+      EmptyHeader
+        EmptyTitle 开始一段新对话
+        EmptyDescription 从下方输入消息，开启这次交流。
   Composer(
     ref="composer" :streaming="streaming" :connected="sync.status === 'open'"
     :can-send="canSend" :hint="sendHint" @send="onSend" @stop="onStop")

@@ -9,6 +9,17 @@ export type EnabledModelEntry = {
 
 const normalizeQuery = (query: string) => query.trim().toLocaleLowerCase()
 
+/** Builds a stable avatar fallback without depending on the host's default locale. */
+export function displayInitials(name: string, fallback = 'AI'): string {
+  const value = name.trim()
+  if (!value) return fallback
+  const words = value.split(/\s+/).filter(Boolean)
+  const initials = words.length > 1
+    ? words.slice(0, 2).map(word => Array.from(word)[0] ?? '').join('')
+    : Array.from(value).slice(0, 2).join('')
+  return initials.toUpperCase()
+}
+
 /** Returns the newest activity timestamp belonging to a Project or one of its sessions. */
 export function projectActivity(project: Project, sessions: readonly Session[]): number {
   return sessions.reduce(

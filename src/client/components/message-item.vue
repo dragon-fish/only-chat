@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import MarkdownRender from 'markstream-vue'
-import { LoaderCircle, PencilIcon, RefreshCwIcon } from '@lucide/vue'
+import { LoaderCircle, PencilIcon, RefreshCwIcon, TriangleAlertIcon } from '@lucide/vue'
 import BranchSwitcher from '@/client/components/branch-switcher.vue'
 import ProjectAvatar from '@/client/components/project-avatar.vue'
 import ProviderAvatar from '@/client/components/provider-avatar.vue'
 import { api } from '@/client/lib/api'
 import { cn } from '@/client/lib/utils'
 import { assistantWaitState, useSyncStore } from '@/client/stores/sync'
+import { Alert, AlertDescription, AlertTitle } from '@/client/ui/alert'
 import { Badge } from '@/client/ui/badge'
 import { Bubble, BubbleContent } from '@/client/ui/bubble'
 import { Button } from '@/client/ui/button'
@@ -93,17 +94,22 @@ MessageRoot(:align="message.role === 'user' ? 'end' : 'start'")
           //- Generated images are served by the same authenticated attachment route as uploads.
           .flex.flex-wrap.gap-2.pt-2(v-if="images.length")
             img.max-h-80.rounded.border(v-for="(img, i) in images" :key="i" :src="api.attachmentUrl(img.attachment_id)")
-          p.text-xs.text-destructive(v-if="message.status === 'error'") 出错：{{ message.error }}
+          Alert(v-if="message.status === 'error'" variant="destructive")
+            TriangleAlertIcon
+            AlertTitle 生成失败
+            AlertDescription {{ message.error ?? '未知错误' }}
           p.text-xs.text-muted-foreground(v-else-if="message.status === 'aborted'") 已停止
 
     MessageFooter(:class="actionsClass")
       BranchSwitcher(:message="message")
       Button(
         v-if="message.role === 'assistant' && !streaming" variant="ghost" size="icon-xs"
+        class="min-h-10 min-w-10 md:min-h-6 md:min-w-6"
         title="重新生成" aria-label="重新生成" @click="regenerate")
         RefreshCwIcon
       Button(
         v-if="message.role === 'user' && !editing" variant="ghost" size="icon-xs"
+        class="min-h-10 min-w-10 md:min-h-6 md:min-w-6"
         title="编辑消息" aria-label="编辑消息" @click="startEdit")
         PencilIcon
       span.ml-1(v-if="message.usage") {{ message.usage.prompt ?? '?' }} / {{ message.usage.completion ?? '?' }} tokens

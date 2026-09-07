@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ModelCapabilities, Project, Provider, Session } from '@/shared/models'
 import {
+  displayInitials,
   filterModelEntries,
   recentProjects,
   searchProjects,
@@ -25,6 +26,10 @@ const entry = (providerName: string, model_id: string, display_name: string, cap
 })
 
 describe('navigation view models', () => {
+  it('derives initials with locale-independent casing', () => {
+    expect(displayInitials('istanbul intelligence')).toBe('II')
+  })
+
   it('orders Projects by their newest own or child-session activity and limits to five', () => {
     const projects = [project(1, 10), project(2, 20), project(3, 30), project(4, 40), project(5, 50), project(6, 60)]
     const sessions = [session(1, 1, 100), session(2, 2, 90)]
