@@ -274,9 +274,13 @@ models-dev:active
 Endpoint 自动识别规则：
 
 1. 仅移除 URL 末尾 `/`，不改写 scheme、host、port、`/v1` 或其他 path。
-2. 将每个接口的规范化 Base URL 与 models.dev `provider.api` 逐字比较。
-3. 所有唯一命中必须指向同一个 provider ID，才保存该 `models_dev_provider_id`。
-4. 无命中时保存 null；不同接口命中不同 provider 时不选择任何一方，并向设置 UI 返回非阻塞提示。
+2. 首先将默认接口的规范化 Base URL 与 models.dev `provider.api` 逐字比较；唯一命中时立即使用。
+3. 默认接口未命中时，只检查与默认接口 `URL.origin` 完全一致的其他接口。`origin` 包含 scheme、host 和 port；这些兄弟接口只允许 path 不同。
+4. 按接口配置顺序，将兄弟接口的完整规范化 Base URL 与 `provider.api` 逐字比较。所有命中指向同一 provider ID 时使用该 ID。
+5. 不检查不同 origin 的其他接口，避免一个逻辑供应商的辅助代理地址错误改变身份。
+6. 无命中时保存 null；同 origin 兄弟接口命中不同 provider 时不选择任何一方，并向设置 UI 返回非阻塞提示。
+
+例如 DeepSeek 同时配置 `https://api.deepseek.com/anthropic` 和 `https://api.deepseek.com`，即使前者是默认接口，默认 URL 未命中后仍会用同 origin 的后者匹配 models.dev DeepSeek provider。
 
 模型 metadata 解析只在已保存的 `models_dev_provider_id` 下查 provider-specific catalog；endpoint 不在每次模型读取时重复匹配。
 
@@ -472,7 +476,7 @@ Session 与 Project 行尾操作使用官方 `SidebarMenuAction`，桌面点击�
 
 ### 15.1 自动测试
 
-- Provider/interface schema、唯一约束、默认接口和跨供应商引用。
+- Provider/interface schema、唯一约束、默认接口和跨供应商引用，以及默认 endpoint 优先、同 origin 兄弟 endpoint 回退。
 - 四种协议的有效接口解析和参数映射。
 - DeepSeek 风格 reasoning SSE、非流式 output、完整存储和第二轮回放。
 - Chat Completions `reasoning_content` 与工具调用交错顺序。
