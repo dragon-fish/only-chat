@@ -59,7 +59,7 @@ function clearSearch() {
     <SidebarHeader>
       <SidebarMenu>
         <SidebarMenuItem>
-          <SidebarMenuButton as-child>
+          <SidebarMenuButton as-child class="min-h-10">
             <RouterLink to="/chats" @click="clearSearch">
               <ArrowLeftIcon />
               <span>返回聊天</span>
@@ -78,7 +78,7 @@ function clearSearch() {
             <DropdownMenuContent align="start" class="min-w-56">
               <DropdownMenuLabel>切换 Project</DropdownMenuLabel>
               <DropdownMenuGroup>
-                <DropdownMenuItem v-for="item in allProjectsByActivity" :key="item.id" as-child>
+                <DropdownMenuItem v-for="item in allProjectsByActivity" :key="item.id" class="min-h-10" as-child>
                   <RouterLink :to="`/projects/${item.id}`">
                     <ProjectAvatar :name="item.name" size="sm" />
                     <span class="truncate">{{ item.name }}</span>
@@ -92,7 +92,7 @@ function clearSearch() {
 
       <SidebarMenu>
         <SidebarMenuItem>
-          <SidebarMenuButton as-child>
+          <SidebarMenuButton as-child class="min-h-10">
             <RouterLink :to="{ path: '/', query: { project: project.id } }">
               <PlusIcon />
               <span>Project 新对话</span>
@@ -102,11 +102,11 @@ function clearSearch() {
       </SidebarMenu>
       <div class="relative">
         <SearchIcon class="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-        <SidebarInput v-model="query" class="pl-8" placeholder="搜索 Project 对话…" />
+        <SidebarInput v-model="query" class="min-h-10 pl-8" placeholder="搜索 Project 对话…" />
       </div>
       <SidebarMenu>
         <SidebarMenuItem>
-          <SidebarMenuButton as-child>
+          <SidebarMenuButton as-child class="min-h-10">
             <RouterLink :to="`/settings/projects/${project.id}`">
               <SlidersHorizontalIcon />
               <span>Project 设置</span>
@@ -151,7 +151,7 @@ function clearSearch() {
           </SidebarMenuButton>
         </SidebarMenuItem>
         <SidebarMenuItem>
-          <SidebarMenuButton as-child>
+          <SidebarMenuButton as-child class="min-h-10">
             <RouterLink to="/">
               <PlusIcon />
               <span>新建随心聊</span>
@@ -161,7 +161,7 @@ function clearSearch() {
       </SidebarMenu>
       <div class="relative">
         <SearchIcon class="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-        <SidebarInput v-model="query" class="pl-8" placeholder="搜索聊天或 Project…" />
+        <SidebarInput v-model="query" class="min-h-10 pl-8" placeholder="搜索聊天或 Project…" />
       </div>
     </SidebarHeader>
 
@@ -181,7 +181,7 @@ function clearSearch() {
                 {{ query ? '没有匹配的 Project' : '还没有 Project' }}
               </SidebarMenuItem>
               <SidebarMenuItem>
-                <SidebarMenuButton as-child>
+                <SidebarMenuButton as-child class="min-h-10">
                   <RouterLink to="/projects">
                     <FolderKanbanIcon />
                     <span>查看全部 Projects</span>
@@ -221,7 +221,7 @@ function clearSearch() {
     <SidebarFooter>
       <SidebarMenu>
         <SidebarMenuItem>
-          <SidebarMenuButton as-child :is-active="route.path.startsWith('/settings')">
+          <SidebarMenuButton as-child class="min-h-10" :is-active="route.path.startsWith('/settings')">
             <RouterLink to="/settings/providers">
               <SettingsIcon />
               <span>设置</span>

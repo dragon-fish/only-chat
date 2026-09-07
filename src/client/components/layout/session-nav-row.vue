@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { FolderInputIcon, Trash2Icon } from '@lucide/vue'
-import { RouterLink, useRoute, useRouter } from 'vue-router'
-import { moveSessionCommand, useSyncStore } from '@/client/stores/sync'
+import { RouterLink } from 'vue-router'
+import { DISCONNECTED_MESSAGE, moveSessionCommand, useSyncStore } from '@/client/stores/sync'
 import { cn } from '@/client/lib/utils'
 import { Button } from '@/client/ui/button'
 import {
@@ -23,8 +23,6 @@ const props = defineProps<{
 
 const emit = defineEmits<{ navigate: [] }>()
 const sync = useSyncStore()
-const route = useRoute()
-const router = useRouter()
 
 const moveTargets = computed(() => [
   ...(props.session.project_id === null ? [] : [{ id: null, label: '移出 Project' }]),
@@ -34,12 +32,18 @@ const moveTargets = computed(() => [
 ])
 
 function move(projectId: number | null) {
-  sync.send(moveSessionCommand(props.session.id, projectId))
+  send(moveSessionCommand(props.session.id, projectId))
 }
 
 function remove() {
-  sync.send({ type: 'session.delete', session_id: props.session.id })
-  if (route.path === `/c/${props.session.id}`) void router.push('/chats')
+  send({ type: 'session.delete', session_id: props.session.id })
+}
+
+function send(command: Parameters<typeof sync.send>[0]): boolean {
+  sync.lastError = null
+  if (sync.send(command)) return true
+  sync.lastError = DISCONNECTED_MESSAGE
+  return false
 }
 </script>
 
@@ -68,10 +72,10 @@ function remove() {
       <DropdownMenuContent align="end" class="min-w-44">
         <DropdownMenuLabel>移动到</DropdownMenuLabel>
         <DropdownMenuGroup>
-          <DropdownMenuItem v-for="target in moveTargets" :key="target.id ?? 'none'" @select="move(target.id)">
+          <DropdownMenuItem v-for="target in moveTargets" :key="target.id ?? 'none'" class="min-h-10" @select="move(target.id)">
             {{ target.label }}
           </DropdownMenuItem>
-          <DropdownMenuItem v-if="moveTargets.length === 0" disabled>还没有其他 Project</DropdownMenuItem>
+          <DropdownMenuItem v-if="moveTargets.length === 0" class="min-h-10" disabled>还没有其他 Project</DropdownMenuItem>
         </DropdownMenuGroup>
       </DropdownMenuContent>
     </DropdownMenu>
@@ -93,8 +97,8 @@ function remove() {
           <AlertDialogDescription>“{{ session.title }}”及其所有消息将被永久删除。</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel>取消</AlertDialogCancel>
-          <AlertDialogAction variant="destructive" @click="remove">删除</AlertDialogAction>
+          <AlertDialogCancel class="min-h-10">取消</AlertDialogCancel>
+          <AlertDialogAction class="min-h-10" variant="destructive" @click="remove">删除</AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

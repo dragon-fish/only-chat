@@ -2,7 +2,7 @@
 import { ref, watch, watchEffect } from 'vue'
 import { PlusIcon } from '@lucide/vue'
 import { cn } from '@/client/lib/utils'
-import { useSyncStore } from '@/client/stores/sync'
+import { DISCONNECTED_MESSAGE, useSyncStore } from '@/client/stores/sync'
 import { Button } from '@/client/ui/button'
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
@@ -51,9 +51,11 @@ function createProject() {
   if (!value || submittedName.value !== null) return
   idsBeforeSubmit.value = new Set(sync.projects.keys())
   submittedName.value = value
+  sync.lastError = null
   if (!sync.send({ type: 'project.create', name: value })) {
     submittedName.value = null
     idsBeforeSubmit.value = null
+    sync.lastError = DISCONNECTED_MESSAGE
   }
 }
 </script>
@@ -71,7 +73,7 @@ function createProject() {
         <span v-if="!compact">新建 Project</span>
       </Button>
     </DialogTrigger>
-    <DialogContent>
+    <DialogContent class="[&>button]:size-10">
       <DialogHeader>
         <DialogTitle>新建 Project</DialogTitle>
         <DialogDescription>为相关对话创建一个独立工作区。</DialogDescription>
@@ -80,12 +82,12 @@ function createProject() {
         <FieldGroup>
           <Field>
             <FieldLabel for="oc-new-project-name">名称</FieldLabel>
-            <Input id="oc-new-project-name" v-model="name" autofocus placeholder="例如：产品设计" />
+            <Input id="oc-new-project-name" v-model="name" class="min-h-10" autofocus placeholder="例如：产品设计" />
           </Field>
         </FieldGroup>
         <DialogFooter>
-          <Button type="button" variant="outline" @click="open = false">取消</Button>
-          <Button type="submit" :disabled="!name.trim() || sync.status !== 'open' || submittedName !== null">
+          <Button type="button" variant="outline" class="min-h-10" @click="open = false">取消</Button>
+          <Button class="min-h-10" type="submit" :disabled="!name.trim() || sync.status !== 'open' || submittedName !== null">
             <Spinner v-if="submittedName !== null" data-icon="inline-start" />
             {{ submittedName === null ? '创建' : '创建中…' }}
           </Button>

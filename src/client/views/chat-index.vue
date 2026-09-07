@@ -38,7 +38,9 @@ const sessions = computed(() => query.value.trim()
         <div class="flex min-h-10 items-center gap-2">
           <FolderKanbanIcon />
           <h2 id="oc-chat-projects" class="text-sm font-medium">Projects</h2>
-          <RouterLink class="ml-auto text-sm text-muted-foreground hover:text-foreground" to="/projects">查看全部</RouterLink>
+          <RouterLink class="ml-auto inline-flex min-h-10 items-center px-2 text-sm text-muted-foreground hover:text-foreground" to="/projects">
+            查看全部
+          </RouterLink>
         </div>
         <div class="flex flex-col gap-1">
           <ProjectNavRow v-for="project in projects" :key="project.id" :project="project" />

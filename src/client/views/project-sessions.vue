@@ -63,7 +63,7 @@ watch([() => sync.projectsLoaded, project], ([loaded, value]) => {
             <EmptyDescription>在这个 Project 中开始一段新对话。</EmptyDescription>
           </EmptyHeader>
           <EmptyContent>
-            <Button as-child>
+            <Button as-child class="min-h-10">
               <RouterLink :to="{ path: '/', query: { project: project.id } }">开始对话</RouterLink>
             </Button>
           </EmptyContent>

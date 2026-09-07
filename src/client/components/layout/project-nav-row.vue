@@ -3,7 +3,7 @@ import { Trash2Icon } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 import ProjectAvatar from '@/client/components/project-avatar.vue'
 import { cn } from '@/client/lib/utils'
-import { useSyncStore } from '@/client/stores/sync'
+import { DISCONNECTED_MESSAGE, useSyncStore } from '@/client/stores/sync'
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
@@ -20,7 +20,10 @@ const emit = defineEmits<{ navigate: [] }>()
 const sync = useSyncStore()
 
 function remove() {
-  sync.send({ type: 'project.delete', project_id: props.project.id })
+  sync.lastError = null
+  if (!sync.send({ type: 'project.delete', project_id: props.project.id })) {
+    sync.lastError = DISCONNECTED_MESSAGE
+  }
 }
 </script>
 
@@ -52,8 +55,8 @@ function remove() {
           <AlertDialogDescription>“{{ project.name }}”将被删除，其中的对话会移到随心聊。</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel>取消</AlertDialogCancel>
-          <AlertDialogAction variant="destructive" @click="remove">
+          <AlertDialogCancel class="min-h-10">取消</AlertDialogCancel>
+          <AlertDialogAction class="min-h-10" variant="destructive" @click="remove">
             <Trash2Icon data-icon="inline-start" />
             删除
           </AlertDialogAction>
