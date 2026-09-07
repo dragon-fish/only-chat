@@ -4,7 +4,7 @@ import { eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
 import { createDb } from '@/server/db/client'
 import { attachmentProviderFiles, attachments, messages, projects, providers, sessions, users } from '@/server/db/schema'
-import { getProviderFile } from '@/server/plugins/hub/sessions'
+import { findReusableProviderFile, insertProviderFile } from '@/server/plugins/hub/sessions'
 
 describe('D1 schema', () => {
   it('inserts a session and a message tree', async () => {
@@ -89,24 +89,40 @@ describe('D1 schema', () => {
       user_id: 1, name: 'p2', protocol: 'anthropic', base_url: 'https://api.example.com', created_at: 0,
     }).returning()
 
-    await db.insert(attachmentProviderFiles).values({
+    const scope = { providerId: p1!.id, credentialVersion: 1, family: 'openai' as const, baseURL: 'https://api.example.com' }
+    const pointer = { attachment_id: a!.id, provider_id: p1!.id, credential_version: 1, file_family: 'openai' as const, base_url: scope.baseURL, cleanup_after: 2000 }
+    await insertProviderFile(db, {
+      ...pointer,
       attachment_id: a!.id, provider_id: p1!.id, provider_reference: { openai: 'file-1' },
       expires_at: 1000, created_at: 0,
     })
-    await db.insert(attachmentProviderFiles).values({
+    await insertProviderFile(db, {
+      ...pointer, file_family: 'anthropic',
       attachment_id: a!.id, provider_id: p2!.id, provider_reference: { anthropic: 'file-2' },
       expires_at: 1000, created_at: 0,
     })
     const rows = await db.select().from(attachmentProviderFiles).where(eq(attachmentProviderFiles.attachment_id, a!.id))
     expect(rows).toHaveLength(2)
 
-    await db.insert(attachmentProviderFiles).values({
+    await insertProviderFile(db, {
+      ...pointer,
       attachment_id: a!.id, provider_id: p1!.id, provider_reference: { openai: 'file-3' },
       expires_at: 2000, created_at: 0,
     })
     expect(await db.select().from(attachmentProviderFiles).where(eq(attachmentProviderFiles.attachment_id, a!.id))).toHaveLength(3)
-    expect((await getProviderFile(db, a!.id, p1!.id))!.provider_reference).toEqual({ openai: 'file-3' })
-    expect((await getProviderFile(db, a!.id, p2!.id))!.provider_reference).toEqual({ anthropic: 'file-2' })
+    expect((await findReusableProviderFile(db, scope, a!.id, 500))!.provider_reference).toEqual({ openai: 'file-3' })
+    expect((await findReusableProviderFile(db, { ...scope, providerId: p2!.id, family: 'anthropic' }, a!.id, 500))!.provider_reference).toEqual({ anthropic: 'file-2' })
+    for (const changedScope of [
+      { ...scope, providerId: p2!.id },
+      { ...scope, credentialVersion: 2 },
+      { ...scope, family: 'anthropic' as const },
+      { ...scope, baseURL: 'https://other.example.com' },
+    ]) expect(await findReusableProviderFile(db, changedScope, a!.id, 500)).toBeUndefined()
+    // A newer expired upload must not hide an older valid reference, including equal timestamps.
+    await insertProviderFile(db, { ...pointer, provider_reference: { openai: 'expired' }, expires_at: 500, created_at: 1 })
+    expect((await findReusableProviderFile(db, scope, a!.id, 500))!.provider_reference).toEqual({ openai: 'file-3' })
+    expect(await findReusableProviderFile(db, scope, a!.id, 2000)).toBeUndefined()
+    expect(await db.select().from(attachmentProviderFiles).where(eq(attachmentProviderFiles.attachment_id, a!.id))).toHaveLength(4)
   })
 
   it('stores two interfaces and rejects duplicate protocols and dangling interface references', async () => {

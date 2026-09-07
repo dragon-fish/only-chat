@@ -1,13 +1,13 @@
-import type { FilesV4, SharedV4ProviderReference } from '@ai-sdk/provider'
+import type { SharedV4ProviderReference } from '@ai-sdk/provider'
 import type { DB } from '../../db/client'
 import type { AttachmentRow, ProviderInterfaceRow, ProviderRow } from '../../db/schema'
 import type { Assets } from '../assets'
 import type { Llm } from '../llm'
 import type { AttachmentInput } from '../llm/messages'
-import { getAttachment, getProviderFile, upsertProviderFile } from './sessions'
+import { PROVIDER_FILE_TTL_SECONDS, type ScopedFilesClient } from '../llm/files/types'
+import { findReusableProviderFile, getAttachment, insertProviderFile } from './sessions'
 
 /** Spec §5.7: uploads ask the provider to expire the file after seven days. */
-const PROVIDER_FILE_TTL_SECONDS = 604_800
 const PROVIDER_FILE_TTL_MS = PROVIDER_FILE_TTL_SECONDS * 1000
 
 /**
@@ -39,7 +39,7 @@ function filenameFor(attachment: AttachmentRow): string {
 /**
  * Decides how each referenced attachment reaches the model (spec §5.6). With the provider's Files
  * API enabled an unexpired pointer is reused as-is, otherwise the bytes are read from R2 once and
- * uploaded, and the resulting pointer replaces whatever was stored for that provider. Every other
+ * uploaded, and the resulting scoped pointer is appended to the upload history. Every other
  * case inlines the bytes.
  *
  * Upload failures propagate: an auth, rate-limit or server error is a failed turn, never a silent
@@ -53,8 +53,8 @@ export async function resolveAttachmentInputs(
 ): Promise<Map<number, AttachmentInput>> {
   const out = new Map<number, AttachmentInput>()
   const useFiles = deps.llm.hasFiles(providerInterface)
-  // One Files client serves the whole turn; building it is deferred until an upload is actually due.
-  let files: FilesV4 | undefined
+  // Resolve the actual Files scope once per turn, before either pointer reuse or upload.
+  let client: ScopedFilesClient | undefined
 
   for (const id of attachmentIds) {
     if (out.has(id)) continue
@@ -62,9 +62,9 @@ export async function resolveAttachmentInputs(
     if (!attachment) throw new Error(`attachment ${id} missing`)
 
     if (useFiles) {
-      const pointer = await getProviderFile(deps.db, id, provider.id)
-      // An expired pointer never takes part in context assembly, cleanup job or not (spec §5.7).
-      if (pointer && pointer.expires_at > Date.now()) {
+      client ??= await deps.llm.createFiles(provider, providerInterface)
+      const pointer = await findReusableProviderFile(deps.db, { ...client, providerId: provider.id }, id, Date.now())
+      if (pointer) {
         out.set(id, { mime: attachment.mime, data: { type: 'reference', reference: toReference(pointer.provider_reference) } })
         continue
       }
@@ -73,25 +73,30 @@ export async function resolveAttachmentInputs(
     const stored = await deps.assets.getBytes(attachment.r2_key)
     if (!stored) throw new Error(`attachment ${id} bytes missing`)
 
-    if (!useFiles) {
+    if (!client) {
       out.set(id, { mime: attachment.mime, data: { type: 'data', data: stored.bytes } })
       continue
     }
 
-    files ??= (await deps.llm.createFiles(provider, providerInterface)).files
-    const result = await files.uploadFile({
+    const result = await client.files.uploadFile({
       data: { type: 'data', data: stored.bytes },
       mediaType: attachment.mime,
       filename: filenameFor(attachment),
       providerOptions: UPLOAD_OPTIONS,
     })
-    await upsertProviderFile(deps.db, {
+    const createdAt = Date.now()
+    // Anthropic's SDK may omit expiresAt even though its adapter requests the TTL on upload.
+    const expiresAt = result.expiresAt?.getTime() ?? createdAt + PROVIDER_FILE_TTL_MS
+    await insertProviderFile(deps.db, {
       attachment_id: attachment.id,
       provider_id: provider.id,
+      credential_version: client.credentialVersion,
+      file_family: client.family,
+      base_url: client.baseURL,
       provider_reference: result.providerReference,
-      // The provider's own answer wins; without one the local pointer dies on the requested deadline.
-      expires_at: result.expiresAt?.getTime() ?? Date.now() + PROVIDER_FILE_TTL_MS,
-      created_at: Date.now(),
+      expires_at: expiresAt,
+      cleanup_after: expiresAt,
+      created_at: createdAt,
     })
     out.set(id, { mime: attachment.mime, data: { type: 'reference', reference: result.providerReference } })
   }

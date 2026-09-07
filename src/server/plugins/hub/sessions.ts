@@ -1,4 +1,5 @@
-import { and, desc, eq, isNotNull, isNull, lte, sql } from 'drizzle-orm'
+import { and, desc, eq, gt, isNotNull, isNull, lte, sql } from 'drizzle-orm'
+import type { ScopedFilesClient } from '../llm/files/types'
 import type { DB } from '../../db/client'
 import { attachmentProviderFiles, attachments, messages, models, providerInterfaces, providers, sessions, users } from '../../db/schema'
 import type {
@@ -132,19 +133,25 @@ export async function getAttachment(db: DB, id: number): Promise<AttachmentRow |
   return db.query.attachments.findFirst({ where: eq(attachments.id, id) })
 }
 
-/**
- * Return the latest upload for this attachment/provider. Expiry is the caller's to check;
- * historical rows must not shadow a newer upload when timestamps are equal.
- */
-export async function getProviderFile(db: DB, attachmentId: number, providerId: number): Promise<AttachmentProviderFileRow | undefined> {
+export type ProviderFileScope = Pick<ScopedFilesClient, 'family' | 'baseURL' | 'credentialVersion'> & { providerId: number }
+
+/** Match the Files endpoint and credentials, retaining expired references for remote cleanup. */
+export async function findReusableProviderFile(db: DB, scope: ProviderFileScope, attachmentId: number, now: number): Promise<AttachmentProviderFileRow | undefined> {
   return db.query.attachmentProviderFiles.findFirst({
-    where: and(eq(attachmentProviderFiles.attachment_id, attachmentId), eq(attachmentProviderFiles.provider_id, providerId)),
+    where: and(
+      eq(attachmentProviderFiles.attachment_id, attachmentId),
+      eq(attachmentProviderFiles.provider_id, scope.providerId),
+      eq(attachmentProviderFiles.credential_version, scope.credentialVersion),
+      eq(attachmentProviderFiles.file_family, scope.family),
+      eq(attachmentProviderFiles.base_url, scope.baseURL),
+      gt(attachmentProviderFiles.expires_at, now),
+    ),
     orderBy: [desc(attachmentProviderFiles.created_at), desc(attachmentProviderFiles.id)],
   })
 }
 
 /** Append each upload so older remote references remain available for cleanup. */
-export async function upsertProviderFile(db: DB, row: typeof attachmentProviderFiles.$inferInsert): Promise<void> {
+export async function insertProviderFile(db: DB, row: typeof attachmentProviderFiles.$inferInsert): Promise<void> {
   await db.insert(attachmentProviderFiles).values(row)
 }
 
