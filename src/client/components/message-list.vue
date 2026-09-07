@@ -1,33 +1,49 @@
 <script setup lang="ts">
-import { nextTick, onMounted, ref, watch } from 'vue'
+import { computed } from 'vue'
 import MessageItem from '@/client/components/message-item.vue'
-import type { Message } from '@/shared/models'
+import { useConfigStore } from '@/client/stores/config'
+import {
+  MessageScroller,
+  MessageScrollerButton,
+  MessageScrollerContent,
+  MessageScrollerItem,
+  MessageScrollerProvider,
+  MessageScrollerViewport,
+} from '@/client/ui/message-scroller'
+import type { Message, Project } from '@/shared/models'
 
-const props = defineProps<{ messages: Message[] }>()
-const el = ref<HTMLElement | null>(null)
-const stick = ref(true)
+const props = defineProps<{
+  messages: Message[]
+  project?: Project
+}>()
+const config = useConfigStore()
+const streaming = computed(() => props.messages.some(message => message.status === 'streaming'))
 
-function onScroll() {
-  const e = el.value
-  if (!e) return
-  stick.value = e.scrollHeight - e.scrollTop - e.clientHeight < 48
-}
-
-async function scrollToBottom() {
-  if (!stick.value) return
-  await nextTick()
-  el.value?.scrollTo({ top: el.value.scrollHeight })
-}
-
-// `immediate` covers the first paint: the list mounts with a full path already in place, so a lazy
-// watch would leave an existing session parked at the top. `onMounted` covers the case where the
-// immediate run fires before the element exists.
-watch(() => props.messages.map((m) => m.parts.map((p) => ('text' in p ? p.text.length : 0)).join(',')).join('|'), scrollToBottom, { immediate: true })
-onMounted(scrollToBottom)
+const rows = computed(() => props.messages.map((message) => {
+  if (message.role !== 'assistant') return { message }
+  const actual = message.provider_id !== null && message.model_id !== null
+    ? config.modelFor({ provider_id: message.provider_id, model_id: message.model_id })
+    : undefined
+  const actualModelName = actual?.model.display_name ?? message.model_id ?? '助手'
+  return {
+    message,
+    assistantName: props.project?.name ?? actualModelName,
+    assistantModelName: props.project && message.model_id !== null ? actualModelName : undefined,
+    assistantProviderName: actual?.provider.name ?? actualModelName,
+  }
+}))
 </script>
 
 <template lang="pug">
-.oc-scroll.h-full.overflow-y-auto.px-4.py-4(ref="el" @scroll="onScroll")
-  .mx-auto.flex.max-w-3xl.flex-col.gap-4
-    MessageItem(v-for="m in messages" :key="m.id" :message="m")
+MessageScrollerProvider(:auto-scroll="true" default-scroll-position="last-anchor")
+  MessageScroller
+    MessageScrollerViewport(class="oc-scroll")
+      MessageScrollerContent(:aria-busy="streaming" class="mx-auto w-full max-w-3xl gap-6 px-4 py-5")
+        MessageScrollerItem(
+          v-for="row in rows" :key="row.message.id" :message-id="String(row.message.id)"
+          :scroll-anchor="row.message.role === 'user'")
+          MessageItem(
+            :message="row.message" :project="project" :assistant-name="row.assistantName"
+            :assistant-model-name="row.assistantModelName" :assistant-provider-name="row.assistantProviderName")
+    MessageScrollerButton(direction="end" class="size-10 md:size-7")
 </template>

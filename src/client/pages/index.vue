@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import ChatView from '@/client/views/chat.vue'
+definePage({
+  redirect: () => window.matchMedia('(min-width: 768px)').matches ? '/new' : '/chats',
+})
 </script>
 
 <template lang="pug">
-ChatView(:session-id="null")
+div
 </template>

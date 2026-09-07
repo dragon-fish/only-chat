@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { ChevronLeft, ChevronRight } from '@lucide/vue'
 import { useSyncStore } from '@/client/stores/sync'
+import { Button } from '@/client/ui/button'
 import type { Message } from '@/shared/models'
 
 const props = defineProps<{ message: Message }>()
@@ -30,9 +31,9 @@ function leafOf(m: Message): number {
 
 <template lang="pug">
 .inline-flex.items-center.gap-1.text-xs.text-muted-foreground(v-if="siblings.length > 1")
-  button.rounded(class="hover:bg-accent disabled:opacity-40" :disabled="index <= 0" @click="go(-1)")
-    ChevronLeft(class="size-4")
+  Button(variant="ghost" size="icon-xs" class="size-10 md:size-6" aria-label="上一个分支" title="上一个分支" :disabled="index <= 0" @click="go(-1)")
+    ChevronLeft(data-icon="inline-start")
   span {{ index + 1 }} / {{ siblings.length }}
-  button.rounded(class="hover:bg-accent disabled:opacity-40" :disabled="index >= siblings.length - 1" @click="go(1)")
-    ChevronRight(class="size-4")
+  Button(variant="ghost" size="icon-xs" class="size-10 md:size-6" aria-label="下一个分支" title="下一个分支" :disabled="index >= siblings.length - 1" @click="go(1)")
+    ChevronRight(data-icon="inline-end")
 </template>

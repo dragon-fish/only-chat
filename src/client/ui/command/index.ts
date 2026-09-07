@@ -12,6 +12,7 @@ export { default as CommandSeparator } from './CommandSeparator.vue'
 export { default as CommandShortcut } from './CommandShortcut.vue'
 
 export const [useCommand, provideCommandContext] = createContext<{
+  shouldFilter: Ref<boolean>
   allItems: Ref<Map<string, string>>
   allGroups: Ref<Map<string, Set<string>>>
   filterState: {

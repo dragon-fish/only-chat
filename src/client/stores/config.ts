@@ -8,12 +8,19 @@ export const useConfigStore = defineStore('config', () => {
   const providers = ref<Provider[]>([])
   const modelsByProvider = ref<Record<number, Model[]>>({})
   const loaded = ref(false)
+  const loadError = ref<string | null>(null)
 
   async function load(): Promise<void> {
-    providers.value = await api.providers()
-    const entries = await Promise.all(providers.value.map(async (p) => [p.id, await api.models(p.id)] as const))
-    modelsByProvider.value = Object.fromEntries(entries)
-    loaded.value = true
+    loadError.value = null
+    try {
+      providers.value = await api.providers()
+      const entries = await Promise.all(providers.value.map(async (p) => [p.id, await api.models(p.id)] as const))
+      modelsByProvider.value = Object.fromEntries(entries)
+      loaded.value = true
+    } catch (error) {
+      loadError.value = error instanceof Error ? error.message : String(error)
+      throw error
+    }
   }
 
   function enabledModels(): Array<{ provider: Provider; model: Model }> {
@@ -37,5 +44,5 @@ export const useConfigStore = defineStore('config', () => {
     return found !== undefined && found.provider.enabled && found.model.enabled
   }
 
-  return { providers, modelsByProvider, loaded, load, enabledModels, modelFor, isAvailable }
+  return { providers, modelsByProvider, loaded, loadError, load, enabledModels, modelFor, isAvailable }
 })

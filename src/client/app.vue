@@ -1,27 +1,28 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, watch } from 'vue'
+import { toast } from 'vue-sonner'
+import 'vue-sonner/style.css'
 import AppShell from '@/client/components/app-shell.vue'
-import { api } from '@/client/lib/api'
+import { useTheme } from '@/client/composables/use-theme'
 import { useSyncStore } from '@/client/stores/sync'
 import { useConfigStore } from '@/client/stores/config'
+import { Toaster } from '@/client/ui/sonner'
 
 const sync = useSyncStore()
 const config = useConfigStore()
-const bootError = ref<string | null>(null)
+const { resolved: resolvedTheme } = useTheme()
 
 onMounted(async () => {
   sync.connect()
-  try {
-    // The plugin switches render from settings, so the client needs them before first paint.
-    const [me] = await Promise.all([api.me(), sync.loadSessions(), sync.loadProjects(), config.load()])
-    sync.settings = me.settings
-  } catch (err) {
-    bootError.value = err instanceof Error ? err.message : String(err)
-  }
+  // Each collection owns its blocking error and retry action in the relevant content region.
+  await Promise.allSettled([sync.loadSettings(), sync.loadSessions(), sync.loadProjects(), config.load()])
 })
+
+watch(() => sync.lastError, error => { if (error) toast.error(error) }, { flush: 'sync' })
 </script>
 
 <template lang="pug">
-AppShell(:boot-error="bootError")
+AppShell
   RouterView
+Toaster(:theme="resolvedTheme" position="top-right" close-button rich-colors)
 </template>

@@ -7,10 +7,14 @@ import { cloudflare } from '@cloudflare/vite-plugin'
 
 export default defineConfig({
   plugins: [
-    VueRouter({ routesFolder: 'src/client/pages', dts: 'src/client/typed-router.d.ts' }),
+    VueRouter({
+      routesFolder: 'src/client/pages',
+      dts: 'src/client/typed-router.d.ts',
+    }),
     vue(),
     tailwindcss(),
     cloudflare(),
   ],
   resolve: { alias: { '@': path.resolve(import.meta.dirname, './src') } },
+  server: { port: 7456 },
 })

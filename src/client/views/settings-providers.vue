@@ -1,62 +1,20 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
-import { RouterLink, useRouter } from 'vue-router'
-import { api } from '@/client/lib/api'
-import { Button } from '@/client/ui/button'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/client/ui/select'
-import { useConfigStore } from '@/client/stores/config'
-import type { PresetProvider } from '@/server/plugins/llm/presets'
-
-const config = useConfigStore()
-const router = useRouter()
-const presets = ref<PresetProvider[]>([])
-const chosen = ref('')
-const status = ref('')
-
-onMounted(async () => { presets.value = await api.presets(); await config.load() })
-
-// reka-ui emits `AcceptableValue`; narrow here rather than in the template.
-function onChoose(key: unknown) {
-  chosen.value = typeof key === 'string' ? key : ''
-}
-
-async function addFromPreset() {
-  const preset = presets.value.find((p) => p.key === chosen.value)
-  status.value = ''
-  try {
-    const created = preset
-      ? await api.createProvider({ name: preset.name, protocol: preset.protocol, base_url: preset.base_url, native_files: preset.native_files })
-      : await api.createProvider({ name: '自定义供应商', protocol: 'openai-completions', base_url: 'https://api.example.com/v1' })
-    if (preset) for (const m of preset.models) await api.createModel(created.id, { model_id: m.model_id, display_name: m.display_name, capabilities: m.capabilities })
-    await config.load()
-    await router.push(`/settings/providers/${created.id}`)
-  } catch (err) {
-    status.value = err instanceof Error ? err.message : String(err)
-  }
-}
+import { ServerIcon } from '@lucide/vue'
+import ProviderNavigation from '@/client/components/provider-navigation.vue'
+import SettingsBackButton from '@/client/components/layout/settings-back-button.vue'
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/client/ui/empty'
 </script>
 
 <template lang="pug">
-//- Spec §8: the route root is fixed-height and clips; the body below is its only scroll owner, so
-//- a long provider list scrolls here instead of handing a scrollbar back to the document.
-.h-full.min-h-0.overflow-hidden
+.flex.h-full.min-h-0.overflow-hidden
   Teleport(to="#page-header")
-    span.truncate.text-sm.font-medium 供应商
-  .oc-scroll.h-full.overflow-y-auto
-    .max-w-2xl.p-4.flex.flex-col.gap-4
-      .flex.gap-2
-        Select(:model-value="chosen" @update:model-value="onChoose")
-          SelectTrigger(class="w-56")
-            SelectValue(placeholder="从预制模板添加…")
-          SelectContent
-            SelectItem(v-for="p in presets" :key="p.key" :value="p.key") {{ p.name }}
-        Button(@click="addFromPreset") 添加
-      p.text-xs.text-destructive(v-if="status") {{ status }}
-      ul.divide-y.rounded-md.border
-        li.flex.items-center.gap-3.p-3(v-for="p in config.providers" :key="p.id")
-          RouterLink.min-w-0.truncate.font-medium(:to="`/settings/providers/${p.id}`") {{ p.name }}
-          span.shrink-0.text-xs.text-muted-foreground {{ p.protocol }}
-          span.ml-auto.shrink-0.text-xs(:class="p.enabled ? 'text-emerald-600' : 'text-muted-foreground'") {{ p.enabled ? '启用' : '停用' }}
-          span.shrink-0.text-xs.text-muted-foreground {{ p.has_key ? '已配置密钥' : '无密钥' }}
-      RouterLink.text-sm.text-muted-foreground(to="/settings/plugins") 插件开关 →
+    SettingsBackButton
+    span.truncate.text-sm.font-medium 模型服务
+  ProviderNavigation(class="w-full md:w-64 md:shrink-0 md:border-r")
+  Empty(class="hidden min-w-0 flex-1 md:flex")
+    EmptyHeader
+      EmptyMedia(variant="icon")
+        ServerIcon
+      EmptyTitle 配置你的模型服务
+      EmptyDescription 选择一个供应商，管理连接与可用模型。
 </template>
