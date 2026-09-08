@@ -243,7 +243,7 @@ function formatTime(ms: number): string {
 <template lang="pug">
 ResponsiveOverlay(
   mode="dialog" :open="overlayOpen" :title="project?.name ?? '项目设置'" @update:open="setOverlayOpen")
-  .mb-4.flex.justify-end
+  template(#status)
     UnsavedChangesGuard(:dirty="dirty")
   Alert(v-if="loadError" variant="destructive")
     AlertTitle 无法加载项目设置
@@ -272,8 +272,9 @@ ResponsiveOverlay(
             Button(v-if="form.model" type="button" variant="ghost" size="xs" class="min-h-10" @click="form.model = null") 清除
           FieldDescription 留空表示不设置默认模型，由会话或发送时的选择决定。
         Field
-          FieldLabel(for="oc-project-temperature") temperature
-          Badge(variant="outline") {{ blank('temperature') ? '继承' : '项目设置' }}
+          .flex.items-center.justify-between.gap-2
+            FieldLabel(for="oc-project-temperature") temperature
+            Badge(variant="outline") {{ blank('temperature') ? '继承' : '项目设置' }}
           //- `step` sizes the +/- buttons only: `step-snapping` off is what lets a typed 0.77 stay
           //- 0.77 instead of being rewritten to the nearest step, which is how the raw box behaved.
           //- `maximumFractionDigits` is 20, not a guess at what people type: a double carries at most
@@ -292,8 +293,9 @@ ResponsiveOverlay(
               NumberFieldIncrement(:disabled="blank('temperature')")
           FieldDescription {{ paramHint('temperature') }}
         Field
-          FieldLabel(for="oc-project-top-p") top_p
-          Badge(variant="outline") {{ blank('top_p') ? '继承' : '项目设置' }}
+          .flex.items-center.justify-between.gap-2
+            FieldLabel(for="oc-project-top-p") top_p
+            Badge(variant="outline") {{ blank('top_p') ? '继承' : '项目设置' }}
           NumberField(
             id="oc-project-top-p" :model-value="optionalNumber(form.top_p)"
             :min="0" :max="1" :step="0.05" :step-snapping="false" :disable-wheel-change="true"
@@ -307,8 +309,9 @@ ResponsiveOverlay(
               NumberFieldIncrement(:disabled="blank('top_p')")
           FieldDescription {{ paramHint('top_p') }}
         Field
-          FieldLabel(for="oc-project-max-tokens") max tokens
-          Badge(variant="outline") {{ blank('max_tokens') ? '继承' : '项目设置' }}
+          .flex.items-center.justify-between.gap-2
+            FieldLabel(for="oc-project-max-tokens") max tokens
+            Badge(variant="outline") {{ blank('max_tokens') ? '继承' : '项目设置' }}
           NumberField(
             id="oc-project-max-tokens" :model-value="optionalNumber(form.max_tokens)"
             :min="1" :step="1" :step-snapping="false" :disable-wheel-change="true" :format-options="{ useGrouping: false }"
@@ -321,8 +324,9 @@ ResponsiveOverlay(
               NumberFieldIncrement(:disabled="blank('max_tokens')")
           FieldDescription {{ paramHint('max_tokens') }}
         Field
-          FieldLabel 推理强度
-          Badge(variant="outline") {{ form.reasoning === 'inherit' ? '继承' : '项目设置' }}
+          .flex.items-center.justify-between.gap-2
+            FieldLabel 推理强度
+            Badge(variant="outline") {{ form.reasoning === 'inherit' ? '继承' : '项目设置' }}
           //- Rendered inline, not behind a chip and an overlay. That shape belongs to the Composer's
           //- toolbar, which is one row with no space for two switches and a slider; a settings page
           //- has the room, and every field beside this one is laid out plainly.
