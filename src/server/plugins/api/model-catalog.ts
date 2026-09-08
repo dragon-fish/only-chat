@@ -1,6 +1,5 @@
 import type { Context } from 'cordis'
 import { Hono } from 'hono'
-import { CatalogLeaseLostError, CatalogRefreshBusyError } from '../model-catalog/lease'
 
 export function modelCatalogRoutes(ctx: Context) {
   const app = new Hono<{ Bindings: Env }>()
@@ -11,11 +10,20 @@ export function modelCatalogRoutes(ctx: Context) {
     return c.json(providers.filter(provider => `${provider.id} ${provider.name}`.toLowerCase().includes(query)))
   })
   app.post('/model-catalog/refresh', async c => {
+    const instance = await ctx.env.MODEL_CATALOG_REFRESH.create({
+      id: `catalog-manual-${crypto.randomUUID()}`,
+      params: { source: 'manual' },
+    })
+    return c.json({ instanceId: instance.id }, 202)
+  })
+  app.get('/model-catalog/refresh/:instanceId', async c => {
+    const id = c.req.param('instanceId')
+    if (!/^catalog-(?:manual|cron)-[a-zA-Z0-9-]{1,128}$/u.test(id)) return c.json({ error: 'not found' }, 404)
     try {
-      return c.json(await ctx.modelCatalog.refresh('manual'))
-    } catch (error) {
-      if (error instanceof CatalogRefreshBusyError || error instanceof CatalogLeaseLostError) return c.json({ error: error.message }, 409)
-      throw error
+      const status = await (await ctx.env.MODEL_CATALOG_REFRESH.get(id)).status()
+      return c.json({ status: status.status, ...(status.error?.message ? { error: status.error.message } : {}) })
+    } catch {
+      return c.json({ error: 'not found' }, 404)
     }
   })
   return app

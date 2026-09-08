@@ -75,6 +75,7 @@ async function refreshWithLease(storage: CatalogStorage, db: DB, lease: CatalogL
     stage = 'validation'
     const catalog = parseModelCatalog(JSON.parse(new TextDecoder().decode(bytes)))
     const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), byte => byte.toString(16).padStart(2, '0')).join('')
+    await lease.renew()
     stage = 'storage'
     const pointer = lease.pointer
     const active = pointer ? await storage.manifest(pointer.current) : null
@@ -82,7 +83,7 @@ async function refreshWithLease(storage: CatalogStorage, db: DB, lease: CatalogL
       await lease.recordUnchangedSuccess()
       result = { version: active.version, changed: false, providers: active.providers, globalModels: active.globalModels, providerModels: active.providerModels }
     } else {
-      const manifest = await storage.stage(catalog, hash, Date.now())
+      const manifest = await storage.stage(catalog, hash, Date.now(), () => lease.renew())
       stage = 'materialization'
       await retryModelSource(async () => {
         await lease.renew()

@@ -1,4 +1,4 @@
-import type { AttachmentCheckResponse, AttachmentUploadResponse, CatalogProviderSummary, CatalogRefreshResponse, CatalogStatus, FetchModelsResponse, ModelRef, ModelWriteInput, ProviderWriteInput } from '@/shared/api'
+import type { AttachmentCheckResponse, AttachmentUploadResponse, CatalogProviderSummary, CatalogRefreshJobStatus, CatalogRefreshStartResponse, CatalogStatus, FetchModelsResponse, ModelRef, ModelWriteInput, ProviderWriteInput } from '@/shared/api'
 import type { Message, ModelPage, ModelQuery, ModelWithMetadata, Project, ProviderWithInterfaces, Session, User } from '@/shared/models'
 import type { PresetProvider } from '@/server/plugins/llm/presets'
 
@@ -45,7 +45,8 @@ export const api = {
   deleteModel: (providerId: number, rowId: number) => request<void>('DELETE', `/api/providers/${providerId}/models/${rowId}`),
   catalogStatus: () => request<CatalogStatus>('GET', '/api/model-catalog/status'),
   catalogProviders: (query = '', signal?: AbortSignal) => request<CatalogProviderSummary[]>('GET', `/api/model-catalog/providers${queryString({ q: query })}`, undefined, { signal }),
-  refreshCatalog: () => request<CatalogRefreshResponse>('POST', '/api/model-catalog/refresh'),
+  refreshCatalog: () => request<CatalogRefreshStartResponse>('POST', '/api/model-catalog/refresh'),
+  catalogRefreshStatus: (instanceId: string) => request<CatalogRefreshJobStatus>('GET', `/api/model-catalog/refresh/${encodeURIComponent(instanceId)}`),
   checkAttachment: (sha256: string) => request<AttachmentCheckResponse>('POST', '/api/attachments/check', { sha256 }),
   uploadAttachment: (sha256: string, blob: Blob, w: number, h: number) =>
     request<AttachmentUploadResponse>('PUT', `/api/attachments/${sha256}?w=${w}&h=${h}`, blob, { headers: { 'content-type': blob.type } }),
