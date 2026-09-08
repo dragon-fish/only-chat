@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue'
-import { BracesIcon, Trash2Icon, TriangleAlertIcon } from '@lucide/vue'
+import { BracesIcon, ChevronDownIcon, Trash2Icon, TriangleAlertIcon } from '@lucide/vue'
 import ResponsiveOverlay from '@/client/components/layout/responsive-overlay.vue'
 import UnsavedChangesGuard from '@/client/components/unsaved-changes-guard.vue'
 import { catalogSource, metadataValue, resetMetadataOverride, setMetadataOverride, type ModelEditorSession } from '@/client/lib/model-editor'
@@ -29,6 +29,7 @@ const model = computed(() => props.session.model)
 const inputs = reactive<Record<string, string>>({})
 const errors = reactive<Record<string, string>>({})
 const rawOpen = ref(false)
+const advancedOpen = ref(false)
 const rawInput = ref('')
 const prefix = `model-${props.session.target.provider_id}-${props.session.target.id}`
 type MetadataField = { path: string; label: string; kind: 'text' | 'number' | 'boolean' }
@@ -40,6 +41,8 @@ const groups = [
   { label: '价格', root: 'cost', fields: fields('number', { 'cost.input': '输入价格', 'cost.output': '输出价格', 'cost.reasoning': '推理价格', 'cost.cache_read': '缓存读取', 'cost.cache_write': '缓存写入', 'cost.input_audio': '音频输入', 'cost.output_audio': '音频输出' }) },
   { label: '其他信息', fields: fields('text', { knowledge: '知识截止', release_date: '发布日期', last_updated: '更新日期', status: '状态（alpha / beta / deprecated）', license: '许可证' }) },
 ]
+const commonGroups = groups.slice(0, 2)
+const advancedGroups = groups.slice(2)
 const modalities = ['text', 'image', 'audio', 'video', 'pdf'] as const satisfies readonly ModelModality[]
 const effortValues = [null, 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra', 'default'] as const
 type EffortValue = typeof effortValues[number]
@@ -267,7 +270,23 @@ ResponsiveOverlay(:open="open" title="编辑模型" @update:open="setOpen")
               Field(v-for="modality in modalities" :key="`output-${modality}`" orientation="horizontal")
                 Checkbox(:id="`${prefix}-output-${modality}`" :aria-label="`输出模态 ${modality}`" :model-value="effectiveModalities('output').includes(modality)" @update:model-value="toggleModality('output', modality, $event === true)")
                 FieldLabel(:for="`${prefix}-output-${modality}`" class="font-normal") {{ modality }}
-      FieldSet(:data-invalid="!!errors.reasoning_options || undefined")
+      FieldSet(v-for="group in commonGroups" :key="group.label")
+        FieldLegend(variant="label") {{ group.label }}
+        .flex.flex-wrap.gap-2
+          Button(type="button" variant="ghost" size="sm" class="min-h-10" :aria-label="`恢复 ${group.label} 整组默认值`" @click="resetGroup(group)") 恢复整组默认
+        FieldGroup(class="gap-4")
+          Field(v-for="field in group.fields" :key="field.path" :data-invalid="!!errors[field.path] || undefined")
+            .flex.items-center.justify-between.gap-2
+              FieldLabel(:for="`${prefix}-${field.path.replaceAll('.', '-')}`") {{ field.label }}
+              Button(type="button" variant="ghost" size="xs" class="min-h-10" :disabled="metadataValue(form.metadata_override, field.path) === undefined && !inputs[field.path] && !errors[field.path]" :aria-label="`恢复 ${field.label} 默认值`" @click="reset(field.path)") 恢复默认
+            Switch(v-if="field.kind === 'boolean'" :id="`${prefix}-${field.path}`" :model-value="Boolean(metadataValue(form.metadata_override, field.path) ?? metadataValue(model.metadata, field.path))" class="after:-inset-y-3" @update:model-value="update(field, $event)")
+            Input(v-else :id="`${prefix}-${field.path.replaceAll('.', '-')}`" :model-value="inputs[field.path]" :type="field.kind === 'number' ? 'number' : 'text'" :min="field.kind === 'number' ? 0 : undefined" :step="field.path.startsWith('limit.') ? 1 : 'any'" :placeholder="placeholder(field.path)" :aria-invalid="!!errors[field.path]" class="min-h-10" @update:model-value="update(field, $event)")
+            FieldDescription(:data-metadata-source="field.path") {{ source(field.path) }} · 当前有效值：{{ format(metadataValue(model.metadata, field.path)) || '未提供' }}
+            FieldDescription(v-if="errors[field.path]" role="alert") {{ errors[field.path] }}
+      Button(type="button" variant="ghost" class="group/more min-h-10 justify-between" :aria-expanded="advancedOpen" @click="advancedOpen = !advancedOpen")
+        | 更多设置
+        ChevronDownIcon(data-icon="inline-end" class="transition-transform group-aria-expanded/more:rotate-180")
+      FieldSet(v-if="advancedOpen" :data-invalid="!!errors.reasoning_options || undefined")
         FieldLegend(variant="label") 推理选项
         .flex.flex-wrap.gap-2
           Button(type="button" variant="ghost" size="sm" class="min-h-10" aria-label="恢复 推理选项 整组默认值" @click="resetReasoningOptions") 恢复推理选项
@@ -312,7 +331,7 @@ ResponsiveOverlay(:open="open" title="编辑模型" @update:open="setOpen")
           Field(v-if="interleavedMode() === 'field'")
             FieldLabel(:for="`${prefix}-interleaved-field`") 响应字段
             Input(:id="`${prefix}-interleaved-field`" :model-value="interleavedField" required class="min-h-10" @update:model-value="updateInterleavedField")
-      FieldSet(v-for="group in groups" :key="group.label")
+      FieldSet(v-for="group in advancedOpen ? advancedGroups : []" :key="group.label")
         FieldLegend(variant="label") {{ group.label }}
         .flex.flex-wrap.gap-2
           Button(type="button" variant="ghost" size="sm" class="min-h-10" :aria-label="`恢复 ${group.label} 整组默认值`" @click="resetGroup(group)") 恢复整组默认

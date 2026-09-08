@@ -270,6 +270,39 @@ async function addModel() {
   finally { if (token === loadToken) modelAction.value = false }
 }
 
+async function setModelsEnabled(enabled: boolean, lab_id?: string | null) {
+  if (busyModels.value || deletingProvider.value) return
+  const id = requireId()
+  const token = loadToken
+  modelAction.value = true
+  try {
+    const result = await api.updateModels(id, { enabled, ...(lab_id !== undefined ? { lab_id } : {}) })
+    const loadedModels = await readModels(id)
+    const modelToken = modelLoadToken
+    await config.load()
+    if (token !== loadToken) return
+    if (loadedModels && modelToken === modelLoadToken) models.value = loadedModels
+    toast.success(`${enabled ? '启用' : '禁用'} ${result.updated} 个模型${result.deleted ? `，移除 ${result.deleted} 个失效模型` : ''}`)
+  } catch (error) { report(error) }
+  finally { if (token === loadToken) modelAction.value = false }
+}
+
+async function setModelEnabled(model: ModelWithMetadata, enabled: boolean) {
+  if (enabled || model.manual_pinned || model.upstream_available !== false) {
+    await applyModel(model, { enabled })
+    return
+  }
+  if (busyModels.value || deletingProvider.value) return
+  modelAction.value = true
+  try {
+    await api.deleteModel(model.provider_id, model.id)
+    config.forgetModel(model)
+    models.value = models.value.filter(entry => entry.id !== model.id)
+    toast.success('已移除运营商不再提供的模型')
+  } catch (error) { report(error) }
+  finally { modelAction.value = false }
+}
+
 async function refreshWrittenModel(target: Pick<ModelWithMetadata, 'id' | 'provider_id' | 'model_id'>) {
   try {
     const current = await config.refreshModel(target)
@@ -359,6 +392,7 @@ async function saveModel(patch: Partial<ModelWriteInput>) {
 
 function confirmModelDelete() {
   modelToDelete.value = editingSession.value?.model ?? null
+  editorOpen.value = false
   modelDeleteOpen.value = true
 }
 
@@ -390,7 +424,7 @@ async function removeModel() {
     span.truncate.text-sm.font-medium {{ savedName }}
   ProviderNavigation(:selected-provider-id="providerId" class="hidden w-64 shrink-0 border-r md:flex" @catalog-refreshed="load()")
   .oc-scroll.min-h-0.min-w-0.flex-1.overflow-y-auto
-    .mx-auto.flex.w-full.max-w-3xl.flex-col.gap-6.p-4(class="md:p-6 lg:p-8")
+    .mx-auto.flex.w-full.max-w-5xl.flex-col.gap-6.p-4.pb-0(class="md:p-6 md:pb-0 lg:p-8 lg:pb-0")
       .flex.flex-col.gap-2
         .flex.h-10.items-center.gap-3
           .flex.min-w-0.flex-1.items-center.gap-2
@@ -410,7 +444,7 @@ async function removeModel() {
           p {{ loadError }}
           Button(variant="outline" class="min-h-10" @click="load") 重试
       template(v-else)
-        form.flex.flex-col.gap-6(@submit.prevent="save")
+        form#provider-settings-form.flex.flex-col.gap-6(@submit.prevent="save")
           ProviderSettingsForm(
             :model-value="form"
             :catalog-providers="catalogProviders"
@@ -418,28 +452,17 @@ async function removeModel() {
             :has-key="hasKey"
             @update:model-value="updateProviderForm")
           p.min-h-5.text-sm.text-muted-foreground(role="status") {{ associationWarning ?? '' }}
-          .flex.flex-wrap.items-center.justify-between.gap-2
-            ButtonGroup(aria-label="供应商操作")
-              Button(type="submit" class="min-h-10" :disabled="saving || deletingProvider || !validProvider") {{ saving ? '保存中…' : '保存' }}
-              Button(type="button" variant="outline" class="min-h-10" :disabled="dirty || !canFetchModels || busyModels || deletingProvider" @click="fetchModels")
-                DownloadIcon(data-icon="inline-start")
-                | {{ modelAction ? '处理中…' : '拉取模型' }}
-            AlertDialog(v-model:open="providerDeleteOpen")
-              AlertDialogTrigger(as-child)
-                Button(type="button" variant="ghost" size="icon" class="size-10" aria-label="删除供应商" :disabled="busyModels || deletingProvider || saving")
-                  Trash2Icon
-              AlertDialogContent
-                AlertDialogHeader
-                  AlertDialogTitle 删除 {{ form.name }}？
-                  AlertDialogDescription 此供应商及其模型配置将被删除。
-                AlertDialogFooter
-                  AlertDialogCancel(class="min-h-10") 取消
-                  AlertDialogAction(variant="destructive" class="min-h-10" :disabled="busyModels || deletingProvider" @click="remove") 删除供应商
         Separator
         section.flex.flex-col.gap-4(aria-labelledby="provider-models-title")
-          .flex.items-center.gap-2
-            h2#provider-models-title.text-lg.font-semibold 模型
-            Badge(variant="secondary") {{ models.length }}
+          .flex.flex-wrap.items-center.gap-2
+            .flex.min-w-0.flex-1.items-center.gap-2
+              h2#provider-models-title.text-lg.font-semibold 模型
+              Badge(variant="secondary") {{ models.length }}
+            Button(type="button" variant="outline" size="sm" class="min-h-10" :disabled="dirty || !canFetchModels || busyModels || deletingProvider" @click="fetchModels")
+              DownloadIcon(data-icon="inline-start")
+              | {{ modelAction ? '处理中…' : '拉取模型' }}
+            Button(type="button" variant="ghost" size="sm" class="min-h-10" :disabled="busyModels || deletingProvider" @click="setModelsEnabled(true)") 全部启用
+            Button(type="button" variant="ghost" size="sm" class="min-h-10" :disabled="busyModels || deletingProvider" @click="setModelsEnabled(false)") 全部禁用
           p.text-sm.text-muted-foreground 通过供应商拉取或手动添加模型。目录只提供元数据。
           ModelFilterBar(v-model="modelFilters" :providers="savedProvider ? [savedProvider] : []")
           p.min-h-5.text-sm.text-muted-foreground(role="status") {{ modelLoadError ?? '' }}
@@ -453,17 +476,22 @@ async function removeModel() {
                     PlusIcon(data-icon="inline-start")
                     | 添加
           ItemGroup(class="gap-2")
-            ModelGroupList(:entries="modelEntries" :catalog-providers="catalogProviders" :show-providers="false")
+            ModelGroupList(:entries="modelEntries" :catalog-providers="catalogProviders" :show-providers="false" collapsible show-single-lab)
+              template(#lab-actions="{ lab }")
+                Button(type="button" variant="ghost" size="xs" class="min-h-10" :aria-label="`启用 ${lab.id ?? '其他'} 分组`" :disabled="busyModels || deletingProvider" @click="setModelsEnabled(true, lab.id)") 启用
+                Button(type="button" variant="ghost" size="xs" class="min-h-10" :aria-label="`禁用 ${lab.id ?? '其他'} 分组`" :disabled="busyModels || deletingProvider" @click="setModelsEnabled(false, lab.id)") 禁用
               template(#default="{ entry: { model, provider } }")
                 Item(variant="outline")
-                  LabAvatar(:lab-id="model.lab_id" :provider-name="provider.name" size="sm")
+                  LabAvatar(:model-id="model.model_id" :lab-id="model.lab_id" :family="model.metadata.family" :provider-name="provider.name" size="sm")
                   ItemContent(class="min-w-0")
                     ItemTitle {{ modelName(model) }}
                     ItemDescription(class="break-all") {{ model.model_id }}
                     .flex.flex-wrap.gap-1
                       Badge(v-for="badge in modelBadges(model)" :key="badge.key" variant="secondary") {{ badge.label }}
+                      Badge(v-if="model.manual_pinned" variant="outline") 手动
+                      Badge(v-else-if="model.upstream_available === false" variant="outline" class="border-warning text-warning") 运营商已移除
                   ItemActions(class="gap-4")
-                    Switch(:model-value="model.enabled" :aria-label="`启用 ${modelName(model)}`" class="after:-inset-y-3" :disabled="modelAction || deletingProvider" @update:model-value="applyModel(model, { enabled: $event })")
+                    Switch(:model-value="model.enabled" :aria-label="`启用 ${modelName(model)}`" class="after:-inset-y-3" :disabled="modelAction || deletingProvider" @update:model-value="setModelEnabled(model, $event)")
                     Button(variant="ghost" size="icon" class="size-10" :aria-label="`编辑 ${modelName(model)}`" :disabled="modelAction || deletingProvider" @click="openModel(model)")
                       Settings2Icon
             template(v-if="refreshing && !visibleModels.length")
@@ -477,6 +505,21 @@ async function removeModel() {
                 Button(v-else-if="canFetchModels" variant="outline" class="min-h-10" :disabled="dirty || busyModels || deletingProvider" @click="fetchModels") 拉取模型
                 Button(v-else variant="outline" class="min-h-10" @click="focusNewModel") 输入模型 ID
           Button(v-if="nextCursor" variant="outline" :disabled="refreshing || busyModels" @click="loadModelPage(true)") 加载更多模型
+        .sticky.bottom-0.-mx-4.flex.items-center.justify-between.gap-3.border-t.p-4.backdrop-blur(data-provider-save-bar class="bg-background/95 pb-[calc(1rem+env(safe-area-inset-bottom))] md:-mx-6 md:px-6 lg:-mx-8 lg:px-8")
+          AlertDialog(v-model:open="providerDeleteOpen")
+            AlertDialogTrigger(as-child)
+              Button(type="button" variant="ghost" size="icon" class="size-10" aria-label="删除供应商" :disabled="busyModels || deletingProvider || saving")
+                Trash2Icon
+            AlertDialogContent
+              AlertDialogHeader
+                AlertDialogTitle 删除 {{ form.name }}？
+                AlertDialogDescription 此供应商及其模型配置将被删除。
+              AlertDialogFooter
+                AlertDialogCancel(class="min-h-10") 取消
+                AlertDialogAction(variant="destructive" class="min-h-10" :disabled="busyModels || deletingProvider" @click="remove") 删除供应商
+          .flex.items-center.gap-2(aria-label="供应商操作")
+            span.text-sm.text-muted-foreground {{ dirty ? '有未保存的更改' : '更改已保存' }}
+            Button(type="submit" form="provider-settings-form" class="min-h-10" :disabled="saving || deletingProvider || !validProvider || !dirty") {{ saving ? '保存中…' : '保存' }}
   ModelEditor(v-if="editorOpen && editingSession && savedProvider && providerId !== null" ref="modelEditor" v-model:open="editorOpen" :key="editingSession.target.id" :session="editingSession" :interfaces="savedProvider.interfaces" :default-interface-id="savedProvider.default_interface_id" :saving="busyModels" @save="saveModel" @delete="confirmModelDelete")
   AlertDialog(v-model:open="modelDeleteOpen")
     AlertDialogContent

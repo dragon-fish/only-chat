@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import ProviderInterfaceList from '@/client/components/provider-interface-list.vue'
+import { computed, ref } from 'vue'
+import { Settings2Icon } from '@lucide/vue'
+import ProviderRequestConfig from '@/client/components/provider-request-config.vue'
+import { Button } from '@/client/ui/button'
 import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/client/ui/field'
 import { Input } from '@/client/ui/input'
-import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/client/ui/select'
 import type { CatalogProviderSummary, ProviderWriteInput } from '@/shared/api'
 
 const props = withDefaults(defineProps<{
@@ -15,16 +16,14 @@ const props = withDefaults(defineProps<{
   idPrefix?: string
 }>(), { currentCatalogProviderId: null, hasKey: false, disabled: false, idPrefix: 'provider' })
 const emit = defineEmits<{ 'update:modelValue': [value: ProviderWriteInput] }>()
+const requestOpen = ref(false)
 
 function update(patch: Partial<ProviderWriteInput>) {
   emit('update:modelValue', { ...props.modelValue, ...patch })
 }
-const association = computed(() => props.modelValue.models_dev_provider?.source === 'manual'
-  ? props.modelValue.models_dev_provider.provider_id
-  : 'endpoint')
-function chooseAssociation(value: unknown) {
-  if (typeof value !== 'string') return
-  update({ models_dev_provider: value === 'endpoint' ? { source: 'endpoint' } : { source: 'manual', provider_id: value } })
+const defaultEndpoint = computed(() => props.modelValue.interfaces.find(endpoint => endpoint.protocol === props.modelValue.default_protocol))
+function updateDefaultUrl(value: string | number) {
+  update({ interfaces: props.modelValue.interfaces.map(endpoint => endpoint.protocol === props.modelValue.default_protocol ? { ...endpoint, base_url: String(value) } : endpoint) })
 }
 </script>
 
@@ -38,19 +37,18 @@ FieldGroup(data-provider-settings-form)
     Input(:id="`${idPrefix}-key`" :model-value="modelValue.api_key" type="password" autocomplete="off" placeholder="留空保持不变" class="min-h-10" :disabled="disabled" @update:model-value="update({ api_key: String($event) })")
     FieldDescription {{ hasKey ? '留空保留已配置的密钥。' : '尚未配置密钥。' }}
   Field
-    FieldLabel(:for="`${idPrefix}-association`") models.dev 关联
-    Select(:model-value="association" :disabled="disabled" @update:model-value="chooseAssociation")
-      SelectTrigger(:id="`${idPrefix}-association`" class="w-full")
-        SelectValue
-      SelectContent
-        SelectGroup
-          SelectItem(value="endpoint") 按端点自动匹配
-          SelectItem(v-for="entry in catalogProviders" :key="entry.id" :value="entry.id") {{ entry.name }}
-    FieldDescription {{ modelValue.models_dev_provider?.source === 'manual' ? '手动关联将保留，不受端点修改影响。' : `保存时按默认端点和同源接口匹配。当前关联：${currentCatalogProviderId ?? '未匹配'}` }}
-  ProviderInterfaceList(
-    :model-value="modelValue.interfaces"
-    :default-protocol="modelValue.default_protocol"
-    :disabled="disabled"
-    @update:model-value="update({ interfaces: $event })"
-    @update:default-protocol="update({ default_protocol: $event })")
+    FieldLabel(:for="`${idPrefix}-default-url`") 默认 API 地址
+    Input(:id="`${idPrefix}-default-url`" data-provider-default-url :model-value="defaultEndpoint?.base_url ?? ''" type="url" required class="min-h-10" :disabled="disabled || !defaultEndpoint" @update:model-value="updateDefaultUrl")
+    FieldDescription {{ defaultEndpoint ? `${defaultEndpoint.protocol} · 其他协议可在请求配置中管理。` : '请先添加一个接口。' }}
+  .flex.flex-wrap.gap-2
+    Button(type="button" variant="ghost" class="min-h-10" :disabled="disabled" @click="requestOpen = true") 添加端点
+    Button(type="button" variant="outline" class="min-h-10" :disabled="disabled" @click="requestOpen = true")
+      Settings2Icon(data-icon="inline-start")
+      | 请求配置
+ProviderRequestConfig(
+  v-model:open="requestOpen"
+  :model-value="modelValue"
+  :catalog-providers="catalogProviders"
+  :current-catalog-provider-id="currentCatalogProviderId"
+  @apply="emit('update:modelValue', $event)")
 </template>

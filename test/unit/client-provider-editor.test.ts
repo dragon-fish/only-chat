@@ -52,6 +52,22 @@ async function type(input: HTMLInputElement | HTMLTextAreaElement, value: string
   await nextTick()
 }
 
+async function openRequestConfig() {
+  ;[...document.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.trim() === '请求配置')!.click()
+  await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')?.textContent).toContain('请求配置'))
+}
+
+async function applyRequestConfig() {
+  ;[...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(button => button.textContent?.trim() === '应用')!.click()
+  await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull())
+}
+
+async function openModelMoreSettings() {
+  const more = [...document.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.trim() === '更多设置')!
+  more.click()
+  await vi.waitFor(() => expect(more.getAttribute('aria-expanded')).toBe('true'))
+}
+
 function delayModelSave() {
   const persisted = structuredClone(models)
   let acknowledge!: () => void
@@ -112,7 +128,9 @@ async function pendingAcknowledgementAcrossAssociation() {
   })
   await type(document.querySelector<HTMLInputElement>('[aria-label="搜索模型"]')!, 'First model')
   await vi.waitFor(() => expect(config.modelsByRef['1:first-model']?.metadata.description).toBe('Association A'))
+  await openRequestConfig()
   await type(document.querySelector<HTMLInputElement>('[data-interface-url]')!, 'https://acme.test/v1')
+  await applyRequestConfig()
   document.querySelector('#provider-name')!.closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
   await vi.waitFor(() => expect(commitProvider).toBeTypeOf('function'))
   await submitModelName()
@@ -216,10 +234,12 @@ describe('provider model editor', () => {
       return { ...provider, models_dev_provider_source: 'manual', models_dev_provider_id: 'acme' }
     })
     vi.mocked(api.providers).mockResolvedValue([{ ...provider, models_dev_provider_source: 'manual', models_dev_provider_id: 'acme' }, { ...provider, id: 2 }])
+    await openRequestConfig()
     document.querySelector<HTMLButtonElement>('#provider-association')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
     await vi.waitFor(() => expect(document.querySelector('[role="option"]')).not.toBeNull())
     ;[...document.querySelectorAll<HTMLElement>('[role="option"]')].find(option => option.textContent?.trim() === 'Acme')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
     await vi.waitFor(() => expect(document.querySelector('#provider-association')?.textContent).toContain('Acme'))
+    await applyRequestConfig()
     document.querySelector('#provider-name')!.closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
     await vi.waitFor(() => expect(acknowledge).toBeTypeOf('function'))
     await type(document.querySelector<HTMLInputElement>('#provider-name')!, 'Newer provider draft')
@@ -326,6 +346,7 @@ describe('provider model editor', () => {
     await vi.waitFor(() => expect(document.querySelector('#model-1-2-name')).not.toBeNull())
     ;[...document.querySelectorAll<HTMLButtonElement>('[data-slot="sheet-content"] button')].find(button => button.textContent?.trim() === '删除模型')!.click()
     await vi.waitFor(() => expect(document.querySelector('[role="alertdialog"]')).not.toBeNull())
+    expect(document.querySelector('[data-slot="sheet-content"]')).toBeNull()
     ;[...document.querySelectorAll<HTMLButtonElement>('[role="alertdialog"] button')].find(button => button.textContent?.trim() === '删除模型')!.click()
     await vi.waitFor(() => expect(finishDelete).toBeTypeOf('function'))
     await router.push('/settings/providers/2')
@@ -436,6 +457,7 @@ describe('provider model editor', () => {
     document.querySelector<HTMLButtonElement>('[aria-label="恢复 显示名称 默认值"]')!.click()
     await nextTick()
     expect(name.value).toBe('')
+    await openModelMoreSettings()
     await type(document.querySelector<HTMLInputElement>('#model-1-2-limit-context')!, '0')
     document.querySelector<HTMLButtonElement>('[aria-label="恢复 限制 整组默认值"]')!.click()
     await nextTick()
@@ -464,6 +486,18 @@ describe('provider model editor', () => {
     await vi.waitFor(() => expect(write).toHaveBeenCalledWith(1, 2, {
       metadata_override: { modalities: { output: ['text', 'image'] } },
     }))
+  })
+
+  it('keeps model limits and pricing behind a collapsed more-settings section', async () => {
+    await mountEditor()
+    document.querySelector<HTMLButtonElement>('[aria-label="编辑 First model"]')!.click()
+    await vi.waitFor(() => expect(document.querySelector('#model-1-2-name')).not.toBeNull())
+    expect(document.querySelector('#model-1-2-limit-context')).toBeNull()
+    const more = [...document.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.trim() === '更多设置')
+    expect(more).not.toBeUndefined()
+    expect(more!.getAttribute('aria-expanded')).toBe('false')
+    more!.click()
+    await vi.waitFor(() => expect(document.querySelector('#model-1-2-limit-context')).not.toBeNull())
   })
 
   it('warns before raw JSON editing and blocks syntax or schema errors from saving', async () => {
@@ -499,6 +533,7 @@ describe('provider model editor', () => {
     await mountEditor()
     document.querySelector<HTMLButtonElement>('[aria-label="编辑 First model"]')!.click()
     await vi.waitFor(() => expect(document.querySelector('#model-1-2-name')).not.toBeNull())
+    await openModelMoreSettings()
     document.querySelector<HTMLButtonElement>('[aria-label="支持思考开关"]')!.click()
     document.querySelector<HTMLButtonElement>('[aria-label="推理强度 low"]')!.click()
     document.querySelector<HTMLButtonElement>('[aria-label="启用推理 Token 预算"]')!.click()
@@ -543,7 +578,7 @@ describe('provider model editor', () => {
   it('keeps its saved heading stable while editing interfaces and refreshes catalog metadata without clearing the draft', async () => {
     await mountEditor()
     await type(document.querySelector<HTMLInputElement>('#provider-name')!, 'Unsaved new name')
-    await type(document.querySelector<HTMLInputElement>('[data-interface-url]')!, 'https://new.test/v1')
+    await type(document.querySelector<HTMLInputElement>('[data-provider-default-url]')!, 'https://new.test/v1')
     expect(document.querySelector('#page-header')?.textContent).toContain('Example')
     expect(document.querySelector('#page-header')?.textContent).not.toContain('Unsaved new name')
     vi.spyOn(api, 'refreshCatalog').mockResolvedValue({ instanceId: 'catalog-manual-test' })
@@ -553,15 +588,60 @@ describe('provider model editor', () => {
     await vi.waitFor(() => expect(refreshStatus).toHaveBeenCalledWith('catalog-manual-test'))
     await vi.waitFor(() => expect(document.querySelector('[role="status"]')?.textContent).not.toContain('正在刷新'))
     expect(document.querySelector<HTMLInputElement>('#provider-name')?.value).toBe('Unsaved new name')
-    expect(document.querySelector<HTMLInputElement>('[data-interface-url]')?.value).toBe('https://new.test/v1')
+    expect(document.querySelector<HTMLInputElement>('[data-provider-default-url]')?.value).toBe('https://new.test/v1')
     const unload = new Event('beforeunload', { cancelable: true })
     window.dispatchEvent(unload)
     expect(unload.defaultPrevented).toBe(true)
   })
 
+  it('keeps common connection fields on the page and stages request configuration in a Sheet', async () => {
+    await mountEditor()
+    const update = vi.spyOn(api, 'updateProvider').mockResolvedValue(provider)
+    expect(document.querySelector('#provider-key')).not.toBeNull()
+    expect(document.querySelector('[data-provider-default-url]')).not.toBeNull()
+    expect(document.querySelector('[data-interface-url]')).toBeNull()
+    expect(document.querySelector('[data-provider-save-bar]')).not.toBeNull()
+
+    await openRequestConfig()
+    const endpoint = document.querySelector<HTMLInputElement>('[data-interface-url]')!
+    await type(endpoint, 'https://changed.test/v1')
+    await applyRequestConfig()
+    expect(update).not.toHaveBeenCalled()
+    expect(document.body.textContent).toContain('未保存的更改')
+
+    document.querySelector<HTMLButtonElement>('[data-provider-save-bar] button[type="submit"]')!.click()
+    await vi.waitFor(() => expect(update).toHaveBeenCalledWith(1, expect.objectContaining({ interfaces: [expect.objectContaining({ base_url: 'https://changed.test/v1' })] }), expect.any(Function)))
+  })
+
+  it('exposes provider-wide bulk model controls and manual provenance', async () => {
+    await mountEditor()
+    const bulk = vi.spyOn(api, 'updateModels').mockResolvedValue({ updated: 2, deleted: 0 })
+    expect(document.body.textContent).toContain('手动')
+    const enableAll = [...document.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.trim() === '全部启用')
+    expect(enableAll).not.toBeUndefined()
+    enableAll!.click()
+    await vi.waitFor(() => expect(bulk).toHaveBeenCalledWith(1, { enabled: true }))
+  })
+
+  it('removes an unavailable unpinned model when its enabled switch is turned off', async () => {
+    await mountEditor()
+    const removed = { ...models[0]!, model_id: 'removed-model', enabled: true, manual_pinned: false, upstream_available: false, metadata: { name: 'Removed model' } }
+    vi.mocked(api.queryModels).mockResolvedValue({ models: [removed], next_cursor: null })
+    await type(document.querySelector<HTMLInputElement>('[aria-label="搜索模型"]')!, 'removed')
+    await vi.waitFor(() => expect(document.querySelector('[aria-label="启用 Removed model"]')).not.toBeNull())
+    const destroy = vi.spyOn(api, 'deleteModel').mockResolvedValue()
+    const update = vi.spyOn(api, 'updateModel')
+    document.querySelector<HTMLButtonElement>('[aria-label="启用 Removed model"]')!.click()
+    await vi.waitFor(() => expect(destroy).toHaveBeenCalledWith(1, removed.id))
+    expect(update).not.toHaveBeenCalled()
+    await vi.waitFor(() => expect(document.querySelector('[aria-label="启用 Removed model"]')).toBeNull())
+  })
+
   it('adds distinct interfaces, disables Vertex Files, switches defaults and submits one atomic write', async () => {
     await mountEditor()
     const update = vi.spyOn(api, 'updateProvider').mockResolvedValue(provider)
+    await openRequestConfig()
+    expect(document.querySelector<HTMLButtonElement>('[aria-label="默认接口 OpenAI Chat Completions"]')?.disabled).toBe(true)
     document.querySelector<HTMLButtonElement>('[aria-label="添加接口"]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
     await vi.waitFor(() => expect(document.querySelector('[role="option"]')).not.toBeNull())
     expect([...document.querySelectorAll('[role="option"]')].some(option => option.textContent?.trim() === 'OpenAI Chat Completions')).toBe(false)
@@ -569,10 +649,9 @@ describe('provider model editor', () => {
     await vi.waitFor(() => expect(document.querySelector('[data-protocol="vertex-compatible"]')).not.toBeNull())
     await type(document.querySelector<HTMLInputElement>('[data-protocol="vertex-compatible"]')!, 'https://vertex.test/v1')
     expect(document.querySelector<HTMLButtonElement>('[aria-label="Vertex 兼容 Files"]')?.disabled).toBe(true)
-    document.querySelector<HTMLButtonElement>('[aria-label="默认接口"]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
-    await vi.waitFor(() => expect(document.querySelector('[role="option"]')).not.toBeNull())
-    ;[...document.querySelectorAll<HTMLElement>('[role="option"]')].find(option => option.textContent?.trim() === 'Vertex 兼容')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
-    await vi.waitFor(() => expect(document.querySelector('[aria-label="默认接口"]')?.textContent).toContain('Vertex 兼容'))
+    document.querySelector<HTMLButtonElement>('[aria-label="设为默认 Vertex 兼容"]')!.click()
+    await vi.waitFor(() => expect(document.querySelector<HTMLButtonElement>('[aria-label="默认接口 Vertex 兼容"]')?.disabled).toBe(true))
+    await applyRequestConfig()
     document.querySelector('#provider-name')!.closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
     await vi.waitFor(() => expect(update).toHaveBeenCalledOnce())
     expect(update.mock.calls[0]?.[1]).toMatchObject({ default_protocol: 'vertex-compatible', interfaces: [
