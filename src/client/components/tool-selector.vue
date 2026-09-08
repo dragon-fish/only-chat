@@ -9,7 +9,7 @@ import { Drawer, DrawerContent, DrawerDescription, DrawerHeader, DrawerTitle, Dr
 import { Item, ItemContent, ItemDescription, ItemGroup, ItemTitle } from '@/client/ui/item'
 import { Popover, PopoverContent, PopoverDescription, PopoverHeader, PopoverTitle, PopoverTrigger } from '@/client/ui/popover'
 import { Switch } from '@/client/ui/switch'
-import { availablePluginRows, nextToolSelection } from './tool-selector'
+import { availablePluginRows, ensureSelectedPlugins, nextToolSelection } from './tool-selector'
 
 const props = defineProps<{
   modelValue: string[]
@@ -24,7 +24,7 @@ const selectedCount = computed(() => props.modelValue.length)
 watchEffect(() => {
   if (!host) return
   const pluginIds = new Set(rows.value.filter(row => row.selected).map(row => row.pluginId))
-  for (const pluginId of pluginIds) void host.ensurePlugin(pluginId)
+  void ensureSelectedPlugins(host, [...pluginIds])
 })
 
 function toggle(toolId: string, on: boolean) {

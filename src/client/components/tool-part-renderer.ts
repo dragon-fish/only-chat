@@ -1,5 +1,7 @@
 import type { Message } from '@/shared/models'
 import type { ToolCallPart, ToolResultPart } from '@/shared/parts'
+import { ASK_USER_TOOL_ID } from '@/shared/plugins'
+import { AskUserInputSchema } from '@/plugins/ask-user/shared'
 
 function toolState(message: Message) {
   const calls = message.parts.filter((part): part is ToolCallPart => part.type === 'tool_call')
@@ -13,8 +15,13 @@ function toolState(message: Message) {
 
 export function hasPendingToolCalls(messages: readonly Message[]): boolean {
   return messages.some((message) => {
+    if (message.status !== 'done') return false
     const { calls, results } = toolState(message)
-    return calls.some(call => !results.has(call.id))
+    return calls.some(call => (
+      call.name === ASK_USER_TOOL_ID
+      && AskUserInputSchema.safeParse(call.args).success
+      && !results.has(call.id)
+    ))
   })
 }
 

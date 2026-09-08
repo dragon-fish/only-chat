@@ -106,6 +106,15 @@ describe('ask_user answer serialization', () => {
     expect(canContinueToolMessage(answered, [answered], answered.id)).toBe(true)
   })
 
+  it('only blocks on valid interactive ask_user calls in completed messages', () => {
+    const valid = { type: 'tool_call' as const, id: 'valid', name: 'ask_user', args: input }
+    expect(hasPendingToolCalls([message([valid])])).toBe(true)
+    expect(hasPendingToolCalls([{ ...message([valid]), status: 'error' }])).toBe(false)
+    expect(hasPendingToolCalls([{ ...message([valid]), status: 'aborted' }])).toBe(false)
+    expect(hasPendingToolCalls([message([{ ...valid, name: 'unknown_tool' }])])).toBe(false)
+    expect(hasPendingToolCalls([message([{ ...valid, args: { questions: [] } }])])).toBe(false)
+  })
+
   it('hides recovery for cancellation, a non-head message, or an existing assistant child', () => {
     const call = { type: 'tool_call' as const, id: 'one', name: 'ask_user', args: input }
     const cancelled = message([call, { type: 'tool_result', call_id: 'one', name: 'ask_user', content: { status: 'cancelled' } }])

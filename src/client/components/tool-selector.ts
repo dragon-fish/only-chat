@@ -9,6 +9,20 @@ export interface PluginToolRow {
   selected: boolean
 }
 
+interface PluginLoader { ensurePlugin(pluginId: string): Promise<void> }
+type PluginLoadReporter = (pluginId: string, error: unknown) => void
+
+export async function ensureSelectedPlugins(
+  host: PluginLoader,
+  pluginIds: readonly string[],
+  report: PluginLoadReporter = (pluginId, error) => console.error(`Failed to load client plugin ${pluginId}`, error),
+): Promise<void> {
+  await Promise.all([...new Set(pluginIds)].map(async (pluginId) => {
+    try { await host.ensurePlugin(pluginId) }
+    catch (error) { report(pluginId, error) }
+  }))
+}
+
 export function stableToolIds(ids: readonly string[]): string[] {
   return [...new Set(ids)].sort()
 }

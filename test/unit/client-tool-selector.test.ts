@@ -6,6 +6,7 @@ import { TooltipProvider } from '@/client/ui/tooltip'
 import {
   availablePluginRows,
   defaultToolsForSettings,
+  ensureSelectedPlugins,
   nextToolSelection,
   sessionToolBlockReason,
   toolSelectionSupported,
@@ -47,6 +48,17 @@ describe('session tool selection', () => {
     expect(sessionToolBlockReason({ draft: false, settingsLoaded: true, pending: true, toolsSupported: true }))
       .toBe('请先回答或取消当前问题')
     expect(sessionToolBlockReason({ draft: false, settingsLoaded: true, pending: false, toolsSupported: true })).toBeNull()
+  })
+
+  it('consumes lazy plugin load failures and reports them once', async () => {
+    const error = new Error('chunk unavailable')
+    const report = vi.fn()
+    await expect(ensureSelectedPlugins(
+      { ensurePlugin: vi.fn().mockRejectedValue(error) },
+      ['ask_user', 'ask_user'],
+      report,
+    )).resolves.toBeUndefined()
+    expect(report).toHaveBeenCalledExactlyOnceWith('ask_user', error)
   })
 
   it.each([
