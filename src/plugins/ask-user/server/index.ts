@@ -11,8 +11,9 @@ export const AskUserServerPlugin = {
       description: [
         'Ask the user only when missing preferences or decisions are needed before continuing.',
         'Prefer one short question and never ask more than three.',
+        'Do not use this tool for a single open-ended text question; ask that question normally in chat. Text questions are useful when collecting multiple answers together.',
         'For single-choice questions, provide 2-3 mutually exclusive options, put the recommended option first, and suffix its label with "(Recommended)".',
-        'Use a text question when a free-form answer is needed instead of inventing an "Other" option.',
+        'Choice questions allow one custom "Other" answer by default. Set allowOther to false only when a custom answer would be invalid.',
       ].join(' '),
       inputSchema: AskUserInputSchema,
     }))

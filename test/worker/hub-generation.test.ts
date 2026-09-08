@@ -60,7 +60,7 @@ const STREAM: StreamPart[] = [
 const ASK_USER_INPUT = {
   questions: [{
     id: 'framework', header: '框架', question: '选择框架', type: 'single' as const,
-    options: [{ label: 'Vue' }, { label: 'React' }],
+    options: [{ label: 'Vue' }, { label: 'React' }], allowOther: false,
   }],
 }
 

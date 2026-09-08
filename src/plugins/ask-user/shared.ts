@@ -23,14 +23,26 @@ const QuestionBase = {
 }
 
 export const AskUserQuestionSchema = z.discriminatedUnion('type', [
-  z.strictObject({ ...QuestionBase, type: z.literal('single'), options: ChoiceOptionsSchema }),
-  z.strictObject({ ...QuestionBase, type: z.literal('multiple'), options: ChoiceOptionsSchema }),
+  z.strictObject({
+    ...QuestionBase,
+    type: z.literal('single'),
+    options: ChoiceOptionsSchema,
+    allowOther: z.boolean().default(true).describe('Whether the user may enter one custom option. Defaults to true.'),
+  }),
+  z.strictObject({
+    ...QuestionBase,
+    type: z.literal('multiple'),
+    options: ChoiceOptionsSchema,
+    allowOther: z.boolean().default(true).describe('Whether the user may enter one custom option. Defaults to true.'),
+  }),
   z.strictObject({ ...QuestionBase, type: z.literal('text'), placeholder: z.string().max(500).optional() }),
 ])
 export type AskUserQuestion = z.infer<typeof AskUserQuestionSchema>
 
 export const AskUserInputSchema = z.strictObject({
-  questions: z.array(AskUserQuestionSchema).min(1).max(3),
+  questions: z.array(AskUserQuestionSchema).min(1).max(3).describe(
+    'Ask 1-3 questions together. Do not use ask_user for a single open-ended text question; ask it normally in chat. Text questions are useful when batching multiple questions.',
+  ),
 }).superRefine(({ questions }, ctx) => {
   const seen = new Set<string>()
   for (const [index, question] of questions.entries()) {
@@ -71,11 +83,13 @@ export function validateAskUserResult(input: AskUserInput, result: AskUserResult
     if (question.type === 'multiple') {
       if (!Array.isArray(answer.value)) throw new Error(`question ${answer.id} requires multiple values`)
       if (new Set(answer.value).size !== answer.value.length) throw new Error(`question ${answer.id} has duplicate values`)
-      if (answer.value.some(value => !question.options.some(option => option.label === value))) throw new Error(`question ${answer.id} has an invalid option`)
+      const custom = answer.value.filter(value => !question.options.some(option => option.label === value))
+      if (custom.length > 0 && question.allowOther === false) throw new Error(`question ${answer.id} has an invalid option`)
+      if (custom.length > 1) throw new Error(`question ${answer.id} has more than one custom option`)
       continue
     }
     if (Array.isArray(answer.value)) throw new Error(`question ${answer.id} requires one value`)
-    if (question.type === 'single' && !question.options.some(option => option.label === answer.value)) {
+    if (question.type === 'single' && question.allowOther === false && !question.options.some(option => option.label === answer.value)) {
       throw new Error(`question ${answer.id} has an invalid option`)
     }
   }

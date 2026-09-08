@@ -47,9 +47,12 @@ Each question contains:
 - `type`: `single`, `multiple`, or `text`;
 - optional explanatory `description`;
 - optional text `placeholder`;
-- two to nine `options` for choice questions, each with `label` and optional `description`.
+- two to nine `options` for choice questions, each with `label` and optional `description`;
+- optional `allowOther` for choice questions, defaulting to `true`.
 
 IDs must be unique within one call. Choice options are forbidden for text questions and required for choice questions. The schema is strict and shared between the AI tool and client renderer.
+The tool guidance tells the model to ask a lone open-ended question in normal chat. Text questions
+remain available when batching multiple questions so the user can submit every answer together.
 
 ## Generation behavior
 
@@ -61,13 +64,18 @@ Multiple calls in one assistant Message are allowed. Generation continues only a
 
 ## Questionnaire rendering
 
-The client renders an unmatched `ask_user` call as a Questionnaire card inside the assistant Message.
+The client renders the current unmatched `ask_user` call in place of the Composer. The assistant
+Message keeps a compact waiting indicator; answered and cancelled calls render their durable summary
+in the Message. Replacing the Composer hides but does not discard an existing local draft.
 
 - Questions are shown one at a time.
 - Single-choice answers use radio choices.
 - Multiple-choice answers use checkbox choices.
 - Text answers use Questionnaire input.
+- Choice questions show one “其他” input unless `allowOther` is explicitly `false`; multiple choice
+  may combine it with preset values, while validation accepts at most one custom value.
 - Choice shortcuts use Questionnaire's numeric mode.
+- The first answer receives focus so a numeric shortcut followed by Enter can advance or submit.
 - Back/next/progress controls use the bundled Questionnaire components.
 - Answers are submitted together after the last question.
 - Partial answers remain local and are discarded on full-page reload.

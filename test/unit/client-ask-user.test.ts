@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { createApp, h, nextTick, ref } from 'vue'
 import { createPinia } from 'pinia'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import AskUserCard from '@/plugins/ask-user/client/ask-user-card.vue'
 import Composer from '@/client/components/composer.vue'
 import ToolPartRenderer from '@/client/components/tool-part-renderer.vue'
@@ -13,8 +13,8 @@ import { TooltipProvider } from '@/client/ui/tooltip'
 
 const input: AskUserInput = {
   questions: [
-    { id: 'framework', header: 'Framework', question: 'Choose one', type: 'single', options: [{ label: 'Vue' }, { label: 'React' }] },
-    { id: 'features', header: 'Features', question: 'Choose many', type: 'multiple', options: [{ label: 'Tools' }, { label: 'Cache' }] },
+    { id: 'framework', header: 'Framework', question: 'Choose one', type: 'single', options: [{ label: 'Vue' }, { label: 'React' }], allowOther: true },
+    { id: 'features', header: 'Features', question: 'Choose many', type: 'multiple', options: [{ label: 'Tools' }, { label: 'Cache' }], allowOther: true },
     { id: 'notes', header: 'Notes', question: 'Say more', type: 'text', placeholder: 'Optional detail' },
   ],
 }
@@ -50,6 +50,72 @@ describe('ask_user answer serialization', () => {
         { id: 'notes', value: 'Ship it' },
       ],
     })
+  })
+
+  it('merges one Other value into choice answers without duplicating preset selections', () => {
+    expect(buildAnsweredResult(input, {
+      framework: 'Svelte', features: ['Cache'], notes: 'Ship it',
+    }, { features: 'Solid' })).toEqual({
+      status: 'answered',
+      answers: [
+        { id: 'framework', value: 'Svelte' },
+        { id: 'features', value: ['Cache', 'Solid'] },
+        { id: 'notes', value: 'Ship it' },
+      ],
+    })
+  })
+
+  it('renders an Other input for choice questions unless the Agent disables it', async () => {
+    const root = document.createElement('div')
+    document.body.append(root)
+    const app = createApp({ render: () => h(AskUserCard, {
+      call: { type: 'tool_call', id: 'call-1', name: 'ask_user', args: input },
+      result: null,
+      canContinue: false,
+    }) })
+    app.mount(root)
+    expect(root.querySelectorAll('input[placeholder="其他…"]')).toHaveLength(2)
+    app.unmount()
+
+    const strictInput: AskUserInput = {
+      questions: [{
+        id: 'framework', header: 'Framework', question: 'Choose one', type: 'single',
+        options: [{ label: 'Vue' }, { label: 'React' }], allowOther: false,
+      }],
+    }
+    const strict = createApp({ render: () => h(AskUserCard, {
+      call: { type: 'tool_call', id: 'call-2', name: 'ask_user', args: strictInput },
+      result: null,
+      canContinue: false,
+    }) })
+    strict.mount(root)
+    expect(root.querySelector('input[placeholder="其他…"]')).toBeNull()
+    strict.unmount()
+    root.remove()
+  })
+
+  it('focuses the active answer so Enter can advance or submit without an extra click', async () => {
+    const respond = vi.fn()
+    const root = document.createElement('div')
+    document.body.append(root)
+    const oneQuestion: AskUserInput = { questions: [input.questions[0]!] }
+    const app = createApp({ render: () => h(AskUserCard, {
+      call: { type: 'tool_call', id: 'call-enter', name: 'ask_user', args: oneQuestion },
+      result: null,
+      canContinue: false,
+      onRespond: respond,
+    }) })
+    app.mount(root)
+    await nextTick()
+    const first = root.querySelector<HTMLInputElement>('input[type="radio"]')!
+    expect(document.activeElement).toBe(first)
+    first.click()
+    await nextTick()
+    first.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    await nextTick()
+    expect(respond).toHaveBeenCalledOnce()
+    app.unmount()
+    root.remove()
   })
 
   it('rejects missing or type-invalid local answers before sending', () => {

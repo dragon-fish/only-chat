@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { CircleHelpIcon, CircleXIcon } from '@lucide/vue'
 import { Alert, AlertDescription, AlertTitle } from '@/client/ui/alert'
 import { Button } from '@/client/ui/button'
@@ -32,9 +32,11 @@ const props = defineProps<{
   busy?: boolean
 }>()
 const emit = defineEmits<{ respond: [result: AskUserResult]; continue: [] }>()
+const questionnaire = ref<{ $el?: HTMLFormElement } | null>(null)
 const parsedInput = computed(() => AskUserInputSchema.safeParse(props.call.args))
 const input = computed(() => parsedInput.value.success ? parsedInput.value.data : null)
 const answers = reactive(input.value ? initialAnswers(input.value) : {})
+const otherAnswers = reactive<Record<string, string>>({})
 const parsedResult = computed(() => props.result ? AskUserResultSchema.safeParse(props.result.content) : null)
 const terminal = computed(() => parsedResult.value?.success ? parsedResult.value.data : null)
 const definitions = computed<QuestionnaireItemDefinition[]>(() => input.value?.questions.map(question => ({
@@ -42,6 +44,16 @@ const definitions = computed<QuestionnaireItemDefinition[]>(() => input.value?.q
   required: true,
   ...(question.type === 'text' ? {} : { choices: question.options.map(option => ({ value: option.label })) }),
 })) ?? [])
+
+async function focusFirstAnswer() {
+  await nextTick()
+  questionnaire.value?.$el?.querySelector<HTMLElement>(
+    'input:not([type=hidden]):not(:disabled), textarea:not(:disabled)',
+  )?.focus()
+}
+
+onMounted(focusFirstAnswer)
+watch(() => props.call.id, focusFirstAnswer)
 
 function choiceChecked(questionId: string, label: string): boolean {
   const value = answers[questionId]
@@ -69,10 +81,19 @@ function setTextAnswer(questionId: string, value: string) {
   answers[questionId] = value
 }
 
+function otherAnswer(questionId: string): string {
+  return otherAnswers[questionId] ?? ''
+}
+
+function setOtherAnswer(questionId: string, value: string, multiple: boolean) {
+  otherAnswers[questionId] = value
+  if (!multiple) answers[questionId] = value
+}
+
 function submit(event: Event) {
   event.preventDefault()
   if (!input.value) return
-  emit('respond', buildAnsweredResult(input.value, answers))
+  emit('respond', buildAnsweredResult(input.value, answers, otherAnswers))
 }
 
 function cancel() {
@@ -113,7 +134,7 @@ Card(v-else class="my-2 w-full")
       CircleHelpIcon
       span 需要你的回答
   CardContent
-    Questionnaire(:items="definitions" shortcuts="numbers" @submit="submit")
+    Questionnaire(ref="questionnaire" :items="definitions" shortcuts="numbers" @submit="submit")
       QuestionnaireItem(
         v-for="question in input?.questions" :key="question.id" :name="question.id"
         :multiple="question.type === 'multiple'" required)
@@ -126,6 +147,9 @@ Card(v-else class="my-2 w-full")
             @update:checked="setChoice(question.id, option.label, question.type === 'multiple', $event)")
             span {{ option.label }}
             QuestionnaireChoiceDescription(v-if="option.description") {{ option.description }}
+          QuestionnaireInput(
+            v-if="question.allowOther" :model-value="otherAnswer(question.id)" placeholder="其他…"
+            @update:model-value="setOtherAnswer(question.id, $event, question.type === 'multiple')")
         QuestionnaireInput(
           v-else :model-value="textAnswer(question.id)" :placeholder="question.placeholder"
           class="mt-4" @update:model-value="setTextAnswer(question.id, $event)")
