@@ -48,7 +48,8 @@ Each question contains:
 - optional explanatory `description`;
 - optional text `placeholder`;
 - two to nine `options` for choice questions, each with `label` and optional `description`;
-- optional `allowOther` for choice questions, defaulting to `true`.
+- optional `allowOther` for choice questions, defaulting to `true`;
+- optional `required`, defaulting to `false`.
 
 IDs must be unique within one call. Choice options are forbidden for text questions and required for choice questions. The schema is strict and shared between the AI tool and client renderer.
 The tool guidance tells the model to ask a lone open-ended question in normal chat. Text questions
@@ -73,10 +74,11 @@ in the Message. Replacing the Composer hides but does not discard an existing lo
 - Multiple-choice answers use checkbox choices.
 - Text answers use Questionnaire input.
 - Choice questions show one “其他” input unless `allowOther` is explicitly `false`; multiple choice
-  may combine it with preset values, while validation accepts at most one custom value.
+  may combine it with preset values. Preset choices guide the UI and do not whitelist results.
 - Choice shortcuts use Questionnaire's numeric mode.
 - The first answer receives focus so a numeric shortcut followed by Enter can advance or submit.
-- Back/next/progress controls use the bundled Questionnaire components.
+- Back/next/skip/progress controls use the bundled Questionnaire components. Optional questions may
+  be skipped; required questions cannot.
 - Answers are submitted together after the last question.
 - Partial answers remain local and are discarded on full-page reload.
 
@@ -98,10 +100,15 @@ Answered result:
   "status": "answered",
   "answers": [
     { "id": "framework", "value": "Vue" },
-    { "id": "features", "value": ["缓存", "工具"] }
+    { "id": "features", "value": ["缓存", "工具"] },
+    { "id": "budget", "value": null }
   ]
 }
 ```
+
+Answered results contain exactly one ordered entry per question. `null` means that the user skipped
+that question. A result in which every value is `null` is complete and resumes generation
+immediately; cancelling the whole Questionnaire uses the separate `cancelled` result and stops.
 
 Cancelled result:
 
@@ -112,7 +119,11 @@ Cancelled result:
 }
 ```
 
-The server verifies ownership, finds the matching unresolved call, validates answers against the original call arguments, and atomically appends one `tool_result` to the Message's JSON Parts only when that call has no result. The conditional D1 update is the exactly-once fence. A repeated identical command is idempotent; a conflicting second result is rejected.
+The server verifies ownership, finds the matching unresolved call, validates ordered IDs, required
+questions, and value shapes against the original call arguments, and atomically appends one
+`tool_result` to the Message's JSON Parts only when that call has no result. Choice values outside
+the advertised options are preserved for the model. The conditional D1 update is the exactly-once
+fence. A repeated identical command is idempotent; a conflicting second result is rejected.
 
 The server broadcasts the appended result through `message.part`, so every connected client closes the same card. Reloads receive it through the existing messages API.
 

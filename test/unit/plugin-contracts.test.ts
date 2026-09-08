@@ -13,8 +13,10 @@ const singleQuestion = {
 describe('ask_user shared contract', () => {
   it('accepts one to three strictly shaped questions', () => {
     expect(AskUserInputSchema.parse({ questions: [singleQuestion] })).toEqual({
-      questions: [{ ...singleQuestion, allowOther: true }],
+      questions: [{ ...singleQuestion, required: false, allowOther: true }],
     })
+    expect(AskUserInputSchema.parse({ questions: [{ ...singleQuestion, required: true }] }))
+      .toMatchObject({ questions: [{ required: true }] })
     expect(AskUserInputSchema.parse({ questions: [{ ...singleQuestion, allowOther: false }] }))
       .toMatchObject({ questions: [{ allowOther: false }] })
     expect(AskUserInputSchema.parse({ questions: [singleQuestion, { ...singleQuestion, id: 'two' }, { ...singleQuestion, id: 'three' }] }).questions).toHaveLength(3)
@@ -30,7 +32,7 @@ describe('ask_user shared contract', () => {
     expect(AskUserInputSchema.parse({ questions: [{ id: 'notes', header: 'Notes', question: 'Anything else?', type: 'text', placeholder: 'Optional' }] })).toMatchObject({ questions: [{ type: 'text' }] })
   })
 
-  it('validates answered values against their original question type and options', () => {
+  it('validates only answer identity and value shape, not option membership', () => {
     const input = AskUserInputSchema.parse({ questions: [
       singleQuestion,
       { id: 'features', header: 'Features', question: 'Pick features', type: 'multiple' as const, options: [{ label: 'Cache' }, { label: 'Tools' }] },
@@ -40,31 +42,33 @@ describe('ask_user shared contract', () => {
       { id: 'framework', value: 'Vue' }, { id: 'features', value: ['Cache', 'Tools'] }, { id: 'notes', value: 'Keep it small' },
     ] })
     expect(validateAskUserResult(input, answer)).toEqual(answer)
+    expect(validateAskUserResult(input, { status: 'answered', answers: [
+      { id: 'framework', value: 'Svelte' }, { id: 'features', value: null }, { id: 'notes', value: null },
+    ] })).toMatchObject({ answers: [{ value: 'Svelte' }, { value: null }, { value: null }] })
     expect(() => validateAskUserResult(input, { status: 'answered', answers: [{ id: 'framework', value: ['Vue'] }] })).toThrow()
     expect(() => validateAskUserResult(input, { status: 'answered', answers: [{ id: 'features', value: 'Cache' }] })).toThrow()
-    expect(() => validateAskUserResult(input, { status: 'answered', answers: [{ id: 'framework', value: 'Svelte' }] })).toThrow()
+    expect(() => validateAskUserResult(input, { status: 'answered', answers: [
+      { id: 'missing', value: 'anything' }, { id: 'features', value: null }, { id: 'notes', value: null },
+    ] })).toThrow()
+
+    const required = AskUserInputSchema.parse({ questions: [{ ...singleQuestion, required: true }] })
+    expect(() => validateAskUserResult(required, { status: 'answered', answers: [{ id: 'framework', value: null }] })).toThrow(/required/i)
   })
 
-  it('accepts at most one custom choice only when that question allows Other', () => {
-    const single = AskUserInputSchema.parse({ questions: [singleQuestion] })
-    expect(validateAskUserResult(single, {
+  it('treats allowOther as presentation metadata rather than a server whitelist', () => {
+    const strict = AskUserInputSchema.parse({ questions: [{ ...singleQuestion, allowOther: false }] })
+    expect(validateAskUserResult(strict, {
       status: 'answered', answers: [{ id: 'framework', value: 'Svelte' }],
     })).toMatchObject({ answers: [{ value: 'Svelte' }] })
-
-    const strict = AskUserInputSchema.parse({ questions: [{ ...singleQuestion, allowOther: false }] })
-    expect(() => validateAskUserResult(strict, {
-      status: 'answered', answers: [{ id: 'framework', value: 'Svelte' }],
-    })).toThrow(/invalid option/i)
 
     const multiple = AskUserInputSchema.parse({ questions: [{
       ...singleQuestion, id: 'features', type: 'multiple',
     }] })
-    expect(validateAskUserResult(multiple, {
-      status: 'answered', answers: [{ id: 'features', value: ['Vue', 'Svelte'] }],
-    })).toMatchObject({ answers: [{ value: ['Vue', 'Svelte'] }] })
-    expect(() => validateAskUserResult(multiple, {
-      status: 'answered', answers: [{ id: 'features', value: ['Svelte', 'Solid'] }],
-    })).toThrow(/custom option/i)
+    const freeformValues = Array.from({ length: 10 }, (_, index) => `custom-${index}`)
+    const freeformResult = AskUserResultSchema.parse({
+      status: 'answered', answers: [{ id: 'features', value: freeformValues }],
+    })
+    expect(validateAskUserResult(multiple, freeformResult)).toMatchObject({ answers: [{ value: freeformValues }] })
   })
 
   it('accepts a terminal cancelled result', () => {

@@ -17,6 +17,7 @@ import {
   QuestionnaireNext,
   QuestionnairePrevious,
   QuestionnaireProgress,
+  QuestionnaireSkip,
   QuestionnaireSubmit,
   QuestionnaireTitle,
   type QuestionnaireItemDefinition,
@@ -37,11 +38,12 @@ const parsedInput = computed(() => AskUserInputSchema.safeParse(props.call.args)
 const input = computed(() => parsedInput.value.success ? parsedInput.value.data : null)
 const answers = reactive(input.value ? initialAnswers(input.value) : {})
 const otherAnswers = reactive<Record<string, string>>({})
+const activeQuestionId = ref(input.value?.questions[0]?.id)
 const parsedResult = computed(() => props.result ? AskUserResultSchema.safeParse(props.result.content) : null)
 const terminal = computed(() => parsedResult.value?.success ? parsedResult.value.data : null)
 const definitions = computed<QuestionnaireItemDefinition[]>(() => input.value?.questions.map(question => ({
   name: question.id,
-  required: true,
+  required: question.required,
   ...(question.type === 'text' ? {} : { choices: question.options.map(option => ({ value: option.label })) }),
 })) ?? [])
 
@@ -54,6 +56,12 @@ async function focusFirstAnswer() {
 
 onMounted(focusFirstAnswer)
 watch(() => props.call.id, focusFirstAnswer)
+watch(() => props.call.id, () => {
+  for (const key of Object.keys(answers)) delete answers[key]
+  for (const key of Object.keys(otherAnswers)) delete otherAnswers[key]
+  if (input.value) Object.assign(answers, initialAnswers(input.value))
+  activeQuestionId.value = input.value?.questions[0]?.id
+})
 
 function choiceChecked(questionId: string, label: string): boolean {
   const value = answers[questionId]
@@ -90,6 +98,15 @@ function setOtherAnswer(questionId: string, value: string, multiple: boolean) {
   if (!multiple) answers[questionId] = value
 }
 
+function skipCurrentQuestion() {
+  const id = activeQuestionId.value
+  if (!id) return
+  const question = input.value?.questions.find(candidate => candidate.id === id)
+  if (!question) return
+  answers[id] = question.type === 'multiple' ? [] : ''
+  delete otherAnswers[id]
+}
+
 function submit(event: Event) {
   event.preventDefault()
   if (!input.value) return
@@ -103,6 +120,7 @@ function cancel() {
 function answerLabel(questionId: string): string {
   if (terminal.value?.status !== 'answered') return ''
   const value = terminal.value.answers.find(answer => answer.id === questionId)?.value
+  if (value === null) return '已跳过'
   return Array.isArray(value) ? value.join('、') : (value ?? '')
 }
 </script>
@@ -134,10 +152,12 @@ Card(v-else class="my-2 w-full")
       CircleHelpIcon
       span 需要你的回答
   CardContent
-    Questionnaire(ref="questionnaire" :items="definitions" shortcuts="numbers" @submit="submit")
+    Questionnaire(
+      ref="questionnaire" v-model:item="activeQuestionId"
+      :items="definitions" shortcuts="numbers" @submit="submit")
       QuestionnaireItem(
         v-for="question in input?.questions" :key="question.id" :name="question.id"
-        :multiple="question.type === 'multiple'" required)
+        :multiple="question.type === 'multiple'" :required="question.required")
         QuestionnaireTitle {{ question.question }}
         QuestionnaireDescription(v-if="question.description") {{ question.description }}
         QuestionnaireChoices(v-if="question.type !== 'text'" class="mt-4")
@@ -155,9 +175,11 @@ Card(v-else class="my-2 w-full")
           class="mt-4" @update:model-value="setTextAnswer(question.id, $event)")
         QuestionnaireError 请填写当前问题。
       QuestionnaireActions(class="mt-4")
-        QuestionnairePrevious(size="sm") 上一步
-        QuestionnaireProgress
-          template(#default="progress") {{ progress.current }} / {{ progress.total }}
+        .flex.items-center.gap-2
+          QuestionnairePrevious(size="sm") 上一步
+          QuestionnaireProgress
+            template(#default="progress") {{ progress.current }} / {{ progress.total }}
+        QuestionnaireSkip(size="sm" @click="skipCurrentQuestion") 跳过
         QuestionnaireNext(size="sm") 下一步
         QuestionnaireSubmit(size="sm" :disabled="busy") 提交
   CardFooter(class="justify-end")

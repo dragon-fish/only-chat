@@ -20,6 +20,7 @@ const QuestionBase = {
   header: z.string().trim().min(1).max(200),
   question: z.string().trim().min(1).max(4_000),
   description: z.string().trim().min(1).max(2_000).optional(),
+  required: z.boolean().default(false).describe('Whether this question must be answered. Defaults to false.'),
 }
 
 export const AskUserQuestionSchema = z.discriminatedUnion('type', [
@@ -56,7 +57,7 @@ export type AskUserInput = z.infer<typeof AskUserInputSchema>
 
 export const AskUserAnswerSchema = z.strictObject({
   id: QuestionIdSchema,
-  value: z.union([z.string().min(1), z.array(z.string().min(1)).min(1).max(9)]),
+  value: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]).nullable(),
 })
 export type AskUserAnswer = z.infer<typeof AskUserAnswerSchema>
 
@@ -67,31 +68,24 @@ export const AskUserResultSchema = z.discriminatedUnion('status', [
 export type AskUserResult = z.infer<typeof AskUserResultSchema>
 
 /**
- * Answer shape is intentionally separate from the result envelope: matching values to question
- * types and choice labels requires the original, persisted tool-call arguments.
+ * Answer shape is intentionally separate from the result envelope: matching IDs and value types
+ * requires the original, persisted tool-call arguments. Choice labels are guidance, not a whitelist.
  */
 export function validateAskUserResult(input: AskUserInput, result: AskUserResult): AskUserResult {
   if (result.status === 'cancelled') return result
-  const questions = new Map(input.questions.map(question => [question.id, question]))
-  if (result.answers.length !== input.questions.length) throw new Error('every question must be answered exactly once')
-  const seen = new Set<string>()
-  for (const answer of result.answers) {
-    const question = questions.get(answer.id)
-    if (!question) throw new Error(`unknown question ID: ${answer.id}`)
-    if (seen.has(answer.id)) throw new Error('answer IDs must be unique')
-    seen.add(answer.id)
+  if (result.answers.length !== input.questions.length) throw new Error('every question must have one answer entry')
+  for (const [index, answer] of result.answers.entries()) {
+    const question = input.questions[index]!
+    if (answer.id !== question.id) throw new Error(`answer ${answer.id} does not match question ${question.id}`)
+    if (answer.value === null) {
+      if (question.required) throw new Error(`required question ${question.id} must be answered`)
+      continue
+    }
     if (question.type === 'multiple') {
       if (!Array.isArray(answer.value)) throw new Error(`question ${answer.id} requires multiple values`)
-      if (new Set(answer.value).size !== answer.value.length) throw new Error(`question ${answer.id} has duplicate values`)
-      const custom = answer.value.filter(value => !question.options.some(option => option.label === value))
-      if (custom.length > 0 && question.allowOther === false) throw new Error(`question ${answer.id} has an invalid option`)
-      if (custom.length > 1) throw new Error(`question ${answer.id} has more than one custom option`)
       continue
     }
     if (Array.isArray(answer.value)) throw new Error(`question ${answer.id} requires one value`)
-    if (question.type === 'single' && question.allowOther === false && !question.options.some(option => option.label === answer.value)) {
-      throw new Error(`question ${answer.id} has an invalid option`)
-    }
   }
   return result
 }

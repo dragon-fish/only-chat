@@ -357,6 +357,34 @@ describe('generation', () => {
     expect(created).toHaveLength(1)
   })
 
+  it('continues generation when every optional question is explicitly skipped', async () => {
+    const providerId = await seedProvider('skip-all-provider', 'skip-all-model', false, { tool_call: true })
+    const db = createDb(env.DB)
+    await db.update(users).set({ settings: { plugins: { ask_user: true } } }).where(eq(users.id, DEFAULT_USER_ID))
+    const streams = [TOOL_STREAM, STREAM]
+    const created = await installMock(() => new MockLanguageModelV4({
+      doStream: async () => ({ stream: simulateReadableStream({ chunks: streams.shift()!, chunkDelayInMs: null, initialDelayInMs: null }) }),
+    }))
+    const c = await connect()
+    c.ws.send(JSON.stringify({
+      type: 'send', session_id: null, parent_id: null, parts: [{ type: 'text', text: 'ask me' }],
+      provider_id: providerId, model_id: 'skip-all-model', tools: ['ask_user'],
+    }))
+    await c.next('message.done')
+    const assistant = (await listMessages(db, sessionIdOf(c)))[1]!
+    c.events.length = 0
+    c.ws.send(JSON.stringify({
+      type: 'tool.respond', request_id: 'skip-all', message_id: assistant.id, call_id: 'call-ask-1',
+      result: { status: 'answered', answers: [{ id: 'framework', value: null }] },
+    }))
+
+    expect(await c.next('message.part')).toMatchObject({
+      part: { type: 'tool_result', content: { status: 'answered', answers: [{ id: 'framework', value: null }] } },
+    })
+    await c.next('message.done')
+    expect(created).toHaveLength(2)
+  })
+
   it('accepts identical response retries but rejects a conflicting second result', async () => {
     const providerId = await seedProvider('retry-provider', 'retry-model', false, { tool_call: true })
     const db = createDb(env.DB)
@@ -387,7 +415,7 @@ describe('generation', () => {
     expect(stored.parts.filter(part => part.type === 'tool_result')).toHaveLength(1)
   })
 
-  it('rejects unknown calls and answers that do not match the persisted question', async () => {
+  it('rejects unknown calls and answer values with the wrong shape for the persisted question', async () => {
     const providerId = await seedProvider('invalid-answer-provider', 'invalid-answer-model', false, { tool_call: true })
     const db = createDb(env.DB)
     await db.update(users).set({ settings: { plugins: { ask_user: true } } }).where(eq(users.id, DEFAULT_USER_ID))
@@ -409,10 +437,10 @@ describe('generation', () => {
     }))
     expect(await c.nextAfter('error', 1)).toMatchObject({ request_id: 'unknown-call' })
     c.ws.send(JSON.stringify({
-      type: 'tool.respond', request_id: 'bad-option', message_id: assistant.id, call_id: 'call-ask-1',
-      result: { status: 'answered', answers: [{ id: 'framework', value: 'Svelte' }] },
+      type: 'tool.respond', request_id: 'bad-shape', message_id: assistant.id, call_id: 'call-ask-1',
+      result: { status: 'answered', answers: [{ id: 'framework', value: ['Svelte'] }] },
     }))
-    expect(await c.nextAfter('error', 2)).toMatchObject({ request_id: 'bad-option' })
+    expect(await c.nextAfter('error', 2)).toMatchObject({ request_id: 'bad-shape' })
     expect((await listMessages(db, sessionId))[1]!.parts.filter(part => part.type === 'tool_result')).toEqual([])
   })
 

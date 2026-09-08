@@ -16,9 +16,14 @@ export function buildAnsweredResult(
     status: 'answered',
     answers: input.questions.map((question) => {
       const value = values[question.id] ?? ''
-      if (question.type !== 'multiple') return { id: question.id, value }
+      if (question.type !== 'multiple') {
+        if (Array.isArray(value)) return { id: question.id, value }
+        return { id: question.id, value: value.trim() !== '' ? value : null }
+      }
+      if (!Array.isArray(value)) return { id: question.id, value }
       const custom = otherValues[question.id]?.trim()
-      return { id: question.id, value: [...new Set([...(Array.isArray(value) ? value : []), ...(custom ? [custom] : [])])] }
+      const selected = [...new Set([...value, ...(custom ? [custom] : [])])]
+      return { id: question.id, value: selected.length ? selected : null }
     }),
   })
   return validateAskUserResult(input, result)

@@ -13,9 +13,9 @@ import { TooltipProvider } from '@/client/ui/tooltip'
 
 const input: AskUserInput = {
   questions: [
-    { id: 'framework', header: 'Framework', question: 'Choose one', type: 'single', options: [{ label: 'Vue' }, { label: 'React' }], allowOther: true },
-    { id: 'features', header: 'Features', question: 'Choose many', type: 'multiple', options: [{ label: 'Tools' }, { label: 'Cache' }], allowOther: true },
-    { id: 'notes', header: 'Notes', question: 'Say more', type: 'text', placeholder: 'Optional detail' },
+    { id: 'framework', header: 'Framework', question: 'Choose one', type: 'single', options: [{ label: 'Vue' }, { label: 'React' }], allowOther: true, required: false },
+    { id: 'features', header: 'Features', question: 'Choose many', type: 'multiple', options: [{ label: 'Tools' }, { label: 'Cache' }], allowOther: true, required: false },
+    { id: 'notes', header: 'Notes', question: 'Say more', type: 'text', placeholder: 'Optional detail', required: false },
   ],
 }
 
@@ -75,12 +75,13 @@ describe('ask_user answer serialization', () => {
     }) })
     app.mount(root)
     expect(root.querySelectorAll('input[placeholder="其他…"]')).toHaveLength(2)
+    expect(root.querySelector('[data-slot="questionnaire-skip"]:not([hidden])')).not.toBeNull()
     app.unmount()
 
     const strictInput: AskUserInput = {
       questions: [{
         id: 'framework', header: 'Framework', question: 'Choose one', type: 'single',
-        options: [{ label: 'Vue' }, { label: 'React' }], allowOther: false,
+        options: [{ label: 'Vue' }, { label: 'React' }], allowOther: false, required: true,
       }],
     }
     const strict = createApp({ render: () => h(AskUserCard, {
@@ -90,6 +91,7 @@ describe('ask_user answer serialization', () => {
     }) })
     strict.mount(root)
     expect(root.querySelector('input[placeholder="其他…"]')).toBeNull()
+    expect(root.querySelector('[data-slot="questionnaire-skip"]')?.hasAttribute('hidden')).toBe(true)
     strict.unmount()
     root.remove()
   })
@@ -118,8 +120,41 @@ describe('ask_user answer serialization', () => {
     root.remove()
   })
 
-  it('rejects missing or type-invalid local answers before sending', () => {
-    expect(() => buildAnsweredResult(input, { framework: 'Vue', features: [], notes: 'ok' })).toThrow()
+  it('clears a previous choice when the user explicitly skips that question', async () => {
+    const respond = vi.fn()
+    const root = document.createElement('div')
+    document.body.append(root)
+    const oneQuestion: AskUserInput = { questions: [input.questions[0]!] }
+    const app = createApp({ render: () => h(AskUserCard, {
+      call: { type: 'tool_call', id: 'call-skip', name: 'ask_user', args: oneQuestion },
+      result: null,
+      canContinue: false,
+      onRespond: respond,
+    }) })
+    app.mount(root)
+    root.querySelector<HTMLInputElement>('input[type="radio"]')!.click()
+    await nextTick()
+    root.querySelector<HTMLButtonElement>('[data-slot="questionnaire-skip"]')!.click()
+    await vi.waitFor(() => expect(respond).toHaveBeenCalledWith({
+      status: 'answered', answers: [{ id: 'framework', value: null }],
+    }))
+    app.unmount()
+    root.remove()
+  })
+
+  it('serializes skipped questions as null and still rejects type-invalid submitted answers', () => {
+    expect(buildAnsweredResult(input, { framework: '', features: [], notes: '' })).toEqual({
+      status: 'answered',
+      answers: [
+        { id: 'framework', value: null }, { id: 'features', value: null }, { id: 'notes', value: null },
+      ],
+    })
+    expect(buildAnsweredResult(input, { framework: 'Vue', features: [], notes: '' })).toEqual({
+      status: 'answered',
+      answers: [
+        { id: 'framework', value: 'Vue' }, { id: 'features', value: null }, { id: 'notes', value: null },
+      ],
+    })
     expect(() => buildAnsweredResult(input, { framework: ['Vue'], features: ['Cache'], notes: 'ok' })).toThrow()
   })
 
