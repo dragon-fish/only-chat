@@ -5,8 +5,17 @@ import { createDb } from './db/client'
 import { cleanupExpiredProviderFiles } from './plugins/files-cleanup'
 import { refreshCatalog } from './plugins/model-catalog/refresh'
 import { CatalogStorage } from './plugins/model-catalog/storage'
+import { disposeRpcStub } from './rpc'
 
 let workerApp: Promise<Context> | undefined
+
+async function startScheduledCatalogRefresh(env: Env, scheduledTime: number): Promise<void> {
+  const instance = await env.MODEL_CATALOG_REFRESH.create({
+    id: `catalog-cron-${scheduledTime}`,
+    params: { source: 'cron' },
+  })
+  disposeRpcStub(instance)
+}
 
 export default {
   async fetch(request, env, execCtx) {
@@ -19,10 +28,7 @@ export default {
     workerApp ??= createApp({ env, side: 'worker' })
     const ctx = await workerApp
     await Promise.all([
-      env.MODEL_CATALOG_REFRESH.create({
-        id: `catalog-cron-${controller.scheduledTime}`,
-        params: { source: 'cron' },
-      }).catch(error => console.error('Could not start scheduled catalog refresh', error)),
+      startScheduledCatalogRefresh(env, controller.scheduledTime).catch(error => console.error('Could not start scheduled catalog refresh', error)),
       cleanupExpiredProviderFiles(ctx, Date.now()).catch(() => console.error('Scheduled provider file cleanup failed')),
     ])
   },
