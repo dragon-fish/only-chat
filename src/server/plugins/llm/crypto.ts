@@ -34,3 +34,11 @@ export async function decryptSecret(secret: string, ciphertext: string): Promise
   const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: fromBase64(ivB64) }, key, fromBase64(ctB64))
   return dec.decode(pt)
 }
+
+export async function encryptJson(valueSecret: string, value: unknown): Promise<string> {
+  return encryptSecret(valueSecret, JSON.stringify(value))
+}
+
+export async function decryptJson<T>(valueSecret: string, ciphertext: string): Promise<T> {
+  return JSON.parse(await decryptSecret(valueSecret, ciphertext)) as T
+}
