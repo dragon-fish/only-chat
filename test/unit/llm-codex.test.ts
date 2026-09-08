@@ -63,7 +63,7 @@ describe('Codex Responses transport', () => {
     })
     const lm = await createCodexModel(codex, provider, endpoint, model) as LanguageModelV4
     if (retryStatus === 200) await (await lm.doStream({ prompt })).stream.cancel()
-    else await expect(lm.doStream({ prompt })).rejects.toThrow(/Codex.*401/)
+    else await expect(lm.doStream({ prompt })).rejects.toThrow('Codex Responses request failed')
     expect(requests.map(req => req.headers.get('authorization'))).toEqual(['Bearer private-access', 'Bearer private-rotated'])
     expect(getValidCredentials.mock.calls.filter(([, force]) => force)).toEqual([[1, true]])
     expect(await requests[0]!.text()).toBe(await requests[1]!.text())
@@ -77,6 +77,13 @@ describe('Codex Responses transport', () => {
     const lm = await createCodexModel(codex, provider, endpoint, model) as LanguageModelV4
     const reader = (await lm.doStream({ prompt })).stream.getReader()
     expect((await reader.read()).value).toMatchObject({ type: 'stream-start' })
+    bodyController.enqueue(new TextEncoder().encode([
+      { type: 'response.output_item.added', output_index: 0, item: { id: 'msg_live', type: 'message', status: 'in_progress', role: 'assistant', content: [] } },
+      { type: 'response.output_text.delta', item_id: 'msg_live', output_index: 0, content_index: 0, delta: 'live text' },
+    ].map(event => `data: ${JSON.stringify(event)}\n\n`).join('')))
+    let chunk = (await reader.read()).value
+    while (chunk && chunk.type !== 'text-delta') chunk = (await reader.read()).value
+    expect(chunk).toMatchObject({ type: 'text-delta', delta: 'live text' })
     bodyController.close()
     await reader.cancel()
     expect(remote).toHaveBeenCalledTimes(1)
@@ -113,5 +120,90 @@ describe('Codex Responses transport', () => {
       expect((error as Error).message).not.toMatch(/private-/)
       expect(JSON.stringify(error)).not.toMatch(/private-/)
     }
+  })
+
+  it.each([
+    { label: 'response.failed', body: 'data: {"type":"response.failed","response":{"status":"failed","error":{"code":"private-upstream-code","message":"private-upstream-text"},"input":"private-prompt"}}\n\n' },
+    { label: 'error event', body: 'data: {"type":"error","error":{"code":"private-upstream-code","message":"private-upstream-text"},"detail":"private-upstream-detail"}\n\n' },
+    { label: 'malformed SSE JSON', body: 'data: {"private-malformed-json":\n\n' },
+    { label: 'malformed SSE object', body: 'data: null\n\n' },
+  ])('sanitizes accepted $label before exposing SDK chunks or reader errors', async ({ body }) => {
+    const { codex, getValidCredentials } = service()
+    const remote = vi.fn(async () => new Response(body, { headers: { 'content-type': 'text/event-stream' } }))
+    vi.stubGlobal('fetch', remote)
+    const lm = await createCodexModel(codex, provider, endpoint, model) as LanguageModelV4
+    const chunks = []
+    const errors: unknown[] = []
+    try {
+      for await (const chunk of (await lm.doStream({ prompt, includeRawChunks: true })).stream) {
+        chunks.push(chunk)
+        if (chunk.type === 'error') errors.push(chunk.error)
+      }
+    } catch (error) { errors.push(error) }
+    expect(errors).toHaveLength(1)
+    for (const error of errors) {
+      expect(error).toBeInstanceOf(Error)
+      expect((error as Error).message).toBe('Codex Responses request failed')
+      expect(JSON.stringify(error)).not.toMatch(/private-|requestBodyValues|responseBody|cause/)
+    }
+    expect(JSON.stringify(chunks)).not.toMatch(/private-/)
+    expect(remote).toHaveBeenCalledTimes(1)
+    expect(getValidCredentials.mock.calls.some(([, force]) => force)).toBe(false)
+  })
+
+  it.each([
+    { mode: 'stream' as const, label: 'empty successful response', response: () => new Response(null) },
+    { mode: 'generate' as const, label: 'empty successful JSON response', response: () => new Response('') },
+    { mode: 'generate' as const, label: 'malformed successful JSON', response: () => new Response('{"private-malformed-json":') },
+    { mode: 'generate' as const, label: 'successful JSON error', response: () => Response.json({ error: { message: 'private-upstream-text' }, input: 'private-prompt' }) },
+  ])('sanitizes $label model-call exceptions', async ({ mode, response }) => {
+    const { codex } = service()
+    vi.stubGlobal('fetch', async () => response())
+    const lm = await createCodexModel(codex, provider, endpoint, model) as LanguageModelV4
+    const call = mode === 'stream' ? lm.doStream({ prompt }) : lm.doGenerate({ prompt })
+    const error = await Promise.resolve(call).then(() => null, error => error as Error)
+    expect(error).toBeInstanceOf(Error)
+    expect(error?.message).toBe('Codex Responses request failed')
+    expect(JSON.stringify(error)).not.toMatch(/private-|requestBodyValues|responseBody|cause/)
+  })
+
+  it('sanitizes successful response body reader failures without replay', async () => {
+    const { codex, getValidCredentials } = service()
+    let bodyController!: ReadableStreamDefaultController<Uint8Array>
+    const remote = vi.fn(async () => new Response(new ReadableStream<Uint8Array>({ start(c) { bodyController = c } }), { headers: { 'content-type': 'text/event-stream' } }))
+    vi.stubGlobal('fetch', remote)
+    const lm = await createCodexModel(codex, provider, endpoint, model) as LanguageModelV4
+    const reader = (await lm.doStream({ prompt })).stream.getReader()
+    expect((await reader.read()).value).toMatchObject({ type: 'stream-start' })
+    bodyController.error(new Error('private-body-reader-failure'))
+    const error = await reader.read().then(() => null, error => error as Error)
+    expect(error).toBeInstanceOf(Error)
+    expect(error?.message).toBe('Codex Responses request failed')
+    expect(JSON.stringify(error)).not.toMatch(/private-|requestBodyValues|responseBody|cause/)
+    expect(remote).toHaveBeenCalledTimes(1)
+    expect(getValidCredentials.mock.calls.some(([, force]) => force)).toBe(false)
+  })
+
+  it.each(['request', 'reader'] as const)('preserves caller abort semantics during a %s failure', async stage => {
+    const { codex } = service()
+    const abort = new AbortController()
+    let bodyController!: ReadableStreamDefaultController<Uint8Array>
+    vi.stubGlobal('fetch', async () => {
+      if (stage === 'request') {
+        abort.abort()
+        throw abort.signal.reason
+      }
+      return new Response(new ReadableStream<Uint8Array>({ start(c) { bodyController = c } }), { headers: { 'content-type': 'text/event-stream' } })
+    })
+    const lm = await createCodexModel(codex, provider, endpoint, model) as LanguageModelV4
+    let error: unknown
+    try {
+      const reader = (await lm.doStream({ prompt, abortSignal: abort.signal })).stream.getReader()
+      await reader.read()
+      abort.abort()
+      bodyController.error(abort.signal.reason)
+      await reader.read()
+    } catch (caught) { error = caught }
+    expect(error).toMatchObject({ name: 'AbortError' })
   })
 })

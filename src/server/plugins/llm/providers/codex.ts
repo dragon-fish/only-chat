@@ -1,12 +1,66 @@
 import type { Context } from 'cordis'
 import type { LanguageModel } from 'ai'
+import type { LanguageModelV4, LanguageModelV4StreamPart } from '@ai-sdk/provider'
 import type { FetchFunction } from '@ai-sdk/provider-utils'
 import type { ModelRow, ProviderInterfaceRow, ProviderRow } from '@/server/db/schema'
 import type { Codex } from '../../codex'
 import { CODEX_API_BASE_URL, CODEX_ORIGINATOR } from '../../codex/constants'
 import { createFileAwareResponsesModel } from '../files/references'
 import { observedProviderFetch, type LlmRequestTrace } from '../observability'
-import { RESPONSES_PROVIDER_NAME } from '../responses-reasoning'
+import { readResponsesReasoningDelta, RESPONSES_PROVIDER_NAME } from '../responses-reasoning'
+
+function modelError(signal?: AbortSignal): Error {
+  return signal?.aborted
+    ? new DOMException('Codex Responses request aborted', 'AbortError')
+    : new Error('Codex Responses request failed')
+}
+
+/** SDK failures can retain prompts, raw events, and upstream errors even after HTTP succeeds. */
+function sanitizeModelErrors(model: LanguageModelV4): LanguageModelV4 {
+  return {
+    specificationVersion: model.specificationVersion,
+    provider: model.provider,
+    modelId: model.modelId,
+    supportedUrls: model.supportedUrls,
+    async doGenerate(options) {
+      try { return await model.doGenerate(options) } catch { throw modelError(options.abortSignal) }
+    },
+    async doStream(options) {
+      try {
+        const result = await model.doStream(options)
+        const reader = result.stream.getReader()
+        return { ...result, stream: new ReadableStream<LanguageModelV4StreamPart>({
+          async pull(controller) {
+            try {
+              while (true) {
+                const { done, value } = await reader.read()
+                if (done) {
+                  reader.releaseLock()
+                  controller.close()
+                  return
+                }
+                // Only reasoning deltas are consumed as raw input; SDK raw errors precede error chunks.
+                if (value.type === 'raw' && !readResponsesReasoningDelta(value.rawValue)) continue
+                if (value.type === 'error') controller.enqueue({ type: 'error', error: modelError(options.abortSignal) })
+                else if (value.type === 'finish' && value.finishReason.unified === 'error') {
+                  controller.enqueue({ ...value, finishReason: { unified: 'error', raw: undefined } })
+                } else controller.enqueue(value)
+                return
+              }
+            } catch {
+              reader.releaseLock()
+              controller.error(modelError(options.abortSignal))
+            }
+          },
+          async cancel(reason) {
+            try { await reader.cancel(reason) } catch { throw modelError(options.abortSignal) }
+            finally { reader.releaseLock() }
+          },
+        }) }
+      } catch { throw modelError(options.abortSignal) }
+    },
+  }
+}
 
 export function normalizeCodexResponsesBody(body: string): string {
   let parsed: unknown
@@ -52,7 +106,7 @@ export async function createCodexModel(codex: Codex, provider: ProviderRow, _pro
     }
     return response
   }
-  return createFileAwareResponsesModel({ name: RESPONSES_PROVIDER_NAME, url: `${CODEX_API_BASE_URL}/responses`, apiKey: credentials.bundle.accessToken, fetch: codexFetch }, model.model_id)
+  return sanitizeModelErrors(createFileAwareResponsesModel({ name: RESPONSES_PROVIDER_NAME, url: `${CODEX_API_BASE_URL}/responses`, apiKey: credentials.bundle.accessToken, fetch: codexFetch }, model.model_id))
 }
 
 export const codexProvider = {

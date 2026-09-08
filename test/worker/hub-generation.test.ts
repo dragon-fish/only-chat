@@ -1360,6 +1360,27 @@ describe('effective model interface', () => {
 })
 
 describe('Codex Responses generation', () => {
+  it('stores and publishes only a sanitized error after a successful HTTP response fails in SSE', async () => {
+    const db = createDb(env.DB)
+    await ensureDefaultUser(db)
+    const providerId = await new CodexCredentialStore(db, env.KEY_ENCRYPTION_SECRET).createProvider({
+      accessToken: 'private-codex-access', refreshToken: 'private-codex-refresh', idToken: 'private-codex-id',
+      tokenType: 'Bearer', accountId: 'codex-error-boundary', email: 'owner@example.com', expiresAt: Date.now() + 3_600_000,
+    }, Date.now())
+    await db.insert(models).values({ provider_id: providerId, model_id: 'codex-error-fixture', enabled: true })
+    vi.stubGlobal('fetch', async () => new Response('data: {"type":"response.failed","response":{"status":"failed","error":{"code":"private-upstream-code","message":"private-upstream-text"}}}\n\n', { headers: { 'content-type': 'text/event-stream' } }))
+    const logged: unknown[] = []
+    const errors = vi.spyOn(console, 'error').mockImplementation((...args) => logged.push(...args.map(value => value instanceof Error ? { ...value, message: value.message } : value)))
+    try {
+      const c = await connect()
+      c.ws.send(JSON.stringify({ type: 'send', session_id: null, parent_id: null, parts: [{ type: 'text', text: 'hello' }], provider_id: providerId, model_id: 'codex-error-fixture' }))
+      expect(await c.next('message.done')).toMatchObject({ status: 'error', error: 'Codex Responses request failed' })
+      const saved = (await listMessages(db, sessionIdOf(c)))[1]!
+      expect(saved).toMatchObject({ status: 'error', error: 'Codex Responses request failed' })
+      expect(JSON.stringify({ logged, events: c.events, saved })).not.toMatch(/private-/)
+    } finally { vi.unstubAllGlobals(); errors.mockRestore() }
+  })
+
   it.each([false, true])('persists and replays stateless reasoning and tool IDs with inline images (content omitted: %s)', async omitReasoningContent => {
     const db = createDb(env.DB)
     await ensureDefaultUser(db)
