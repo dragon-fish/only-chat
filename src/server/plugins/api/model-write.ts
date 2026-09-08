@@ -37,6 +37,7 @@ export function toModelDto(row: ModelRow): ModelWithMetadata {
   return ModelWithMetadataSchema.parse({
     id: row.id, provider_id: row.provider_id, model_id: row.model_id, interface_id: row.interface_id,
     metadata: row.metadata_resolved, metadata_override: row.metadata_override, catalog_matches: row.catalog_matches,
-    lab_id: row.lab_id, enabled: row.enabled, sort: row.sort,
+    lab_id: row.lab_id, enabled: row.enabled, manual_pinned: row.manual_pinned,
+    upstream_available: row.upstream_available, sort: row.sort,
   })
 }

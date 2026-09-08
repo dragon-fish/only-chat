@@ -68,6 +68,8 @@ export const models = sqliteTable('models', {
   context_limit: integer(),
   output_limit: integer(),
   enabled: integer({ mode: 'boolean' }).notNull().default(true),
+  manual_pinned: integer({ mode: 'boolean' }).notNull().default(true),
+  upstream_available: integer({ mode: 'boolean' }),
   sort: integer().notNull().default(0),
 }, (t) => [
   uniqueIndex('models_provider_model_uq').on(t.provider_id, t.model_id),
@@ -79,6 +81,7 @@ export const models = sqliteTable('models', {
   index('models_enabled_context_idx').on(t.enabled, t.context_limit),
   index('models_interface_idx').on(t.interface_id),
   index('models_lab_enabled_sort_idx').on(t.lab_id, t.enabled, t.sort, t.id),
+  index('models_provider_lab_state_idx').on(t.provider_id, t.lab_id, t.enabled, t.upstream_available, t.id),
 ])
 
 export const projects = sqliteTable('projects', {

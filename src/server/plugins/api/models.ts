@@ -1,8 +1,9 @@
 import type { Context } from 'cordis'
 import { Hono } from 'hono'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, isNull } from 'drizzle-orm'
+import type { BatchItem } from 'drizzle-orm/batch'
 import { DEFAULT_USER_ID } from '@/shared/constants'
-import { ModelWriteInputSchema } from '@/shared/api'
+import { BulkModelStateInputSchema, ModelWriteInputSchema } from '@/shared/api'
 import { ModelQuerySchema } from '@/shared/models'
 import { models, providerInterfaces, providers } from '../../db/schema'
 import { parseId } from './params'
@@ -63,15 +64,62 @@ export function modelRoutes(ctx: Context) {
         if (!currentProvider) return c.json({ error: 'not found' }, 404)
         const override = input.metadata_override ?? {}
         const catalog = await catalogForModels(ctx, currentProvider.models_dev_provider_id, [input.model_id])
+        const existing = await db.select(modelSourceColumns).from(models).where(and(eq(models.provider_id, provider.id), eq(models.model_id, input.model_id))).get()
+        if (existing) {
+          const [, , rows] = await db.batch([
+            providerSourceFence(db, currentProvider, catalog.version),
+            modelSourceFence(db, existing, currentProvider, catalog.version),
+            db.update(models).set({ manual_pinned: true }).where(modelSourceMatches(existing, currentProvider, catalog.version)).returning(),
+          ])
+          const row = rows[0]
+          return row ? c.json(toModelDto(row)) : c.json({ error: 'not found' }, 404)
+        }
         const [, rows] = await db.batch([
           providerSourceFence(db, currentProvider, catalog.version),
           db.insert(models).values({
-            ...input, provider_id: provider.id, metadata_override: override,
+            ...input, provider_id: provider.id, metadata_override: override, manual_pinned: true, upstream_available: null,
             ...resolveModelFields(catalog, currentProvider.models_dev_provider_id, input.model_id, override),
           }).onConflictDoNothing().returning(),
         ])
         const row = rows[0]
         return row ? c.json(toModelDto(row), 201) : c.json({ error: 'model already exists' }, 409)
+      })
+    } catch (error) {
+      if (error instanceof ModelSourceConflict) return c.json({ error: error.message }, 409)
+      throw error
+    }
+  })
+
+  r.put('/providers/:id/models/bulk', async c => {
+    const pid = parseId(c.req.param('id'))
+    const provider = pid === null ? undefined : await ownedProvider(pid)
+    if (!provider) return c.json({ error: 'not found' }, 404)
+    const parsed = BulkModelStateInputSchema.safeParse(await c.req.json())
+    if (!parsed.success) return c.json({ error: 'invalid input', issues: parsed.error.issues }, 400)
+    try {
+      return await retryModelSource(async () => {
+        const currentProvider = await ownedProvider(provider.id)
+        if (!currentProvider) return c.json({ error: 'not found' }, 404)
+        const condition = and(eq(models.provider_id, provider.id), parsed.data.lab_id === undefined
+          ? undefined
+          : parsed.data.lab_id === null ? isNull(models.lab_id) : eq(models.lab_id, parsed.data.lab_id))
+        const rows = await db.select(modelSourceColumns).from(models).where(condition)
+        const version = (await ctx.modelCatalog.status()).version
+        const operations: BatchItem<'sqlite'>[] = [providerSourceFence(db, currentProvider, version)]
+        let updated = 0
+        let deleted = 0
+        for (const row of rows) {
+          operations.push(modelSourceFence(db, row, currentProvider, version))
+          if (!parsed.data.enabled && row.upstream_available === false && !row.manual_pinned) {
+            deleted++
+            operations.push(db.delete(models).where(modelSourceMatches(row, currentProvider, version)))
+          } else if (row.enabled !== parsed.data.enabled) {
+            updated++
+            operations.push(db.update(models).set({ enabled: parsed.data.enabled }).where(modelSourceMatches(row, currentProvider, version)))
+          }
+        }
+        await db.batch(operations as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]])
+        return c.json({ updated, deleted })
       })
     } catch (error) {
       if (error instanceof ModelSourceConflict) return c.json({ error: error.message }, 409)

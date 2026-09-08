@@ -342,17 +342,17 @@ describe('REST api', () => {
     expect((await json('POST', '/api/projects', { name: 'nope' })).status).toBe(404)
   })
 
-  it('rejects a duplicate model_id with 409 and preserves the existing edit', async () => {
+  it('pins a duplicate model_id without replacing the existing edit', async () => {
     const created = await json('POST', '/api/providers', { name: 'C', interfaces: [{ protocol: 'anthropic', base_url: 'https://api.anthropic.com/v1' }], default_protocol: 'anthropic' })
     const p = (await created.json()) as { id: number }
     const m = await json('POST', `/api/providers/${p.id}/models`, { model_id: 'dup-model', metadata_override: { name: 'Dup' } })
     const createdModel = (await m.json()) as { id: number }
     await json('PUT', `/api/providers/${p.id}/models/${createdModel.id}`, { enabled: false })
     const dup = await json('POST', `/api/providers/${p.id}/models`, { model_id: 'dup-model', metadata_override: { name: 'Should not apply' } })
-    expect(dup.status).toBe(409)
-    expect(await dup.json()).toEqual({ error: 'model already exists' })
-    const list = await (await json('GET', `/api/providers/${p.id}/models`)).json() as { models: Array<{ model_id: string; enabled: boolean }> }
-    expect(list.models.find((x) => x.model_id === 'dup-model')?.enabled).toBe(false)
+    expect(dup.status).toBe(200)
+    expect(await dup.json()).toMatchObject({ model_id: 'dup-model', enabled: false, manual_pinned: true, metadata_override: { name: 'Dup' } })
+    const list = await (await json('GET', `/api/providers/${p.id}/models`)).json() as { models: Array<{ model_id: string; enabled: boolean; manual_pinned: boolean }> }
+    expect(list.models.find((x) => x.model_id === 'dup-model')).toMatchObject({ enabled: false, manual_pinned: true })
   })
 
   it('rejects native Vertex and the retired single-protocol input', async () => {

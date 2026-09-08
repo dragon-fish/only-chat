@@ -26,6 +26,7 @@ const model: ModelRow = {
   interface_id: null, metadata_override: {}, metadata_resolved: {}, catalog_matches: { operator: null, lab: null, global: null },
   search_name: '', lab_id: null, supports_image_input: false, supports_image_output: false,
   supports_reasoning: false, supports_tools: false, context_limit: null, output_limit: null,
+  manual_pinned: true, upstream_available: null,
 }
 
 async function provider(

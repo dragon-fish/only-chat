@@ -137,6 +137,8 @@ export const ModelWithMetadataSchema = z.strictObject({
   catalog_matches: CatalogMatchesSchema,
   lab_id: z.string().nullable(),
   enabled: z.boolean(),
+  manual_pinned: z.boolean(),
+  upstream_available: z.boolean().nullable(),
   sort: z.number().int(),
 })
 export type ModelWithMetadata = z.infer<typeof ModelWithMetadataSchema>

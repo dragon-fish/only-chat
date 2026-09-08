@@ -61,6 +61,8 @@ export function providerSourceFence(db: DB, provider: ProviderSource, version: s
 
 export function modelSourceMatches(row: ModelSourceRow, provider: ProviderSource, version: string | null) {
   return and(eq(models.id, row.id), eq(models.provider_id, row.provider_id), eq(models.model_id, row.model_id),
+    sql`${models.interface_id} IS ${row.interface_id}`, eq(models.enabled, row.enabled), eq(models.manual_pinned, row.manual_pinned),
+    sql`${models.upstream_available} IS ${row.upstream_available}`, eq(models.sort, row.sort),
     sql`${models.metadata_override} = ${row.metadata_override_snapshot}`, providerSourceMatches(provider, version))!
 }
 

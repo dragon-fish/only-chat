@@ -78,8 +78,17 @@ export interface AttachmentUploadResponse {
 }
 export interface FetchModelsResponse {
   imported: number
+  removed: number
+  unavailable: number
   models: string[]
 }
+
+export const BulkModelStateInputSchema = z.strictObject({
+  enabled: z.boolean(),
+  lab_id: z.string().min(1).nullable().optional(),
+})
+export type BulkModelStateInput = z.infer<typeof BulkModelStateInputSchema>
+export interface BulkModelStateResponse { updated: number; deleted: number }
 
 export interface CatalogProviderSummary { id: string; name: string; api?: string; npm?: string; doc?: string }
 export interface CatalogStatus { version: string | null; previousVersion: string | null; lastSuccessAt: number | null; lastError: string | null }

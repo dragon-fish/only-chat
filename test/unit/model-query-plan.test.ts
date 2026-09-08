@@ -20,7 +20,13 @@ describe('indexed model query plans', () => {
   ])('uses an index for %j without scanning models', input => {
     const db = new DatabaseSync(':memory:')
     databases.push(db)
-    for (const migration of ['0000_init.sql', '0001_projects-media.sql', '0002_provider-catalog.sql']) {
+    for (const migration of [
+      '0000_init.sql',
+      '0001_projects-media.sql',
+      '0002_provider-catalog.sql',
+      '0003_provider-files-cleanup.sql',
+      '0004_model-membership-state.sql',
+    ]) {
       db.exec(readFileSync(new URL(`../../migrations/${migration}`, import.meta.url), 'utf8'))
     }
     const query = buildModelQuery({ ...input, limit: 50 })

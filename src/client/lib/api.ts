@@ -1,4 +1,4 @@
-import type { AttachmentCheckResponse, AttachmentUploadResponse, CatalogProviderSummary, CatalogRefreshJobStatus, CatalogRefreshStartResponse, CatalogStatus, FetchModelsResponse, ModelRef, ModelWriteInput, ProviderWriteInput } from '@/shared/api'
+import type { AttachmentCheckResponse, AttachmentUploadResponse, BulkModelStateInput, BulkModelStateResponse, CatalogProviderSummary, CatalogRefreshJobStatus, CatalogRefreshStartResponse, CatalogStatus, FetchModelsResponse, ModelRef, ModelWriteInput, ProviderWriteInput } from '@/shared/api'
 import type { Message, ModelPage, ModelQuery, ModelWithMetadata, Project, ProviderWithInterfaces, Session, User } from '@/shared/models'
 import type { PresetProvider } from '@/server/plugins/llm/presets'
 
@@ -42,6 +42,7 @@ export const api = {
   modelByRef: (ref: ModelRef, signal?: AbortSignal) => request<ModelWithMetadata>('GET', `/api/providers/${ref.provider_id}/models/by-ref${queryString({ model_id: ref.model_id })}`, undefined, { signal }),
   createModel: (providerId: number, input: ModelWriteInput) => request<ModelWithMetadata>('POST', `/api/providers/${providerId}/models`, input),
   updateModel: (providerId: number, rowId: number, input: Partial<ModelWriteInput>) => request<ModelWithMetadata>('PUT', `/api/providers/${providerId}/models/${rowId}`, input),
+  updateModels: (providerId: number, input: BulkModelStateInput) => request<BulkModelStateResponse>('PUT', `/api/providers/${providerId}/models/bulk`, input),
   deleteModel: (providerId: number, rowId: number) => request<void>('DELETE', `/api/providers/${providerId}/models/${rowId}`),
   catalogStatus: () => request<CatalogStatus>('GET', '/api/model-catalog/status'),
   catalogProviders: (query = '', signal?: AbortSignal) => request<CatalogProviderSummary[]>('GET', `/api/model-catalog/providers${queryString({ q: query })}`, undefined, { signal }),

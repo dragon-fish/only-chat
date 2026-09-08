@@ -38,7 +38,7 @@ export function buildModelQuery(input: ModelQuery, userId = DEFAULT_USER_ID) {
   }
   params.push(query.limit + 1)
   return {
-    sql: `SELECT m.id, m.provider_id, m.model_id, m.interface_id, m.metadata_resolved, m.metadata_override, m.catalog_matches, m.lab_id, m.enabled, m.sort
+    sql: `SELECT m.id, m.provider_id, m.model_id, m.interface_id, m.metadata_resolved, m.metadata_override, m.catalog_matches, m.lab_id, m.enabled, m.manual_pinned, m.upstream_available, m.sort
       FROM models m JOIN providers p ON p.id = m.provider_id
       WHERE ${predicates.join(' AND ')} ORDER BY m.sort, m.id LIMIT ?`,
     params,
@@ -50,7 +50,7 @@ export async function queryModels(db: D1Database, input: ModelQuery): Promise<Mo
   const result = await db.prepare(query.sql).bind(...query.params).all<{
     id: number; provider_id: number; model_id: string; interface_id: number | null;
     metadata_resolved: string; metadata_override: string; catalog_matches: string;
-    lab_id: string | null; enabled: number; sort: number;
+    lab_id: string | null; enabled: number; manual_pinned: number; upstream_available: number | null; sort: number;
   }>()
   const selected = result.results.slice(0, input.limit)
   const last = selected.at(-1)
@@ -58,7 +58,8 @@ export async function queryModels(db: D1Database, input: ModelQuery): Promise<Mo
     models: selected.map(row => ModelWithMetadataSchema.parse({
       id: row.id, provider_id: row.provider_id, model_id: row.model_id, interface_id: row.interface_id,
       metadata: JSON.parse(row.metadata_resolved), metadata_override: JSON.parse(row.metadata_override),
-      catalog_matches: JSON.parse(row.catalog_matches), lab_id: row.lab_id, enabled: Boolean(row.enabled), sort: row.sort,
+      catalog_matches: JSON.parse(row.catalog_matches), lab_id: row.lab_id, enabled: Boolean(row.enabled),
+      manual_pinned: Boolean(row.manual_pinned), upstream_available: row.upstream_available === null ? null : Boolean(row.upstream_available), sort: row.sort,
     })),
     next_cursor: result.results.length > input.limit && last ? btoa(JSON.stringify({ sort: last.sort, id: last.id })) : null,
   }

@@ -271,6 +271,7 @@ describe('catalog-backed model membership and queries', () => {
       model_id: 'manual', metadata_override: { name: 'My manual model', tool_call: false }, enabled: false, sort: 8,
     })
     expect(manual.status).toBe(201)
+    expect(await manual.clone().json()).toMatchObject({ manual_pinned: true, upstream_available: null })
     vi.stubGlobal('fetch', async (url: string) => {
       expect(url).toBe('https://gateway.test/v1/models')
       return Response.json({ data: [{ id: 'lab/alpha' }, { id: 'manual' }, { id: 'lab/alpha' }] })
@@ -279,8 +280,8 @@ describe('catalog-backed model membership and queries', () => {
     expect(await imported.json()).toMatchObject({ imported: 1 })
     const list = ModelPageSchema.parse(await (await request('GET', `/providers/${provider.id}/models`)).json())
     expect(list.models.map(model => model.model_id)).toEqual(['lab/alpha', 'manual'])
-    expect(list.models[0]).toMatchObject({ metadata: { name: 'Operator alpha', tool_call: false, limit: { context: 100 }, cost: { input: 3 } }, lab_id: 'lab', interface_id: null })
-    expect(list.models[1]).toMatchObject({ metadata: { name: 'My manual model', tool_call: false }, enabled: false, sort: 8 })
+    expect(list.models[0]).toMatchObject({ metadata: { name: 'Operator alpha', tool_call: false, limit: { context: 100 }, cost: { input: 3 } }, lab_id: 'lab', interface_id: null, enabled: false, manual_pinned: false, upstream_available: true })
+    expect(list.models[1]).toMatchObject({ metadata: { name: 'My manual model', tool_call: false }, enabled: false, sort: 8, manual_pinned: true, upstream_available: true })
     await env.DB.exec('CREATE TABLE model_query_audit (model_id TEXT)')
     await env.DB.exec('CREATE TRIGGER model_query_audit_update AFTER UPDATE ON models BEGIN INSERT INTO model_query_audit VALUES (new.model_id); END')
     await request('POST', `/providers/${provider.id}/fetch-models`)
@@ -288,6 +289,60 @@ describe('catalog-backed model membership and queries', () => {
     await env.DB.exec('DROP TRIGGER model_query_audit_update')
     await env.DB.exec('DROP TABLE model_query_audit')
     expect(audit.results).toEqual([])
+  })
+
+  it('reconciles removed provider models only after a successful list response', async () => {
+    const { request, createProvider } = await catalogApp()
+    const provider = await createProvider()
+    let ids = ['lab/alpha', 'lab/beta']
+    vi.stubGlobal('fetch', async () => Response.json({ data: ids.map(id => ({ id })) }))
+    await request('POST', `/providers/${provider.id}/fetch-models`)
+    const initial = ModelPageSchema.parse(await (await request('GET', `/providers/${provider.id}/models`)).json())
+    const alpha = initial.models.find(model => model.model_id === 'lab/alpha')!
+    expect((await request('PUT', `/providers/${provider.id}/models/${alpha.id}`, { enabled: true })).status).toBe(200)
+
+    ids = []
+    await request('POST', `/providers/${provider.id}/fetch-models`)
+    const reconciled = ModelPageSchema.parse(await (await request('GET', `/providers/${provider.id}/models`)).json())
+    expect(reconciled.models).toHaveLength(1)
+    expect(reconciled.models[0]).toMatchObject({ model_id: 'lab/alpha', enabled: true, manual_pinned: false, upstream_available: false })
+
+    vi.stubGlobal('fetch', async () => { throw new Error('provider offline') })
+    expect((await request('POST', `/providers/${provider.id}/fetch-models`)).status).toBe(500)
+    const afterFailure = ModelPageSchema.parse(await (await request('GET', `/providers/${provider.id}/models`)).json())
+    expect(afterFailure.models).toEqual(reconciled.models)
+  })
+
+  it('pins a fetched model on manual collision without replacing its configuration', async () => {
+    const { request, createProvider } = await catalogApp()
+    const provider = await createProvider()
+    vi.stubGlobal('fetch', async () => Response.json({ data: [{ id: 'lab/alpha' }] }))
+    await request('POST', `/providers/${provider.id}/fetch-models`)
+    const before = ModelPageSchema.parse(await (await request('GET', `/providers/${provider.id}/models`)).json()).models[0]!
+    await request('PUT', `/providers/${provider.id}/models/${before.id}`, { interface_id: null, metadata_override: { name: 'Custom alpha' } })
+
+    const collision = await request('POST', `/providers/${provider.id}/models`, { model_id: 'lab/alpha' })
+    expect(collision.status).toBe(200)
+    expect(await collision.json()).toMatchObject({ id: before.id, model_id: 'lab/alpha', manual_pinned: true, upstream_available: true, metadata_override: { name: 'Custom alpha' } })
+  })
+
+  it('bulk enables a Lab and deletes unavailable unpinned rows when disabling all', async () => {
+    const { request, createProvider } = await catalogApp()
+    const provider = await createProvider()
+    vi.stubGlobal('fetch', async () => Response.json({ data: [{ id: 'lab/alpha' }, { id: 'other/beta' }] }))
+    await request('POST', `/providers/${provider.id}/fetch-models`)
+    const enabled = await request('PUT', `/providers/${provider.id}/models/bulk`, { enabled: true, lab_id: 'lab' })
+    expect(await enabled.json()).toEqual({ updated: 1, deleted: 0 })
+    let list = ModelPageSchema.parse(await (await request('GET', `/providers/${provider.id}/models`)).json())
+    expect(list.models.find(model => model.model_id === 'lab/alpha')?.enabled).toBe(true)
+    expect(list.models.find(model => model.model_id === 'other/beta')?.enabled).toBe(false)
+
+    vi.stubGlobal('fetch', async () => Response.json({ data: [] }))
+    await request('POST', `/providers/${provider.id}/fetch-models`)
+    const disabled = await request('PUT', `/providers/${provider.id}/models/bulk`, { enabled: false })
+    expect(await disabled.json()).toEqual({ updated: 0, deleted: 1 })
+    list = ModelPageSchema.parse(await (await request('GET', `/providers/${provider.id}/models`)).json())
+    expect(list.models).toHaveLength(0)
   })
 
   it('uses only safe lab metadata on unmatched operators and removes overrides on reset', async () => {
@@ -311,8 +366,9 @@ describe('catalog-backed model membership and queries', () => {
     expect((await request('POST', `/providers/${first.id}/models`, { model_id: 'bad', interface_id: second.interfaces[0]!.id })).status).toBe(400)
     const own = ModelWithMetadataSchema.parse(await (await request('POST', `/providers/${first.id}/models`, { model_id: 'own', enabled: false })).json())
     expect((await request('PUT', `/providers/${first.id}/models/${own.id}`, { interface_id: second.interfaces[0]!.id })).status).toBe(400)
-    expect((await request('POST', `/providers/${first.id}/models`, { model_id: 'own', enabled: true })).status).toBe(409)
-    expect(ModelWithMetadataSchema.parse(await (await request('GET', `/providers/${first.id}/models/by-ref?model_id=own`)).json()).enabled).toBe(false)
+    const collision = await request('POST', `/providers/${first.id}/models`, { model_id: 'own', enabled: true })
+    expect(collision.status).toBe(200)
+    expect(ModelWithMetadataSchema.parse(await collision.json())).toMatchObject({ enabled: false, manual_pinned: true })
   })
 
   it('filters materialized fields and inherited interfaces, and paginates equal sorts without duplicates', async () => {
