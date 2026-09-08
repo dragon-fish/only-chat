@@ -2,7 +2,7 @@ import { env } from 'cloudflare:workers'
 import { describe, expect, it } from 'vitest'
 import { createDb } from '@/server/db/client'
 import { ensureDefaultUser } from '@/server/plugins/database'
-import { createSession, finalizeMessage, getSession, insertMessage, listMessages, maxSeq, toMessage, updateSession } from '@/server/plugins/hub/sessions'
+import { createSession, finalizeMessage, forkSession, getSession, insertMessage, listMessages, maxSeq, toMessage, updateSession } from '@/server/plugins/hub/sessions'
 import { createProject, deleteProject, getProject, listProjectSessions, listProjects, updateProject } from '@/server/plugins/hub/projects'
 import { users } from '@/server/db/schema'
 import { DEFAULT_USER_ID } from '@/shared/constants'
@@ -24,6 +24,30 @@ describe('session ops', () => {
     const s2 = await updateSession(db, s.id, { head_message_id: a.id, title: 'renamed' })
     expect(s2.head_message_id).toBe(a.id)
     expect(s2.updated_at).toBeGreaterThanOrEqual(s.updated_at)
+  })
+
+  it('forks only the root-to-selected-message path with remapped parents and copied settings', async () => {
+    const db = createDb(env.DB)
+    await ensureDefaultUser(db)
+    const source = await createSession(db, {
+      user_id: 1, title: 'Source', provider_id: 7, model_id: 'model',
+      system_prompt: 'prompt', params: { temperature: 0.3 },
+    })
+    const root = await insertMessage(db, { session_id: source.id, parent_id: null, seq: 1, role: 'user', parts: [{ type: 'text', text: 'root' }], provider_id: null, model_id: null, usage: null, status: 'done', error: null, created_at: 1 })
+    const selected = await insertMessage(db, { session_id: source.id, parent_id: root.id, seq: 2, role: 'assistant', parts: [{ type: 'text', text: 'selected' }], provider_id: 7, model_id: 'model', usage: { prompt: 10, completion: 2 }, status: 'done', error: null, created_at: 2 })
+    await insertMessage(db, { session_id: source.id, parent_id: root.id, seq: 3, role: 'assistant', parts: [{ type: 'text', text: 'other branch' }], provider_id: 7, model_id: 'model', usage: null, status: 'done', error: null, created_at: 3 })
+    await updateSession(db, source.id, { head_message_id: selected.id })
+
+    const forked = await forkSession(db, source.id, 1, selected.id)
+    expect(forked).toMatchObject({ title: 'Source 副本', project_id: null, provider_id: 7, model_id: 'model', system_prompt: 'prompt', params: { temperature: 0.3 } })
+    const copied = await listMessages(db, forked.id)
+    expect(copied.map(message => ({ role: message.role, text: message.parts[0], usage: message.usage }))).toEqual([
+      { role: 'user', text: { type: 'text', text: 'root' }, usage: null },
+      { role: 'assistant', text: { type: 'text', text: 'selected' }, usage: { prompt: 10, completion: 2 } },
+    ])
+    expect(copied[0]!.parent_id).toBeNull()
+    expect(copied[1]!.parent_id).toBe(copied[0]!.id)
+    expect(forked.head_message_id).toBe(copied[1]!.id)
   })
 })
 
@@ -71,9 +95,9 @@ describe('project realtime commands', () => {
     const a = await connect()
     const b = await connect()
 
-    a.ws.send(JSON.stringify({ type: 'project.create', name: 'Proj', system_prompt: 'sys' }))
+    a.ws.send(JSON.stringify({ type: 'project.create', name: '🐍 Proj', system_prompt: 'sys' }))
     const created = await a.next('project.created')
-    expect(created).toMatchObject({ type: 'project.created', project: { name: 'Proj', system_prompt: 'sys' } })
+    expect(created).toMatchObject({ type: 'project.created', project: { name: '🐍 Proj', system_prompt: 'sys', icon_attachment_id: null } })
     expect(await b.next('project.created')).toEqual(created)
     const projectId = (created as { project: { id: number } }).project.id
 
@@ -117,5 +141,22 @@ describe('project realtime commands', () => {
     ws.send(JSON.stringify({ type: 'project.update', project_id: theirs.id, name: 'stolen', request_id: 'r2' }))
     expect(await next('error')).toMatchObject({ type: 'error', request_id: 'r2' })
     expect((await getProject(db, theirs.id, other!.id))!.name).toBe('theirs')
+  })
+
+  it('correlates a session fork while broadcasting the created session', async () => {
+    const db = createDb(env.DB)
+    await ensureDefaultUser(db)
+    const source = await createSession(db, { user_id: 1, title: 'Source', provider_id: null, model_id: null })
+    const root = await insertMessage(db, { session_id: source.id, parent_id: null, seq: 1, role: 'user', parts: [{ type: 'text', text: 'root' }], provider_id: null, model_id: null, usage: null, status: 'done', error: null, created_at: 1 })
+    await updateSession(db, source.id, { head_message_id: root.id })
+    const a = await connect()
+    const b = await connect()
+
+    a.ws.send(JSON.stringify({ type: 'session.fork', request_id: 'fork-1', session_id: source.id, message_id: root.id }))
+    const created = await a.next('session.created')
+    expect(await b.next('session.created')).toEqual(created)
+    const done = await a.next('session.forked')
+    expect(done).toMatchObject({ request_id: 'fork-1', session_id: (created as { session: { id: number } }).session.id })
+    expect(await b.next('session.forked')).toEqual(done)
   })
 })

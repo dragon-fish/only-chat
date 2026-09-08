@@ -88,6 +88,7 @@ export const projects = sqliteTable('projects', {
   id: integer().primaryKey({ autoIncrement: true }),
   user_id: integer().notNull().references(() => users.id, { onDelete: 'cascade' }),
   name: text().notNull(),
+  icon_attachment_id: integer().references((): AnySQLiteColumn => attachments.id, { onDelete: 'set null' }),
   system_prompt: text(),
   provider_id: integer(),
   model_id: text(),

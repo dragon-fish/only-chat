@@ -1,6 +1,6 @@
 import { and, desc, eq } from 'drizzle-orm'
 import type { DB } from '../../db/client'
-import { projects, sessions } from '../../db/schema'
+import { attachments, projects, sessions } from '../../db/schema'
 import type { ProjectRow, SessionRow } from '../../db/schema'
 
 /** Every read and write is scoped to the owning user; D1 is the source of truth (spec §5.1). */
@@ -15,12 +15,13 @@ export async function getProject(db: DB, id: number, userId: number): Promise<Pr
 
 export async function createProject(
   db: DB,
-  input: Pick<ProjectRow, 'user_id' | 'name'> & Partial<Pick<ProjectRow, 'system_prompt' | 'provider_id' | 'model_id' | 'params'>>,
+  input: Pick<ProjectRow, 'user_id' | 'name'> & Partial<Pick<ProjectRow, 'icon_attachment_id' | 'system_prompt' | 'provider_id' | 'model_id' | 'params'>>,
 ): Promise<ProjectRow> {
   const now = Date.now()
   const [row] = await db.insert(projects).values({
     user_id: input.user_id,
     name: input.name,
+    icon_attachment_id: input.icon_attachment_id ?? null,
     system_prompt: input.system_prompt ?? null,
     provider_id: input.provider_id ?? null,
     model_id: input.model_id ?? null,
@@ -35,12 +36,19 @@ export async function updateProject(
   db: DB,
   id: number,
   userId: number,
-  patch: Partial<Pick<ProjectRow, 'name' | 'system_prompt' | 'provider_id' | 'model_id' | 'params'>>,
+  patch: Partial<Pick<ProjectRow, 'name' | 'icon_attachment_id' | 'system_prompt' | 'provider_id' | 'model_id' | 'params'>>,
 ): Promise<ProjectRow> {
   const [row] = await db.update(projects).set({ ...patch, updated_at: Date.now() })
     .where(and(eq(projects.id, id), eq(projects.user_id, userId))).returning()
   if (!row) throw new Error(`project ${id} not found`)
   return row
+}
+
+export async function validateProjectIcon(db: DB, userId: number, attachmentId: number | null): Promise<void> {
+  if (attachmentId !== null) {
+    const attachment = await db.query.attachments.findFirst({ where: and(eq(attachments.id, attachmentId), eq(attachments.user_id, userId)) })
+    if (!attachment || !attachment.mime.startsWith('image/') || attachment.width !== 200 || attachment.height !== 200) throw new Error('project icon image must be 200×200')
+  }
 }
 
 /**

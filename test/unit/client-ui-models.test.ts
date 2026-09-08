@@ -2,13 +2,14 @@ import { describe, expect, it } from 'vitest'
 import type { Project, Session } from '@/shared/models'
 import {
   displayInitials,
+  projectPresentation,
   recentProjects,
   searchProjects,
   searchSessions,
 } from '@/client/lib/ui-models'
 
 const project = (id: number, updated_at: number): Project => ({
-  id, user_id: 1, name: `Project ${id}`, system_prompt: null,
+  id, user_id: 1, name: `Project ${id}`, icon_attachment_id: null, system_prompt: null,
   provider_id: null, model_id: null, params: null,
   created_at: updated_at, updated_at,
 })
@@ -22,6 +23,15 @@ const session = (id: number, project_id: number | null, updated_at: number, titl
 describe('navigation view models', () => {
   it('derives initials with locale-independent casing', () => {
     expect(displayInitials('istanbul intelligence')).toBe('II')
+  })
+
+  it('uses one complete leading Emoji instead of combining it with a letter', () => {
+    expect(displayInitials('🐍 emoji 测试')).toBe('🐍')
+    expect(displayInitials('👩‍💻 coding')).toBe('👩‍💻')
+  })
+
+  it('presents a leading Emoji as the icon while keeping the stored name intact', () => {
+    expect(projectPresentation('🐍 emoji 测试')).toEqual({ icon: '🐍', title: 'emoji 测试' })
   })
 
   it('orders Projects by their newest own or child-session activity and limits to five', () => {

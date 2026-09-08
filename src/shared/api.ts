@@ -10,6 +10,7 @@ export interface ModelRef {
 /** Only `name` is required; prompt, model and params may all be absent or explicitly cleared. */
 export const ProjectInputSchema = z.object({
   name: z.string().min(1).max(200),
+  icon_attachment_id: z.number().int().nullable().optional(),
   system_prompt: z.string().nullable().optional(),
   provider_id: z.number().int().nullable().optional(),
   model_id: z.string().nullable().optional(),

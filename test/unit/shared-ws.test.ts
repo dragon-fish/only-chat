@@ -60,8 +60,9 @@ describe('ws protocol', () => {
   })
 
   it('parses project.create/update/delete commands', () => {
-    const create = parseCommand(JSON.stringify({ type: 'project.create', name: 'Design' }))
+    const create = parseCommand(JSON.stringify({ type: 'project.create', name: 'Design', icon_attachment_id: null }))
     expect(create.type).toBe('project.create')
+    if (create.type === 'project.create') expect(create.icon_attachment_id).toBeNull()
     const update = parseCommand(JSON.stringify({
       type: 'project.update', project_id: 1, name: 'Design v2', system_prompt: null,
     }))
@@ -78,7 +79,7 @@ describe('ws protocol', () => {
 
   it('round-trips project.created/updated/deleted events', () => {
     const project = {
-      id: 1, user_id: 1, name: 'Design', system_prompt: null, provider_id: null,
+      id: 1, user_id: 1, name: 'Design', icon_attachment_id: null, system_prompt: null, provider_id: null,
       model_id: null, params: null, created_at: 1, updated_at: 1,
     }
     expect(WsEventSchema.parse({ type: 'project.created', project })).toEqual({ type: 'project.created', project })

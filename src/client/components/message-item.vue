@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import MarkdownRender from 'markstream-vue'
-import { LoaderCircle, PencilIcon, RefreshCwIcon, TriangleAlertIcon } from '@lucide/vue'
+import { EllipsisIcon, GitForkIcon, LoaderCircle, PencilIcon, RefreshCwIcon, TriangleAlertIcon } from '@lucide/vue'
 import BranchSwitcher from '@/client/components/branch-switcher.vue'
 import LabAvatar from '@/client/components/lab-avatar.vue'
 import MessageUsage from '@/client/components/message-usage.vue'
@@ -16,6 +16,8 @@ import { Button } from '@/client/ui/button'
 import { Message as MessageRoot, MessageAvatar, MessageContent, MessageFooter, MessageHeader } from '@/client/ui/message'
 import { Textarea } from '@/client/ui/textarea'
 import type { Message, Project } from '@/shared/models'
+import { useSessionFork } from '@/client/composables/use-session-fork'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/client/ui/dropdown-menu'
 
 const props = defineProps<{
   message: Message
@@ -37,6 +39,7 @@ const images = computed(() => props.message.parts.filter((p) => p.type === 'imag
 const markdown = computed(() => textParts.value.map((p) => p.text).join(''))
 /** Spec §7.4: the shell is visible the moment it arrives, and never claims reasoning it lacks. */
 const wait = computed(() => assistantWaitState(props.message))
+const { pending: forkPending, fork } = useSessionFork()
 
 function startEdit() {
   draft.value = textParts.value.map((p) => p.text).join('\n')
@@ -55,7 +58,7 @@ function regenerate() {
 <template lang="pug">
 MessageRoot(:align="message.role === 'user' ? 'end' : 'start'")
   MessageAvatar(v-if="message.role === 'assistant'" class="self-start group-has-data-[slot=message-footer]/message:translate-y-0")
-    ProjectAvatar(v-if="project" :name="project.name")
+    ProjectAvatar(v-if="project" :project="project")
     LabAvatar(v-else :model-id="message.model_id" :lab-id="assistantLabId ?? null" :family="assistantModelFamily" :provider-name="assistantProviderName ?? assistantName ?? '助手'")
 
   MessageContent
@@ -105,5 +108,15 @@ MessageRoot(:align="message.role === 'user' ? 'end' : 'start'")
         class="min-h-10 min-w-10 md:min-h-6 md:min-w-6"
         title="编辑消息" aria-label="编辑消息" @click="startEdit")
         PencilIcon
+      DropdownMenu(v-if="message.role === 'assistant' && !streaming")
+        DropdownMenuTrigger(as-child)
+          Button(
+            variant="ghost" size="icon-xs" class="min-h-10 min-w-10 md:min-h-6 md:min-w-6"
+            title="更多操作" aria-label="更多消息操作")
+            EllipsisIcon
+        DropdownMenuContent(align="start")
+          DropdownMenuItem(class="min-h-10" :disabled="!!forkPending" @select="fork(message.session_id, message.id)")
+            GitForkIcon
+            span 从此处分叉
       MessageUsage(v-if="message.usage" :usage="message.usage")
 </template>

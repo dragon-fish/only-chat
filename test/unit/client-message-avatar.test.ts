@@ -40,7 +40,7 @@ it('prefers the message model family avatar when available', () => {
 })
 
 it('keeps the workspace avatar for Project assistant messages', () => {
-  const project: Project = { id: 1, user_id: 1, name: 'Design Workspace', system_prompt: null, provider_id: null, model_id: null, params: null, created_at: 0, updated_at: 0 }
+  const project: Project = { id: 1, user_id: 1, name: 'Design Workspace', icon_attachment_id: null, system_prompt: null, provider_id: null, model_id: null, params: null, created_at: 0, updated_at: 0 }
   const host = mount(project)
   expect(host.querySelector('[aria-label="Design Workspace"]')).not.toBeNull()
   expect(host.querySelector('[aria-label="deepseek"]')).toBeNull()

@@ -6,9 +6,9 @@ import type { Message, Project, Session, UserSettings } from '@/shared/models'
 import type { Part } from '@/shared/parts'
 import { encodeEvent, parseCommand, type WsCommand, type WsEvent } from '@/shared/ws'
 import {
-  deleteSession, finalizeMessage, getMessage, getSession, getUser, toMessage, updateSession, updateUserSettings,
+  deleteSession, finalizeMessage, forkSession, getMessage, getSession, getUser, toMessage, updateSession, updateUserSettings,
 } from './sessions'
-import { createProject, deleteProject, getProject, listProjectSessions, updateProject } from './projects'
+import { createProject, deleteProject, getProject, listProjectSessions, updateProject, validateProjectIcon } from './projects'
 import { SeqAllocator } from './seq'
 import { runEdit, runRegenerate, runSend } from './generation'
 
@@ -104,6 +104,7 @@ export class Hub extends Service {
       case 'switch_head': return this.switchHead(cmd.session_id, cmd.message_id)
       case 'session.update': return this.sessionUpdate(cmd)
       case 'session.delete': return this.sessionDelete(cmd.session_id)
+      case 'session.fork': return this.sessionFork(cmd)
       case 'settings.update': return this.settingsUpdate(cmd.settings)
       case 'project.create': return this.projectCreate(cmd)
       case 'project.update': return this.projectUpdate(cmd)
@@ -164,6 +165,13 @@ export class Hub extends Service {
     this.app.emit('session/deleted', sessionId)
   }
 
+  async sessionFork(cmd: Extract<WsCommand, { type: 'session.fork' }>): Promise<void> {
+    if (this._inflight.has(cmd.message_id)) throw new Error('cannot fork a streaming message')
+    const session = await forkSession(this.db, cmd.session_id, DEFAULT_USER_ID, cmd.message_id)
+    this.emitSessionCreated(session)
+    this.broadcast({ type: 'session.forked', request_id: cmd.request_id, session_id: session.id })
+  }
+
   async settingsUpdate(patch: { plugins?: Record<string, boolean> }): Promise<void> {
     const user = await getUser(this.db, DEFAULT_USER_ID)
     if (!user) throw new Error('user missing')
@@ -175,12 +183,16 @@ export class Hub extends Service {
 
   async projectCreate(cmd: Extract<WsCommand, { type: 'project.create' }>): Promise<void> {
     const { type: _t, request_id: _r, ...input } = cmd
+    await validateProjectIcon(this.db, DEFAULT_USER_ID, input.icon_attachment_id ?? null)
     const p = await createProject(this.db, { user_id: DEFAULT_USER_ID, ...input })
     this.emitProjectCreated(p)
   }
 
   async projectUpdate(cmd: Extract<WsCommand, { type: 'project.update' }>): Promise<void> {
     const { type: _t, request_id: _r, project_id, ...patch } = cmd
+    const current = await getProject(this.db, project_id, DEFAULT_USER_ID)
+    if (!current) throw new Error('project not found')
+    await validateProjectIcon(this.db, DEFAULT_USER_ID, patch.icon_attachment_id === undefined ? current.icon_attachment_id : patch.icon_attachment_id)
     const p = await updateProject(this.db, project_id, DEFAULT_USER_ID, patch)
     this.emitProjectUpdated(p)
   }

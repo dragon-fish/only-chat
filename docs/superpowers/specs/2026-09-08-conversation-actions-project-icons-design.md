@@ -16,7 +16,7 @@ Project row menus use the existing shadcn-vue dropdown primitives in this order:
 Session row menus use nested `DropdownMenuSub` groups:
 
 1. Rename
-2. Duplicate conversation
+2. Fork from here
 3. Export
    - Markdown
    - JSON
@@ -28,7 +28,11 @@ Session row menus use nested `DropdownMenuSub` groups:
 
 The existing enlarged ellipsis hit target remains. Destructive confirmation and focus restoration remain unchanged.
 
-Assistant message footers add an always-visible ellipsis action containing “Duplicate from here”. It is disabled while that assistant message is streaming.
+Session and assistant-message fork actions use the Git fork icon and the label “从此处分叉”, leaving the copy icon available for copying message content. Assistant message footers add an always-visible ellipsis action containing this command. It is disabled while that assistant message is streaming.
+
+## First-send focus preservation
+
+The `/new` and `/c/:sessionId` URLs resolve through one aliased route record and one page component. Project-scoped `/project/:projectId/new` and `/project/:projectId/c/:sessionId` do the same. When the first Session is created, Vue Router updates the optional Session parameter while reusing the mounted ChatView and Composer DOM. The textarea never blurs, so touch keyboards are not dismissed and reopened.
 
 ## Session forking
 
@@ -125,24 +129,20 @@ Project icons configure the cropper as `1:1`, `200×200`, WebP, circular preview
 
 ## Project icons
 
-Add nullable Project columns:
+Add one nullable Project column:
 
-- `icon_emoji TEXT`;
 - `icon_attachment_id INTEGER REFERENCES attachments(id) ON DELETE SET NULL`.
 
-Only one may be set. The shared Project schemas and Project create/update commands expose both fields with `undefined` meaning unchanged and `null` meaning clear.
+The shared Project schemas and Project create/update commands expose it with `undefined` meaning unchanged and `null` meaning clear.
 
 The server validates:
 
-- an Emoji value is one trimmed grapheme containing an emoji code point;
 - an attachment belongs to the current user;
 - an icon attachment is an image with recorded dimensions of exactly 200×200;
-- Emoji and attachment are mutually exclusive.
 
 Project settings provide:
 
 - current icon preview;
-- a single-grapheme Emoji input;
 - image selection that opens the cropper;
 - cropped preview;
 - clear action.
@@ -152,10 +152,10 @@ The cropped Blob uses the existing attachment check/upload API and SHA-256 dedup
 `ProjectAvatar` renders in this order:
 
 1. referenced image;
-2. explicit Emoji using an emoji-capable font stack;
+2. a leading Emoji grapheme parsed from the Project name;
 3. grapheme-safe initials.
 
-Initial extraction segments user-visible graphemes. Emoji surrogate pairs and joined multi-code-point emoji are never indexed with UTF-16 `word[0]`.
+The stored name remains unchanged. Outside editing forms, a leading Emoji and its following whitespace are removed from the displayed title and rendered as the icon. Editing inputs always show the complete stored name. Initial extraction segments user-visible graphemes; Emoji surrogate pairs and joined multi-code-point emoji are never indexed with UTF-16 `word[0]`.
 
 ## Error handling
 
@@ -173,7 +173,7 @@ Tests cover product-owned behavior:
 - Markdown and JSON serialization of the active branch;
 - menu command/navigation wiring;
 - pure crop geometry and fixed 200×200 Project-icon output;
-- Project icon ownership, dimensions, exclusivity, and Emoji validation;
+- Project icon ownership and dimensions;
 - Unicode-safe initial extraction.
 
 Visual verification covers desktop and mobile menus, submenu placement, cropper pointer interaction, Project icon rendering, focus restoration, and responsive overlays. Third-party dropdown/dialog internals are not unit-tested.

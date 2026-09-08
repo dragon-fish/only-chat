@@ -11,6 +11,7 @@ import {
   MessageScrollerViewport,
 } from '@/client/ui/message-scroller'
 import type { Message, Project } from '@/shared/models'
+import { projectPresentation } from '@/client/lib/ui-models'
 
 const props = defineProps<{
   messages: Message[]
@@ -27,7 +28,7 @@ const rows = computed(() => props.messages.map((message) => {
   const actualModelName = actual?.model.metadata.name ?? message.model_id ?? '助手'
   return {
     message,
-    assistantName: props.project?.name ?? actualModelName,
+    assistantName: props.project ? projectPresentation(props.project.name).title : actualModelName,
     assistantModelName: props.project && message.model_id !== null ? actualModelName : undefined,
     assistantProviderName: actual?.provider.name ?? actualModelName,
     assistantLabId: actual?.model.lab_id ?? null,

@@ -1,7 +1,11 @@
 <script setup lang="ts">
-import { computed, nextTick, ref } from 'vue'
-import { EllipsisIcon, MessageCircleIcon, Trash2Icon } from '@lucide/vue'
+import { computed, nextTick, ref, watch } from 'vue'
+import { DownloadIcon, EllipsisIcon, FolderInputIcon, GitForkIcon, MessageCircleIcon, PencilIcon, Trash2Icon } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
+import { toast } from 'vue-sonner'
+import { useSessionFork } from '@/client/composables/use-session-fork'
+import { api } from '@/client/lib/api'
+import { downloadSessionExport, type ExportFormat } from '@/client/lib/session-export'
 import { DISCONNECTED_MESSAGE, moveSessionCommand, useSyncStore } from '@/client/stores/sync'
 import { sessionPath } from '@/client/lib/ui-models'
 import { SidebarMenuAction, SidebarMenuButton, SidebarMenuItem, useSidebar } from '@/client/ui/sidebar'
@@ -10,9 +14,12 @@ import {
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/client/ui/alert-dialog'
 import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel,
-  DropdownMenuSeparator, DropdownMenuTrigger,
+  DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem,
+  DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger,
 } from '@/client/ui/dropdown-menu'
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/client/ui/dialog'
+import { Input } from '@/client/ui/input'
+import { Button } from '@/client/ui/button'
 import type { Project, Session } from '@/shared/models'
 
 const props = defineProps<{
@@ -26,6 +33,10 @@ const sync = useSyncStore()
 const { isMobile } = useSidebar()
 const deleteOpen = ref(false)
 const action = ref<InstanceType<typeof SidebarMenuAction> | null>(null)
+const renameOpen = ref(false)
+const title = ref(props.session.title)
+const { pending: forkPending, fork } = useSessionFork()
+watch(() => props.session.title, value => { if (!renameOpen.value) title.value = value })
 
 function restoreActionFocus(event: Event) {
   event.preventDefault()
@@ -48,6 +59,24 @@ function move(projectId: number | null) {
 
 function remove() {
   send({ type: 'session.delete', session_id: props.session.id })
+}
+
+function rename() {
+  const value = title.value.trim()
+  if (!value || value === props.session.title) { renameOpen.value = false; return }
+  if (send({ type: 'session.update', session_id: props.session.id, title: value })) renameOpen.value = false
+}
+
+async function exportSession(format: ExportFormat) {
+  try {
+    await sync.loadMessages(props.session.id)
+    downloadSessionExport(format, {
+      session: props.session,
+      project: props.session.project_id === null ? undefined : sync.projects.get(props.session.project_id),
+      messages: sync.pathFor(props.session.id),
+      attachmentUrl: id => new URL(api.attachmentUrl(id), location.origin).href,
+    })
+  } catch (error) { toast.error(error instanceof Error ? error.message : String(error)) }
 }
 
 function send(command: Parameters<typeof sync.send>[0]): boolean {
@@ -75,11 +104,26 @@ function send(command: Parameters<typeof sync.send>[0]): boolean {
       </DropdownMenuTrigger>
       <DropdownMenuContent :side="isMobile ? 'bottom' : 'right'" :align="isMobile ? 'end' : 'start'" class="min-w-44" @close-auto-focus="event => { if (deleteOpen) event.preventDefault() }">
         <DropdownMenuGroup>
-          <DropdownMenuLabel>移动到</DropdownMenuLabel>
-          <DropdownMenuItem v-for="target in moveTargets" :key="target.id ?? 'none'" class="min-h-10" @select="move(target.id)">
-            {{ target.label }}
+          <DropdownMenuItem class="min-h-10" @select="renameOpen = true">
+            <PencilIcon /><span>重命名</span>
           </DropdownMenuItem>
-          <DropdownMenuItem v-if="moveTargets.length === 0" class="min-h-10" disabled>还没有其他 Project</DropdownMenuItem>
+          <DropdownMenuItem class="min-h-10" :disabled="session.head_message_id === null || !!forkPending" @select="session.head_message_id !== null && fork(session.id, session.head_message_id)">
+            <GitForkIcon /><span>从此处分叉</span>
+          </DropdownMenuItem>
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger class="min-h-10"><DownloadIcon /><span>导出</span></DropdownMenuSubTrigger>
+            <DropdownMenuSubContent>
+              <DropdownMenuItem class="min-h-10" @select="exportSession('markdown')">Markdown</DropdownMenuItem>
+              <DropdownMenuItem class="min-h-10" @select="exportSession('json')">JSON</DropdownMenuItem>
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger class="min-h-10"><FolderInputIcon /><span>移动到</span></DropdownMenuSubTrigger>
+            <DropdownMenuSubContent>
+              <DropdownMenuItem v-for="target in moveTargets" :key="target.id ?? 'none'" class="min-h-10" @select="move(target.id)">{{ target.label }}</DropdownMenuItem>
+              <DropdownMenuItem v-if="moveTargets.length === 0" class="min-h-10" disabled>还没有其他 Project</DropdownMenuItem>
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
         </DropdownMenuGroup>
         <DropdownMenuSeparator />
         <DropdownMenuGroup>
@@ -103,5 +147,18 @@ function send(command: Parameters<typeof sync.send>[0]): boolean {
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
+
+    <Dialog v-model:open="renameOpen">
+      <DialogContent>
+        <DialogHeader><DialogTitle>重命名对话</DialogTitle></DialogHeader>
+        <form class="contents" @submit.prevent="rename">
+          <Input v-model="title" class="min-h-10" maxlength="200" autofocus aria-label="对话名称" />
+          <DialogFooter>
+            <Button type="button" variant="outline" class="min-h-10" @click="renameOpen = false">取消</Button>
+            <Button type="submit" class="min-h-10" :disabled="!title.trim()">保存</Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   </SidebarMenuItem>
 </template>

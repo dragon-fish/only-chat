@@ -45,7 +45,7 @@ async function mountSidebar(path: string, status: 'connecting' | 'open' | 'close
   const pinia = createPinia()
   const sync = useSyncStore(pinia)
   sync.status = status
-  const project: Project = { id: 1, user_id: 1, name: 'Design', system_prompt: null, provider_id: null, model_id: null, params: null, created_at: 0, updated_at: 0 }
+  const project: Project = { id: 1, user_id: 1, name: 'Design', icon_attachment_id: null, system_prompt: null, provider_id: null, model_id: null, params: null, created_at: 0, updated_at: 0 }
   sync.projects.set(project.id, project)
   sync.projectsLoaded = true
   const host = document.createElement('div')

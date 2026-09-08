@@ -10,7 +10,7 @@ import { Button } from '@/client/ui/button'
 import ProjectCreateDialog from '@/client/components/layout/project-create-dialog.vue'
 import ProjectNavRow from '@/client/components/layout/project-nav-row.vue'
 import SessionNavRow from '@/client/components/layout/session-nav-row.vue'
-import { recentProjects, searchProjects, searchSessions } from '@/client/lib/ui-models'
+import { projectPresentation, recentProjects, searchProjects, searchSessions } from '@/client/lib/ui-models'
 import { useSyncStore } from '@/client/stores/sync'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/client/ui/collapsible'
 import {
@@ -32,6 +32,8 @@ const route = useRoute()
 const query = ref('')
 
 const project = computed(() => typeof props.projectId === 'number' ? sync.projects.get(props.projectId) : undefined)
+const projectTitle = computed(() => project.value ? projectPresentation(project.value.name).title : '')
+const displayProjectName = (name: string) => projectPresentation(name).title
 const isProjectMode = computed(() => typeof props.projectId === 'number' && project.value !== undefined)
 const allProjectsByActivity = computed(() => recentProjects(sync.projectList, sync.sessionList, Number.MAX_SAFE_INTEGER))
 const visibleProjects = computed(() => {
@@ -70,9 +72,9 @@ function clearSearch() {
         <SidebarMenuItem>
           <DropdownMenu>
             <DropdownMenuTrigger as-child>
-              <SidebarMenuButton data-project-switcher size="lg" :tooltip="project.name">
-                <ProjectAvatar :name="project.name" />
-                <span class="min-w-0 flex-1 truncate font-medium">{{ project.name }}</span>
+              <SidebarMenuButton data-project-switcher size="lg" :tooltip="projectTitle">
+                <ProjectAvatar :project="project" />
+                <span class="min-w-0 flex-1 truncate font-medium">{{ projectTitle }}</span>
                 <ChevronsUpDownIcon />
               </SidebarMenuButton>
             </DropdownMenuTrigger>
@@ -81,8 +83,8 @@ function clearSearch() {
               <DropdownMenuGroup>
                 <DropdownMenuItem v-for="item in allProjectsByActivity" :key="item.id" class="min-h-10" as-child>
                   <RouterLink :to="`/project/${item.id}`">
-                    <ProjectAvatar :name="item.name" size="sm" />
-                    <span class="truncate">{{ item.name }}</span>
+                    <ProjectAvatar :project="item" size="sm" />
+                    <span class="truncate">{{ displayProjectName(item.name) }}</span>
                   </RouterLink>
                 </DropdownMenuItem>
               </DropdownMenuGroup>

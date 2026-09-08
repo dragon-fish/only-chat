@@ -12,7 +12,7 @@ function session(over: Partial<SessionRow> = {}): SessionRow {
 
 function project(over: Partial<ProjectRow> = {}): ProjectRow {
   return {
-    id: 7, user_id: 1, name: 'p', system_prompt: null,
+    id: 7, user_id: 1, name: 'p', icon_attachment_id: null, system_prompt: null,
     provider_id: null, model_id: null, params: null, created_at: 0, updated_at: 0, ...over,
   }
 }

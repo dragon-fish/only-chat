@@ -67,6 +67,41 @@ export async function deleteSession(db: DB, id: number): Promise<void> {
   await db.delete(sessions).where(eq(sessions.id, id)) // messages cascade
 }
 
+export async function forkSession(db: DB, sourceSessionId: number, userId: number, headMessageId: number): Promise<SessionRow> {
+  const source = await db.query.sessions.findFirst({ where: and(eq(sessions.id, sourceSessionId), eq(sessions.user_id, userId)) })
+  if (!source) throw new Error('session not found')
+  const rows = await listMessages(db, source.id)
+  const byId = new Map(rows.map(message => [message.id, message]))
+  const path: MessageRow[] = []
+  const seen = new Set<number>()
+  let current = byId.get(headMessageId)
+  while (current && !seen.has(current.id)) {
+    seen.add(current.id)
+    path.push(current)
+    current = current.parent_id === null ? undefined : byId.get(current.parent_id)
+  }
+  if (path.length === 0 || path.at(-1)?.parent_id !== null) throw new Error('message not in session path')
+  path.reverse()
+
+  const target = await createSession(db, {
+    user_id: source.user_id, title: `${source.title} 副本`, project_id: source.project_id,
+    provider_id: source.provider_id, model_id: source.model_id,
+    system_prompt: source.system_prompt, params: source.params,
+  })
+  try {
+    let parentId: number | null = null
+    for (const [index, message] of path.entries()) {
+      const { id: _id, session_id: _sessionId, parent_id: _parentId, seq: _seq, ...copy } = message
+      const inserted = await insertMessage(db, { ...copy, session_id: target.id, parent_id: parentId, seq: index + 1 })
+      parentId = inserted.id
+    }
+    return await updateSession(db, target.id, { head_message_id: parentId })
+  } catch (error) {
+    await deleteSession(db, target.id)
+    throw error
+  }
+}
+
 export async function listMessages(db: DB, sessionId: number): Promise<MessageRow[]> {
   return db.select().from(messages).where(eq(messages.session_id, sessionId)).orderBy(messages.seq)
 }

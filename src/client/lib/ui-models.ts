@@ -7,6 +7,15 @@ export type EnabledModelEntry = {
 }
 
 const normalizeQuery = (query: string) => query.trim().toLocaleLowerCase()
+const graphemes = (text: string) => [...new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(text)].map(item => item.segment)
+const isEmoji = (value: string) => /[\p{Extended_Pictographic}\p{Regional_Indicator}\u20e3]/u.test(value)
+
+export function projectPresentation(name: string): { icon: string | null, title: string } {
+  const value = name.trim()
+  const first = graphemes(value)[0]
+  if (!first || !isEmoji(first)) return { icon: null, title: value }
+  return { icon: first, title: value.slice(first.length).trimStart() || value }
+}
 
 export function sessionPath(session: Pick<Session, 'id' | 'project_id'>): string {
   return session.project_id === null ? `/c/${session.id}` : `/project/${session.project_id}/c/${session.id}`
@@ -17,9 +26,11 @@ export function displayInitials(name: string, fallback = 'AI'): string {
   const value = name.trim()
   if (!value) return fallback
   const words = value.split(/\s+/).filter(Boolean)
+  const first = graphemes(value)[0]
+  if (first && isEmoji(first)) return first
   const initials = words.length > 1
-    ? words.slice(0, 2).map(word => Array.from(word)[0] ?? '').join('')
-    : Array.from(value).slice(0, 2).join('')
+    ? words.slice(0, 2).map(word => graphemes(word)[0] ?? '').join('')
+    : graphemes(value).slice(0, 2).join('')
   return initials.toUpperCase()
 }
 

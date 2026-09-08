@@ -135,7 +135,7 @@ describe('models schemas', () => {
 
   it('parses a Project with only name required', () => {
     expect(ProjectSchema.parse({
-      id: 1, user_id: 1, name: 'Design', system_prompt: null,
+      id: 1, user_id: 1, name: 'Design', icon_attachment_id: null, system_prompt: null,
       provider_id: null, model_id: null, params: null,
       created_at: 1, updated_at: 1,
     }).name).toBe('Design')

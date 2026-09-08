@@ -72,6 +72,7 @@ export const ProjectSchema = z.object({
   id: z.number().int(),
   user_id: z.number().int(),
   name: z.string(),
+  icon_attachment_id: z.number().int().nullable(),
   system_prompt: z.string().nullable(),
   provider_id: z.number().int().nullable(),
   model_id: z.string().nullable(),

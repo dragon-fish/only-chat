@@ -66,6 +66,12 @@ export const SessionDeleteCommandSchema = z.object({
   ...base,
   session_id: z.number().int(),
 })
+export const SessionForkCommandSchema = z.object({
+  type: z.literal('session.fork'),
+  request_id: z.string().min(1),
+  session_id: z.number().int(),
+  message_id: z.number().int(),
+})
 export const SettingsUpdateCommandSchema = z.object({
   type: z.literal('settings.update'),
   ...base,
@@ -75,6 +81,7 @@ export const ProjectCreateCommandSchema = z.object({
   type: z.literal('project.create'),
   ...base,
   name: z.string().min(1).max(200),
+  icon_attachment_id: z.number().int().nullable().optional(),
   system_prompt: z.string().nullable().optional(),
   provider_id: z.number().int().nullable().optional(),
   model_id: z.string().nullable().optional(),
@@ -85,6 +92,7 @@ export const ProjectUpdateCommandSchema = z.object({
   ...base,
   project_id: z.number().int(),
   name: z.string().min(1).max(200).optional(),
+  icon_attachment_id: z.number().int().nullable().optional(),
   system_prompt: z.string().nullable().optional(),
   provider_id: z.number().int().nullable().optional(),
   model_id: z.string().nullable().optional(),
@@ -104,6 +112,7 @@ export const WsCommandSchema = z.discriminatedUnion('type', [
   SwitchHeadCommandSchema,
   SessionUpdateCommandSchema,
   SessionDeleteCommandSchema,
+  SessionForkCommandSchema,
   SettingsUpdateCommandSchema,
   ProjectCreateCommandSchema,
   ProjectUpdateCommandSchema,
@@ -117,6 +126,7 @@ export const WsEventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('session.created'), session: SessionSchema }),
   z.object({ type: z.literal('session.updated'), session: SessionSchema }),
   z.object({ type: z.literal('session.deleted'), session_id: z.number().int() }),
+  z.object({ type: z.literal('session.forked'), request_id: z.string(), session_id: z.number().int() }),
   z.object({ type: z.literal('message.created'), message: MessageSchema }),
   z.object({
     type: z.literal('message.delta'),

@@ -34,7 +34,7 @@ it('opens the project that the create command produced', async () => {
   input.closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
   sync.applyEvent({
     type: 'project.created',
-    project: { id: 42, user_id: 1, name: 'Long context', system_prompt: null, provider_id: null, model_id: null, params: null, created_at: 1, updated_at: 1 },
+    project: { id: 42, user_id: 1, name: 'Long context', icon_attachment_id: null, system_prompt: null, provider_id: null, model_id: null, params: null, created_at: 1, updated_at: 1 },
   })
   await vi.waitFor(() => expect(router.currentRoute.value.fullPath).toBe('/project/42'))
 })

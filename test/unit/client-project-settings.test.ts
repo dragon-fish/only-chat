@@ -15,7 +15,7 @@ async function mountSettings() {
   const pinia = createPinia()
   const sync = useSyncStore(pinia)
   useConfigStore(pinia).loaded = true
-  sync.projects.set(7, { id: 7, user_id: 1, name: 'Design', system_prompt: null, provider_id: null, model_id: null, params: null, created_at: 0, updated_at: 1 })
+  sync.projects.set(7, { id: 7, user_id: 1, name: 'Design', icon_attachment_id: null, system_prompt: null, provider_id: null, model_id: null, params: null, created_at: 0, updated_at: 1 })
   sync.projectsLoaded = sync.sessionsLoaded = true
   sync.status = 'open'
   const router = createRouter({ history: createMemoryHistory(), routes })

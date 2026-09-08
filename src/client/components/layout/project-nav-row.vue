@@ -1,16 +1,15 @@
 <script setup lang="ts">
-import { nextTick, ref } from 'vue'
-import { EllipsisIcon, Trash2Icon } from '@lucide/vue'
+import { computed, nextTick, ref } from 'vue'
+import { EllipsisIcon, MessageSquarePlusIcon, SettingsIcon, Trash2Icon } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 import ProjectAvatar from '@/client/components/project-avatar.vue'
+import { projectPresentation } from '@/client/lib/ui-models'
 import { DISCONNECTED_MESSAGE, useSyncStore } from '@/client/stores/sync'
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/client/ui/alert-dialog'
-import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuTrigger,
-} from '@/client/ui/dropdown-menu'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/client/ui/dropdown-menu'
 import { SidebarMenuAction, SidebarMenuButton, SidebarMenuItem, useSidebar } from '@/client/ui/sidebar'
 import type { Project } from '@/shared/models'
 
@@ -24,6 +23,7 @@ const sync = useSyncStore()
 const { isMobile } = useSidebar()
 const deleteOpen = ref(false)
 const action = ref<InstanceType<typeof SidebarMenuAction> | null>(null)
+const presentation = computed(() => projectPresentation(props.project.name))
 
 function restoreActionFocus(event: Event) {
   event.preventDefault()
@@ -43,10 +43,10 @@ function remove() {
 
 <template>
   <SidebarMenuItem>
-    <SidebarMenuButton as-child class="min-h-10 md:min-h-0 group-has-data-[sidebar=menu-action]/menu-item:pr-12" :is-active="active" :tooltip="project.name">
+    <SidebarMenuButton as-child class="min-h-10 md:min-h-0 group-has-data-[sidebar=menu-action]/menu-item:pr-12" :is-active="active" :tooltip="presentation.title">
       <RouterLink :to="`/project/${project.id}`" @click="emit('navigate')">
-        <ProjectAvatar :name="project.name" size="sm" />
-        <span>{{ project.name }}</span>
+        <ProjectAvatar :project="project" size="sm" />
+        <span>{{ presentation.title }}</span>
       </RouterLink>
     </SidebarMenuButton>
     <DropdownMenu>
@@ -56,6 +56,21 @@ function remove() {
         </SidebarMenuAction>
       </DropdownMenuTrigger>
       <DropdownMenuContent :side="isMobile ? 'bottom' : 'right'" :align="isMobile ? 'end' : 'start'" @close-auto-focus="event => { if (deleteOpen) event.preventDefault() }">
+        <DropdownMenuGroup>
+          <DropdownMenuItem as-child class="min-h-10">
+            <RouterLink :to="`/project/${project.id}/new`" @click="emit('navigate')">
+              <MessageSquarePlusIcon />
+              <span>新建对话</span>
+            </RouterLink>
+          </DropdownMenuItem>
+          <DropdownMenuItem as-child class="min-h-10">
+            <RouterLink :to="`/project/${project.id}/settings`" @click="emit('navigate')">
+              <SettingsIcon />
+              <span>Project 设置</span>
+            </RouterLink>
+          </DropdownMenuItem>
+        </DropdownMenuGroup>
+        <DropdownMenuSeparator />
         <DropdownMenuGroup>
           <DropdownMenuItem variant="destructive" class="min-h-10" @select="deleteOpen = true">
             <Trash2Icon />

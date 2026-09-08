@@ -3,9 +3,9 @@ import { computed, ref, watch } from 'vue'
 import { ArrowLeftIcon, PlusIcon, SettingsIcon } from '@lucide/vue'
 import { RouterLink, useRouter } from 'vue-router'
 import ProjectAvatar from '@/client/components/project-avatar.vue'
+import { projectPresentation, searchSessions } from '@/client/lib/ui-models'
 import SessionNavRow from '@/client/components/layout/session-nav-row.vue'
 import CollectionState from '@/client/components/collection-state.vue'
-import { searchSessions } from '@/client/lib/ui-models'
 import { useSyncStore } from '@/client/stores/sync'
 import { Button } from '@/client/ui/button'
 import { Field, FieldGroup, FieldLabel } from '@/client/ui/field'
@@ -17,6 +17,7 @@ const props = defineProps<{ projectId: number | null }>()
 const sync = useSyncStore()
 const router = useRouter()
 const project = computed(() => props.projectId === null ? undefined : sync.projects.get(props.projectId))
+const projectTitle = computed(() => project.value ? projectPresentation(project.value.name).title : '')
 const query = ref('')
 const sessions = computed(() => props.projectId === null ? [] : searchSessions(sync.sessionList, query.value, props.projectId))
 watch(() => props.projectId, () => { query.value = '' })
@@ -34,8 +35,8 @@ watch([() => sync.projectsLoaded, project], ([loaded, value]) => {
       </RouterLink>
     </Button>
     <template v-if="project">
-      <ProjectAvatar :name="project.name" size="sm" />
-      <span class="truncate text-sm font-medium">{{ project.name }}</span>
+      <ProjectAvatar :project="project" size="sm" />
+      <span class="truncate text-sm font-medium">{{ projectTitle }}</span>
     </template>
     <span v-else class="truncate text-sm text-muted-foreground">加载 Project…</span>
   </Teleport>

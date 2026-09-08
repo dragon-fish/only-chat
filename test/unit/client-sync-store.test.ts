@@ -38,13 +38,13 @@ import type { Part } from '@/shared/parts'
 import { parseCommand } from '@/shared/ws'
 
 const session: Session = { id: 1, user_id: 1, project_id: null, title: 't', head_message_id: null, provider_id: null, model_id: null, system_prompt: null, params: null, created_at: 1, updated_at: 1, archived_at: null }
-const project: Project = { id: 1, user_id: 1, name: 'p', system_prompt: null, provider_id: null, model_id: null, params: null, created_at: 1, updated_at: 1 }
+const project: Project = { id: 1, user_id: 1, name: 'p', icon_attachment_id: null, system_prompt: null, provider_id: null, model_id: null, params: null, created_at: 1, updated_at: 1 }
 const msg = (id: number, parent_id: number | null, role: 'user' | 'assistant', over: Partial<Message> = {}): Message =>
   ({ id, session_id: 1, parent_id, seq: id, role, parts: [], provider_id: null, model_id: null, usage: null, status: 'done', error: null, created_at: 0, ...over })
 const mkSession = (id: number, over: Partial<Session> = {}): Session => ({ ...session, id, title: `s${id}`, updated_at: id, ...over })
 const mkProject = (id: number, over: Partial<Project> = {}): Project => ({ ...project, id, name: `p${id}`, updated_at: id, ...over })
 /** Every optional field blank: this is what the settings form holds for a name-only Project. */
-const blankForm: ProjectFormState = { name: '  研究  ', system_prompt: '', model: null, temperature: '', top_p: '', max_tokens: '', reasoning: 'inherit' }
+const blankForm: ProjectFormState = { name: '  研究  ', icon_attachment_id: null, system_prompt: '', model: null, temperature: '', top_p: '', max_tokens: '', reasoning: 'inherit' }
 
 describe('sync store', () => {
   beforeEach(() => setActivePinia(createPinia()))
@@ -225,7 +225,7 @@ describe('project navigation view-model', () => {
     expect(projectParamsFromForm(blankForm)).toBeNull()
     expect(projectUpdateCommand(7, blankForm)).toEqual({
       type: 'project.update', project_id: 7, name: '研究',
-      system_prompt: null, provider_id: null, model_id: null, params: null,
+      icon_attachment_id: null, system_prompt: null, provider_id: null, model_id: null, params: null,
     })
     expect(parseCommand(JSON.stringify(projectUpdateCommand(7, blankForm)))).toMatchObject({ params: null, model_id: null })
   })
@@ -246,13 +246,13 @@ describe('project navigation view-model', () => {
 
   it('builds a complete update command without rewriting the prompt', () => {
     const form: ProjectFormState = {
-      name: 'Weekly report', system_prompt: '  keep\n  the indent  ', model: { provider_id: 2, model_id: 'gpt-5.1' },
+      name: 'Weekly report', icon_attachment_id: null, system_prompt: '  keep\n  the indent  ', model: { provider_id: 2, model_id: 'gpt-5.1' },
       temperature: '0.7', top_p: '', max_tokens: '2048', reasoning: 'high',
     }
     const cmd = projectUpdateCommand(7, form)
     expect(cmd).toEqual({
       type: 'project.update', project_id: 7, name: 'Weekly report',
-      system_prompt: '  keep\n  the indent  ', provider_id: 2, model_id: 'gpt-5.1',
+      icon_attachment_id: null, system_prompt: '  keep\n  the indent  ', provider_id: 2, model_id: 'gpt-5.1',
       params: { temperature: 0.7, max_tokens: 2048, reasoning_enabled: true, reasoning_effort: 'high' },
     })
     expect(parseCommand(JSON.stringify(cmd))).toEqual(cmd)
@@ -261,20 +261,20 @@ describe('project navigation view-model', () => {
 
 describe('project settings form state', () => {
   const configured: Project = {
-    ...project, id: 1, name: 'A', system_prompt: 'A prompt', provider_id: 2, model_id: 'gpt-5.1',
+    ...project, id: 1, name: 'A', icon_attachment_id: null, system_prompt: 'A prompt', provider_id: 2, model_id: 'gpt-5.1',
     params: { temperature: 0.7, top_p: 0.9, max_tokens: 2048, reasoning_enabled: true, reasoning_effort: 'high' },
   }
   const bare: Project = { ...project, id: 2, name: 'B' }
 
   it('renders a name-only project as blank fields rather than inherited values', () => {
-    expect(projectFormFrom(bare)).toEqual({ name: 'B', system_prompt: '', model: null, temperature: '', top_p: '', max_tokens: '', reasoning: 'inherit' })
+    expect(projectFormFrom(bare)).toEqual({ name: 'B', icon_attachment_id: null, system_prompt: '', model: null, temperature: '', top_p: '', max_tokens: '', reasoning: 'inherit' })
     // `undefined` is the canonical empty form the view resets through.
-    expect(projectFormFrom(undefined)).toEqual({ name: '', system_prompt: '', model: null, temperature: '', top_p: '', max_tokens: '', reasoning: 'inherit' })
+    expect(projectFormFrom(undefined)).toEqual({ name: '', icon_attachment_id: null, system_prompt: '', model: null, temperature: '', top_p: '', max_tokens: '', reasoning: 'inherit' })
   })
 
   it('round-trips a configured project through the form without changing anything', () => {
     expect(projectUpdateCommand(configured.id, projectFormFrom(configured))).toEqual({
-      type: 'project.update', project_id: 1, name: 'A', system_prompt: 'A prompt', provider_id: 2, model_id: 'gpt-5.1',
+      type: 'project.update', project_id: 1, name: 'A', icon_attachment_id: null, system_prompt: 'A prompt', provider_id: 2, model_id: 'gpt-5.1',
       params: { temperature: 0.7, top_p: 0.9, max_tokens: 2048, reasoning_enabled: true, reasoning_effort: 'high' },
     })
   })
@@ -286,7 +286,7 @@ describe('project settings form state', () => {
     Object.assign(form, projectFormFrom(bare))
     expect(projectUpdateCommand(bare.id, form)).toEqual({
       type: 'project.update', project_id: 2, name: 'B',
-      system_prompt: null, provider_id: null, model_id: null, params: null,
+      icon_attachment_id: null, system_prompt: null, provider_id: null, model_id: null, params: null,
     })
   })
 

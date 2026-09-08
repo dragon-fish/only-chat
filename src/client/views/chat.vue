@@ -11,7 +11,7 @@ import ReasoningControl from '@/client/components/reasoning-control.vue'
 import SessionSettings from '@/client/components/session-settings.vue'
 import CollectionState from '@/client/components/collection-state.vue'
 import ContextUsageIndicator from '@/client/components/context-usage-indicator.vue'
-import { sessionPath } from '@/client/lib/ui-models'
+import { projectPresentation, sessionPath } from '@/client/lib/ui-models'
 import {
   choiceFromParams, DISCONNECTED_MESSAGE, effectiveModelFor, modelOverrideAfterPick, nextSendState,
   paramsFromFields, sendCommandFor, sessionFormFrom, sessionSettingSources, useSyncStore,
@@ -58,6 +58,7 @@ const project = computed(() => {
   const id = sid.value === null ? draftProjectId.value : session.value?.project_id ?? null
   return id === null ? undefined : sync.projects.get(id)
 })
+const projectTitle = computed(() => project.value ? projectPresentation(project.value.name).title : '')
 const backTarget = computed(() => {
   const projectId = project.value?.id ?? draftProjectId.value
   return projectId === null ? '/chats' : `/project/${projectId}`
@@ -196,8 +197,8 @@ function dispatch(event: SendEvent) {
 // `immediate` — nothing is outstanding before the first send, and `outstanding` is declared here.
 watch(sid, () => dispatch('abandoned'))
 
-// A `send` on a fresh page creates the session server-side; jump to it when it appears. The route
-// change swaps in a different page component, so this Composer unmounts with nothing left to keep.
+// A `send` on a fresh page creates the session server-side; jump to it when it appears. `/new` and
+// `/c/:id` share one aliased route record, so only this prop changes and the focused Composer stays.
 watch(() => sync.sessionList[0]?.id, (newest) => {
   if (outstanding.value === 'outstanding' && newest !== undefined && sid.value === null) {
     dispatch('abandoned')
@@ -313,8 +314,8 @@ function onReasoningChange(choice: ReasoningChoice) {
           RouterLink(:to="backTarget" aria-label="返回聊天")
             ArrowLeftIcon
         template(v-if="project")
-          ProjectAvatar(:name="project.name" size="sm")
-          span.min-w-0.flex-1.truncate.text-sm.font-medium {{ project.name }}
+          ProjectAvatar(:project="project" size="sm")
+          span.min-w-0.flex-1.truncate.text-sm.font-medium {{ projectTitle }}
         span.min-w-0.flex-1.truncate.text-sm.font-medium(v-else) 随心聊
       ModelPicker(:compact="!isDesktop" :model-value="effective.model" @update:model-value="onModelChange")
       Button(

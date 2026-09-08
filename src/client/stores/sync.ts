@@ -239,6 +239,7 @@ export function fieldsFromParams(params: SessionParams | null | undefined): Para
  *  may be blank, and blank must travel as `null`/absent rather than as a copied inherited value. */
 export interface ProjectFormState extends ParamFields {
   name: string
+  icon_attachment_id: number | null
   system_prompt: string
   model: ModelRef | null
 }
@@ -256,6 +257,7 @@ export function projectParamsFromForm(form: ProjectFormState): SessionParams | n
 export function projectFormFrom(project: Project | undefined): ProjectFormState {
   return {
     name: project?.name ?? '',
+    icon_attachment_id: project?.icon_attachment_id ?? null,
     system_prompt: project?.system_prompt ?? '',
     model: project && project.provider_id !== null && project.model_id !== null
       ? { provider_id: project.provider_id, model_id: project.model_id }
@@ -270,6 +272,7 @@ export function projectUpdateCommand(projectId: number, form: ProjectFormState):
     type: 'project.update',
     project_id: projectId,
     name: form.name.trim(),
+    icon_attachment_id: form.icon_attachment_id,
     system_prompt: blankToNull(form.system_prompt),
     provider_id: form.model?.provider_id ?? null,
     model_id: form.model?.model_id ?? null,
@@ -544,6 +547,7 @@ export const useSyncStore = defineStore('sync', () => {
   const messages = reactive(new Map<number, Map<number, Message>>())
   const loadedMessageSessions = reactive(new Set<number>())
   const streamingIds = reactive(new Set<number>())
+  const forkResult = ref<{ request_id: string, session_id: number } | null>(null)
   const settings = ref<UserSettings>({ plugins: {} })
   const lastError = ref<string | null>(null)
   // Whether the Projects list has been fetched. Before it has, a Project id from a route cannot be
@@ -613,6 +617,9 @@ export const useSyncStore = defineStore('sync', () => {
         loadedMessageSessions.delete(e.session_id)
         break
       }
+      case 'session.forked':
+        forkResult.value = { request_id: e.request_id, session_id: e.session_id }
+        break
       case 'message.created':
         upsertMessage(e.message)
         break
@@ -741,7 +748,7 @@ export const useSyncStore = defineStore('sync', () => {
   }
 
   return {
-    status, snapshotSeq, sessions, projects, messages, streamingIds, settings, lastError, projectsLoaded, sessionsLoaded, settingsLoaded,
+    status, snapshotSeq, sessions, projects, messages, streamingIds, forkResult, settings, lastError, projectsLoaded, sessionsLoaded, settingsLoaded,
     sessionsError, projectsError, settingsError, loadedMessageSessions, sessionList, projectList,
     applyEvent, ingestMessages, sessionsInProject, pathFor, siblingsOf, isStreaming, loadSessions, loadProjects, loadSettings, loadMessages, connect, send,
   }

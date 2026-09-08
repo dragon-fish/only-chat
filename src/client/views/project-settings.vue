@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
 import { Alert, AlertDescription, AlertTitle } from '@/client/ui/alert'
 import { Badge } from '@/client/ui/badge'
-import { ToggleGroup, ToggleGroupItem } from '@/client/ui/toggle-group'
+import { Tabs, TabsList, TabsTrigger } from '@/client/ui/tabs'
 import ResponsiveOverlay from '@/client/components/layout/responsive-overlay.vue'
 import UnsavedChangesGuard from '@/client/components/unsaved-changes-guard.vue'
 import { useFormChanges } from '@/client/composables/use-form-changes'
@@ -28,8 +28,10 @@ import { Skeleton } from '@/client/ui/skeleton'
 import { Spinner } from '@/client/ui/spinner'
 import ModelPicker from '@/client/components/model-picker.vue'
 import ReasoningControls from '@/client/components/reasoning-controls.vue'
+import ProjectIconEditor from '@/client/components/project-icon-editor.vue'
 import { DISCONNECTED_MESSAGE, fieldLooksBlank, optionalNumber, projectFormFrom, projectUpdateCommand, reasoningStopsFor, REASONING_ORDER, useSyncStore, type ProjectFormState } from '@/client/stores/sync'
 import { useConfigStore } from '@/client/stores/config'
+import { projectPresentation } from '@/client/lib/ui-models'
 
 const props = defineProps<{ projectId: number | null }>()
 const router = useRouter()
@@ -55,6 +57,7 @@ let savedAgainst = 0
 let savedSnapshot = ''
 
 const project = computed(() => (props.projectId === null ? undefined : sync.projects.get(props.projectId)))
+const projectTitle = computed(() => project.value ? projectPresentation(project.value.name).title : '项目设置')
 /** 保存 is gated on the socket exactly as the Composer gates 发送: no round trip, no wait to latch. */
 const connected = computed(() => sync.status === 'open')
 const defaultModel = computed(() => config.modelFor(form.model))
@@ -242,7 +245,7 @@ function formatTime(ms: number): string {
 
 <template lang="pug">
 ResponsiveOverlay(
-  mode="dialog" :open="overlayOpen" :title="project?.name ?? '项目设置'" @update:open="setOverlayOpen")
+  mode="dialog" :open="overlayOpen" :title="projectTitle" @update:open="setOverlayOpen")
   template(#status)
     UnsavedChangesGuard(:dirty="dirty")
   Alert(v-if="loadError" variant="destructive")
@@ -251,9 +254,16 @@ ResponsiveOverlay(
       p {{ loadError }}
       Button(variant="outline" class="min-h-10 mt-2" @click="initialize") 重试
   template(v-else-if="project")
-    ToggleGroup(type="single" variant="outline" :model-value="section" class="mb-4" aria-label="项目设置分区" @update:model-value="selectSection")
-      ToggleGroupItem(v-for="item in sections" :key="item.key" :value="item.key" class="min-h-10") {{ item.label }}
+    Tabs(:model-value="section" @update:model-value="selectSection")
+      TabsList(class="mb-4")
+        TabsTrigger(v-for="item in sections" :key="item.key" :value="item.key" class="min-h-10") {{ item.label }}
     FieldGroup(v-if="section === 'basic'")
+        Field
+          FieldLabel Project 图标
+          ProjectIconEditor(
+            :name="form.name" :attachment-id="form.icon_attachment_id"
+            @update:attachment-id="form.icon_attachment_id = $event")
+          FieldDescription 可上传并裁剪为 200×200 图片；未上传图片时，名称开头的 Emoji 会自动成为图标。
         Field
           FieldLabel(for="oc-project-name") 名称
           Input(id="oc-project-name" v-model="form.name" placeholder="项目名称" class="min-h-10" required maxlength="100")

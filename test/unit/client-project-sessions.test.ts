@@ -15,7 +15,7 @@ it('filters the current Project only and restores its full list when search is c
   // A missing query binding leaves all rows visible; losing the Project scope leaks other chats.
   const pinia = createPinia()
   const sync = useSyncStore(pinia)
-  const project: Project = { id: 7, user_id: 1, name: 'Design', system_prompt: null, provider_id: null, model_id: null, params: null, created_at: 0, updated_at: 0 }
+  const project: Project = { id: 7, user_id: 1, name: 'Design', icon_attachment_id: null, system_prompt: null, provider_id: null, model_id: null, params: null, created_at: 0, updated_at: 0 }
   const session = (id: number, title: string, project_id: number | null): Session => ({ id, user_id: 1, title, project_id, head_message_id: null, provider_id: null, model_id: null, system_prompt: null, params: null, archived_at: null, created_at: 0, updated_at: id })
   sync.projects.set(7, project)
   sync.projectsLoaded = true

@@ -26,7 +26,7 @@ async function mountRows(options: { mobile?: boolean } = {}) {
   }))
   const pinia = createPinia()
   const sync = useSyncStore(pinia)
-  const project: Project = { id: 7, user_id: 1, name: 'Design', system_prompt: null, provider_id: null, model_id: null, params: null, created_at: 0, updated_at: 0 }
+  const project: Project = { id: 7, user_id: 1, name: 'Design', icon_attachment_id: null, system_prompt: null, provider_id: null, model_id: null, params: null, created_at: 0, updated_at: 0 }
   const session: Session = { id: 12, user_id: 1, project_id: 7, title: 'Notes', head_message_id: null, provider_id: null, model_id: null, system_prompt: null, params: null, archived_at: null, created_at: 0, updated_at: 0 }
   const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/:pathMatch(.*)*', component: { template: '<div />' } }] })
   await router.push('/project/7')
@@ -81,8 +81,10 @@ it('offers session movement and confirmed deletion from one row action menu', as
   const actions = document.querySelector<HTMLButtonElement>('[aria-label="对话操作：Notes"]')
   expect(actions).not.toBeNull()
   actions!.click()
-  await vi.waitFor(() => expect(menuItem('Research')).toBeDefined())
+  await vi.waitFor(() => expect(menuItem('移动到')).toBeDefined())
   expect(menuItem('删除对话')).toBeDefined()
+  menuItem('移动到').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
+  await vi.waitFor(() => expect(menuItem('Research')).toBeDefined())
   menuItem('Research').click()
   await vi.waitFor(() => expect(send).toHaveBeenCalledWith({ type: 'session.update', session_id: 12, project_id: 8 }))
   await vi.waitFor(() => expect(document.querySelector('[role="menu"]')).toBeNull())
