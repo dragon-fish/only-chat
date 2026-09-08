@@ -12,7 +12,8 @@ import SessionSettings from '@/client/components/session-settings.vue'
 import CollectionState from '@/client/components/collection-state.vue'
 import ContextUsageIndicator from '@/client/components/context-usage-indicator.vue'
 import ToolSelector from '@/client/components/tool-selector.vue'
-import { defaultToolsForSettings, toolSelectionSupported } from '@/client/components/tool-selector'
+import { defaultToolsForSettings, sessionToolBlockReason, toolSelectionSupported } from '@/client/components/tool-selector'
+import { hasPendingToolCalls } from '@/client/components/tool-part-renderer'
 import { pluginManifests } from '@/client/plugins/loaders'
 import { projectPresentation, sessionPath } from '@/client/lib/ui-models'
 import {
@@ -129,10 +130,16 @@ const toolsSupported = computed(() => toolSelectionSupported(
   globallyAvailableTools.value,
   entry.value?.model.metadata.tool_call === true,
 ))
-const canSend = computed(() => effective.value.model !== null && modelAvailable.value && toolsSupported.value)
+const toolBlockReason = computed(() => sessionToolBlockReason({
+  draft: sid.value === null,
+  settingsLoaded: sync.settingsLoaded,
+  pending: hasPendingToolCalls(path.value),
+  toolsSupported: toolsSupported.value,
+}))
+const canSend = computed(() => effective.value.model !== null && modelAvailable.value && toolBlockReason.value === null)
 const sendHint = computed(() => {
+  if (toolBlockReason.value) return toolBlockReason.value
   if (effective.value.model === null) return '未选择模型'
-  if (!toolsSupported.value) return '当前模型不支持工具调用，请更换模型或停用已选工具'
   if (modelAvailable.value) return null
   const source = effective.value.source
   return `模型不可用（来源：${source === 'session' ? '会话' : source === 'project' ? 'Project' : '当前选择'}）`

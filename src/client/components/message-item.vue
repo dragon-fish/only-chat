@@ -6,6 +6,7 @@ import BranchSwitcher from '@/client/components/branch-switcher.vue'
 import LabAvatar from '@/client/components/lab-avatar.vue'
 import MessageUsage from '@/client/components/message-usage.vue'
 import ToolPartRenderer from '@/client/components/tool-part-renderer.vue'
+import { canContinueToolMessage } from '@/client/components/tool-part-renderer'
 import ProjectAvatar from '@/client/components/project-avatar.vue'
 import { api } from '@/client/lib/api'
 import { cn } from '@/client/lib/utils'
@@ -46,7 +47,11 @@ const toolRows = computed(() => {
     .filter((part): part is ToolCallPart => part.type === 'tool_call')
     .map(call => ({ call, result: results.get(call.id) ?? null }))
 })
-const isSessionHead = computed(() => sync.sessions.get(props.message.session_id)?.head_message_id === props.message.id)
+const canContinueTools = computed(() => canContinueToolMessage(
+  props.message,
+  [...(sync.messages.get(props.message.session_id)?.values() ?? [])],
+  sync.sessions.get(props.message.session_id)?.head_message_id,
+))
 /** Spec §7.4: the shell is visible the moment it arrives, and never claims reasoning it lacks. */
 const wait = computed(() => assistantWaitState(props.message))
 const { pending: forkPending, fork } = useSessionFork()
@@ -99,7 +104,7 @@ MessageRoot(:align="message.role === 'user' ? 'end' : 'start'")
           MarkdownRender(mode="chat" :content="markdown" :final="!streaming" :smooth-streaming="false" :fade="true")
           ToolPartRenderer(
             v-for="row in toolRows" :key="row.call.id" :message-id="message.id"
-            :call="row.call" :result="row.result" :can-continue="isSessionHead")
+            :call="row.call" :result="row.result" :can-continue="canContinueTools")
           //- Generated images are served by the same authenticated attachment route as uploads.
           .flex.flex-wrap.gap-2.pt-2(v-if="images.length")
             img.max-h-80.rounded.border(v-for="(img, i) in images" :key="i" :src="api.attachmentUrl(img.attachment_id)")

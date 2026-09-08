@@ -7,6 +7,7 @@ import {
   availablePluginRows,
   defaultToolsForSettings,
   nextToolSelection,
+  sessionToolBlockReason,
   toolSelectionSupported,
 } from '@/client/components/tool-selector'
 
@@ -38,6 +39,14 @@ describe('session tool selection', () => {
     expect(toolSelectionSupported(['ask_user'], new Set(['ask_user']), false)).toBe(false)
     expect(toolSelectionSupported(['ask_user'], new Set(), false)).toBe(true)
     expect(toolSelectionSupported(['ask_user'], new Set(['ask_user']), true)).toBe(true)
+  })
+
+  it('blocks draft sends until plugin settings have loaded and pending calls until resolved', () => {
+    expect(sessionToolBlockReason({ draft: true, settingsLoaded: false, pending: false, toolsSupported: true }))
+      .toBe('正在加载插件设置…')
+    expect(sessionToolBlockReason({ draft: false, settingsLoaded: true, pending: true, toolsSupported: true }))
+      .toBe('请先回答或取消当前问题')
+    expect(sessionToolBlockReason({ draft: false, settingsLoaded: true, pending: false, toolsSupported: true })).toBeNull()
   })
 
   it.each([

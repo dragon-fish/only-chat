@@ -4,6 +4,8 @@ import { afterEach, describe, expect, it } from 'vitest'
 import AskUserCard from '@/plugins/ask-user/client/ask-user-card.vue'
 import { buildAnsweredResult, initialAnswers } from '@/plugins/ask-user/client/answers'
 import type { AskUserInput } from '@/plugins/ask-user/shared'
+import { canContinueToolMessage, hasPendingToolCalls } from '@/client/components/tool-part-renderer'
+import type { Message } from '@/shared/models'
 
 const input: AskUserInput = {
   questions: [
@@ -11,6 +13,23 @@ const input: AskUserInput = {
     { id: 'features', header: 'Features', question: 'Choose many', type: 'multiple', options: [{ label: 'Tools' }, { label: 'Cache' }] },
     { id: 'notes', header: 'Notes', question: 'Say more', type: 'text', placeholder: 'Optional detail' },
   ],
+}
+
+function message(parts: Message['parts'], id = 20, parentId: number | null = 10): Message {
+  return {
+    id,
+    session_id: 3,
+    parent_id: parentId,
+    seq: id,
+    role: 'assistant',
+    parts,
+    provider_id: 1,
+    model_id: 'model',
+    usage: null,
+    status: 'done',
+    error: null,
+    created_at: 1,
+  }
 }
 
 describe('ask_user answer serialization', () => {
@@ -71,6 +90,31 @@ describe('ask_user answer serialization', () => {
     expect([...root.querySelectorAll('button')].some(button => button.textContent === '继续')).toBe(false)
     app.unmount()
     root.remove()
+  })
+
+  it('detects unmatched calls and only permits recovery after every call is answered', () => {
+    const first = { type: 'tool_call' as const, id: 'one', name: 'ask_user', args: input }
+    const second = { type: 'tool_call' as const, id: 'two', name: 'ask_user', args: input }
+    const answeredOne = { type: 'tool_result' as const, call_id: 'one', name: 'ask_user', content: { status: 'answered', answers: [] } }
+    const answeredTwo = { type: 'tool_result' as const, call_id: 'two', name: 'ask_user', content: { status: 'answered', answers: [] } }
+    const pending = message([first, second, answeredOne])
+    expect(hasPendingToolCalls([pending])).toBe(true)
+    expect(canContinueToolMessage(pending, [pending], pending.id)).toBe(false)
+
+    const answered = message([first, second, answeredOne, answeredTwo])
+    expect(hasPendingToolCalls([answered])).toBe(false)
+    expect(canContinueToolMessage(answered, [answered], answered.id)).toBe(true)
+  })
+
+  it('hides recovery for cancellation, a non-head message, or an existing assistant child', () => {
+    const call = { type: 'tool_call' as const, id: 'one', name: 'ask_user', args: input }
+    const cancelled = message([call, { type: 'tool_result', call_id: 'one', name: 'ask_user', content: { status: 'cancelled' } }])
+    expect(canContinueToolMessage(cancelled, [cancelled], cancelled.id)).toBe(false)
+
+    const answered = message([call, { type: 'tool_result', call_id: 'one', name: 'ask_user', content: { status: 'answered' } }])
+    expect(canContinueToolMessage(answered, [answered], 99)).toBe(false)
+    const child = message([{ type: 'text', text: 'continued' }], 21, answered.id)
+    expect(canContinueToolMessage(answered, [answered, child], answered.id)).toBe(false)
   })
 
 })

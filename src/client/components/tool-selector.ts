@@ -52,3 +52,15 @@ export function toolSelectionSupported(
 ): boolean {
   return modelSupportsTools || !selected.some(toolId => globallyAvailable.has(toolId))
 }
+
+export function sessionToolBlockReason(state: {
+  draft: boolean
+  settingsLoaded: boolean
+  pending: boolean
+  toolsSupported: boolean
+}): string | null {
+  if (state.draft && !state.settingsLoaded) return '正在加载插件设置…'
+  if (state.pending) return '请先回答或取消当前问题'
+  if (!state.toolsSupported) return '当前模型不支持工具调用，请更换模型或停用已选工具'
+  return null
+}
