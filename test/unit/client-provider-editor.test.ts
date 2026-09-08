@@ -46,7 +46,7 @@ async function mountEditor() {
   return { router, config: useConfigStore(pinia) }
 }
 
-async function type(input: HTMLInputElement, value: string) {
+async function type(input: HTMLInputElement | HTMLTextAreaElement, value: string) {
   input.value = value
   input.dispatchEvent(new Event('input', { bubbles: true }))
   await nextTick()
@@ -444,6 +444,73 @@ describe('provider model editor', () => {
     document.querySelector<HTMLButtonElement>('#model-1-2-tool_call')!.click()
     name.closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
     await vi.waitFor(() => expect(write).toHaveBeenCalledWith(1, 2, { metadata_override: { cost: null, tool_call: true } }))
+  })
+
+  it('uses structured modality controls instead of exposing field-level JSON editors', async () => {
+    await mountEditor()
+    const write = vi.spyOn(api, 'updateModel').mockResolvedValue(models[0]!)
+    document.querySelector<HTMLButtonElement>('[aria-label="编辑 First model"]')!.click()
+    await vi.waitFor(() => expect(document.querySelector('#model-1-2-name')).not.toBeNull())
+
+    expect(document.querySelector('#model-1-2-modalities-input')).toBeNull()
+    expect(document.querySelector('#model-1-2-reasoning_options')).toBeNull()
+    const imageOutput = document.querySelector<HTMLButtonElement>('[aria-label="输出模态 image"]')!
+    expect(imageOutput).not.toBeNull()
+    imageOutput.click()
+    await nextTick()
+    document.querySelector('#model-1-2-name')!.closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+
+    await vi.waitFor(() => expect(write).toHaveBeenCalledWith(1, 2, {
+      metadata_override: { modalities: { output: ['text', 'image'] } },
+    }))
+  })
+
+  it('warns before raw JSON editing and blocks syntax or schema errors from saving', async () => {
+    await mountEditor()
+    const write = vi.spyOn(api, 'updateModel').mockResolvedValue(models[0]!)
+    document.querySelector<HTMLButtonElement>('[aria-label="编辑 First model"]')!.click()
+    await vi.waitFor(() => expect(document.querySelector('#model-1-2-name')).not.toBeNull())
+    document.querySelector<HTMLButtonElement>('[aria-label="查看或编辑原始 JSON"]')!.click()
+    await nextTick()
+
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain('保存错误的数据可能导致意外问题')
+    const raw = document.querySelector<HTMLTextAreaElement>('#model-1-2-raw-json')!
+    expect(raw).not.toBeNull()
+    await type(raw, '{')
+    expect(document.querySelector('[data-raw-json-error]')?.textContent).toContain('JSON 语法错误')
+    raw.closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    await nextTick()
+    expect(write).not.toHaveBeenCalled()
+
+    await type(raw, '{"modalities":{"input":["spreadsheet"]}}')
+    expect(document.querySelector('[data-raw-json-error]')?.textContent).toContain('不符合模型元数据结构')
+    raw.closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    await nextTick()
+    expect(write).not.toHaveBeenCalled()
+
+    await type(raw, '{"name":"Raw name"}')
+    expect(document.querySelector('[data-raw-json-error]')).toBeNull()
+    raw.closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(write).toHaveBeenCalledWith(1, 2, { metadata_override: { name: 'Raw name' } }))
+  })
+
+  it('clears reasoning budget validation when restoring inherited reasoning options', async () => {
+    await mountEditor()
+    document.querySelector<HTMLButtonElement>('[aria-label="编辑 First model"]')!.click()
+    await vi.waitFor(() => expect(document.querySelector('#model-1-2-name')).not.toBeNull())
+    document.querySelector<HTMLButtonElement>('[aria-label="支持思考开关"]')!.click()
+    document.querySelector<HTMLButtonElement>('[aria-label="推理强度 low"]')!.click()
+    document.querySelector<HTMLButtonElement>('[aria-label="启用推理 Token 预算"]')!.click()
+    await nextTick()
+    await type(document.querySelector<HTMLInputElement>('#model-1-2-reasoning-budget-min')!, '100')
+    await type(document.querySelector<HTMLInputElement>('#model-1-2-reasoning-budget-max')!, '10')
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain('最小值不能大于最大值')
+
+    document.querySelector<HTMLButtonElement>('[aria-label="恢复 推理选项 整组默认值"]')!.click()
+    await nextTick()
+    expect(document.querySelector('[role="alert"]')).toBeNull()
+    expect(document.querySelector<HTMLButtonElement>('[aria-label="支持思考开关"]')?.getAttribute('aria-checked')).toBe('false')
+    expect(document.querySelector<HTMLButtonElement>('[aria-label="启用推理 Token 预算"]')?.getAttribute('aria-checked')).toBe('false')
   })
 
   it('clears an association conflict after a later successful save has no warning', async () => {
