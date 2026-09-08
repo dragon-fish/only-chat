@@ -136,6 +136,25 @@ describe('buildModelMessages', () => {
     ])
   })
 
+  for (const protocol of PROTOCOLS) {
+    it(`keeps an ask_user result before the following user turn (${protocol})`, () => {
+      const conversation = [
+        msg({ id: 1, role: 'user', parts: [{ type: 'text', text: 'start' }] }),
+        msg({ id: 2, role: 'assistant', parent_id: 1, parts: [
+          { type: 'tool_call', id: 'ask-1', name: 'ask_user', args: { questions: [] } },
+          { type: 'tool_result', call_id: 'ask-1', name: 'ask_user', content: { status: 'cancelled', message: '用户选择了取消回答' } },
+        ] }),
+        msg({ id: 3, role: 'user', parent_id: 2, parts: [{ type: 'text', text: 'continue normally' }] }),
+      ]
+      const out = buildModelMessages({ protocol, systemPrompt: null, path: conversation, attachments: new Map() })
+      expect(out.map(message => message.role)).toEqual(['user', 'assistant', 'tool', 'user'])
+      expect(out[2]).toMatchObject({
+        role: 'tool',
+        content: [{ type: 'tool-result', toolCallId: 'ask-1', toolName: 'ask_user', output: { type: 'json', value: { status: 'cancelled' } } }],
+      })
+    })
+  }
+
   it('replays an empty reasoning summary that only carries encrypted metadata', () => {
     const encrypted: Message[] = [
       msg({ id: 1, role: 'user', parts: [{ type: 'text', text: 'q' }] }),

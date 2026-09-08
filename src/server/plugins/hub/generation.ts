@@ -1,8 +1,10 @@
-import { streamText, type LanguageModel } from 'ai'
+import { streamText, type LanguageModel, type ToolSet } from 'ai'
 import { DEFAULT_USER_ID, INFLIGHT_FLUSH_INTERVAL_MS } from '@/shared/constants'
 import type { Message, PersistedStatus, SessionParams, Usage } from '@/shared/models'
-import type { Part } from '@/shared/parts'
+import type { Part, ToolCallPart, ToolResultPart } from '@/shared/parts'
 import type { SendCommand, WsCommand } from '@/shared/ws'
+import { ASK_USER_TOOL_ID } from '@/shared/plugins'
+import { AskUserInputSchema, AskUserResultSchema, validateAskUserResult } from '@/plugins/ask-user/shared'
 import type { ModelRow, ProviderInterfaceRow, ProviderRow, SessionRow } from '../../db/schema'
 import { PartAccumulator } from '../llm/accumulator'
 import { buildModelMessages, buildProviderOptions, requiredAttachmentIds, type AttachmentInput } from '../llm/messages'
@@ -15,8 +17,8 @@ import {
 import { persistGeneratedImage } from './generated-images'
 import { getProject } from './projects'
 import {
-  createSession, finalizeMessage, getMessage, getModel, getProvider, getProviderInterface, getSession,
-  insertMessage, lastGenerationModel, listMessages, maxSeq, toMessage, updateSession,
+  appendToolResult, createSession, finalizeMessage, getMessage, getModel, getProvider, getProviderInterface, getSession, getUser,
+  insertAssistantChildIfAbsent, insertMessage, lastGenerationModel, listAssistantChildren, listMessages, maxSeq, toMessage, updateSession,
 } from './sessions'
 import { resolveAttachmentInputs } from './attachment-transport'
 import { pathToRoot, titleFromParts } from './tree'
@@ -39,6 +41,7 @@ interface Target {
    * `resolveTarget` has already proved the model resolved, so consumers never re-check it.
    */
   config: EffectiveConfig & { model: EffectiveModel }
+  tools: ToolSet
 }
 
 /** The session-init draft carried by the first `send` of a new session (spec §5.2). */
@@ -95,6 +98,14 @@ async function resolveTarget(hub: Hub, args: ResolveArgs): Promise<Target> {
   const providerInterface = interfaceId === null ? undefined : await getProviderInterface(hub.db, interfaceId)
   if (!providerInterface || providerInterface.provider_id !== provider.id) throw new Error('model interface is unavailable')
 
+  const user = await getUser(hub.db, DEFAULT_USER_ID)
+  if (!user) throw new Error('user missing')
+  const resolvedTools = hub.app.tools.resolve(draft.tools, user.settings.plugins)
+  if (resolvedTools.length > 0 && model.metadata_resolved.tool_call !== true) {
+    throw new Error('当前模型不支持工具调用，请取消所选工具或更换模型')
+  }
+  const tools = Object.fromEntries(resolvedTools)
+
   // The persisted override is the draft's, never this generation's model: copying the latter down
   // would silently end the session's Project inheritance.
   const session = existing ?? await createSession(hub.db, {
@@ -108,7 +119,7 @@ async function resolveTarget(hub: Hub, args: ResolveArgs): Promise<Target> {
     model_id: draft.model_id,
   })
   if (!existing) hub.emitSessionCreated(session)
-  return { session, provider, providerInterface, model, config }
+  return { session, provider, providerInterface, model, config, tools }
 }
 
 // ---- stage 2: persist a user message
@@ -142,12 +153,28 @@ async function openAssistantShell(hub: Hub, target: Target, parentId: number): P
   return message
 }
 
+async function openContinuationShell(hub: Hub, target: Target, parentId: number): Promise<Message | undefined> {
+  const seq = await hub.seq.allocate(target.session.id, () => maxSeq(hub.db, target.session.id))
+  const row = await insertAssistantChildIfAbsent(hub.db, {
+    session_id: target.session.id, parent_id: parentId, seq, role: 'assistant', parts: [],
+    provider_id: target.provider.id, model_id: target.model.model_id, usage: null,
+    status: 'error', error: 'interrupted', created_at: Date.now(),
+  })
+  if (!row) return undefined
+  const message = toMessage(row, 'streaming')
+  hub.broadcast({ type: 'message.created', message })
+  const session = await updateSession(hub.db, target.session.id, { head_message_id: row.id })
+  hub.broadcast({ type: 'head.changed', session_id: session.id, message_id: row.id })
+  hub.emitSessionUpdated(session)
+  return message
+}
+
 // ---- stage 4: context assembly
 
-async function assembleContext(hub: Hub, target: Target, leafUserId: number): Promise<{ path: Message[]; attachments: Map<number, AttachmentInput> }> {
+async function assembleContext(hub: Hub, target: Target, leafMessageId: number): Promise<{ path: Message[]; attachments: Map<number, AttachmentInput> }> {
   const rows = await listMessages(hub.db, target.session.id)
   const byId = new Map(rows.map((r) => [r.id, toMessage(r)]))
-  const path = pathToRoot(byId, leafUserId)
+  const path = pathToRoot(byId, leafMessageId)
   // Which ids the request needs is the message builder's own answer, not a second one kept in step
   // by convention: a part it drops must never be resolved here.
   const ids = requiredAttachmentIds(path)
@@ -158,7 +185,7 @@ async function assembleContext(hub: Hub, target: Target, leafUserId: number): Pr
 
 // ---- stage 5/6: stream + finalize
 
-async function generate(hub: Hub, target: Target, shell: Message, leafUserId: number): Promise<void> {
+async function generate(hub: Hub, target: Target, shell: Message, leafMessageId: number): Promise<void> {
   const controller = new AbortController()
   const acc = new PartAccumulator()
   const job = { message: shell, sessionId: target.session.id, controller, startedAt: Date.now(), parts: acc.parts }
@@ -171,7 +198,7 @@ async function generate(hub: Hub, target: Target, shell: Message, leafUserId: nu
   let usage: Usage | null = null
 
   try {
-    const { path, attachments } = await assembleContext(hub, target, leafUserId)
+    const { path, attachments } = await assembleContext(hub, target, leafMessageId)
     const payload: BeforeSendPayload = { sessionId: target.session.id, systemPrompt: target.config.systemPrompt, path }
     hub.app.emit('message/before-send', payload)
 
@@ -192,6 +219,7 @@ async function generate(hub: Hub, target: Target, shell: Message, leafUserId: nu
     const result = streamText({
       model,
       messages,
+      tools: target.tools,
       // The system prompt travels as a `role: 'system'` message so cache breakpoints can attach to it.
       allowSystemInMessages: true,
       // Responses raw deltas preserve full-text versus summary provenance before SDK normalization.
@@ -223,6 +251,9 @@ async function generate(hub: Hub, target: Target, shell: Message, leafUserId: nu
         continue
       }
       for (const ev of acc.apply(part)) {
+        if (part.type === 'tool-call' && ev.kind === 'part' && ev.part.type === 'tool_call' && ev.part.name === ASK_USER_TOOL_ID) {
+          AskUserInputSchema.parse(ev.part.args)
+        }
         if (ev.kind === 'delta') {
           if (firstTokenAt === null && ev.delta.length > 0) firstTokenAt = performance.now()
           hub.broadcast({ type: 'message.delta', message_id: shell.id, part_index: ev.part_index, kind: ev.part_kind, delta: ev.delta })
@@ -322,4 +353,89 @@ export async function runEdit(hub: Hub, cmd: Extract<WsCommand, { type: 'edit' }
   const user = await persistUserMessage(hub, target.session, old.parent_id, cmd.parts)
   const shell = await openAssistantShell(hub, target, user.id)
   await generate(hub, target, shell, user.id)
+}
+
+function toolResultFor(parts: Part[], callId: string): ToolResultPart | undefined {
+  return parts.find((part): part is ToolResultPart => part.type === 'tool_result' && part.call_id === callId)
+}
+
+function toolCallFor(parts: Part[], callId: string): ToolCallPart | undefined {
+  return parts.find((part): part is ToolCallPart => part.type === 'tool_call' && part.id === callId)
+}
+
+function sameJson(a: unknown, b: unknown): boolean {
+  return JSON.stringify(a) === JSON.stringify(b)
+}
+
+async function ownedTerminalToolMessage(hub: Hub, messageId: number) {
+  const message = await getMessage(hub.db, messageId)
+  if (!message || message.role !== 'assistant') throw new Error('tool-call message not found')
+  const session = await getSession(hub.db, message.session_id)
+  if (!session || session.user_id !== DEFAULT_USER_ID) throw new Error('tool-call message not found')
+  if (hub.inflight().some(job => job.message.id === messageId) || message.status !== 'done') {
+    throw new Error('cannot respond to a streaming or incomplete message')
+  }
+  return { message, session }
+}
+
+function completedToolState(parts: Part[]): 'waiting' | 'cancelled' | 'answered' {
+  const calls = parts.filter(part => part.type === 'tool_call')
+  if (calls.length === 0) throw new Error('message has no tool calls')
+  const results = new Map(parts.filter(part => part.type === 'tool_result').map(part => [part.call_id, part]))
+  if (calls.some(call => !results.has(call.id))) return 'waiting'
+  for (const call of calls) {
+    if (call.name !== ASK_USER_TOOL_ID) throw new Error(`unsupported pending tool: ${call.name}`)
+    const result = AskUserResultSchema.parse(results.get(call.id)!.content)
+    if (result.status === 'cancelled') return 'cancelled'
+  }
+  return 'answered'
+}
+
+async function continueFromToolMessage(hub: Hub, messageId: number, requireHead: boolean): Promise<void> {
+  const { message, session } = await ownedTerminalToolMessage(hub, messageId)
+  const state = completedToolState(message.parts)
+  if (state === 'waiting') throw new Error('tool calls are still waiting for responses')
+  if (state === 'cancelled') throw new Error('cancelled tool calls cannot continue automatically')
+  if (requireHead && session.head_message_id !== message.id) throw new Error('tool-call message is no longer the session head')
+  if ((await listAssistantChildren(hub.db, message.id)).length > 0) return
+
+  const fallbackModel = message.provider_id !== null && message.model_id !== null
+    ? { provider_id: message.provider_id, model_id: message.model_id }
+    : await lastGenerationModel(hub.db, message.session_id)
+  const target = await resolveTarget(hub, { sessionId: message.session_id, fallbackModel, firstParts: [] })
+  const shell = await openContinuationShell(hub, target, message.id)
+  if (!shell) return
+  await generate(hub, target, shell, message.id)
+}
+
+export async function runToolRespond(hub: Hub, cmd: Extract<WsCommand, { type: 'tool.respond' }>): Promise<void> {
+  const { message } = await ownedTerminalToolMessage(hub, cmd.message_id)
+  const call = toolCallFor(message.parts, cmd.call_id)
+  if (!call) throw new Error('tool call not found')
+  if (call.name !== ASK_USER_TOOL_ID) throw new Error(`unsupported tool: ${call.name}`)
+
+  const input = AskUserInputSchema.parse(call.args)
+  const result = validateAskUserResult(input, AskUserResultSchema.parse(cmd.result))
+  const part = { type: 'tool_result' as const, call_id: call.id, name: call.name, content: result }
+  const appended = await appendToolResult(hub.db, message.id, message.session_id, part)
+  if (!appended) {
+    const current = await getMessage(hub.db, message.id)
+    const existing = current && toolResultFor(current.parts, call.id)
+    if (!existing || existing.name !== part.name || !sameJson(existing.content, part.content)) {
+      throw new Error('tool result conflict')
+    }
+    return
+  }
+
+  const updated = await getMessage(hub.db, message.id)
+  if (!updated) throw new Error('tool-call message disappeared')
+  hub.broadcast({
+    type: 'message.part', message_id: updated.id, part_index: updated.parts.length - 1,
+    part: updated.parts.at(-1)!,
+  })
+  if (completedToolState(updated.parts) === 'answered') await continueFromToolMessage(hub, updated.id, false)
+}
+
+export async function runToolContinue(hub: Hub, cmd: Extract<WsCommand, { type: 'tool.continue' }>): Promise<void> {
+  await continueFromToolMessage(hub, cmd.message_id, true)
 }

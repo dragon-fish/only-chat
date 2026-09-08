@@ -87,6 +87,30 @@ describe('ws protocol', () => {
     expect(update.type === 'session.update' && update.tools).toEqual(['ask_user'])
   })
 
+  it('parses correlated tool response and continuation commands', () => {
+    const respond = parseCommand(JSON.stringify({
+      type: 'tool.respond', request_id: 'answer-1', message_id: 7, call_id: 'call-1',
+      result: { status: 'answered', answers: [{ id: 'framework', value: 'Vue' }] },
+    }))
+    expect(respond).toEqual({
+      type: 'tool.respond', request_id: 'answer-1', message_id: 7, call_id: 'call-1',
+      result: { status: 'answered', answers: [{ id: 'framework', value: 'Vue' }] },
+    })
+    expect(parseCommand(JSON.stringify({
+      type: 'tool.continue', request_id: 'continue-1', message_id: 7,
+    }))).toEqual({ type: 'tool.continue', request_id: 'continue-1', message_id: 7 })
+  })
+
+  it('rejects malformed tool response envelopes at the wire boundary', () => {
+    expect(() => parseCommand(JSON.stringify({
+      type: 'tool.respond', request_id: 'answer-1', message_id: 7, call_id: 'call-1',
+      result: { status: 'answered', answers: [] },
+    }))).toThrow()
+    expect(() => parseCommand(JSON.stringify({
+      type: 'tool.continue', message_id: 7,
+    }))).toThrow()
+  })
+
   it('round-trips project.created/updated/deleted events', () => {
     const project = {
       id: 1, user_id: 1, name: 'Design', icon_attachment_id: null, system_prompt: null, provider_id: null,

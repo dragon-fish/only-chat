@@ -4,6 +4,7 @@ import {
   MessageSchema, MessageStatusSchema, PersistedStatusSchema, ProjectSchema, SessionParamsSchema,
   SessionSchema, UsageSchema, UserSettingsSchema,
 } from './models'
+import { AskUserResultSchema } from '@/plugins/ask-user/shared'
 
 const base = { request_id: z.string().optional() }
 
@@ -106,6 +107,18 @@ export const ProjectDeleteCommandSchema = z.object({
   ...base,
   project_id: z.number().int(),
 })
+export const ToolRespondCommandSchema = z.strictObject({
+  type: z.literal('tool.respond'),
+  request_id: z.string().min(1),
+  message_id: z.number().int(),
+  call_id: z.string().min(1),
+  result: AskUserResultSchema,
+})
+export const ToolContinueCommandSchema = z.strictObject({
+  type: z.literal('tool.continue'),
+  request_id: z.string().min(1),
+  message_id: z.number().int(),
+})
 
 export const WsCommandSchema = z.discriminatedUnion('type', [
   SendCommandSchema,
@@ -120,6 +133,8 @@ export const WsCommandSchema = z.discriminatedUnion('type', [
   ProjectCreateCommandSchema,
   ProjectUpdateCommandSchema,
   ProjectDeleteCommandSchema,
+  ToolRespondCommandSchema,
+  ToolContinueCommandSchema,
 ])
 export type WsCommand = z.infer<typeof WsCommandSchema>
 export type SendCommand = z.infer<typeof SendCommandSchema>

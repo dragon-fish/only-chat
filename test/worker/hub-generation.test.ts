@@ -18,7 +18,7 @@ import type { Hub } from '@/server/plugins/hub'
 import { persistGeneratedImage } from '@/server/plugins/hub/generated-images'
 import { resolveEffectiveConfig } from '@/server/plugins/hub/effective-config'
 import { getProject } from '@/server/plugins/hub/projects'
-import { createSession, finalizeMessage, getSession, insertMessage, listMessages, toMessage, updateSession } from '@/server/plugins/hub/sessions'
+import { appendToolResult, createSession, finalizeMessage, getMessage, getSession, insertMessage, listMessages, toMessage, updateSession } from '@/server/plugins/hub/sessions'
 import { attachmentProviderFiles, attachments, models, projects, providerInterfaces, providers, users } from '@/server/db/schema'
 import type { ProviderInterfaceRow, ProviderRow } from '@/server/db/schema'
 import { sendCommandFor } from '@/client/stores/sync'
@@ -53,6 +53,42 @@ const STREAM: StreamPart[] = [
     },
   },
 ]
+
+const ASK_USER_INPUT = {
+  questions: [{
+    id: 'framework', header: '框架', question: '选择框架', type: 'single' as const,
+    options: [{ label: 'Vue' }, { label: 'React' }],
+  }],
+}
+
+const TOOL_STREAM: StreamPart[] = [
+  { type: 'stream-start', warnings: [] },
+  { type: 'response-metadata', id: 'tool-response', modelId: 'mock', timestamp: new Date(0) },
+  { type: 'tool-call', toolCallId: 'call-ask-1', toolName: 'ask_user', input: ASK_USER_INPUT },
+  {
+    type: 'finish', finishReason: { unified: 'tool-calls', raw: 'tool_calls' },
+    usage: {
+      inputTokens: { total: 10, noCache: 10, cacheRead: 0, cacheWrite: 0 },
+      outputTokens: { total: 5, text: 5, reasoning: 0 }, raw: {},
+    },
+  },
+] as StreamPart[]
+
+const MULTI_TOOL_STREAM: StreamPart[] = [
+  { type: 'stream-start', warnings: [] },
+  { type: 'response-metadata', id: 'multi-tool-response', modelId: 'mock', timestamp: new Date(0) },
+  { type: 'tool-call', toolCallId: 'call-ask-1', toolName: 'ask_user', input: ASK_USER_INPUT },
+  { type: 'tool-call', toolCallId: 'call-ask-2', toolName: 'ask_user', input: {
+    questions: [{ id: 'detail', header: '补充', question: '补充说明', type: 'text' }],
+  } },
+  {
+    type: 'finish', finishReason: { unified: 'tool-calls', raw: 'tool_calls' },
+    usage: {
+      inputTokens: { total: 10, noCache: 10, cacheRead: 0, cacheWrite: 0 },
+      outputTokens: { total: 5, text: 5, reasoning: 0 }, raw: {},
+    },
+  },
+] as StreamPart[]
 
 async function seedProvider(name = 'mock', modelId = 'mock-1', nativeFiles = false, metadata: ModelMetadata = { reasoning: true }): Promise<number> {
   const db = createDb(env.DB)
@@ -166,6 +202,313 @@ async function installMock(
 }
 
 describe('generation', () => {
+  it('passes globally enabled session tools to the model and persists an unresolved call without executing it', async () => {
+    const providerId = await seedProvider('tool-provider', 'tool-model', false, { tool_call: true })
+    const db = createDb(env.DB)
+    await db.update(users).set({ settings: { plugins: { ask_user: true } } }).where(eq(users.id, DEFAULT_USER_ID))
+    const created = await installMock(() => new MockLanguageModelV4({
+      doStream: async () => ({ stream: simulateReadableStream({ chunks: TOOL_STREAM, chunkDelayInMs: null, initialDelayInMs: null }) }),
+    }))
+    const c = await connect()
+    c.ws.send(JSON.stringify({
+      type: 'send', session_id: null, parent_id: null, parts: [{ type: 'text', text: 'ask me' }],
+      provider_id: providerId, model_id: 'tool-model', tools: ['ask_user'],
+    }))
+    await c.next('message.done')
+
+    const rows = await listMessages(db, sessionIdOf(c))
+    expect(rows[1]!.parts).toEqual([{ type: 'tool_call', id: 'call-ask-1', name: 'ask_user', args: ASK_USER_INPUT }])
+    expect(rows[1]!.parts.some(part => part.type === 'tool_result')).toBe(false)
+    expect(created).toHaveLength(1)
+    expect(created[0]!.doStreamCalls[0]!.tools?.map(tool => tool.name)).toEqual(['ask_user'])
+  })
+
+  it('persists invalid ask_user arguments as a visible generation error', async () => {
+    const providerId = await seedProvider('invalid-tool-provider', 'invalid-tool-model', false, { tool_call: true })
+    const db = createDb(env.DB)
+    await db.update(users).set({ settings: { plugins: { ask_user: true } } }).where(eq(users.id, DEFAULT_USER_ID))
+    const invalidStream: StreamPart[] = [
+      { type: 'stream-start', warnings: [] },
+      { type: 'tool-call', toolCallId: 'bad-call', toolName: 'ask_user', input: { questions: [] } },
+      {
+        type: 'finish', finishReason: { unified: 'tool-calls', raw: 'tool_calls' },
+        usage: {
+          inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 },
+          outputTokens: { total: 1, text: 1, reasoning: 0 }, raw: {},
+        },
+      },
+    ] as StreamPart[]
+    await installMock(() => new MockLanguageModelV4({
+      doStream: async () => ({ stream: simulateReadableStream({ chunks: invalidStream, chunkDelayInMs: null, initialDelayInMs: null }) }),
+    }))
+    const c = await connect()
+    c.ws.send(JSON.stringify({
+      type: 'send', session_id: null, parent_id: null, parts: [{ type: 'text', text: 'bad ask' }],
+      provider_id: providerId, model_id: 'invalid-tool-model', tools: ['ask_user'],
+    }))
+    expect(await c.next('message.done')).toMatchObject({ status: 'error', error: expect.any(String) })
+    expect((await listMessages(db, sessionIdOf(c)))[1]).toMatchObject({ status: 'error', error: expect.any(String) })
+  })
+
+  it('rejects enabled selected tools before generation when the model lacks tool-call support', async () => {
+    const providerId = await seedProvider('no-tools-provider', 'no-tools-model', false, {})
+    const db = createDb(env.DB)
+    await db.update(users).set({ settings: { plugins: { ask_user: true } } }).where(eq(users.id, DEFAULT_USER_ID))
+    const created = await installMock(() => new MockLanguageModelV4({
+      doStream: async () => ({ stream: simulateReadableStream({ chunks: STREAM, chunkDelayInMs: null, initialDelayInMs: null }) }),
+    }))
+    const c = await connect()
+    c.ws.send(JSON.stringify({
+      type: 'send', request_id: 'no-tools', session_id: null, parent_id: null, parts: [{ type: 'text', text: 'hi' }],
+      provider_id: providerId, model_id: 'no-tools-model', tools: ['ask_user'],
+    }))
+    expect(await c.next('error')).toMatchObject({ request_id: 'no-tools', message: expect.stringMatching(/工具/) })
+    expect(created).toHaveLength(0)
+  })
+
+  it('suppresses globally disabled selected tools without deleting or blocking the session snapshot', async () => {
+    const providerId = await seedProvider('disabled-tool-provider', 'disabled-tool-model', false, {})
+    const db = createDb(env.DB)
+    await db.update(users).set({ settings: { plugins: { ask_user: false } } }).where(eq(users.id, DEFAULT_USER_ID))
+    const created = await installMock(() => new MockLanguageModelV4({
+      doStream: async () => ({ stream: simulateReadableStream({ chunks: STREAM, chunkDelayInMs: null, initialDelayInMs: null }) }),
+    }))
+    const c = await connect()
+    c.ws.send(JSON.stringify({
+      type: 'send', session_id: null, parent_id: null, parts: [{ type: 'text', text: 'hi' }],
+      provider_id: providerId, model_id: 'disabled-tool-model', tools: ['ask_user'],
+    }))
+    await c.next('message.done')
+    expect((await getSession(db, sessionIdOf(c)))!.tools).toEqual(['ask_user'])
+    expect(created[0]!.doStreamCalls[0]!.tools).toBeUndefined()
+  })
+
+  it('atomically stores an ask_user answer and continues from the tool-call message', async () => {
+    const providerId = await seedProvider('answer-provider', 'answer-model', false, { tool_call: true })
+    const db = createDb(env.DB)
+    await db.update(users).set({ settings: { plugins: { ask_user: true } } }).where(eq(users.id, DEFAULT_USER_ID))
+    const streams = [TOOL_STREAM, STREAM]
+    const created = await installMock(() => new MockLanguageModelV4({
+      doStream: async () => ({ stream: simulateReadableStream({ chunks: streams.shift()!, chunkDelayInMs: null, initialDelayInMs: null }) }),
+    }))
+    const c = await connect()
+    c.ws.send(JSON.stringify({
+      type: 'send', session_id: null, parent_id: null, parts: [{ type: 'text', text: 'ask me' }],
+      provider_id: providerId, model_id: 'answer-model', tools: ['ask_user'],
+    }))
+    await c.next('message.done')
+    const sessionId = sessionIdOf(c)
+    const firstAssistant = (await listMessages(db, sessionId))[1]!
+    // Pending historical calls remain answerable after global disablement; only the next request's
+    // actual tool set is filtered.
+    await db.update(users).set({ settings: { plugins: { ask_user: false } } }).where(eq(users.id, DEFAULT_USER_ID))
+    c.events.length = 0
+    c.ws.send(JSON.stringify({
+      type: 'tool.respond', request_id: 'answer-1', message_id: firstAssistant.id, call_id: 'call-ask-1',
+      result: { status: 'answered', answers: [{ id: 'framework', value: 'Vue' }] },
+    }))
+
+    expect(await c.next('message.part')).toMatchObject({
+      message_id: firstAssistant.id,
+      part: { type: 'tool_result', call_id: 'call-ask-1', name: 'ask_user', content: { status: 'answered' } },
+    })
+    await c.next('message.done')
+    const rows = await listMessages(db, sessionId)
+    expect(rows.map(row => [row.role, row.parent_id])).toEqual([
+      ['user', null], ['assistant', rows[0]!.id], ['assistant', firstAssistant.id],
+    ])
+    expect(rows[1]!.parts.at(-1)).toEqual({
+      type: 'tool_result', call_id: 'call-ask-1', name: 'ask_user',
+      content: { status: 'answered', answers: [{ id: 'framework', value: 'Vue' }] },
+    })
+    expect(created).toHaveLength(2)
+    expect(created[1]!.doStreamCalls[0]!.prompt.map(message => message.role)).toEqual(['user', 'assistant', 'tool'])
+    expect(created[1]!.doStreamCalls[0]!.tools).toBeUndefined()
+
+    await runInDurableObject(env.USER_HUB.getByName(String(DEFAULT_USER_ID)), async (instance: UserHub) => {
+      await instance.app.hub.handleCommand(JSON.stringify({
+        type: 'tool.continue', request_id: 'continue-again', message_id: firstAssistant.id,
+      }))
+    })
+    expect(created).toHaveLength(2)
+    expect(await listMessages(db, sessionId)).toHaveLength(3)
+  })
+
+  it('persists cancellation without starting another generation', async () => {
+    const providerId = await seedProvider('cancel-provider', 'cancel-model', false, { tool_call: true })
+    const db = createDb(env.DB)
+    await db.update(users).set({ settings: { plugins: { ask_user: true } } }).where(eq(users.id, DEFAULT_USER_ID))
+    const created = await installMock(() => new MockLanguageModelV4({
+      doStream: async () => ({ stream: simulateReadableStream({ chunks: TOOL_STREAM, chunkDelayInMs: null, initialDelayInMs: null }) }),
+    }))
+    const c = await connect()
+    c.ws.send(JSON.stringify({
+      type: 'send', session_id: null, parent_id: null, parts: [{ type: 'text', text: 'ask me' }],
+      provider_id: providerId, model_id: 'cancel-model', tools: ['ask_user'],
+    }))
+    await c.next('message.done')
+    const sessionId = sessionIdOf(c)
+    const firstAssistant = (await listMessages(db, sessionId))[1]!
+    c.events.length = 0
+    c.ws.send(JSON.stringify({
+      type: 'tool.respond', request_id: 'cancel-1', message_id: firstAssistant.id, call_id: 'call-ask-1',
+      result: { status: 'cancelled', message: '用户选择了取消回答' },
+    }))
+    await c.next('message.part')
+    const rows = await listMessages(db, sessionId)
+    expect(rows).toHaveLength(2)
+    expect(rows[1]!.parts.at(-1)).toMatchObject({ type: 'tool_result', content: { status: 'cancelled' } })
+    expect(created).toHaveLength(1)
+  })
+
+  it('accepts identical response retries but rejects a conflicting second result', async () => {
+    const providerId = await seedProvider('retry-provider', 'retry-model', false, { tool_call: true })
+    const db = createDb(env.DB)
+    await db.update(users).set({ settings: { plugins: { ask_user: true } } }).where(eq(users.id, DEFAULT_USER_ID))
+    await installMock(() => new MockLanguageModelV4({
+      doStream: async () => ({ stream: simulateReadableStream({ chunks: TOOL_STREAM, chunkDelayInMs: null, initialDelayInMs: null }) }),
+    }))
+    const c = await connect()
+    c.ws.send(JSON.stringify({
+      type: 'send', session_id: null, parent_id: null, parts: [{ type: 'text', text: 'ask me' }],
+      provider_id: providerId, model_id: 'retry-model', tools: ['ask_user'],
+    }))
+    await c.next('message.done')
+    const sessionId = sessionIdOf(c)
+    const assistant = (await listMessages(db, sessionId))[1]!
+    const cancelled = { status: 'cancelled', message: '用户选择了取消回答' }
+    c.events.length = 0
+    c.ws.send(JSON.stringify({ type: 'tool.respond', request_id: 'r1', message_id: assistant.id, call_id: 'call-ask-1', result: cancelled }))
+    await c.next('message.part')
+    c.events.length = 0
+    c.ws.send(JSON.stringify({ type: 'tool.respond', request_id: 'r2', message_id: assistant.id, call_id: 'call-ask-1', result: cancelled }))
+    c.ws.send(JSON.stringify({
+      type: 'tool.respond', request_id: 'r3', message_id: assistant.id, call_id: 'call-ask-1',
+      result: { status: 'answered', answers: [{ id: 'framework', value: 'Vue' }] },
+    }))
+    expect(await c.next('error')).toMatchObject({ request_id: 'r3', message: expect.stringMatching(/conflict/i) })
+    const stored = (await listMessages(db, sessionId))[1]!
+    expect(stored.parts.filter(part => part.type === 'tool_result')).toHaveLength(1)
+  })
+
+  it('rejects unknown calls and answers that do not match the persisted question', async () => {
+    const providerId = await seedProvider('invalid-answer-provider', 'invalid-answer-model', false, { tool_call: true })
+    const db = createDb(env.DB)
+    await db.update(users).set({ settings: { plugins: { ask_user: true } } }).where(eq(users.id, DEFAULT_USER_ID))
+    await installMock(() => new MockLanguageModelV4({
+      doStream: async () => ({ stream: simulateReadableStream({ chunks: TOOL_STREAM, chunkDelayInMs: null, initialDelayInMs: null }) }),
+    }))
+    const c = await connect()
+    c.ws.send(JSON.stringify({
+      type: 'send', session_id: null, parent_id: null, parts: [{ type: 'text', text: 'ask me' }],
+      provider_id: providerId, model_id: 'invalid-answer-model', tools: ['ask_user'],
+    }))
+    await c.next('message.done')
+    const sessionId = sessionIdOf(c)
+    const assistant = (await listMessages(db, sessionId))[1]!
+    c.events.length = 0
+    c.ws.send(JSON.stringify({
+      type: 'tool.respond', request_id: 'unknown-call', message_id: assistant.id, call_id: 'missing',
+      result: { status: 'cancelled', message: '用户选择了取消回答' },
+    }))
+    expect(await c.nextAfter('error', 1)).toMatchObject({ request_id: 'unknown-call' })
+    c.ws.send(JSON.stringify({
+      type: 'tool.respond', request_id: 'bad-option', message_id: assistant.id, call_id: 'call-ask-1',
+      result: { status: 'answered', answers: [{ id: 'framework', value: 'Svelte' }] },
+    }))
+    expect(await c.nextAfter('error', 2)).toMatchObject({ request_id: 'bad-option' })
+    expect((await listMessages(db, sessionId))[1]!.parts.filter(part => part.type === 'tool_result')).toEqual([])
+  })
+
+  it('rejects a tool response for another user session without mutating it', async () => {
+    const db = createDb(env.DB)
+    await ensureDefaultUser(db)
+    const [other] = await db.insert(users).values({ name: 'tool-owner', settings: { plugins: {} }, created_at: 0 }).returning()
+    const session = await createSession(db, {
+      user_id: other!.id, title: 'private', provider_id: null, model_id: null,
+    })
+    const message = await insertMessage(db, {
+      session_id: session.id, parent_id: null, seq: 1, role: 'assistant', status: 'done', error: null,
+      provider_id: null, model_id: null, usage: null, created_at: 0,
+      parts: [{ type: 'tool_call', id: 'private-call', name: 'ask_user', args: ASK_USER_INPUT }],
+    })
+    const c = await connect()
+    c.ws.send(JSON.stringify({
+      type: 'tool.respond', request_id: 'foreign', message_id: message.id, call_id: 'private-call',
+      result: { status: 'cancelled', message: '用户选择了取消回答' },
+    }))
+    expect(await c.next('error')).toMatchObject({ request_id: 'foreign', message: 'tool-call message not found' })
+    expect((await getMessage(db, message.id))!.parts).toHaveLength(1)
+  })
+
+  it('waits for every tool call before continuing', async () => {
+    const providerId = await seedProvider('multi-answer-provider', 'multi-answer-model', false, { tool_call: true })
+    const db = createDb(env.DB)
+    await db.update(users).set({ settings: { plugins: { ask_user: true } } }).where(eq(users.id, DEFAULT_USER_ID))
+    const streams = [MULTI_TOOL_STREAM, STREAM]
+    const created = await installMock(() => new MockLanguageModelV4({
+      doStream: async () => ({ stream: simulateReadableStream({ chunks: streams.shift()!, chunkDelayInMs: null, initialDelayInMs: null }) }),
+    }))
+    const c = await connect()
+    c.ws.send(JSON.stringify({
+      type: 'send', session_id: null, parent_id: null, parts: [{ type: 'text', text: 'ask twice' }],
+      provider_id: providerId, model_id: 'multi-answer-model', tools: ['ask_user'],
+    }))
+    await c.next('message.done')
+    const sessionId = sessionIdOf(c)
+    const assistant = (await listMessages(db, sessionId))[1]!
+
+    await runInDurableObject(env.USER_HUB.getByName(String(DEFAULT_USER_ID)), async (instance: UserHub) => {
+      await instance.app.hub.handleCommand(JSON.stringify({
+        type: 'tool.respond', request_id: 'first', message_id: assistant.id, call_id: 'call-ask-1',
+        result: { status: 'answered', answers: [{ id: 'framework', value: 'Vue' }] },
+      }))
+    })
+    expect(created).toHaveLength(1)
+    expect(await listMessages(db, sessionId)).toHaveLength(2)
+
+    c.events.length = 0
+    c.ws.send(JSON.stringify({
+      type: 'tool.respond', request_id: 'second', message_id: assistant.id, call_id: 'call-ask-2',
+      result: { status: 'answered', answers: [{ id: 'detail', value: 'ship it' }] },
+    }))
+    await c.next('message.done')
+    expect(created).toHaveLength(2)
+    expect(await listMessages(db, sessionId)).toHaveLength(3)
+  })
+
+  it('recovers an answered head whose result was stored before its continuation shell', async () => {
+    const providerId = await seedProvider('recover-provider', 'recover-model', false, { tool_call: true })
+    const db = createDb(env.DB)
+    await db.update(users).set({ settings: { plugins: { ask_user: true } } }).where(eq(users.id, DEFAULT_USER_ID))
+    const streams = [TOOL_STREAM, STREAM]
+    const created = await installMock(() => new MockLanguageModelV4({
+      doStream: async () => ({ stream: simulateReadableStream({ chunks: streams.shift()!, chunkDelayInMs: null, initialDelayInMs: null }) }),
+    }))
+    const c = await connect()
+    c.ws.send(JSON.stringify({
+      type: 'send', session_id: null, parent_id: null, parts: [{ type: 'text', text: 'ask me' }],
+      provider_id: providerId, model_id: 'recover-model', tools: ['ask_user'],
+    }))
+    await c.next('message.done')
+    const sessionId = sessionIdOf(c)
+    const assistant = (await listMessages(db, sessionId))[1]!
+    expect(await appendToolResult(db, assistant.id, sessionId, {
+      type: 'tool_result', call_id: 'call-ask-1', name: 'ask_user',
+      content: { status: 'answered', answers: [{ id: 'framework', value: 'Vue' }] },
+    })).toBe(true)
+
+    await runInDurableObject(env.USER_HUB.getByName(String(DEFAULT_USER_ID)), async (instance: UserHub) => {
+      await instance.app.hub.handleCommand(JSON.stringify({
+        type: 'tool.continue', request_id: 'recover', message_id: assistant.id,
+      }))
+    })
+    expect(created).toHaveLength(2)
+    const rows = await listMessages(db, sessionId)
+    expect(rows).toHaveLength(3)
+    expect(rows[2]!.parent_id).toBe(assistant.id)
+  })
+
   it('streams a reply to every socket and persists it', async () => {
     const providerId = await seedProvider()
     const created = await installMock(() => new MockLanguageModelV4({

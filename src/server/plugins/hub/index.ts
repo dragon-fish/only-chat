@@ -10,7 +10,7 @@ import {
 } from './sessions'
 import { createProject, deleteProject, getProject, listProjectSessions, updateProject, validateProjectIcon } from './projects'
 import { SeqAllocator } from './seq'
-import { runEdit, runRegenerate, runSend } from './generation'
+import { runEdit, runRegenerate, runSend, runToolContinue, runToolRespond } from './generation'
 
 export interface InflightJob {
   message: Message
@@ -109,6 +109,8 @@ export class Hub extends Service {
       case 'project.create': return this.projectCreate(cmd)
       case 'project.update': return this.projectUpdate(cmd)
       case 'project.delete': return this.projectDelete(cmd.project_id)
+      case 'tool.respond': return runToolRespond(this, cmd)
+      case 'tool.continue': return runToolContinue(this, cmd)
     }
   }
 
@@ -181,7 +183,7 @@ export class Hub extends Service {
     const settings: UserSettings = { plugins: { ...user.settings.plugins, ...(patch.plugins ?? {}) } }
     const updated = await updateUserSettings(this.db, DEFAULT_USER_ID, settings)
     this.broadcast({ type: 'settings.updated', settings: updated.settings })
-    // Feature plugins toggled here would be loaded/disposed at this point; MVP ships none.
+    // Built-in server registrations stay loaded; request-time resolution applies this enable map.
   }
 
   async projectCreate(cmd: Extract<WsCommand, { type: 'project.create' }>): Promise<void> {

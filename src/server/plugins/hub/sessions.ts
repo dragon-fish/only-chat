@@ -7,7 +7,7 @@ import type {
   AttachmentProviderFileRow, AttachmentRow, MessageRow, ModelRow, ProviderInterfaceRow, ProviderRow, SessionRow, UserRow,
 } from '../../db/schema'
 import type { Message, MessageStatus, PersistedStatus, SessionParams, Usage, UserSettings } from '@/shared/models'
-import type { Part } from '@/shared/parts'
+import type { Part, ToolResultPart } from '@/shared/parts'
 
 /** Row → wire DTO. Persisted rows only carry the persisted statuses; live ones pass `status` in. */
 export function toMessage(row: MessageRow, status: MessageStatus = row.status): Message {
@@ -112,9 +112,60 @@ export async function getMessage(db: DB, id: number): Promise<MessageRow | undef
   return db.query.messages.findFirst({ where: eq(messages.id, id) })
 }
 
+export async function listAssistantChildren(db: DB, parentId: number): Promise<MessageRow[]> {
+  return db.select().from(messages).where(and(eq(messages.parent_id, parentId), eq(messages.role, 'assistant'))).orderBy(messages.seq)
+}
+
+/**
+ * Appends a terminal tool result with one SQLite statement. The call-id predicate is scoped to one
+ * Message row, so retries neither scan the table nor create a second result.
+ */
+export async function appendToolResult(
+  db: DB,
+  messageId: number,
+  sessionId: number,
+  part: ToolResultPart,
+): Promise<boolean> {
+  const result = await db.$client.prepare(`
+    UPDATE messages
+       SET parts = json_insert(parts, '$[#]', json(?))
+     WHERE id = ?
+       AND session_id = ?
+       AND role = 'assistant'
+       AND status = 'done'
+       AND NOT EXISTS (
+         SELECT 1 FROM json_each(parts)
+          WHERE json_extract(value, '$.type') = 'tool_result'
+            AND json_extract(value, '$.call_id') = ?
+       )
+  `).bind(JSON.stringify(part), messageId, sessionId, part.call_id).run()
+  return result.meta.changes === 1
+}
+
 export async function insertMessage(db: DB, row: Omit<MessageRow, 'id'>): Promise<MessageRow> {
   const [inserted] = await db.insert(messages).values(row).returning()
   return inserted!
+}
+
+/** Creates the sole assistant continuation for one tool-call parent with an atomic SQLite fence. */
+export async function insertAssistantChildIfAbsent(
+  db: DB,
+  row: Omit<MessageRow, 'id'> & { role: 'assistant'; parent_id: number },
+): Promise<MessageRow | undefined> {
+  const inserted = await db.$client.prepare(`
+    INSERT INTO messages (
+      session_id, parent_id, seq, role, parts, provider_id, model_id, usage, status, error, created_at
+    )
+    SELECT ?, ?, ?, 'assistant', json(?), ?, ?, ?, ?, ?, ?
+     WHERE NOT EXISTS (
+       SELECT 1 FROM messages WHERE parent_id = ? AND role = 'assistant'
+     )
+    RETURNING id
+  `).bind(
+    row.session_id, row.parent_id, row.seq, JSON.stringify(row.parts), row.provider_id, row.model_id,
+    row.usage === null ? null : JSON.stringify(row.usage), row.status, row.error, row.created_at, row.parent_id,
+  ).first<{ id: number }>()
+  return inserted ? getMessage(db, inserted.id) : undefined
 }
 
 export async function finalizeMessage(

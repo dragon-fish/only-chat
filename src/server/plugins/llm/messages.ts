@@ -25,7 +25,7 @@ export interface AttachmentInput {
 export interface BuildInput {
   protocol: InterfaceProtocol
   systemPrompt: string | null
-  /** Root → leaf. The last element is the user message being answered. */
+  /** Root → leaf. A tool continuation ends at the assistant message that now contains its result. */
   path: Message[]
   attachments: ReadonlyMap<number, AttachmentInput>
 }
