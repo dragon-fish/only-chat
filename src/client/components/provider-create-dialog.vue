@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { toast } from 'vue-sonner'
 import { api } from '@/client/lib/api'
 import ProviderInterfaceList from '@/client/components/provider-interface-list.vue'
+import CodexOAuthDialog from '@/client/components/codex-oauth-dialog.vue'
 import { Button } from '@/client/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/client/ui/dialog'
 import { Command, CommandGroup, CommandInput, CommandItem, CommandList } from '@/client/ui/command'
@@ -20,6 +21,7 @@ const saving = ref(false)
 const error = ref<string | null>(null)
 const warning = ref<string | null>(null)
 const chosen = ref(false)
+const codexOpen = ref(false)
 const initialBaseUrl = ref('')
 const form = reactive<Omit<ProviderWriteInput, 'default_protocol'> & { default_protocol?: InterfaceProtocol }>({ name: '', interfaces: [], api_key: '', models_dev_provider: { source: 'endpoint' } })
 const valid = computed(() => ProviderWriteInputSchema.safeParse(form).success)
@@ -86,6 +88,7 @@ Dialog(:open="open" @update:open="value => { if (!saving) emit('update:open', va
           CommandGroup
             CommandItem(v-for="provider in entries" :key="provider.id" :value="provider.id" @select="choose(provider)") {{ provider.name }}
       p.h-5.text-sm.text-muted-foreground(role="status") {{ loading ? '正在搜索…' : entries.length ? '' : '没有匹配的供应商' }}
+      Button(type="button" variant="outline" data-add-codex @click="codexOpen = true") 添加 Codex
       Button(type="button" variant="outline" @click="choose()") 自定义供应商
     form(v-else @submit.prevent="create")
       FieldGroup
@@ -102,4 +105,5 @@ Dialog(:open="open" @update:open="value => { if (!saving) emit('update:open', va
         Button(type="submit" :disabled="saving || !valid") {{ saving ? '创建中…' : '创建供应商' }}
     p.min-h-5.text-sm.text-destructive(v-if="error" role="alert") {{ error }}
     p.min-h-5.text-sm.text-muted-foreground(v-if="warning" role="status") {{ warning }}
+  CodexOAuthDialog(v-if="codexOpen" v-model:open="codexOpen" @created="provider => emit('created', provider)")
 </template>

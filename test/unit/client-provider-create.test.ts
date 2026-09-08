@@ -4,10 +4,30 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import ProviderCreateDialog from '@/client/components/provider-create-dialog.vue'
 import { api } from '@/client/lib/api'
 import { provider } from './provider-fixtures'
-import type { CatalogProviderSummary } from '@/shared/api'
+import type { CatalogProviderSummary, CodexOAuthPollResponse, CodexOAuthStartResponse } from '@/shared/api'
 
 let cleanup = () => {}
 afterEach(() => { cleanup(); vi.restoreAllMocks(); document.body.innerHTML = '' })
+
+const oauthApi = api as typeof api & {
+  startCodexOAuth: () => Promise<CodexOAuthStartResponse>
+  pollCodexOAuth: (flowId: string) => Promise<CodexOAuthPollResponse>
+  cancelCodexOAuth: (flowId: string) => Promise<void>
+}
+const oauthGrant = (): CodexOAuthStartResponse => ({
+  flow_id: '6b23e34a-8f0d-4c7e-a3d1-0e7d9ca1cd8b',
+  verification_url: 'https://auth.openai.com/codex/device',
+  user_code: 'ABCD-EFGH',
+  expires_at: Date.now() + 10_000,
+  poll_interval_ms: 1_000,
+})
+
+function mockOAuthApi() {
+  oauthApi.startCodexOAuth = vi.fn().mockResolvedValue(oauthGrant())
+  oauthApi.pollCodexOAuth = vi.fn().mockResolvedValue({ status: 'pending', next_poll_at: Date.now() + 1_000 })
+  oauthApi.cancelCodexOAuth = vi.fn().mockResolvedValue(undefined)
+  return oauthApi
+}
 
 async function type(selector: string, value: string) {
   const input = document.querySelector<HTMLInputElement>(selector)!
@@ -29,6 +49,107 @@ async function mountDialog(entries: CatalogProviderSummary[] = [{ id: 'acme', na
 }
 
 describe('provider creation', () => {
+  it('starts Codex device login without revealing or editing a custom-provider draft', async () => {
+    const oauth = mockOAuthApi()
+    await mountDialog()
+
+    document.querySelector<HTMLButtonElement>('[data-add-codex]')!.click()
+    await vi.waitFor(() => expect(oauth.startCodexOAuth).toHaveBeenCalledOnce())
+
+    expect(document.querySelector('[data-codex-user-code]')?.textContent).toContain('ABCD-EFGH')
+    expect(document.querySelector('[data-provider-key]')).toBeNull()
+    expect(document.querySelector('[data-interface-url]')).toBeNull()
+  })
+
+  it('creates the provider after a completed Codex device poll', async () => {
+    vi.useFakeTimers()
+    const oauth = mockOAuthApi()
+    oauth.pollCodexOAuth = vi.fn().mockResolvedValue({ status: 'complete', provider })
+    const { created } = await mountDialog()
+
+    document.querySelector<HTMLButtonElement>('[data-add-codex]')!.click()
+    await Promise.resolve()
+    await vi.advanceTimersByTimeAsync(1_000)
+
+    await vi.waitFor(() => expect(created).toHaveBeenCalledWith(provider))
+    vi.useRealTimers()
+  })
+
+  it('waits until the server-specified time before each Codex poll', async () => {
+    vi.useFakeTimers()
+    const oauth = mockOAuthApi()
+    oauth.startCodexOAuth = vi.fn().mockResolvedValue({ ...oauthGrant(), expires_at: Date.now() + 20_000 })
+    oauth.pollCodexOAuth = vi.fn().mockImplementation(async () => ({ status: 'pending' as const, next_poll_at: Date.now() + 5_000 }))
+    await mountDialog()
+
+    document.querySelector<HTMLButtonElement>('[data-add-codex]')!.click()
+    await Promise.resolve()
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(oauth.pollCodexOAuth).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(4_999)
+    expect(oauth.pollCodexOAuth).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(oauth.pollCodexOAuth).toHaveBeenCalledTimes(2)
+    vi.useRealTimers()
+  })
+
+  it('cancels a waiting Codex flow exactly once when closed', async () => {
+    const oauth = mockOAuthApi()
+    await mountDialog()
+
+    document.querySelector<HTMLButtonElement>('[data-add-codex]')!.click()
+    await vi.waitFor(() => expect(document.querySelector('[data-codex-user-code]')).not.toBeNull())
+    const close = [...document.querySelectorAll<HTMLButtonElement>('[data-slot="dialog-close"]')].at(-1)!
+    close.click()
+    close.click()
+
+    await vi.waitFor(() => expect(oauth.cancelCodexOAuth).toHaveBeenCalledOnce())
+    expect(oauth.cancelCodexOAuth).toHaveBeenCalledWith('6b23e34a-8f0d-4c7e-a3d1-0e7d9ca1cd8b')
+  })
+
+  it('marks a waiting Codex flow expired when its device code expires', async () => {
+    vi.useFakeTimers()
+    const oauth = mockOAuthApi()
+    oauth.pollCodexOAuth = vi.fn().mockImplementation(async () => ({ status: 'pending' as const, next_poll_at: Date.now() + 10_000 }))
+    await mountDialog()
+
+    document.querySelector<HTMLButtonElement>('[data-add-codex]')!.click()
+    await Promise.resolve()
+    await vi.advanceTimersByTimeAsync(10_000)
+
+    expect(document.querySelector('[data-codex-expired]')).not.toBeNull()
+    expect(oauth.pollCodexOAuth).toHaveBeenCalledOnce()
+    vi.useRealTimers()
+  })
+
+  it('shows a failed device authorization without cancelling a terminal flow', async () => {
+    vi.useFakeTimers()
+    const oauth = mockOAuthApi()
+    oauth.pollCodexOAuth = vi.fn().mockResolvedValue({ status: 'failed', error: 'Authorization denied' })
+    await mountDialog()
+
+    document.querySelector<HTMLButtonElement>('[data-add-codex]')!.click()
+    await Promise.resolve()
+    await vi.advanceTimersByTimeAsync(1_000)
+
+    await vi.waitFor(() => expect(document.querySelector('[role="alert"]')?.textContent).toContain('Authorization denied'))
+    expect(oauth.cancelCodexOAuth).not.toHaveBeenCalled()
+    vi.useRealTimers()
+  })
+
+  it('restarts device authorization after a transient request failure', async () => {
+    const oauth = mockOAuthApi()
+    oauth.startCodexOAuth = vi.fn().mockRejectedValueOnce(new Error('Network unavailable')).mockResolvedValueOnce(oauthGrant())
+    await mountDialog()
+
+    document.querySelector<HTMLButtonElement>('[data-add-codex]')!.click()
+    await vi.waitFor(() => expect(document.querySelector('[role="alert"]')?.textContent).toContain('Network unavailable'))
+    ;[...document.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.trim() === '重试')!.click()
+
+    await vi.waitFor(() => expect(oauth.startCodexOAuth).toHaveBeenCalledTimes(2))
+    await vi.waitFor(() => expect(document.querySelector('[data-codex-user-code]')).not.toBeNull())
+  })
+
   it.each([
     ['@ai-sdk/openai', 'responses'], ['@ai-sdk/anthropic', 'anthropic'], ['@ai-sdk/openai-compatible', 'chat-completions'],
   ])('prefills the recognized %s interface format', async (npm, protocol) => {

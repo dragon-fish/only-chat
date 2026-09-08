@@ -71,6 +71,6 @@ nav.flex.h-full.min-h-0.flex-col(aria-label="供应商")
               ItemDescription {{ provider.interfaces.map(endpoint => endpoint.protocol).join(' · ') || '待配置接口' }}
               .flex.flex-wrap.gap-1
                 Badge(:variant="provider.enabled ? 'secondary' : 'outline'") {{ provider.enabled ? '启用' : '停用' }}
-                Badge(variant="outline") {{ provider.has_key ? '已配置密钥' : '无密钥' }}
+                Badge(variant="outline") {{ provider.kind === 'codex-oauth' ? provider.oauth.status : provider.has_key ? '已配置密钥' : '无密钥' }}
   ProviderCreateDialog(v-if="createOpen" v-model:open="createOpen" @created="created")
 </template>

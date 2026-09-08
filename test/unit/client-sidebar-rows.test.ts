@@ -6,9 +6,11 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { compile } from 'tailwindcss'
 import ProjectNavRow from '@/client/components/layout/project-nav-row.vue'
 import SessionNavRow from '@/client/components/layout/session-nav-row.vue'
+import ProviderNavigation from '@/client/components/provider-navigation.vue'
+import { api } from '@/client/lib/api'
 import { SidebarMenu, SidebarProvider } from '@/client/ui/sidebar'
 import { useSyncStore } from '@/client/stores/sync'
-import type { Project, Session } from '@/shared/models'
+import type { Project, ProviderWithInterfaces, Session } from '@/shared/models'
 
 let cleanup = () => {}
 afterEach(() => { cleanup(); vi.restoreAllMocks(); document.body.innerHTML = '' })
@@ -117,4 +119,26 @@ it('requires Project deletion confirmation after opening its row action menu', a
   expect(send).not.toHaveBeenCalled()
   ;[...document.querySelectorAll('button')].find(button => button.textContent?.trim() === '删除')!.click()
   expect(send).toHaveBeenCalledWith({ type: 'project.delete', project_id: 7 })
+})
+
+it('shows a Codex provider account status instead of a custom-key badge', async () => {
+  const codexProvider: ProviderWithInterfaces = {
+    id: 3, user_id: 1, name: 'Codex', kind: 'codex-oauth', has_key: false, enabled: true,
+    credential_version: 1, default_interface_id: 4, models_dev_provider_id: null, models_dev_provider_source: null,
+    interfaces: [{ id: 4, provider_id: 3, protocol: 'responses', base_url: 'https://chatgpt.com/backend-api/codex', native_files: false, created_at: 0 }],
+    oauth: { status: 'connected', account_email: 'owner@example.com', access_expires_at: null, last_error: null },
+    created_at: 0,
+  }
+  vi.spyOn(api, 'providers').mockResolvedValue([codexProvider])
+  vi.spyOn(api, 'catalogStatus').mockResolvedValue({ version: null, previousVersion: null, lastSuccessAt: null, lastError: null })
+  const pinia = createPinia()
+  const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/:pathMatch(.*)*', component: { template: '<div />' } }] })
+  const host = document.createElement('div')
+  document.body.append(host)
+  const app = createApp({ render: () => h(ProviderNavigation) }).use(pinia).use(router)
+  app.mount(host)
+  cleanup = () => app.unmount()
+
+  await vi.waitFor(() => expect(host.textContent).toContain('connected'))
+  expect(host.textContent).not.toContain('无密钥')
 })
