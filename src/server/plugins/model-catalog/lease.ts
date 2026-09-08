@@ -4,7 +4,7 @@ import type { DB } from '@/server/db/client'
 import { modelCatalogRefresh } from '@/server/db/schema'
 import type { CatalogPointer } from './storage'
 
-const LEASE_DURATION_MS = 5 * 60 * 1000
+const LEASE_DURATION_MS = 60 * 1000
 
 export class CatalogRefreshBusyError extends Error {
   constructor() { super('Catalog refresh already in progress') }

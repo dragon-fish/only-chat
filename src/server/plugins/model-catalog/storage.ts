@@ -37,7 +37,7 @@ export class CatalogStorage {
     return this.kv.get<CatalogManifest>(`models-dev:${version}:manifest`, 'json')
   }
 
-  async stage(catalog: ModelCatalog, hash: string, fetchedAt: number): Promise<CatalogManifest> {
+  async stage(catalog: ModelCatalog, hash: string, fetchedAt: number, checkpoint?: () => Promise<void>): Promise<CatalogManifest> {
     // Separate attempts must never overwrite each other's staging shards, even within one millisecond.
     const version = `${fetchedAt}-${hash}-${crypto.randomUUID()}`
     const prefix = `models-dev:${version}:`
@@ -54,7 +54,11 @@ export class CatalogStorage {
       shards: shards.map(([key]) => key),
     }
     // Every staging key carries its age so interrupted writes can be collected without a manifest.
-    for (const [key, data] of shards) await this.kv.put(key, JSON.stringify(data), { metadata: { fetchedAt } })
+    for (const [index, [key, data]] of shards.entries()) {
+      if (index % 20 === 0) await checkpoint?.()
+      await this.kv.put(key, JSON.stringify(data), { metadata: { fetchedAt } })
+    }
+    await checkpoint?.()
     await this.kv.put(`${prefix}manifest`, JSON.stringify(manifest), { metadata: { fetchedAt } })
     return manifest
   }

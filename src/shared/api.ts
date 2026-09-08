@@ -83,4 +83,6 @@ export interface FetchModelsResponse {
 
 export interface CatalogProviderSummary { id: string; name: string; api?: string; npm?: string; doc?: string }
 export interface CatalogStatus { version: string | null; previousVersion: string | null; lastSuccessAt: number | null; lastError: string | null }
-export interface CatalogRefreshResponse { version: string; changed: boolean; providers: number; globalModels: number; providerModels: number }
+export interface CatalogRefreshStartResponse { instanceId: string }
+export type CatalogRefreshJobState = 'queued' | 'running' | 'paused' | 'errored' | 'terminated' | 'complete' | 'waiting' | 'waitingForPause' | 'unknown'
+export interface CatalogRefreshJobStatus { status: CatalogRefreshJobState; error?: string }

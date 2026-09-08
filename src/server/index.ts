@@ -1,7 +1,10 @@
-import { DurableObject } from 'cloudflare:workers'
+import { DurableObject, WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from 'cloudflare:workers'
 import type { Context } from 'cordis'
 import { createApp } from './app'
+import { createDb } from './db/client'
 import { cleanupExpiredProviderFiles } from './plugins/files-cleanup'
+import { refreshCatalog } from './plugins/model-catalog/refresh'
+import { CatalogStorage } from './plugins/model-catalog/storage'
 
 let workerApp: Promise<Context> | undefined
 
@@ -12,15 +15,27 @@ export default {
     return ctx.api.fetch(request, env, execCtx)
   },
   // Catalog publication and remote file cleanup must run independently.
-  async scheduled(_controller, env, _execCtx) {
+  async scheduled(controller, env, _execCtx) {
     workerApp ??= createApp({ env, side: 'worker' })
     const ctx = await workerApp
     await Promise.all([
-      ctx.modelCatalog.refresh('cron').catch(error => console.error('Scheduled catalog refresh failed', error)),
+      env.MODEL_CATALOG_REFRESH.create({
+        id: `catalog-cron-${controller.scheduledTime}`,
+        params: { source: 'cron' },
+      }).catch(error => console.error('Could not start scheduled catalog refresh', error)),
       cleanupExpiredProviderFiles(ctx, Date.now()).catch(() => console.error('Scheduled provider file cleanup failed')),
     ])
   },
 } satisfies ExportedHandler<Env>
+
+export class ModelCatalogRefreshWorkflow extends WorkflowEntrypoint<Env, { source: 'manual' | 'cron' }> {
+  async run(_event: Readonly<WorkflowEvent<{ source: 'manual' | 'cron' }>>, step: WorkflowStep) {
+    return step.do('refresh model catalog', {
+      retries: { limit: 8, delay: '10 seconds', backoff: 'exponential' },
+      timeout: '10 minutes',
+    }, async () => refreshCatalog(new CatalogStorage(this.env.KV), createDb(this.env.DB)))
+  }
+}
 
 export class UserHub extends DurableObject<Env> {
   private _app!: Context

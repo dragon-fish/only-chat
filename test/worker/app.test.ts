@@ -43,10 +43,12 @@ describe('scheduled provider file cleanup', () => {
     const [attachment] = await db.insert(attachments).values({ user_id: 1, sha256: 'failure-cleanup', mime: 'text/plain', size: 1, r2_key: 'cleanup-failure', origin: 'upload', created_at: 0 }).returning()
     await db.insert(attachmentProviderFiles).values({ attachment_id: attachment!.id, provider_id: provider!.id, file_family: 'openai', base_url: 'https://files.test/v1', provider_reference: { openai: 'file-failure' }, expires_at: 0, created_at: 0 })
     await env.DB.exec("CREATE TRIGGER fail_file_cleanup BEFORE DELETE ON attachment_provider_files BEGIN SELECT RAISE(ABORT, 'cleanup failed'); END")
-    vi.stubGlobal('fetch', async () => Response.json({ providers: {}, models: {} }))
+    const startWorkflow = vi.fn().mockResolvedValue({ id: 'catalog-cron-test' })
+    const testEnv = { ...env, MODEL_CATALOG_REFRESH: { create: startWorkflow } as unknown as Workflow } as Env
     try {
-      await worker.scheduled!({ scheduledTime: Date.now(), cron: '0 3 * * *', noRetry: () => {} }, env, createExecutionContext())
-      expect(await env.DB.prepare('SELECT current_version FROM model_catalog_refresh WHERE id = 1').first()).toMatchObject({ current_version: expect.any(String) })
+      const scheduledTime = Date.now()
+      await worker.scheduled!({ scheduledTime, cron: '0 3 * * *', noRetry: () => {} }, testEnv, createExecutionContext())
+      expect(startWorkflow).toHaveBeenCalledWith({ id: `catalog-cron-${scheduledTime}`, params: { source: 'cron' } })
     } finally {
       await env.DB.exec('DROP TRIGGER fail_file_cleanup')
       vi.unstubAllGlobals()
@@ -77,17 +79,18 @@ describe('scheduled provider file cleanup', () => {
 
     const requests: Request[] = []
     const fetchSpy = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      if (String(input) === 'https://models.dev/catalog.json') throw new Error('catalog unavailable')
       requests.push(new Request(input, init))
       return Response.json({ id: 'file-stale', object: 'file', deleted: true })
     })
+    const startWorkflow = vi.fn().mockResolvedValue({ id: 'catalog-cron-test' })
+    const testEnv = { ...env, MODEL_CATALOG_REFRESH: { create: startWorkflow } as unknown as Workflow } as Env
     vi.stubGlobal('fetch', fetchSpy)
     try {
-      await worker.scheduled!({ scheduledTime: now, cron: '0 3 * * *', noRetry: () => {} }, env, createExecutionContext())
+      await worker.scheduled!({ scheduledTime: now, cron: '0 3 * * *', noRetry: () => {} }, testEnv, createExecutionContext())
     } finally {
       vi.unstubAllGlobals()
     }
-    expect(fetchSpy).toHaveBeenCalledWith('https://models.dev/catalog.json')
+    expect(startWorkflow).toHaveBeenCalledWith({ id: `catalog-cron-${now}`, params: { source: 'cron' } })
     expect(requests.map(request => [request.method, request.url])).toEqual([['DELETE', 'https://files.test/v1/files/file-stale']])
 
     const rows = await db.select().from(attachmentProviderFiles).where(eq(attachmentProviderFiles.attachment_id, a!.id))
