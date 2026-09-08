@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { Settings2Icon } from '@lucide/vue'
 import LabAvatar from '@/client/components/lab-avatar.vue'
 import CollectionState from '@/client/components/collection-state.vue'
 import ModelFilterBar from '@/client/components/model-filter-bar.vue'
@@ -14,7 +15,7 @@ import type { ModelRef } from '@/shared/api'
 import type { ModelQuery } from '@/shared/models'
 
 const props = defineProps<{ modelValue: ModelRef | null }>()
-const emit = defineEmits<{ select: [ModelRef] }>()
+const emit = defineEmits<{ select: [ModelRef]; editProvider: [providerId: number] }>()
 const config = useConfigStore()
 const filters = ref<Partial<ModelQuery>>({})
 const searchKey = ref(0)
@@ -52,13 +53,16 @@ Command(:key="searchKey" :model-value="currentKey" :should-filter="false" class=
   CommandInput(placeholder="搜索模型名称或 ID…" @input="onSearch")
   .px-3.py-2
     ModelFilterBar(:model-value="filters" :providers="config.providers" :search="false" @update:model-value="updateFilters")
-  CommandList(class="max-h-[min(20rem,40vh)]")
+  CommandList(class="max-h-[min(32rem,65vh)]")
     CollectionState(:loaded="config.loaded && config.pickerLoaded" :error="validationError ?? config.pickerError ?? config.loadError" :retry="loadModels" :empty="entries.length === 0" empty-title="没有可用模型" empty-description="当前筛选条件下没有已启用的模型。")
       template(#empty-action)
         Button(v-if="Object.keys(filters).length" variant="outline" class="min-h-10" @click="updateFilters({})") 清除筛选
         Button(v-else as-child variant="outline" class="min-h-10")
           RouterLink(to="/settings/providers") 配置模型
       ModelGroupList(:entries="entries" :catalog-providers="config.catalogProviders" command)
+        template(#provider-actions="{ provider }")
+          Button(type="button" variant="ghost" size="icon-sm" class="size-8" :aria-label="`设置供应商 ${provider.name}`" @click.stop="emit('editProvider', provider.id)")
+            Settings2Icon
         template(#default="{ entry }")
           CommandItem(:value="keyFor(entry)" class="min-h-10 md:min-h-0")
             LabAvatar(:lab-id="entry.model.lab_id" :provider-name="entry.provider.name" size="sm")

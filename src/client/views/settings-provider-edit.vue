@@ -12,8 +12,9 @@ import SettingsBackButton from '@/client/components/layout/settings-back-button.
 import { useFormChanges } from '@/client/composables/use-form-changes'
 import { Alert, AlertDescription, AlertTitle } from '@/client/ui/alert'
 import ProviderNavigation from '@/client/components/provider-navigation.vue'
-import ProviderInterfaceList from '@/client/components/provider-interface-list.vue'
+import ProviderSettingsForm from '@/client/components/provider-settings-form.vue'
 import { api } from '@/client/lib/api'
+import { providerSettingsDraft } from '@/client/lib/provider-settings'
 import { modelBadges, modelName } from '@/client/lib/ui-models'
 import { createModelWriteQueue } from '@/client/lib/settings'
 import { createModelEditorSession, type ModelEditorSession } from '@/client/lib/model-editor'
@@ -21,10 +22,9 @@ import { useConfigStore } from '@/client/stores/config'
 import { Badge } from '@/client/ui/badge'
 import { Button } from '@/client/ui/button'
 import { ButtonGroup } from '@/client/ui/button-group'
-import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/client/ui/field'
+import { Field, FieldGroup, FieldLabel } from '@/client/ui/field'
 import { Input } from '@/client/ui/input'
 import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemTitle } from '@/client/ui/item'
-import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/client/ui/select'
 import { Separator } from '@/client/ui/separator'
 import { Skeleton } from '@/client/ui/skeleton'
 import { Spinner } from '@/client/ui/spinner'
@@ -161,12 +161,7 @@ async function load() {
     const provider = config.providerRecords.find(item => item.id === id)
     if (!provider) { await router.replace('/settings/providers'); return }
     if (loadedProviderId !== id) {
-      Object.assign(form, {
-        name: provider.name, api_key: '', enabled: provider.enabled,
-        interfaces: provider.interfaces.map(({ id, protocol, base_url, native_files }) => ({ id, protocol, base_url, native_files })),
-        default_protocol: provider.interfaces.find(endpoint => endpoint.id === provider.default_interface_id)?.protocol ?? 'chat-completions',
-        models_dev_provider: provider.models_dev_provider_source === 'manual' && provider.models_dev_provider_id ? { source: 'manual', provider_id: provider.models_dev_provider_id } : { source: 'endpoint' },
-      })
+      Object.assign(form, providerSettingsDraft(provider))
       markSaved()
       models.value = JSON.parse(JSON.stringify(config.modelsByProvider[provider.id] ?? []))
       modelFilters.value = {}
@@ -190,10 +185,7 @@ async function load() {
 watch(providerId, load, { immediate: true })
 onBeforeUnmount(() => { loadToken++; modelLoadToken++; loadController?.abort() })
 
-function chooseAssociation(value: unknown) {
-  if (typeof value !== 'string') return
-  form.models_dev_provider = value === 'endpoint' ? { source: 'endpoint' } : { source: 'manual', provider_id: value }
-}
+function updateProviderForm(value: ProviderWriteInput) { Object.assign(form, value) }
 
 async function save() {
   if (saving.value || !validProvider.value) return
@@ -419,26 +411,13 @@ async function removeModel() {
           Button(variant="outline" class="min-h-10" @click="load") 重试
       template(v-else)
         form.flex.flex-col.gap-6(@submit.prevent="save")
-          FieldGroup
-            Field
-              FieldLabel(for="provider-name") 名称
-              Input#provider-name(v-model="form.name" required maxlength="100" class="min-h-10")
-            Field
-              FieldLabel(for="provider-key") API Key
-              Input#provider-key(v-model="form.api_key" type="password" autocomplete="off" placeholder="留空保持不变" class="min-h-10")
-              FieldDescription 留空保留已配置的密钥。
-            Field
-              FieldLabel(for="provider-association") models.dev 关联
-              Select(:model-value="form.models_dev_provider?.source === 'manual' ? form.models_dev_provider.provider_id : 'endpoint'" @update:model-value="chooseAssociation")
-                SelectTrigger#provider-association(class="w-full")
-                  SelectValue
-                SelectContent
-                  SelectGroup
-                    SelectItem(value="endpoint") 按端点自动匹配
-                    SelectItem(v-for="entry in catalogProviders" :key="entry.id" :value="entry.id") {{ entry.name }}
-              FieldDescription {{ form.models_dev_provider?.source === 'manual' ? '手动关联将保留，不受端点修改影响。' : `保存时按默认端点和同源接口匹配。当前关联：${savedProvider?.models_dev_provider_id ?? '未匹配'}` }}
-            ProviderInterfaceList(v-model="form.interfaces" v-model:default-protocol="form.default_protocol")
-            p.min-h-5.text-sm.text-muted-foreground(role="status") {{ associationWarning ?? '' }}
+          ProviderSettingsForm(
+            :model-value="form"
+            :catalog-providers="catalogProviders"
+            :current-catalog-provider-id="savedProvider?.models_dev_provider_id"
+            :has-key="hasKey"
+            @update:model-value="updateProviderForm")
+          p.min-h-5.text-sm.text-muted-foreground(role="status") {{ associationWarning ?? '' }}
           .flex.flex-wrap.items-center.justify-between.gap-2
             ButtonGroup(aria-label="供应商操作")
               Button(type="submit" class="min-h-10" :disabled="saving || deletingProvider || !validProvider") {{ saving ? '保存中…' : '保存' }}

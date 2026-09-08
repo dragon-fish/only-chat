@@ -426,6 +426,7 @@ describe('provider model editor', () => {
     const write = vi.spyOn(api, 'updateModel').mockResolvedValue(models[0]!)
     document.querySelector<HTMLButtonElement>('[aria-label="编辑 First model"]')!.click()
     await vi.waitFor(() => expect(document.querySelector('#model-1-2-name')).not.toBeNull())
+    expect(document.querySelector('[data-provider-settings-form]')).not.toBeNull()
     const name = document.querySelector<HTMLInputElement>('#model-1-2-name')!
     expect(name.value).toBe('')
     expect(name.placeholder).toBe('First model')

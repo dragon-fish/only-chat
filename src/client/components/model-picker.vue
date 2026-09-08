@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { useMediaQuery } from '@vueuse/core'
 import { ChevronDownIcon } from '@lucide/vue'
 import ModelPickerContent from '@/client/components/model-picker-content.vue'
+import ProviderQuickSettingsDialog from '@/client/components/provider-quick-settings-dialog.vue'
 import LabAvatar from '@/client/components/lab-avatar.vue'
 import { useConfigStore } from '@/client/stores/config'
 import { cn } from '@/client/lib/utils'
@@ -21,6 +22,8 @@ const emit = defineEmits<{ 'update:modelValue': [ModelRef | null] }>()
 const config = useConfigStore()
 
 const open = ref(false)
+const quickSettingsOpen = ref(false)
+const quickSettingsProviderId = ref<number | null>(null)
 const isDesktop = useMediaQuery('(min-width: 768px)')
 const selected = computed(() => config.modelFor(props.modelValue))
 const selectedName = computed(() => selected.value?.model.metadata.name ?? props.modelValue?.model_id ?? '选择模型')
@@ -40,6 +43,11 @@ function onSelect(value: ModelRef) {
   emit('update:modelValue', value)
   open.value = false
 }
+function editProvider(providerId: number) {
+  open.value = false
+  quickSettingsProviderId.value = providerId
+  quickSettingsOpen.value = true
+}
 </script>
 
 <template lang="pug">
@@ -55,10 +63,11 @@ component(:is="isDesktop ? Popover : Drawer" v-model:open="open")
   component(
     :is="isDesktop ? PopoverContent : DrawerContent"
     :align="isDesktop ? 'start' : undefined" :side-offset="isDesktop ? 8 : undefined"
-    :class="cn(isDesktop ? 'w-96 max-h-[calc(100dvh-2rem)] max-w-[calc(100vw-1.5rem)] overflow-y-auto p-0' : 'overflow-y-auto pb-[max(1rem,env(safe-area-inset-bottom))]')")
+    :class="cn(isDesktop ? 'w-[32rem] max-h-[calc(100dvh-2rem)] max-w-[calc(100vw-2rem)] overflow-y-auto p-0' : 'overflow-y-auto pb-[max(1rem,env(safe-area-inset-bottom))]')")
     DrawerHeader(v-if="!isDesktop")
       DrawerTitle 选择模型
       DrawerDescription 搜索模型，或按已声明的能力筛选。
     p.px-3.py-2.text-sm.text-muted-foreground(v-if="selectedError" role="status") 当前选择的模型无法加载：{{ selectedError }}
-    ModelPickerContent(:model-value="modelValue" @select="onSelect")
+    ModelPickerContent(:model-value="modelValue" @select="onSelect" @edit-provider="editProvider")
+ProviderQuickSettingsDialog(v-model:open="quickSettingsOpen" :provider-id="quickSettingsProviderId")
 </template>
