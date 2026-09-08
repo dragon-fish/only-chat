@@ -5,6 +5,7 @@ import { EllipsisIcon, GitForkIcon, LoaderCircle, PencilIcon, RefreshCwIcon, Tri
 import BranchSwitcher from '@/client/components/branch-switcher.vue'
 import LabAvatar from '@/client/components/lab-avatar.vue'
 import MessageUsage from '@/client/components/message-usage.vue'
+import ToolPartRenderer from '@/client/components/tool-part-renderer.vue'
 import ProjectAvatar from '@/client/components/project-avatar.vue'
 import { api } from '@/client/lib/api'
 import { cn } from '@/client/lib/utils'
@@ -16,6 +17,7 @@ import { Button } from '@/client/ui/button'
 import { Message as MessageRoot, MessageAvatar, MessageContent, MessageFooter, MessageHeader } from '@/client/ui/message'
 import { Textarea } from '@/client/ui/textarea'
 import type { Message, Project } from '@/shared/models'
+import type { ToolCallPart, ToolResultPart } from '@/shared/parts'
 import { useSessionFork } from '@/client/composables/use-session-fork'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/client/ui/dropdown-menu'
 
@@ -37,6 +39,14 @@ const textParts = computed(() => props.message.parts.filter((p) => p.type === 't
 const reasoning = computed(() => props.message.parts.filter((p) => p.type === 'reasoning').map((p) => p.text).join('\n'))
 const images = computed(() => props.message.parts.filter((p) => p.type === 'image'))
 const markdown = computed(() => textParts.value.map((p) => p.text).join(''))
+const toolRows = computed(() => {
+  const results = new Map<string, ToolResultPart>()
+  for (const part of props.message.parts) if (part.type === 'tool_result') results.set(part.call_id, part)
+  return props.message.parts
+    .filter((part): part is ToolCallPart => part.type === 'tool_call')
+    .map(call => ({ call, result: results.get(call.id) ?? null }))
+})
+const isSessionHead = computed(() => sync.sessions.get(props.message.session_id)?.head_message_id === props.message.id)
 /** Spec §7.4: the shell is visible the moment it arrives, and never claims reasoning it lacks. */
 const wait = computed(() => assistantWaitState(props.message))
 const { pending: forkPending, fork } = useSessionFork()
@@ -87,6 +97,9 @@ MessageRoot(:align="message.role === 'user' ? 'end' : 'start'")
             LoaderCircle(class="size-3.5 animate-spin")
             span 正在思考…
           MarkdownRender(mode="chat" :content="markdown" :final="!streaming" :smooth-streaming="false" :fade="true")
+          ToolPartRenderer(
+            v-for="row in toolRows" :key="row.call.id" :message-id="message.id"
+            :call="row.call" :result="row.result" :can-continue="isSessionHead")
           //- Generated images are served by the same authenticated attachment route as uploads.
           .flex.flex-wrap.gap-2.pt-2(v-if="images.length")
             img.max-h-80.rounded.border(v-for="(img, i) in images" :key="i" :src="api.attachmentUrl(img.attachment_id)")
