@@ -1,5 +1,6 @@
 import { Context, Service } from 'cordis'
 import type { LanguageModel } from 'ai'
+import type { ProviderKind } from '@/shared/models'
 import type { ScopedFilesClient } from './files/types'
 import type { LlmRequestTrace } from './observability'
 import type { ModelRow, ProviderInterfaceRow, ProviderRow } from '../../db/schema'
@@ -8,6 +9,7 @@ import { chatCompletionsProtocol } from './protocols/chat-completions'
 import { responsesProtocol } from './protocols/responses'
 import { anthropicProtocol } from './protocols/anthropic'
 import { vertexCompatibleProtocol } from './protocols/vertex-compatible'
+import { codexProvider } from './providers/codex'
 
 /**
  * One protocol's bindings to a provider SDK. `createFiles` is optional: a Files API is a provider
@@ -18,11 +20,16 @@ export interface LlmProtocolAdapter {
   createFiles?: (provider: ProviderRow, providerInterface: ProviderInterfaceRow, apiKey: string) => ScopedFilesClient
 }
 
+export interface LlmProviderAdapter {
+  createModel(provider: ProviderRow, providerInterface: ProviderInterfaceRow, model: ModelRow, trace?: LlmRequestTrace): Promise<LanguageModel>
+}
+
 export class Llm extends Service {
   static readonly provide = 'llm'
   static readonly inject = ['env']
 
   private readonly _adapters = new Map<string, LlmProtocolAdapter>()
+  private readonly _providers = new Map<ProviderKind, LlmProviderAdapter>()
   private readonly _secret: string
 
   constructor(ctx: Context) {
@@ -42,6 +49,13 @@ export class Llm extends Service {
     return this._adapters.has(protocol)
   }
 
+  registerProvider(kind: ProviderKind, adapter: LlmProviderAdapter): () => void {
+    return this.ctx.effect(() => {
+      this._providers.set(kind, adapter)
+      return () => { this._providers.delete(kind) }
+    }, `llm.registerProvider(${kind})`)
+  }
+
   /**
    * Whether uploads may be attempted at all. Callers ask this before `createFiles` so that a
    * provider with the capability switched off is never probed — it falls straight through to the
@@ -57,6 +71,8 @@ export class Llm extends Service {
 
   async createModel(provider: ProviderRow, providerInterface: ProviderInterfaceRow, model: ModelRow, trace?: LlmRequestTrace): Promise<LanguageModel> {
     if (providerInterface.provider_id !== provider.id || model.provider_id !== provider.id) throw new Error('model and interface must belong to the provider')
+    const providerAdapter = this._providers.get(provider.kind)
+    if (providerAdapter) return providerAdapter.createModel(provider, providerInterface, model, trace)
     const adapter = this._adapters.get(providerInterface.protocol)
     if (!adapter) throw new Error(`no adapter for protocol ${providerInterface.protocol}`)
     const key = await this.decryptKey(provider)
@@ -84,5 +100,6 @@ export const LlmPlugin = {
     await ctx.plugin(responsesProtocol)
     await ctx.plugin(anthropicProtocol)
     await ctx.plugin(vertexCompatibleProtocol)
+    await ctx.plugin(codexProvider)
   },
 }

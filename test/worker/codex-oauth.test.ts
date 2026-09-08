@@ -57,6 +57,157 @@ async function poll(id: string) {
 }
 
 describe('Codex OAuth REST boundary', () => {
+  it('refreshes the catalog through hub credentials and leaves newly discovered models disabled', async () => {
+    const result = await poll((await start()).flow_id)
+    if (result.status !== 'complete') throw new Error('Missing provider')
+    const upstream = globalThis.fetch
+    let authorization: string | null = null
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+      const req = new Request(input, init)
+      if (!req.url.endsWith('/models')) return upstream(input, init)
+      authorization = req.headers.get('authorization')
+      return Response.json({ models: [{ slug: 'codex-test' }, { slug: 'codex-new' }] })
+    })
+    const response = await request('POST', `/providers/${result.provider.id}/fetch-models`)
+    expect(response.status).toBe(200)
+    expect(authorization).toBe('Bearer private-access')
+    const rows = await db.query.models.findMany()
+    expect(rows.find(row => row.model_id === 'codex-test')).toMatchObject({ enabled: true })
+    expect(rows.find(row => row.model_id === 'codex-new')).toMatchObject({ enabled: false })
+  })
+
+  it('shares one refresh among concurrent callers and retains the connection version', async () => {
+    const result = await poll((await start()).flow_id)
+    if (result.status !== 'complete') throw new Error('Missing provider')
+    await runInDurableObject(stub(), async (instance: UserHub) => {
+      const id = result.provider.id
+      const original = (await store.read(id))!
+      await store.storeRefresh(original, { ...original.bundle!, expiresAt: Date.now() + 1 }, Date.now())
+      const requests: unknown[] = []
+      vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+        const req = new Request(input, init)
+        requests.push(await req.json())
+        return Response.json({ access_token: 'rotated-access', refresh_token: 'rotated-refresh', expires_in: 3600 })
+      })
+      const snapshots = await Promise.all(Array.from({ length: 8 }, () => instance.app.codex.getValidCredentials(id)))
+      expect(requests).toEqual([{ client_id: 'app_EMoamEEZ73f0CkXaXp7hrann', grant_type: 'refresh_token', refresh_token: 'private-refresh' }])
+      for (const snapshot of snapshots) expect(snapshot).toMatchObject({ status: 'connected', revision: 3, credentialVersion: 1, bundle: { accessToken: 'rotated-access', refreshToken: 'rotated-refresh' } })
+      expect(await instance.app.codex.getValidCredentials(id)).toEqual(snapshots[0])
+      expect(requests).toHaveLength(1)
+    })
+  })
+
+  it.each(['disconnected', 'reconnect-required'] as const)('refuses model listing and token refresh for a %s connection', async status => {
+    const result = await poll((await start()).flow_id)
+    if (result.status !== 'complete') throw new Error('Missing provider')
+    const original = (await store.read(result.provider.id))!
+    if (status === 'disconnected') await store.disconnect(result.provider.id, original.revision, Date.now())
+    else await store.markReconnectRequired(original, 'Reconnect required', Date.now())
+    calls.length = 0
+    const response = await request('POST', `/providers/${result.provider.id}/fetch-models`)
+    expect(response.status).toBe(502)
+    expect(await response.json()).toEqual({ error: 'Codex model listing failed' })
+    await runInDurableObject(stub(), async (instance: UserHub) => {
+      await expect(instance.app.codex.getValidCredentials(result.provider.id, true)).rejects.toThrow(/reconnect/i)
+      await expect(instance.app.codex.getValidCredentials(-1)).rejects.toThrow(/reconnect/i)
+    })
+    expect(calls).toEqual([])
+    expect(await store.read(result.provider.id)).toMatchObject({ status })
+    expect(await db.query.models.findMany()).toMatchObject([{ model_id: 'codex-test', enabled: true }])
+  })
+
+  it.each(['reconnect', 'disconnect', 'rotation'] as const)('discards refresh completion after a concurrent %s', async change => {
+    const result = await poll((await start()).flow_id)
+    if (result.status !== 'complete') throw new Error('Missing provider')
+    await runInDurableObject(stub(), async (instance: UserHub) => {
+      const id = result.provider.id
+      const original = (await store.read(id))!
+      vi.stubGlobal('fetch', async () => {
+        const winner = { ...original.bundle!, accessToken: 'winning-access', expiresAt: Date.now() + 3_600_000 }
+        if (change === 'reconnect') await store.reconnect(id, original.revision, winner, Date.now())
+        else if (change === 'disconnect') await store.disconnect(id, original.revision, Date.now())
+        else await store.storeRefresh(original, winner, Date.now())
+        return Response.json({ access_token: 'stale-access', expires_in: 3600 })
+      })
+      const refreshing = instance.app.codex.getValidCredentials(id, true)
+      if (change === 'disconnect') await expect(refreshing).rejects.toThrow(/reconnect/i)
+      else expect(await refreshing).toMatchObject({ bundle: { accessToken: 'winning-access' } })
+      expect(await store.read(id)).toMatchObject(change === 'disconnect' ? { status: 'disconnected', bundle: null } : { bundle: { accessToken: 'winning-access' } })
+    })
+  })
+
+  it.each([400, 401, 429, 500])('only permanent refresh failures require reconnect (HTTP %s)', async status => {
+    const result = await poll((await start()).flow_id)
+    if (result.status !== 'complete') throw new Error('Missing provider')
+    await runInDurableObject(stub(), async (instance: UserHub) => {
+      vi.stubGlobal('fetch', async () => Response.json({ error: status === 400 ? 'invalid_grant' : 'private-upstream', detail: 'private-access' }, { status }))
+      await expect(instance.app.codex.getValidCredentials(result.provider.id, true)).rejects.toThrow(/Codex/)
+      const current = (await store.read(result.provider.id))!
+      expect(current.status).toBe(status < 429 ? 'reconnect-required' : 'connected')
+      const row = await db.query.providerOAuthCredentials.findFirst()
+      expect(row?.last_error).toBe(status < 429 ? `Codex token refresh failed (${status})` : null)
+      expect(JSON.stringify(row?.last_error)).not.toMatch(/private-/)
+    })
+  })
+
+  it('ignores a permanent refresh failure from credentials superseded by reconnect', async () => {
+    const result = await poll((await start()).flow_id)
+    if (result.status !== 'complete') throw new Error('Missing provider')
+    await runInDurableObject(stub(), async (instance: UserHub) => {
+      const id = result.provider.id
+      const original = (await store.read(id))!
+      vi.stubGlobal('fetch', async () => {
+        await store.reconnect(id, original.revision, { ...original.bundle!, accessToken: 'winning-access' }, Date.now())
+        return Response.json({ error: 'invalid_grant' }, { status: 400 })
+      })
+      expect(await instance.app.codex.getValidCredentials(id, true)).toMatchObject({ status: 'connected', bundle: { accessToken: 'winning-access' } })
+      expect(await db.query.providerOAuthCredentials.findFirst()).toMatchObject({ status: 'connected', last_error: null })
+    })
+  })
+
+  it('clears a failed refresh so a later attempt can succeed', async () => {
+    const result = await poll((await start()).flow_id)
+    if (result.status !== 'complete') throw new Error('Missing provider')
+    await runInDurableObject(stub(), async (instance: UserHub) => {
+      let attempts = 0
+      vi.stubGlobal('fetch', async () => ++attempts === 1
+        ? Response.json({ error: 'private-transient' }, { status: 500 })
+        : Response.json({ access_token: 'recovered-access', expires_in: 3600 }))
+      await expect(instance.app.codex.getValidCredentials(result.provider.id, true)).rejects.toThrow(/Codex/)
+      expect(await instance.app.codex.getValidCredentials(result.provider.id, true)).toMatchObject({ status: 'connected', bundle: { accessToken: 'recovered-access' } })
+      expect(attempts).toBe(2)
+    })
+  })
+
+  it.each(['refresh', 'models'] as const)('aborts stalled %s requests after 30 seconds and retains the connection', async operation => {
+    const result = await poll((await start()).flow_id)
+    if (result.status !== 'complete') throw new Error('Missing provider')
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] })
+    await runInDurableObject(stub(), async (instance: UserHub) => {
+      let entered!: (signal: AbortSignal) => void
+      let rejectPending!: (error: Error) => void
+      const started = new Promise<AbortSignal>(resolve => { entered = resolve })
+      vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+        const req = new Request(input, init)
+        rejectPending = reject
+        req.signal.addEventListener('abort', () => reject(new Error('private-timeout-detail')), { once: true })
+        entered(req.signal)
+      }))
+      const pending = (operation === 'refresh' ? instance.app.codex.getValidCredentials(result.provider.id, true) : instance.app.codex.listModels(result.provider.id))
+        .then(() => null, error => error as Error)
+      try {
+        const signal = await started
+        await vi.advanceTimersByTimeAsync(29_999)
+        expect(signal.aborted).toBe(false)
+        await vi.advanceTimersByTimeAsync(1)
+        expect(signal.aborted).toBe(true)
+        expect(await pending).toBeInstanceOf(Error)
+        expect((await pending)?.message).not.toContain('private-timeout-detail')
+        expect(await store.read(result.provider.id)).toMatchObject({ status: 'connected', revision: 1 })
+      } finally { rejectPending(new Error('fixture cleanup')); await pending }
+    })
+  })
+
   it('stores only encrypted pending secrets and creates an enabled model only after completion', async () => {
     const grant = await start()
     expect(await db.select().from(providers)).toEqual([])

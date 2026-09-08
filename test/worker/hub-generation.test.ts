@@ -12,6 +12,7 @@ import { createDb, type DB } from '@/server/db/client'
 import { ensureDefaultUser } from '@/server/plugins/database'
 import type { Assets } from '@/server/plugins/assets'
 import { encryptSecret } from '@/server/plugins/llm/crypto'
+import { CodexCredentialStore } from '@/server/plugins/codex/credentials'
 import { buildModelMessages } from '@/server/plugins/llm/messages'
 import { MAX_UPLOAD_BYTES, r2Key } from '@/server/plugins/api/attachments'
 import type { Hub } from '@/server/plugins/hub'
@@ -1355,6 +1356,57 @@ describe('effective model interface', () => {
     c.ws.send(JSON.stringify({ type: 'send', request_id: 'missing-interface', session_id: null, parent_id: null, parts: [{ type: 'text', text: 'first' }], provider_id: providerId, model_id: 'mock-1' }))
     expect(await Promise.race([c.next('error'), c.next('message.done')])).toMatchObject({ request_id: 'missing-interface', message: expect.stringMatching(/interface/) })
     expect(c.events.some(event => event.type === 'session.created' || event.type === 'message.created')).toBe(false)
+  })
+})
+
+describe('Codex Responses generation', () => {
+  it.each([false, true])('persists and replays stateless reasoning and tool IDs with inline images (content omitted: %s)', async omitReasoningContent => {
+    const db = createDb(env.DB)
+    await ensureDefaultUser(db)
+    const providerId = await new CodexCredentialStore(db, env.KEY_ENCRYPTION_SECRET).createProvider({
+      accessToken: 'private-codex-access', refreshToken: 'private-codex-refresh', idToken: 'private-codex-id',
+      tokenType: 'Bearer', accountId: `codex-generation-${omitReasoningContent}`, email: 'owner@example.com', expiresAt: Date.now() + 3_600_000,
+    }, Date.now())
+    await db.insert(models).values({ provider_id: providerId, model_id: 'codex-fixture', enabled: true, metadata_resolved: { reasoning: true, modalities: { input: ['text', 'image'], output: ['text'] } } })
+    const bytes = uniqueImageBytes()
+    const digest = await sha256(bytes)
+    const key = r2Key(DEFAULT_USER_ID, digest)
+    await env.BUCKET.put(key, bytes)
+    const [attachment] = await db.insert(attachments).values({ user_id: DEFAULT_USER_ID, sha256: digest, mime: 'image/png', size: bytes.length, width: 1, height: 1, r2_key: key, origin: 'upload', created_at: 0 }).returning()
+    const requests: Array<{ url: string; body: { input: unknown[]; store: boolean; include: string[] } }> = []
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(input, init)
+      requests.push({ url: request.url, body: await request.json() })
+      return deepseekResponsesStream({ omitReasoningContent })
+    })
+    try {
+      const c = await connect()
+      c.ws.send(JSON.stringify({ type: 'send', session_id: null, parent_id: null, parts: [{ type: 'text', text: 'first' }, { type: 'image', attachment_id: attachment!.id }], provider_id: providerId, model_id: 'codex-fixture' }))
+      expect(await c.next('message.done')).toMatchObject({ status: 'done', error: null })
+      const sessionId = sessionIdOf(c)
+      const saved = (await listMessages(db, sessionId))[1]!
+      expect(saved.parts).toEqual([
+        { type: 'reasoning', text: 'complete reasoning', providerOptions: { responses: { itemId: 'rs_fixture', reasoningSummary: deepseekReasoningItem.summary, reasoningContent: deepseekReasoningItem.content, reasoningEncryptedContent: 'fixture-encrypted-state' } } },
+        { type: 'tool_call', id: 'call_fixture', name: 'lookup', args: { q: 'fixture' }, providerOptions: { responses: { itemId: 'fc_fixture' } } },
+        { type: 'text', text: 'fixture answer', providerOptions: { responses: { itemId: 'msg_fixture' } } },
+      ])
+      await finalizeMessage(db, saved.id, { parts: [...saved.parts, { type: 'tool_result', call_id: 'call_fixture', name: 'lookup', content: { found: true } }], usage: saved.usage, status: 'done', error: null })
+      c.ws.send(JSON.stringify({ type: 'send', session_id: sessionId, parent_id: null, parts: [{ type: 'text', text: 'next' }], provider_id: providerId, model_id: 'codex-fixture' }))
+      expect(await c.nextAfter('message.done', 2)).toMatchObject({ status: 'done' })
+      expect(requests).toHaveLength(2)
+      for (const request of requests) {
+        expect(request.url).toBe('https://chatgpt.com/backend-api/codex/responses')
+        expect(request.body).toMatchObject({ store: false, include: ['reasoning.encrypted_content'] })
+        expect(request.body).not.toHaveProperty('previous_response_id')
+        expect(request.body.input[0]).toMatchObject({ content: [{ type: 'input_text', text: 'first' }, { type: 'input_image', image_url: `data:image/png;base64,${toBase64(bytes)}` }] })
+      }
+      expect(requests[1]!.body.input).toEqual(expect.arrayContaining([
+        { type: 'reasoning', id: 'rs_fixture', summary: deepseekReasoningItem.summary, content: deepseekReasoningItem.content, encrypted_content: 'fixture-encrypted-state' },
+        { type: 'function_call', id: 'fc_fixture', call_id: 'call_fixture', name: 'lookup', arguments: '{"q":"fixture"}' },
+        { type: 'function_call_output', call_id: 'call_fixture', output: '{"found":true}' },
+      ]))
+      expect(await pointersOf(attachment!.id)).toEqual([])
+    } finally { vi.unstubAllGlobals() }
   })
 })
 

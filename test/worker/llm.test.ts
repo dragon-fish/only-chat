@@ -73,6 +73,18 @@ async function captureStreamRequest(p: ProviderRow, selected: ProviderInterfaceR
 }
 
 describe('Llm service', () => {
+  it('dispatches provider kinds before API-key decryption and disposes registration with its caller', async () => {
+    await inHub(async ctx => {
+      const p = { ...await provider(null), kind: 'custom' as const, api_key: 'invalid-ciphertext' }
+      const fiber = await ctx.plugin({ name: 'kind-adapter', inject: ['llm'], apply(c) {
+        c.llm.registerProvider('custom', { createModel: async (_p, _i, m) => ({ modelId: m.model_id, provider: 'kind-provider' }) as never })
+      } })
+      expect(await ctx.llm.createModel(p, providerInterface('responses'), model)).toMatchObject({ provider: 'kind-provider', modelId: 'test-model' })
+      await fiber.dispose()
+      await expect(ctx.llm.createModel(await provider(null), providerInterface('responses'), model)).rejects.toThrow(/API key/i)
+    })
+  })
+
   it('shares OpenAI Files scope between both OpenAI interfaces and isolates Anthropic', async () => {
     await inHub(async ctx => {
       const p = { ...await provider('files-key'), credential_version: 9 }

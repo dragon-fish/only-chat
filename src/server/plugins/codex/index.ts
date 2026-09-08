@@ -1,8 +1,18 @@
 import { Context, Service } from 'cordis'
 import { createCodexClient } from './client'
-import { CodexCredentialStore } from './credentials'
+import { CodexCredentialStore, type CodexCredentialSnapshot } from './credentials'
 import { CodexOAuthFlowStore } from './flow'
 import { CodexProtocolError } from './types'
+import { CODEX_REFRESH_SKEW_MS } from './constants'
+
+type ConnectedCredentials = CodexCredentialSnapshot & { status: 'connected' }
+
+export class CodexReconnectRequiredError extends Error {
+  constructor(readonly providerId: number) {
+    super('Codex reconnect required')
+    this.name = 'CodexReconnectRequiredError'
+  }
+}
 
 export type CodexOAuthPollResult =
   | { status: 'pending'; next_poll_at: number }
@@ -37,11 +47,50 @@ export class Codex extends Service {
   readonly credentials: CodexCredentialStore
   readonly flows: CodexOAuthFlowStore
   private readonly polling = new Map<string, AbortController>()
+  private readonly refreshing = new Map<number, Promise<ConnectedCredentials>>()
 
   constructor(ctx: Context) {
     super(ctx, 'codex')
     this.credentials = new CodexCredentialStore(ctx.db.orm, ctx.env.KEY_ENCRYPTION_SECRET)
     this.flows = new CodexOAuthFlowStore(ctx.doState.storage, ctx.env.KEY_ENCRYPTION_SECRET)
+  }
+
+  private async readConnected(providerId: number): Promise<ConnectedCredentials> {
+    const current = await this.credentials.read(providerId)
+    if (!current || current.status !== 'connected') throw new CodexReconnectRequiredError(providerId)
+    return current as ConnectedCredentials
+  }
+
+  async getValidCredentials(providerId: number, forceRefresh = false): Promise<ConnectedCredentials> {
+    const current = await this.readConnected(providerId)
+    if (!forceRefresh && current.bundle.expiresAt > Date.now() + CODEX_REFRESH_SKEW_MS) return current
+    return this.refreshOnce(current)
+  }
+
+  private refreshOnce(snapshot: ConnectedCredentials): Promise<ConnectedCredentials> {
+    const pending = this.refreshing.get(snapshot.providerId)
+    if (pending) return pending
+    const refresh = (async () => {
+      const current = await this.readConnected(snapshot.providerId)
+      if (current.revision !== snapshot.revision || current.encryptedBundle !== snapshot.encryptedBundle) return current
+      try {
+        const bundle = await requestWithDeadline(signal => this.client.refreshTokens(current.bundle, signal))
+        await this.credentials.storeRefresh(current, bundle, Date.now())
+      } catch (error) {
+        if (!(error instanceof CodexProtocolError) || error.category !== 'permanent') throw error
+        const message = new CodexProtocolError('token refresh', 'permanent', error.status).message
+        if (await this.credentials.markReconnectRequired(current, message, Date.now())) throw new CodexReconnectRequiredError(current.providerId)
+      }
+      // A stale CAS belongs to a newer rotation, reconnect, or disconnect. Never return stale tokens.
+      return this.readConnected(snapshot.providerId)
+    })().finally(() => { this.refreshing.delete(snapshot.providerId) })
+    this.refreshing.set(snapshot.providerId, refresh)
+    return refresh
+  }
+
+  async listModels(providerId: number): Promise<string[]> {
+    const current = await this.getValidCredentials(providerId)
+    return requestWithDeadline(signal => this.client.listModels(current.bundle, signal))
   }
 
   async start(providerId?: number) {
@@ -86,7 +135,7 @@ export class Codex extends Service {
         providerId = await this.credentials.createProvider(bundle, Date.now())
       }
       try {
-        const modelIds = await requestWithDeadline(signal => this.client.listModels(bundle, signal))
+        const modelIds = await this.listModels(providerId)
         return { status: 'complete', providerId, initialConnection: !flow.reconnect, modelIds, modelListError: null }
       } catch (error) {
         return { status: 'complete', providerId, initialConnection: !flow.reconnect, modelIds: [], modelListError: error instanceof CodexProtocolError ? error.message : 'Codex model listing failed' }

@@ -52,6 +52,16 @@ export function providerRoutes(ctx: Context) {
     if (id === null) return c.json({ error: 'not found' }, 404)
     const provider = await db.query.providers.findFirst({ where: owned(id) })
     if (!provider) return c.json({ error: 'not found' }, 404)
+    if (provider.kind === 'codex-oauth') {
+      try {
+        const ids = await c.env.USER_HUB.getByName(String(DEFAULT_USER_ID)).listCodexModels(id)
+        return c.json(await reconcileProviderModels(ctx, id, ids))
+      } catch (error) {
+        if (error instanceof ProviderModelSyncNotFound) return c.json({ error: error.message }, 404)
+        if (error instanceof ModelSourceConflict) return c.json({ error: error.message }, 409)
+        return c.json({ error: 'Codex model listing failed' }, 502)
+      }
+    }
     const endpoint = provider.default_interface_id === null ? undefined : await db.query.providerInterfaces.findFirst({
       where: and(eq(providerInterfaces.id, provider.default_interface_id), eq(providerInterfaces.provider_id, id)),
     })
