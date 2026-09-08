@@ -132,6 +132,46 @@ describe('model catalog', () => {
     }
   })
 
+  it('bounds abandoned refresh leases to one minute', async () => {
+    const ctx = await createApp({ env, side: 'worker' })
+    const before = Date.now()
+    const lease = await CatalogLease.acquire(ctx.db.orm)
+    try {
+      const state = await env.DB.prepare('SELECT expires_at FROM model_catalog_refresh WHERE id = 1').first<{ expires_at: number }>()
+      expect(state!.expires_at - before).toBeGreaterThan(0)
+      expect(state!.expires_at - before).toBeLessThanOrEqual(60_000)
+    } finally { await lease.release() }
+  })
+
+  it('starts a replacement refresh in the same service after its database lease expires', async () => {
+    const ctx = await createApp({ env, side: 'worker' })
+    let startFirst!: () => void
+    let releaseFirst!: () => void
+    const firstStarted = new Promise<void>(resolve => { startFirst = resolve })
+    const firstResume = new Promise<void>(resolve => { releaseFirst = resolve })
+    let calls = 0
+    vi.stubGlobal('fetch', async () => {
+      calls++
+      if (calls === 1) { startFirst(); await firstResume }
+      return Response.json(catalog(calls === 1 ? 'Abandoned' : 'Replacement'))
+    })
+    const abandoned = ctx.modelCatalog.refresh('manual')
+    await firstStarted
+    await env.DB.exec('UPDATE model_catalog_refresh SET expires_at = 0 WHERE id = 1')
+    const replacement = ctx.modelCatalog.refresh('manual')
+    try {
+      const result = await Promise.race([
+        replacement,
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('replacement refresh did not start')), 250)),
+      ])
+      expect(result).toMatchObject({ changed: true })
+      expect(calls).toBe(2)
+    } finally {
+      releaseFirst()
+      await abandoned.catch(() => {})
+    }
+  })
+
   it('stops an expired publisher before materialization and preserves its successor lease', async () => {
     const { ctx, model } = await seedLeasedModel()
     serve()
@@ -185,8 +225,8 @@ describe('model catalog', () => {
     try {
       serve(catalog('Contender version'))
       const conflict = await contender.api.request('/api/model-catalog/refresh', { method: 'POST' })
-      expect(conflict.status).toBe(409)
-      expect(await conflict.json()).toEqual({ error: 'Catalog refresh already in progress' })
+      expect(conflict.status).toBe(202)
+      expect(await conflict.json()).toHaveProperty('instanceId')
       expect(await contender.modelCatalog.refresh('cron')).toBeNull()
       expect((await ctx.db.orm.select().from(models).where(eq(models.id, model.id)))[0]?.metadata_resolved.name).toBe('Catalog model')
       expect(await publication()).toEqual({ current: initial.version, previous: null })
@@ -390,14 +430,20 @@ describe('model catalog', () => {
   })
 
   it('exposes status, searchable provider index and refresh counts through the Worker routes', async () => {
-    const ctx = await createApp({ env, side: 'worker' })
+    const create = vi.fn().mockResolvedValue({ id: 'catalog-manual-refresh-test-id' })
+    const workflow = { create, get: vi.fn().mockResolvedValue({ status: vi.fn().mockResolvedValue({ status: 'running' }) }) }
+    const ctx = await createApp({ env: { ...env, MODEL_CATALOG_REFRESH: workflow as unknown as Workflow }, side: 'worker' })
     const initial = await ctx.api.request('/api/model-catalog/status')
     expect(initial.status).toBe(200)
     expect(await initial.json()).toMatchObject({ version: null })
-    serve()
     const refresh = await ctx.api.request('/api/model-catalog/refresh', { method: 'POST' })
-    expect(refresh.status).toBe(200)
-    expect(await refresh.json()).toMatchObject({ changed: true, providers: 1, globalModels: 1, providerModels: 2 })
+    expect(refresh.status).toBe(202)
+    expect(await refresh.json()).toEqual({ instanceId: 'catalog-manual-refresh-test-id' })
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ params: { source: 'manual' } }))
+    const running = await ctx.api.request('/api/model-catalog/refresh/catalog-manual-refresh-test-id')
+    expect(await running.json()).toEqual({ status: 'running' })
+    serve()
+    await ctx.modelCatalog.refresh('manual')
     const found = await ctx.api.request('/api/model-catalog/providers?q=ACM')
     expect(await found.json()).toEqual([{ id: 'acme', name: 'Acme', api: 'https://acme.test/v1' }])
     expect(await (await ctx.api.request('/api/model-catalog/providers?q=missing')).json()).toEqual([])

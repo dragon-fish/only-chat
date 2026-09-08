@@ -17,7 +17,6 @@ export class ModelCatalog extends Service {
   static readonly provide = 'modelCatalog'
   static readonly inject = ['env', 'db']
   private readonly storage: CatalogStorage
-  private refreshing: Promise<CatalogRefreshResult> | undefined
 
   constructor(ctx: Context) {
     super(ctx, 'modelCatalog')
@@ -27,10 +26,9 @@ export class ModelCatalog extends Service {
   refresh(source: 'manual'): Promise<CatalogRefreshResult>
   refresh(source: 'cron'): Promise<CatalogRefreshResult | null>
   async refresh(source: 'cron' | 'manual'): Promise<CatalogRefreshResult | null> {
-    this.refreshing ??= refreshCatalog(this.storage, this.ctx.db.orm).finally(() => { this.refreshing = undefined })
     let busy = false
     try {
-      return await this.refreshing
+      return await refreshCatalog(this.storage, this.ctx.db.orm)
     } catch (error) {
       busy = error instanceof CatalogRefreshBusyError
       if (busy && source === 'cron') {
