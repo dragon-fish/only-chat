@@ -397,10 +397,14 @@ async function continueFromToolMessage(hub: Hub, messageId: number, requireHead:
   if (state === 'waiting') throw new Error('tool calls are still waiting for responses')
   if (state === 'cancelled') throw new Error('cancelled tool calls cannot continue automatically')
 
-  const reconcileChildHead = async (child: Message): Promise<void> => {
+  const reconcileChildHead = async (child: Message, rejectOtherHead: boolean): Promise<void> => {
     const current = await getSession(hub.db, session.id)
     if (!current) throw new Error('session not found')
     if (current.head_message_id === child.id) return
+    if (current.head_message_id !== message.id) {
+      if (rejectOtherHead) throw new Error('tool-call message is no longer the session head')
+      return
+    }
     const updated = await updateSession(hub.db, current.id, { head_message_id: child.id })
     hub.broadcast({ type: 'head.changed', session_id: updated.id, message_id: child.id })
     hub.emitSessionUpdated(updated)
@@ -410,10 +414,7 @@ async function continueFromToolMessage(hub: Hub, messageId: number, requireHead:
   if (existingChildren.length > 1) throw new Error('tool-call message has multiple continuation children')
   if (existingChildren.length === 1) {
     const child = toMessage(existingChildren[0]!)
-    if (requireHead && session.head_message_id !== message.id && session.head_message_id !== child.id) {
-      throw new Error('tool-call message is no longer the session head')
-    }
-    await reconcileChildHead(child)
+    await reconcileChildHead(child, requireHead)
     return
   }
   if (requireHead && session.head_message_id !== message.id) throw new Error('tool-call message is no longer the session head')
@@ -426,7 +427,7 @@ async function continueFromToolMessage(hub: Hub, messageId: number, requireHead:
   if (!shell) {
     const raced = await listAssistantChildren(hub.db, message.id)
     if (raced.length !== 1) throw new Error('continuation child could not be resolved')
-    await reconcileChildHead(toMessage(raced[0]!))
+    await reconcileChildHead(toMessage(raced[0]!), requireHead)
     return
   }
   await generate(hub, target, shell, message.id)

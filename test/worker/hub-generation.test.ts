@@ -538,6 +538,47 @@ describe('generation', () => {
     expect(await c.next('head.changed')).toMatchObject({ session_id: session.id, message_id: child.id })
   })
 
+  it('does not rewind a newer Session head on an identical response retry for an old tool call', async () => {
+    const db = createDb(env.DB)
+    await ensureDefaultUser(db)
+    const session = await createSession(db, {
+      user_id: DEFAULT_USER_ID, title: 'keep newer head', provider_id: null, model_id: null,
+    })
+    const toolMessage = await insertMessage(db, {
+      session_id: session.id, parent_id: null, seq: 1, role: 'assistant', status: 'done', error: null,
+      provider_id: null, model_id: null, usage: null, created_at: 0,
+      parts: [
+        { type: 'tool_call', id: 'old-call', name: 'ask_user', args: ASK_USER_INPUT },
+        {
+          type: 'tool_result', call_id: 'old-call', name: 'ask_user',
+          content: { status: 'answered', answers: [{ id: 'framework', value: 'Vue' }] },
+        },
+      ],
+    })
+    const child = await insertMessage(db, {
+      session_id: session.id, parent_id: toolMessage.id, seq: 2, role: 'assistant', status: 'done', error: null,
+      provider_id: null, model_id: null, usage: null, created_at: 1, parts: [{ type: 'text', text: 'continued' }],
+    })
+    const newer = await insertMessage(db, {
+      session_id: session.id, parent_id: child.id, seq: 3, role: 'user', status: 'done', error: null,
+      provider_id: null, model_id: null, usage: null, created_at: 2, parts: [{ type: 'text', text: 'later' }],
+    })
+    await updateSession(db, session.id, { head_message_id: newer.id })
+    const c = await connect()
+    c.events.length = 0
+
+    await runInDurableObject(env.USER_HUB.getByName(String(DEFAULT_USER_ID)), async (instance: UserHub) => {
+      await instance.app.hub.handleCommand(JSON.stringify({
+        type: 'tool.respond', request_id: 'old-retry', message_id: toolMessage.id, call_id: 'old-call',
+        result: { status: 'answered', answers: [{ id: 'framework', value: 'Vue' }] },
+      }))
+    })
+
+    expect((await getSession(db, session.id))!.head_message_id).toBe(newer.id)
+    expect(c.events.some(event => event.type === 'head.changed')).toBe(false)
+    expect(c.events.some(event => event.type === 'session.updated')).toBe(false)
+  })
+
   it('streams a reply to every socket and persists it', async () => {
     const providerId = await seedProvider()
     const created = await installMock(() => new MockLanguageModelV4({
