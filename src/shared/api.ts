@@ -1,6 +1,22 @@
 import { z } from 'zod'
 import { ModelMetadataOverrideSchema } from './model-metadata'
-import { InterfaceProtocolSchema, SessionParamsSchema } from './models'
+import { InterfaceProtocolSchema, ProviderWithInterfacesSchema, SessionParamsSchema } from './models'
+
+export const CodexOAuthStartResponseSchema = z.strictObject({
+  flow_id: z.string().uuid(),
+  verification_url: z.string().url(),
+  user_code: z.string().min(1),
+  expires_at: z.number().int(),
+  poll_interval_ms: z.number().int().positive(),
+})
+export type CodexOAuthStartResponse = z.infer<typeof CodexOAuthStartResponseSchema>
+
+export const CodexOAuthPollResponseSchema = z.discriminatedUnion('status', [
+  z.strictObject({ status: z.literal('pending'), next_poll_at: z.number().int() }),
+  z.strictObject({ status: z.literal('complete'), provider: ProviderWithInterfacesSchema, model_sync_warning: z.string().optional() }),
+  z.strictObject({ status: z.literal('failed'), error: z.string() }),
+])
+export type CodexOAuthPollResponse = z.infer<typeof CodexOAuthPollResponseSchema>
 
 export interface ModelRef {
   provider_id: number

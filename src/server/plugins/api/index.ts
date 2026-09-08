@@ -4,6 +4,7 @@ import { DEFAULT_USER_ID } from '@/shared/constants'
 import { meRoutes } from './me'
 import { sessionRoutes } from './sessions'
 import { providerRoutes } from './providers'
+import { codexRoutes } from './codex'
 import { modelRoutes } from './models'
 import { attachmentRoutes } from './attachments'
 import { projectRoutes } from './projects'
@@ -39,6 +40,7 @@ export const ApiPlugin = {
     app.route('/api', meRoutes(ctx))
     app.route('/api', sessionRoutes(ctx))
     app.route('/api', providerRoutes(ctx))
+    app.route('/api', codexRoutes(ctx))
     app.route('/api', modelRoutes(ctx))
     app.route('/api', attachmentRoutes(ctx))
     app.route('/api', projectRoutes(ctx))

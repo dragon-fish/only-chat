@@ -7,6 +7,7 @@ import { ApiPlugin } from './plugins/api'
 import { ModelCatalog } from './plugins/model-catalog'
 import { ToolRegistryPlugin } from './plugins/tools'
 import { AskUserServerPlugin } from '@/plugins/ask-user/server'
+import { CodexPlugin } from './plugins/codex'
 
 export type Side = 'worker' | 'hub'
 
@@ -36,6 +37,8 @@ export async function createApp(options: AppOptions): Promise<Context> {
   await ctx.plugin(Database)
   await ctx.plugin(Assets)
   if (options.side === 'hub') {
+    await ctx.plugin(CodexPlugin)
+    if (!ctx.get('codex')) throw new Error('CodexPlugin loaded but ctx.codex is unavailable')
     await ctx.plugin(LlmPlugin)
     // `await ctx.plugin()` resolves even when the plugin stays PENDING on a missing injection,
     // so assert the service is actually reachable rather than failing later at first use.

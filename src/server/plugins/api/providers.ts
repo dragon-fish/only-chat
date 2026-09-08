@@ -8,7 +8,8 @@ import { decryptSecret } from '../llm/crypto'
 import { listRemoteModels } from '../llm/list-models'
 import { cleanupProviderFilesBeforeChange, invalidatedProviderFiles } from '../files-cleanup'
 import { parseId } from './params'
-import { ProviderWriteError, toProviderDto, writeProvider } from './provider-write'
+import { ProviderWriteError, writeProvider } from './provider-write'
+import { listProviderDtos } from './provider-read'
 import { ModelSourceConflict } from './model-write'
 import { ProviderModelSyncNotFound, reconcileProviderModels } from './provider-model-sync'
 
@@ -17,13 +18,7 @@ export function providerRoutes(ctx: Context) {
   const db = ctx.db.orm
   const owned = (id: number) => and(eq(providers.id, id), eq(providers.user_id, DEFAULT_USER_ID))
 
-  r.get('/providers', async c => {
-    const rows = await db.select().from(providers).where(eq(providers.user_id, DEFAULT_USER_ID)).orderBy(providers.id)
-    const endpoints = await db.select({ interface: providerInterfaces }).from(providerInterfaces)
-      .innerJoin(providers, eq(providers.id, providerInterfaces.provider_id)).where(eq(providers.user_id, DEFAULT_USER_ID))
-      .orderBy(providerInterfaces.id)
-    return c.json(rows.map(row => toProviderDto(row, endpoints.filter(endpoint => endpoint.interface.provider_id === row.id).map(endpoint => endpoint.interface))))
-  })
+  r.get('/providers', async c => c.json(await listProviderDtos(ctx)))
 
   r.on(['POST', 'PUT'], ['/providers', '/providers/:id'], async c => {
     const id = c.req.param('id') === undefined ? undefined : parseId(c.req.param('id')!)

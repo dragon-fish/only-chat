@@ -60,6 +60,18 @@ export class UserHub extends DurableObject<Env> {
     return this._app
   }
 
+  async startCodexOAuth(providerId?: number) {
+    return this._app.codex.start(providerId)
+  }
+
+  async pollCodexOAuth(flowId: string) {
+    return this._app.codex.poll(flowId)
+  }
+
+  async cancelCodexOAuth(flowId: string) {
+    return this._app.codex.cancel(flowId)
+  }
+
   async fetch(request: Request): Promise<Response> {
     if (request.headers.get('Upgrade') !== 'websocket') return new Response('Expected websocket', { status: 426 })
     const pair = new WebSocketPair()

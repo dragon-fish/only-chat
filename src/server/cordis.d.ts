@@ -6,6 +6,7 @@ import type { BeforeSendPayload } from './plugins/hub/generation'
 import type { ApiApp } from './plugins/api'
 import type { ModelCatalog } from './plugins/model-catalog'
 import type { ToolRegistry } from './plugins/tools'
+import type { Codex } from './plugins/codex'
 import type { Message, Project, Session } from '@/shared/models'
 
 declare module 'cordis' {
@@ -18,6 +19,7 @@ declare module 'cordis' {
     api: ApiApp
     modelCatalog: ModelCatalog
     tools: ToolRegistry
+    codex: Codex
   }
 }
 

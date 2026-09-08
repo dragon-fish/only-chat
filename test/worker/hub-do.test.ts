@@ -1,14 +1,42 @@
 import { runInDurableObject } from 'cloudflare:test'
 import { env, exports } from 'cloudflare:workers'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { createDb } from '@/server/db/client'
 import type { UserHub } from '@/server/index'
 import { ensureDefaultUser } from '@/server/plugins/database'
 import { createSession } from '@/server/plugins/hub/sessions'
 import type { Message } from '@/shared/models'
 import { connect } from './ws-helper'
+import { CodexOAuthFlowStore } from '@/server/plugins/codex/flow'
 
 describe('UserHub DO', () => {
+  it('resumes encrypted OAuth flow storage and exposes only internal completion IDs over RPC', async () => {
+    const stub = env.USER_HUB.getByName('oauth-rpc-test')
+    const flowId = crypto.randomUUID()
+    await runInDurableObject(stub, async (_instance: UserHub, state) => {
+      const flows = new CodexOAuthFlowStore(state.storage, env.KEY_ENCRYPTION_SECRET)
+      await flows.create({ flowId, deviceAuthId: 'rpc-device', userCode: 'rpc-code', verificationUrl: 'https://auth.openai.com/codex/device', intervalMs: 5000, nextPollAt: 0, expiresAt: Date.now() + 60_000 })
+      expect(await new CodexOAuthFlowStore(state.storage, env.KEY_ENCRYPTION_SECRET).read(flowId, Date.now())).toMatchObject({ flowId, userCode: 'rpc-code' })
+    })
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new Request(input, init).url
+      if (url.endsWith('/deviceauth/token')) return Response.json({ authorization_code: 'rpc-auth', code_verifier: 'rpc-verifier', code_challenge: 'rpc-challenge' })
+      if (url.endsWith('/oauth/token')) return Response.json({
+        id_token: `header.${btoa(JSON.stringify({ email: 'rpc@example.com', 'https://api.openai.com/auth': { chatgpt_account_id: crypto.randomUUID() } }))}.signature`,
+        access_token: 'rpc-access', refresh_token: 'rpc-refresh', token_type: 'Bearer', expires_in: 3600,
+      })
+      if (url.endsWith('/models')) return Response.json({ models: [{ slug: 'rpc-model' }] })
+      throw new Error('Unexpected request')
+    })
+    try {
+      const result = await stub.pollCodexOAuth(flowId)
+      expect(result).toEqual({ status: 'complete', providerId: expect.any(Number), modelIds: ['rpc-model'], modelListError: null })
+      await runInDurableObject(stub, async (_instance: UserHub, state) => {
+        expect(await state.storage.get(`codex-oauth:${flowId}`)).toBeUndefined()
+      })
+    } finally { vi.unstubAllGlobals() }
+  })
+
   it('sends a snapshot on connect and rejects non-upgrade requests', async () => {
     const plain = await exports.default.fetch(new Request('https://x/ws'))
     expect(plain.status).toBe(426)
