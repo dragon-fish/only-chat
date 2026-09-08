@@ -5,7 +5,7 @@ import { WsClient, type WsStatus } from '@/client/lib/ws-client'
 import type { ModelRef } from '@/shared/api'
 import type { Message, Project, Session, SessionParams, UserSettings } from '@/shared/models'
 import type { ModelMetadata } from '@/shared/model-metadata'
-import type { Part } from '@/shared/parts'
+import type { Part, ToolResultPart } from '@/shared/parts'
 import type { SendCommand, WsCommand, WsEvent } from '@/shared/ws'
 
 /**
@@ -510,6 +510,10 @@ export function withOptimisticUserMessage(path: Message[], optimistic: Message |
   return optimistic ? [...path, optimistic] : path
 }
 
+export type OptimisticMutation =
+  | { kind: 'message'; message: Message }
+  | { kind: 'tool_result'; messageId: number; part: ToolResultPart }
+
 /**
  * The whole rule as a pure reducer; the view only performs the effect. Only a rejection puts the
  * message back (spec §9). Landing, giving up and leaving all end the wait and drop the copy, which
@@ -589,6 +593,38 @@ export const useSyncStore = defineStore('sync', () => {
   const projectsError = ref<string | null>(null)
   const settingsError = ref<string | null>(null)
   const client = shallowRef<WsClient | null>(null)
+  const optimisticMutations = reactive(new Map<string, OptimisticMutation>())
+
+  function beginOptimistic(requestId: string, mutation: OptimisticMutation): void {
+    optimisticMutations.set(requestId, mutation)
+  }
+
+  function confirmOptimistic(requestId: string): void {
+    optimisticMutations.delete(requestId)
+  }
+
+  function rejectOptimistic(requestId: string): void {
+    optimisticMutations.delete(requestId)
+  }
+
+  function abandonOptimistic(requestId: string): void {
+    optimisticMutations.delete(requestId)
+  }
+
+  function optimisticToolResult(messageId: number, callId: string): ToolResultPart | undefined {
+    for (const mutation of optimisticMutations.values()) {
+      if (mutation.kind === 'tool_result' && mutation.messageId === messageId && mutation.part.call_id === callId) {
+        return mutation.part
+      }
+    }
+    return undefined
+  }
+
+  function optimisticToolCallIds(messageId: number): Set<string> {
+    return new Set([...optimisticMutations.values()].flatMap(mutation => (
+      mutation.kind === 'tool_result' && mutation.messageId === messageId ? [mutation.part.call_id] : []
+    )))
+  }
 
   const sessionList = computed(() => [...sessions.values()].sort((a, b) => b.updated_at - a.updated_at))
   const projectList = computed(() => [...projects.values()].sort((a, b) => b.updated_at - a.updated_at))
@@ -663,6 +699,13 @@ export const useSyncStore = defineStore('sync', () => {
         break
       }
       case 'message.part': {
+        if (e.part.type === 'tool_result') {
+          for (const [requestId, mutation] of optimisticMutations) {
+            if (mutation.kind === 'tool_result' && mutation.messageId === e.message_id && mutation.part.call_id === e.part.call_id) {
+              confirmOptimistic(requestId)
+            }
+          }
+        }
         const m = findMessage(e.message_id)
         if (!m) return
         while (m.parts.length <= e.part_index) m.parts.push({ type: 'text', text: '' })
@@ -696,6 +739,7 @@ export const useSyncStore = defineStore('sync', () => {
         break
       }
       case 'error':
+        if (e.request_id) rejectOptimistic(e.request_id)
         lastError.value = e.message
         break
     }
@@ -779,7 +823,9 @@ export const useSyncStore = defineStore('sync', () => {
 
   return {
     status, snapshotSeq, sessions, projects, messages, streamingIds, forkResult, settings, lastError, projectsLoaded, sessionsLoaded, settingsLoaded,
+    optimisticMutations,
     sessionsError, projectsError, settingsError, loadedMessageSessions, sessionList, projectList,
     applyEvent, ingestMessages, sessionsInProject, pathFor, siblingsOf, isStreaming, loadSessions, loadProjects, loadSettings, loadMessages, connect, send,
+    beginOptimistic, confirmOptimistic, rejectOptimistic, abandonOptimistic, optimisticToolResult, optimisticToolCallIds,
   }
 })

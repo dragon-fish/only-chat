@@ -587,6 +587,34 @@ describe('optimistic user messages', () => {
     expect(confirmed.map(message => message.id)).toEqual([1])
     expect(withOptimisticUserMessage(confirmed, null)).toBe(confirmed)
   })
+
+  it('uses one lifecycle for optimistic messages and tool results', () => {
+    const s = useSyncStore()
+    const message = optimisticUserMessage({
+      id: -1, sessionId: 3, parentId: null, parts: [{ type: 'text', text: 'pending' }], createdAt: 1,
+    })
+    s.beginOptimistic('message-request', { kind: 'message', message })
+    expect(s.optimisticMutations.get('message-request')).toMatchObject({ kind: 'message', message: { id: -1 } })
+    s.abandonOptimistic('message-request')
+    expect(s.optimisticMutations.has('message-request')).toBe(false)
+
+    const call = { type: 'tool_call' as const, id: 'call-1', name: 'ask_user', args: {} }
+    s.ingestMessages(3, [msg(10, null, 'assistant', { session_id: 3, parts: [call] })])
+    const part = {
+      type: 'tool_result' as const,
+      call_id: 'call-1',
+      name: 'ask_user',
+      content: { status: 'answered', answers: [] },
+    }
+    s.beginOptimistic('tool-request', { kind: 'tool_result', messageId: 10, part })
+    expect(s.optimisticToolResult(10, 'call-1')).toEqual(part)
+    s.applyEvent({ type: 'message.part', message_id: 10, part_index: 1, part })
+    expect(s.optimisticMutations.has('tool-request')).toBe(false)
+
+    s.beginOptimistic('rejected-tool', { kind: 'tool_result', messageId: 10, part })
+    s.applyEvent({ type: 'error', request_id: 'rejected-tool', message: 'rejected' })
+    expect(s.optimisticMutations.has('rejected-tool')).toBe(false)
+  })
 })
 
 describe('rejected message recovery', () => {

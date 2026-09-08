@@ -230,6 +230,7 @@ describe('ask_user answer serialization', () => {
       second,
     ])
     expect(pendingAskUserCalls([old, head], head.id)).toEqual([{ messageId: head.id, call: second }])
+    expect(pendingAskUserCalls([old, head], head.id, new Set(['second']))).toEqual([])
     expect(pendingAskUserCalls([old, head], old.id)).toEqual([{ messageId: old.id, call: { ...first, id: 'old' } }])
   })
 

@@ -22,6 +22,7 @@ export interface PendingAskUserCall {
 export function pendingAskUserCalls(
   messages: readonly Message[],
   sessionHeadId: number | null | undefined,
+  optimisticResultCallIds: ReadonlySet<string> = new Set(),
 ): PendingAskUserCall[] {
   const message = messages.find(candidate => candidate.id === sessionHeadId)
   if (!message || message.role !== 'assistant' || message.status !== 'done') return []
@@ -31,6 +32,7 @@ export function pendingAskUserCalls(
       call.name === ASK_USER_TOOL_ID
       && AskUserInputSchema.safeParse(call.args).success
       && !results.has(call.id)
+      && !optimisticResultCallIds.has(call.id)
     ))
     .map(call => ({ messageId: message.id, call }))
 }

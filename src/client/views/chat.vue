@@ -44,9 +44,15 @@ const streaming = computed(() => sid.value !== null && sync.isStreaming(sid.valu
 const composer = ref<InstanceType<typeof Composer> | null>(null)
 const draftTools = ref<string[] | null>(null)
 const outstanding = ref<OutstandingSend>('idle')
-const optimisticMessage = ref<Message | null>(null)
+const optimisticRequestId = ref<string | null>(null)
 const optimisticBaseIds = ref(new Set<number>())
 let nextOptimisticId = -1
+const optimisticMessage = computed<Message | null>(() => {
+  const requestId = optimisticRequestId.value
+  if (!requestId) return null
+  const mutation = sync.optimisticMutations.get(requestId)
+  return mutation?.kind === 'message' ? mutation.message : null
+})
 const visiblePath = computed(() => withOptimisticUserMessage(path.value, optimisticMessage.value))
 
 // ---- draft and session settings
@@ -132,7 +138,15 @@ const contextUsage = computed(() => {
 // While the config is still loading nothing is known to be unavailable, so sending stays possible.
 const modelAvailable = computed(() => !config.loaded || config.isAvailable(effective.value.model))
 const selectedTools = computed(() => sid.value === null ? (draftTools.value ?? []) : (session.value?.tools ?? []))
-const pendingToolCall = computed(() => pendingAskUserCalls(path.value, session.value?.head_message_id)[0] ?? null)
+const optimisticToolCallIds = computed(() => {
+  const headId = session.value?.head_message_id
+  return headId === null || headId === undefined ? new Set<string>() : sync.optimisticToolCallIds(headId)
+})
+const pendingToolCall = computed(() => pendingAskUserCalls(
+  path.value,
+  session.value?.head_message_id,
+  optimisticToolCallIds.value,
+)[0] ?? null)
 const globallyAvailableTools = computed(() => new Set(defaultToolsForSettings(pluginManifests, sync.settings.plugins)))
 const toolsSupported = computed(() => toolSelectionSupported(
   selectedTools.value,
@@ -231,8 +245,12 @@ function dispatch(event: SendEvent) {
   outstanding.value = step.state
   clearTimeout(outstandingTimer)
   outstandingTimer = step.state === 'outstanding' ? setTimeout(() => dispatch('timeout'), 10_000) : undefined
-  if (step.effect !== 'none') {
-    optimisticMessage.value = null
+  const requestId = optimisticRequestId.value
+  if (step.effect !== 'none' && requestId) {
+    if (event === 'landed') sync.confirmOptimistic(requestId)
+    else if (event === 'error') sync.rejectOptimistic(requestId)
+    else sync.abandonOptimistic(requestId)
+    optimisticRequestId.value = null
     optimisticBaseIds.value = new Set()
   }
   if (step.effect === 'confirm') composer.value?.confirmSend()
@@ -244,8 +262,10 @@ function dispatch(event: SendEvent) {
 // against the next chat would restore the previous chat's message into its Composer. Not
 // `immediate` — nothing is outstanding before the first send, and `outstanding` is declared here.
 watch(sid, (id, previous) => {
-  if (previous === null && id !== null && optimisticMessage.value?.session_id === -1) {
-    optimisticMessage.value = { ...optimisticMessage.value, session_id: id }
+  const requestId = optimisticRequestId.value
+  const optimistic = requestId ? sync.optimisticMutations.get(requestId) : undefined
+  if (requestId && previous === null && id !== null && optimistic?.kind === 'message' && optimistic.message.session_id === -1) {
+    sync.beginOptimistic(requestId, { kind: 'message', message: { ...optimistic.message, session_id: id } })
     return
   }
   dispatch('abandoned')
@@ -267,7 +287,10 @@ watch(() => path.value.map(message => message.id), () => {
   if (landed) dispatch('landed')
 })
 watch(() => sync.lastError, (e) => { if (e !== null) dispatch('error') })
-onBeforeUnmount(() => clearTimeout(outstandingTimer))
+onBeforeUnmount(() => {
+  clearTimeout(outstandingTimer)
+  if (optimisticRequestId.value) sync.abandonOptimistic(optimisticRequestId.value)
+})
 
 function readModel(): ModelRef | null {
   try {
@@ -298,16 +321,18 @@ function send(command: Parameters<typeof sync.send>[0]): boolean {
 function onSend(parts: Part[]) {
   const model = effective.value.model
   if (!model) return
+  const requestId = crypto.randomUUID()
   optimisticBaseIds.value = new Set(path.value.map(message => message.id))
-  optimisticMessage.value = optimisticUserMessage({
+  optimisticRequestId.value = requestId
+  sync.beginOptimistic(requestId, { kind: 'message', message: optimisticUserMessage({
     id: nextOptimisticId--,
     sessionId: sid.value ?? -1,
     parentId: session.value?.head_message_id ?? null,
     parts,
     createdAt: Date.now(),
-  })
+  }) })
   dispatch('send')
-  send(sendCommandFor({
+  send({ ...sendCommandFor({
     sessionId: sid.value,
     parentId: session.value?.head_message_id ?? null,
     parts,
@@ -319,7 +344,7 @@ function onSend(parts: Part[]) {
       params: paramsFromFields(form),
       tools: selectedTools.value,
     },
-  }))
+  }), request_id: requestId })
 }
 /**
  * Deliberately not routed through `send`: unlike a settings write, `stop` is idempotent and carries

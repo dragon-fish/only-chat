@@ -24,10 +24,12 @@ const host = inject<ClientPluginHost | null>('clientPluginHost', null)
 const renderer = shallowRef<Component | null>(null)
 const loading = shallowRef(false)
 const busy = shallowRef(false)
+const optimisticResult = computed(() => sync.optimisticToolResult(props.messageId, props.call.id))
+const effectiveResult = computed(() => props.result ?? optimisticResult.value ?? null)
 const compactPending = computed(() => (
   props.placement !== 'composer'
   && props.deferPending === true
-  && props.result === null
+  && effectiveResult.value === null
   && props.call.name === ASK_USER_TOOL_ID
   && AskUserInputSchema.safeParse(props.call.args).success
 ))
@@ -40,12 +42,13 @@ watch(() => props.call.name, async (name) => {
   catch { renderer.value = null }
   finally { loading.value = false }
 }, { immediate: true })
-watch(() => props.result, result => { if (result) busy.value = false })
+watch(effectiveResult, result => { if (result) busy.value = false })
 watch(() => sync.lastError, error => { if (error) busy.value = false })
 
-function send(command: Parameters<typeof sync.send>[0]) {
+function send(command: Parameters<typeof sync.send>[0], optimisticRequestId?: string) {
   sync.lastError = null
   if (sync.status !== 'open' || !sync.send(command)) {
+    if (optimisticRequestId) sync.rejectOptimistic(optimisticRequestId)
     sync.lastError = DISCONNECTED_MESSAGE
     busy.value = false
     return
@@ -54,7 +57,13 @@ function send(command: Parameters<typeof sync.send>[0]) {
 }
 
 function respond(result: AskUserResult) {
-  send({ type: 'tool.respond', request_id: crypto.randomUUID(), message_id: props.messageId, call_id: props.call.id, result })
+  const requestId = crypto.randomUUID()
+  sync.beginOptimistic(requestId, {
+    kind: 'tool_result',
+    messageId: props.messageId,
+    part: { type: 'tool_result', call_id: props.call.id, name: props.call.name, content: result },
+  })
+  send({ type: 'tool.respond', request_id: requestId, message_id: props.messageId, call_id: props.call.id, result }, requestId)
 }
 
 function continueGeneration() {
@@ -70,11 +79,14 @@ Alert(v-if="compactPending")
 .flex.flex-col.gap-2(v-else-if="loading")
   Skeleton(class="h-5 w-36")
   Skeleton(class="h-20 w-full")
-component(
-  v-else-if="renderer" :is="renderer" :call="call" :result="result"
-  :can-continue="canContinue" :busy="busy" @respond="respond" @continue="continueGeneration")
+.w-full(
+  v-else-if="renderer" :data-optimistic="optimisticResult ? '' : undefined"
+  :class="optimisticResult ? 'opacity-70' : undefined")
+  component(
+    :is="renderer" :call="call" :result="effectiveResult"
+    :can-continue="canContinue" :busy="busy" @respond="respond" @continue="continueGeneration")
 Alert(v-else)
   BracesIcon
   AlertTitle {{ call.name }}
-  AlertDescription {{ result ? '工具调用已完成' : '等待工具结果' }}
+  AlertDescription {{ effectiveResult ? '工具调用已完成' : '等待工具结果' }}
 </template>
