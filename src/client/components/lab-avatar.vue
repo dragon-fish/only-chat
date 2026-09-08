@@ -21,6 +21,6 @@ watch(() => props.labId, () => { sourceIndex.value = 0 })
 <template lang="pug">
 ProviderAvatar(v-if="!labId || failed" :name="providerName" :size="size")
 Avatar(v-else :size="size" :aria-label="labId")
-  img.size-full.object-contain(:src="sources[sourceIndex]" :alt="labId" loading="lazy" @error="sourceIndex++")
+  img.size-full.object-contain.p-1(:src="sources[sourceIndex]" :alt="labId" loading="lazy" @error="sourceIndex++")
   AvatarFallback(class="sr-only") {{ providerName }}
 </template>
