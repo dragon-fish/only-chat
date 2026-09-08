@@ -5,6 +5,15 @@ const OptionSchema = z.strictObject({
   label: z.string().trim().min(1).max(500),
   description: z.string().trim().min(1).max(2_000).optional(),
 })
+const ChoiceOptionsSchema = z.array(OptionSchema).min(2).max(9).superRefine((options, ctx) => {
+  const seen = new Set<string>()
+  for (const [index, option] of options.entries()) {
+    if (seen.has(option.label)) {
+      ctx.addIssue({ code: 'custom', path: [index, 'label'], message: 'option labels must be unique' })
+    }
+    seen.add(option.label)
+  }
+})
 
 const QuestionBase = {
   id: QuestionIdSchema,
@@ -14,8 +23,8 @@ const QuestionBase = {
 }
 
 export const AskUserQuestionSchema = z.discriminatedUnion('type', [
-  z.strictObject({ ...QuestionBase, type: z.literal('single'), options: z.array(OptionSchema).min(2).max(9) }),
-  z.strictObject({ ...QuestionBase, type: z.literal('multiple'), options: z.array(OptionSchema).min(2).max(9) }),
+  z.strictObject({ ...QuestionBase, type: z.literal('single'), options: ChoiceOptionsSchema }),
+  z.strictObject({ ...QuestionBase, type: z.literal('multiple'), options: ChoiceOptionsSchema }),
   z.strictObject({ ...QuestionBase, type: z.literal('text'), placeholder: z.string().max(500).optional() }),
 ])
 export type AskUserQuestion = z.infer<typeof AskUserQuestionSchema>

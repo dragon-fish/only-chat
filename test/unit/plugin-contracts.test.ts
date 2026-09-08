@@ -21,6 +21,7 @@ describe('ask_user shared contract', () => {
   it('requires unique IDs and valid choice shapes', () => {
     expect(() => AskUserInputSchema.parse({ questions: [singleQuestion, singleQuestion] })).toThrow(/unique/i)
     expect(() => AskUserInputSchema.parse({ questions: [{ ...singleQuestion, options: [{ label: 'only' }] }] })).toThrow()
+    expect(() => AskUserInputSchema.parse({ questions: [{ ...singleQuestion, options: [{ label: 'Vue' }, { label: 'Vue' }] }] })).toThrow(/unique/i)
     expect(() => AskUserInputSchema.parse({ questions: [{ id: 'notes', header: 'Notes', question: 'Anything else?', type: 'text', options: [] }] })).toThrow()
     expect(AskUserInputSchema.parse({ questions: [{ id: 'notes', header: 'Notes', question: 'Anything else?', type: 'text', placeholder: 'Optional' }] })).toMatchObject({ questions: [{ type: 'text' }] })
   })
