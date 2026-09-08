@@ -431,9 +431,16 @@ describe('model catalog', () => {
 
   it('exposes status, searchable provider index and refresh counts through the Worker routes', async () => {
     const createdDispose = vi.fn()
-    const statusDispose = vi.fn()
+    const instanceDispose = vi.fn()
+    const statusResultDispose = vi.fn()
     const create = vi.fn().mockResolvedValue({ id: 'catalog-manual-refresh-test-id', [Symbol.dispose]: createdDispose })
-    const workflow = { create, get: vi.fn().mockResolvedValue({ status: vi.fn().mockResolvedValue({ status: 'running' }), [Symbol.dispose]: statusDispose }) }
+    const workflow = {
+      create,
+      get: vi.fn().mockResolvedValue({
+        status: vi.fn().mockResolvedValue({ status: 'running', [Symbol.dispose]: statusResultDispose }),
+        [Symbol.dispose]: instanceDispose,
+      }),
+    }
     const ctx = await createApp({ env: { ...env, MODEL_CATALOG_REFRESH: workflow as unknown as Workflow }, side: 'worker' })
     const initial = await ctx.api.request('/api/model-catalog/status')
     expect(initial.status).toBe(200)
@@ -445,7 +452,8 @@ describe('model catalog', () => {
     expect(createdDispose).toHaveBeenCalledOnce()
     const running = await ctx.api.request('/api/model-catalog/refresh/catalog-manual-refresh-test-id')
     expect(await running.json()).toEqual({ status: 'running' })
-    expect(statusDispose).toHaveBeenCalledOnce()
+    expect(statusResultDispose).toHaveBeenCalledOnce()
+    expect(instanceDispose).toHaveBeenCalledOnce()
     serve()
     await ctx.modelCatalog.refresh('manual')
     const found = await ctx.api.request('/api/model-catalog/providers?q=ACM')

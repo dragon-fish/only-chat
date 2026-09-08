@@ -25,7 +25,9 @@ export function modelCatalogRoutes(ctx: Context) {
       const instance = await ctx.env.MODEL_CATALOG_REFRESH.get(id)
       try {
         const status = await instance.status()
-        return c.json({ status: status.status, ...(status.error?.message ? { error: status.error.message } : {}) })
+        try {
+          return c.json({ status: status.status, ...(status.error?.message ? { error: status.error.message } : {}) })
+        } finally { disposeRpcStub(status) }
       } finally { disposeRpcStub(instance) }
     } catch {
       return c.json({ error: 'not found' }, 404)
