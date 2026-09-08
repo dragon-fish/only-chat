@@ -31,6 +31,7 @@ const rows = computed(() => props.messages.map((message) => {
     assistantModelName: props.project && message.model_id !== null ? actualModelName : undefined,
     assistantProviderName: actual?.provider.name ?? actualModelName,
     assistantLabId: actual?.model.lab_id ?? null,
+    assistantModelFamily: actual?.model.metadata.family,
   }
 }))
 </script>
@@ -46,6 +47,6 @@ MessageScrollerProvider(:auto-scroll="true" default-scroll-position="last-anchor
           MessageItem(
             :message="row.message" :project="project" :assistant-name="row.assistantName"
             :assistant-model-name="row.assistantModelName" :assistant-provider-name="row.assistantProviderName"
-            :assistant-lab-id="row.assistantLabId")
+            :assistant-lab-id="row.assistantLabId" :assistant-model-family="row.assistantModelFamily")
     MessageScrollerButton(direction="end" class="size-10 md:size-7")
 </template>

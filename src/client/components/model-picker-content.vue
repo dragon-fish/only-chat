@@ -65,7 +65,7 @@ Command(:key="searchKey" :model-value="currentKey" :should-filter="false" class=
             Settings2Icon
         template(#default="{ entry }")
           CommandItem(:value="keyFor(entry)" class="min-h-10 md:min-h-0")
-            LabAvatar(:lab-id="entry.model.lab_id" :provider-name="entry.provider.name" size="sm")
+            LabAvatar(:model-id="entry.model.model_id" :lab-id="entry.model.lab_id" :family="entry.model.metadata.family" :provider-name="entry.provider.name" size="sm")
             .min-w-0.flex-1
               p.truncate {{ modelName(entry.model) }}
               p.truncate.text-xs.text-muted-foreground {{ entry.model.model_id }}

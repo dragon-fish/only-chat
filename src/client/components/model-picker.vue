@@ -57,7 +57,7 @@ component(:is="isDesktop ? Popover : Drawer" v-model:open="open")
       :variant="compact ? 'ghost' : 'outline'" size="sm" :title="`${selectedProviderName} · ${selectedName}`"
       :class="cn('min-h-10 md:min-h-7', compact ? 'min-w-10 px-1' : 'min-w-44 max-w-64 justify-start')"
       :aria-label="`选择模型，当前为 ${selectedName}`")
-      LabAvatar(:lab-id="selected?.model.lab_id ?? null" :provider-name="selectedProviderName" size="sm")
+      LabAvatar(:model-id="selected?.model.model_id" :lab-id="selected?.model.lab_id ?? null" :family="selected?.model.metadata.family" :provider-name="selectedProviderName" size="sm")
       span.min-w-0.flex-1.truncate.text-left(v-if="!compact") {{ selectedName }}
       ChevronDownIcon(data-icon="inline-end")
   component(

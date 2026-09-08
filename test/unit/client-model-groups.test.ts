@@ -9,15 +9,49 @@ let cleanup = () => {}
 afterEach(() => { cleanup(); document.body.innerHTML = '' })
 
 describe('model Lab presentation', () => {
-  it('tries colored Iconify variants before the models.dev logo and provider avatar', async () => {
+  it.each([
+    ['anthropic/claude-sonnet-4-6', 'claude-sonnet', 'claude'],
+    ['qwen3-max', null, 'qwen'],
+    ['google/gemini-3-pro', null, 'gemini'],
+    ['baidu/ernie-5.0', null, 'wenxin'],
+  ])('resolves %s through the Lobe model icon catalog', (modelId, family, icon) => {
+    const host = document.createElement('div')
+    document.body.append(host)
+    const app = createApp(LabAvatar, { modelId, family, labId: 'anthropic', providerName: 'Example Gateway' })
+    app.mount(host)
+    cleanup = () => app.unmount()
+    expect(host.querySelector('img')?.getAttribute('src')).toBe(`https://cdn.jsdelivr.net/npm/@lobehub/icons-static-svg@latest/icons/${icon}-color.svg`)
+  })
+
+  it('falls back from a missing model icon through mono to the Lab icon', async () => {
+    const host = document.createElement('div')
+    document.body.append(host)
+    const app = createApp(LabAvatar, { modelId: 'claude-sonnet-4-6', family: 'claude-sonnet', labId: 'anthropic', providerName: 'Example Gateway' })
+    app.mount(host)
+    cleanup = () => app.unmount()
+    host.querySelector('img')!.dispatchEvent(new Event('error'))
+    await nextTick()
+    expect(host.querySelector('img')?.getAttribute('src')).toBe('https://cdn.jsdelivr.net/npm/@lobehub/icons-static-svg@latest/icons/claude.svg')
+    host.querySelector('img')!.dispatchEvent(new Event('error'))
+    await nextTick()
+    expect(host.querySelector('img')?.getAttribute('src')).toBe('https://cdn.jsdelivr.net/npm/@lobehub/icons-static-svg@latest/icons/anthropic-color.svg')
+  })
+
+  it('tries Lobe and Iconify variants before the models.dev logo and provider avatar', async () => {
     const host = document.createElement('div')
     document.body.append(host)
     const app = createApp(LabAvatar, { labId: 'deepseek', providerName: 'Example Gateway' })
     app.mount(host)
     cleanup = () => app.unmount()
     const image = host.querySelector('img')!
-    expect(image.getAttribute('src')).toBe('https://api.iconify.design/logos:deepseek-icon.svg')
+    expect(image.getAttribute('src')).toBe('https://cdn.jsdelivr.net/npm/@lobehub/icons-static-svg@latest/icons/deepseek-color.svg')
     image.dispatchEvent(new Event('error'))
+    await nextTick()
+    expect(host.querySelector('img')?.getAttribute('src')).toBe('https://cdn.jsdelivr.net/npm/@lobehub/icons-static-svg@latest/icons/deepseek.svg')
+    host.querySelector('img')!.dispatchEvent(new Event('error'))
+    await nextTick()
+    expect(host.querySelector('img')?.getAttribute('src')).toBe('https://api.iconify.design/logos:deepseek-icon.svg')
+    host.querySelector('img')!.dispatchEvent(new Event('error'))
     await nextTick()
     expect(host.querySelector('img')?.getAttribute('src')).toBe('https://api.iconify.design/logos:deepseek.svg')
     host.querySelector('img')!.dispatchEvent(new Event('error'))

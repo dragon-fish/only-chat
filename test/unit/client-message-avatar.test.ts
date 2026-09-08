@@ -13,15 +13,16 @@ const message: Message = {
 let cleanup = () => {}
 afterEach(() => { cleanup(); document.body.innerHTML = '' })
 
-function mount(project?: Project) {
+function mount(project?: Project, assistantModelFamily?: string, modelId = message.model_id!) {
   const host = document.createElement('div')
   document.body.append(host)
   const app = createApp(MessageItem, {
-    message,
+    message: { ...message, model_id: modelId },
     project,
     assistantName: 'DeepSeek Chat',
     assistantProviderName: 'DeepSeek',
     assistantLabId: 'deepseek',
+    assistantModelFamily,
   }).use(createPinia())
   app.mount(host)
   cleanup = () => app.unmount()
@@ -30,7 +31,12 @@ function mount(project?: Project) {
 
 it('uses the message model Lab avatar for non-Project assistant messages', () => {
   const host = mount()
-  expect(host.querySelector('[aria-label="deepseek"] img')?.getAttribute('src')).toBe('https://api.iconify.design/logos:deepseek-icon.svg')
+  expect(host.querySelector('[aria-label="deepseek"] img')?.getAttribute('src')).toBe('https://cdn.jsdelivr.net/npm/@lobehub/icons-static-svg@latest/icons/deepseek-color.svg')
+})
+
+it('prefers the message model family avatar when available', () => {
+  const host = mount(undefined, 'claude-sonnet', 'anthropic/claude-sonnet-4-6')
+  expect(host.querySelector('img')?.getAttribute('src')).toBe('https://cdn.jsdelivr.net/npm/@lobehub/icons-static-svg@latest/icons/claude-color.svg')
 })
 
 it('keeps the workspace avatar for Project assistant messages', () => {

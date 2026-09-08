@@ -23,6 +23,7 @@ const props = defineProps<{
   assistantModelName?: string
   assistantProviderName?: string
   assistantLabId?: string | null
+  assistantModelFamily?: string
 }>()
 const sync = useSyncStore()
 const streaming = computed(() => props.message.status === 'streaming')
@@ -64,7 +65,7 @@ function regenerate() {
 MessageRoot(:align="message.role === 'user' ? 'end' : 'start'")
   MessageAvatar(v-if="message.role === 'assistant'" class="self-start group-has-data-[slot=message-footer]/message:translate-y-0")
     ProjectAvatar(v-if="project" :name="project.name")
-    LabAvatar(v-else :lab-id="assistantLabId ?? null" :provider-name="assistantProviderName ?? assistantName ?? '助手'")
+    LabAvatar(v-else :model-id="message.model_id" :lab-id="assistantLabId ?? null" :family="assistantModelFamily" :provider-name="assistantProviderName ?? assistantName ?? '助手'")
 
   MessageContent
     MessageHeader(v-if="message.role === 'assistant'" class="gap-2")
