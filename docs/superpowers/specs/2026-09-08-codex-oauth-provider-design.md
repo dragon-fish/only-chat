@@ -91,6 +91,8 @@ Pending records expire after the upstream device-code lifetime. Closing the UI m
 
 `POST /api/codex/oauth/start` starts a new-provider flow. `POST /api/providers/:id/codex/reconnect` starts a reconnect flow after validating ownership and provider kind.
 
+`DELETE /api/codex/oauth/:flowId` cancels a pending local flow and removes its Durable Object record. It does not revoke or modify any already-connected provider.
+
 The Durable Object requests a device code from the fixed OpenAI endpoint with the fixed public Codex client ID. The response returns an opaque Only Chat flow ID, verification URL, user code, polling interval, and expiry. The browser opens the verification URL and shows the code and countdown.
 
 ### Poll and completion
@@ -108,7 +110,7 @@ For a new connection, completion rejects an account already connected to another
 
 For reconnect, completion requires the same stored account ID, replaces the encrypted bundle, sets the status to `connected`, clears the error, increments the OAuth revision, and increments `providers.credential_version` with a conditional write.
 
-After the credential transaction commits, the server immediately runs the normal provider-model reconciliation against the fixed Codex model endpoint. Model-sync failure does not roll back a valid OAuth connection. The API returns the connected provider plus a sanitized sync warning, and the user can retry from provider settings.
+After the credential transaction commits, the server immediately runs provider-model reconciliation against the fixed Codex model endpoint. Models discovered during this first successful sync are enabled so the new provider is immediately usable; models discovered by later manual refreshes keep the existing disabled-by-default behavior. Model-sync failure does not roll back a valid OAuth connection. The API returns the connected provider plus a sanitized sync warning, and the user can retry from provider settings.
 
 ## Credential Lifecycle
 
@@ -138,7 +140,7 @@ Reauthorization always requires user interaction. The existing daily cron contin
 
 Register a provider-kind adapter ahead of the generic protocol adapter. `custom` providers continue through the existing protocol map. `codex-oauth` providers resolve credentials and use the dedicated Codex adapter even though their stored interface protocol remains `responses`.
 
-The adapter uses the installed `@ai-sdk/openai` Responses implementation with provider name `responses`. This preserves the existing Responses provider-options namespace and raw reasoning event accumulation while adding native OpenAI tool and event support needed by future work.
+The adapter uses the installed `@ai-sdk/open-responses` implementation with provider name `responses`. This preserves the existing Responses provider-options namespace, function-tool forwarding, and raw reasoning event accumulation. Image-generation support remains in the separate image-only backlog and does not influence this transport choice.
 
 The adapter fixes the Codex backend URL and applies a narrow fetch wrapper that:
 
