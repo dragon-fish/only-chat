@@ -4,6 +4,7 @@ import MarkdownRender from 'markstream-vue'
 import { LoaderCircle, PencilIcon, RefreshCwIcon, TriangleAlertIcon } from '@lucide/vue'
 import BranchSwitcher from '@/client/components/branch-switcher.vue'
 import LabAvatar from '@/client/components/lab-avatar.vue'
+import MessageUsage from '@/client/components/message-usage.vue'
 import ProjectAvatar from '@/client/components/project-avatar.vue'
 import { api } from '@/client/lib/api'
 import { cn } from '@/client/lib/utils'
@@ -36,16 +37,6 @@ const images = computed(() => props.message.parts.filter((p) => p.type === 'imag
 const markdown = computed(() => textParts.value.map((p) => p.text).join(''))
 /** Spec §7.4: the shell is visible the moment it arrives, and never claims reasoning it lacks. */
 const wait = computed(() => assistantWaitState(props.message))
-
-// Hover is unavailable on touch, and a failed/stopped message must expose 重试 without one, so the
-// row only fades on `md` and up, and never on a terminal-failure message.
-const terminal = computed(() => props.message.status === 'error' || props.message.status === 'aborted')
-const actionsClass = computed(() => cn(
-  'gap-1 transition-opacity',
-  terminal.value
-    ? 'opacity-100'
-    : 'opacity-100 md:opacity-0 md:group-hover/message:opacity-100 md:group-focus-within/message:opacity-100',
-))
 
 function startEdit() {
   draft.value = textParts.value.map((p) => p.text).join('\n')
@@ -102,7 +93,7 @@ MessageRoot(:align="message.role === 'user' ? 'end' : 'start'")
             AlertDescription {{ message.error ?? '未知错误' }}
           p.text-xs.text-muted-foreground(v-else-if="message.status === 'aborted'") 已停止
 
-    MessageFooter(:class="actionsClass")
+    MessageFooter(class="gap-1")
       BranchSwitcher(:message="message")
       Button(
         v-if="message.role === 'assistant' && !streaming" variant="ghost" size="icon-xs"
@@ -114,5 +105,5 @@ MessageRoot(:align="message.role === 'user' ? 'end' : 'start'")
         class="min-h-10 min-w-10 md:min-h-6 md:min-w-6"
         title="编辑消息" aria-label="编辑消息" @click="startEdit")
         PencilIcon
-      span.ml-1(v-if="message.usage") {{ message.usage.prompt ?? '?' }} / {{ message.usage.completion ?? '?' }} tokens
+      MessageUsage(v-if="message.usage" :usage="message.usage")
 </template>

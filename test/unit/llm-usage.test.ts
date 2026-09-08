@@ -27,4 +27,22 @@ describe('toUsage', () => {
   it('returns null without usage', () => {
     expect(toUsage(undefined)).toBeNull()
   })
+
+  it('records server-observed first-token and generation durations', () => {
+    expect(toUsage({
+      inputTokens: 200,
+      inputTokenDetails: { noCacheTokens: 150, cacheReadTokens: 50, cacheWriteTokens: undefined },
+      outputTokens: 100,
+      outputTokenDetails: { textTokens: 70, reasoningTokens: 30 },
+      totalTokens: 300,
+    }, { requestStartedAt: 1_000, firstTokenAt: 1_400, finishedAt: 5_400 })).toEqual({
+      prompt: 200,
+      completion: 100,
+      cached: 50,
+      reasoning: 30,
+      time_to_first_token_ms: 400,
+      generation_duration_ms: 4_000,
+      total_duration_ms: 4_400,
+    })
+  })
 })

@@ -1,5 +1,5 @@
 import type { CatalogProviderSummary } from '@/shared/api'
-import type { ModelWithMetadata, Project, ProviderWithInterfaces, Session } from '@/shared/models'
+import type { ModelWithMetadata, Project, ProviderWithInterfaces, Session, Usage } from '@/shared/models'
 
 export type EnabledModelEntry = {
   provider: ProviderWithInterfaces
@@ -76,6 +76,23 @@ export function modelBadges(model: ModelWithMetadata) {
     tools: metadata.tool_call, image_output: metadata.modalities?.output.includes('image'),
   }
   return MODEL_CAPABILITY_FILTERS.filter(option => values[option.key] === true)
+}
+
+export function messageUsageMetrics(usage: Usage): { cachedPercent: number | null, tokensPerSecond: number | null } {
+  return {
+    cachedPercent: usage.cached !== undefined && usage.prompt !== undefined && usage.prompt > 0
+      ? usage.cached / usage.prompt * 100
+      : null,
+    tokensPerSecond: usage.completion !== undefined && usage.generation_duration_ms !== undefined && usage.generation_duration_ms > 0
+      ? usage.completion / usage.generation_duration_ms * 1000
+      : null,
+  }
+}
+
+export function messageContextUsage(usage: Usage, limit: number): { used: number, limit: number, percent: number } | null {
+  if (usage.prompt === undefined || usage.completion === undefined || limit <= 0) return null
+  const used = usage.prompt + usage.completion
+  return { used, limit, percent: used / limit * 100 }
 }
 
 export function labName(id: string, catalogProviders: readonly CatalogProviderSummary[] = []): string {

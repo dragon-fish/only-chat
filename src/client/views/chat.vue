@@ -10,6 +10,7 @@ import ProjectAvatar from '@/client/components/project-avatar.vue'
 import ReasoningControl from '@/client/components/reasoning-control.vue'
 import SessionSettings from '@/client/components/session-settings.vue'
 import CollectionState from '@/client/components/collection-state.vue'
+import ContextUsageIndicator from '@/client/components/context-usage-indicator.vue'
 import { sessionPath } from '@/client/lib/ui-models'
 import {
   choiceFromParams, DISCONNECTED_MESSAGE, effectiveModelFor, modelOverrideAfterPick, nextSendState,
@@ -103,6 +104,14 @@ const effective = computed(() => effectiveModelFor(override.value, project.value
       messages: path.value,
     }))
 const entry = computed(() => config.modelFor(effective.value.model))
+const contextUsage = computed(() => {
+  const model = effective.value.model
+  const latest = [...path.value].reverse().find(message => message.role === 'assistant')
+  const limit = entry.value?.model.metadata.limit?.context
+  if (!model || !latest?.usage || limit === undefined) return null
+  if (latest.provider_id !== model.provider_id || latest.model_id !== model.model_id) return null
+  return { usage: latest.usage, limit }
+})
 // While the config is still loading nothing is known to be unavailable, so sending stays possible.
 const modelAvailable = computed(() => !config.loaded || config.isAvailable(effective.value.model))
 const canSend = computed(() => effective.value.model !== null && modelAvailable.value)
@@ -330,6 +339,7 @@ function onReasoningChange(choice: ReasoningChoice) {
     ref="composer" :streaming="streaming" :connected="sync.status === 'open'"
     :can-send="canSend" :hint="sendHint" @send="onSend" @stop="onStop")
     template(#controls)
+      ContextUsageIndicator(v-if="contextUsage" :usage="contextUsage.usage" :limit="contextUsage.limit")
       ReasoningControl(
         :metadata="metadata" :active="activeReasoning"
         :overridden="form.reasoning !== 'inherit'" :no-model="entry === undefined"

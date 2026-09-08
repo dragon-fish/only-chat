@@ -1,6 +1,7 @@
 import { Context, Service } from 'cordis'
 import type { LanguageModel } from 'ai'
 import type { ScopedFilesClient } from './files/types'
+import type { LlmRequestTrace } from './observability'
 import type { ModelRow, ProviderInterfaceRow, ProviderRow } from '../../db/schema'
 import { decryptSecret } from './crypto'
 import { chatCompletionsProtocol } from './protocols/chat-completions'
@@ -13,7 +14,7 @@ import { vertexCompatibleProtocol } from './protocols/vertex-compatible'
  * capability, and a protocol that has none simply never offers one (spec §4.8).
  */
 export interface LlmProtocolAdapter {
-  createModel(provider: ProviderRow, providerInterface: ProviderInterfaceRow, model: ModelRow, apiKey: string): LanguageModel
+  createModel(provider: ProviderRow, providerInterface: ProviderInterfaceRow, model: ModelRow, apiKey: string, trace?: LlmRequestTrace): LanguageModel
   createFiles?: (provider: ProviderRow, providerInterface: ProviderInterfaceRow, apiKey: string) => ScopedFilesClient
 }
 
@@ -54,13 +55,13 @@ export class Llm extends Service {
     return provider.api_key ? decryptSecret(this._secret, provider.api_key) : null
   }
 
-  async createModel(provider: ProviderRow, providerInterface: ProviderInterfaceRow, model: ModelRow): Promise<LanguageModel> {
+  async createModel(provider: ProviderRow, providerInterface: ProviderInterfaceRow, model: ModelRow, trace?: LlmRequestTrace): Promise<LanguageModel> {
     if (providerInterface.provider_id !== provider.id || model.provider_id !== provider.id) throw new Error('model and interface must belong to the provider')
     const adapter = this._adapters.get(providerInterface.protocol)
     if (!adapter) throw new Error(`no adapter for protocol ${providerInterface.protocol}`)
     const key = await this.decryptKey(provider)
     if (key === null) throw new Error(`provider ${provider.id} has no API key`)
-    return adapter.createModel(provider, providerInterface, model, key)
+    return adapter.createModel(provider, providerInterface, model, key, trace)
   }
 
   async createFiles(provider: ProviderRow, providerInterface: ProviderInterfaceRow): Promise<ScopedFilesClient> {

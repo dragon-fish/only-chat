@@ -12,6 +12,9 @@ export const UsageSchema = z.object({
   completion: z.number().optional(),
   cached: z.number().optional(),
   reasoning: z.number().optional(),
+  time_to_first_token_ms: z.number().nonnegative().optional(),
+  generation_duration_ms: z.number().nonnegative().optional(),
+  total_duration_ms: z.number().nonnegative().optional(),
 })
 export type Usage = z.infer<typeof UsageSchema>
 

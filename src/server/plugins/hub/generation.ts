@@ -175,8 +175,18 @@ async function generate(hub: Hub, target: Target, shell: Message, leafUserId: nu
 
     const messages = buildModelMessages({ protocol: target.providerInterface.protocol, systemPrompt: payload.systemPrompt, path: payload.path, attachments })
     const params: SessionParams = target.config.params
-    const model: LanguageModel = await hub.app.llm.createModel(target.provider, target.providerInterface, target.model)
+    const trace = {
+      sessionId: target.session.id,
+      messageId: shell.id,
+      providerId: target.provider.id,
+      interfaceId: target.providerInterface.id,
+      protocol: target.providerInterface.protocol,
+      modelId: target.model.model_id,
+    }
+    const model: LanguageModel = await hub.app.llm.createModel(target.provider, target.providerInterface, target.model, trace)
 
+    const requestStartedAt = performance.now()
+    let firstTokenAt: number | null = null
     const result = streamText({
       model,
       messages,
@@ -196,7 +206,11 @@ async function generate(hub: Hub, target: Target, shell: Message, leafUserId: nu
       if (part.type === 'error') throw part.error instanceof Error ? part.error : new Error(String(part.error))
       // An aborted stream ends with `abort` and never emits `finish`, so usage stays null.
       if (part.type === 'abort') { status = 'aborted'; break }
-      if (part.type === 'finish') { usage = toUsage(part.totalUsage); continue }
+      if (part.type === 'finish') {
+        usage = toUsage(part.totalUsage, { requestStartedAt, firstTokenAt, finishedAt: performance.now() })
+        console.info(JSON.stringify({ event: 'llm.generation.usage', ...trace, usage, rawUsage: part.totalUsage.raw ?? null }))
+        continue
+      }
       // Awaited before anything else sees the part: the accumulator, the inflight snapshot, D1 and
       // every socket may only ever carry the attachment id it returns (spec §5.8).
       if (part.type === 'file') {
@@ -207,7 +221,10 @@ async function generate(hub: Hub, target: Target, shell: Message, leafUserId: nu
         continue
       }
       for (const ev of acc.apply(part)) {
-        if (ev.kind === 'delta') hub.broadcast({ type: 'message.delta', message_id: shell.id, part_index: ev.part_index, kind: ev.part_kind, delta: ev.delta })
+        if (ev.kind === 'delta') {
+          if (firstTokenAt === null && ev.delta.length > 0) firstTokenAt = performance.now()
+          hub.broadcast({ type: 'message.delta', message_id: shell.id, part_index: ev.part_index, kind: ev.part_kind, delta: ev.delta })
+        }
         else hub.broadcast({ type: 'message.part', message_id: shell.id, part_index: ev.part_index, part: ev.part })
       }
       if (Date.now() - lastFlush > INFLIGHT_FLUSH_INTERVAL_MS) {

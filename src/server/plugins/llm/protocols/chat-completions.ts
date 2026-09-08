@@ -2,18 +2,21 @@ import type { Context } from 'cordis'
 import { COMPAT_PROVIDER_NAME } from '../messages'
 import { createOpenAIFiles } from '../files/openai'
 import { createFileAwareChatModel } from '../files/references'
+import { observedProviderFetch } from '../observability'
 
 export const chatCompletionsProtocol = {
   name: 'llm-chat-completions',
   inject: ['llm'],
   apply(ctx: Context) {
     ctx.llm.register('chat-completions', {
-      createModel(_provider, providerInterface, model, apiKey) {
+      createModel(_provider, providerInterface, model, apiKey, trace) {
+        const fetch = trace ? observedProviderFetch(trace, apiKey) : undefined
         return createFileAwareChatModel({
           name: COMPAT_PROVIDER_NAME,
           baseURL: providerInterface.base_url,
           apiKey,
           includeUsage: true,
+          ...(fetch ? { fetch } : {}),
         }, model.model_id)
       },
       createFiles(provider, providerInterface, apiKey) {
