@@ -9,6 +9,8 @@ import { decryptJson, encryptJson } from '@/server/plugins/llm/crypto'
 import { CodexOAuthPollResponseSchema, CodexOAuthStartResponseSchema } from '@/shared/api'
 import { createCodexModel } from '@/server/plugins/llm/providers/codex'
 import { createApp } from '@/server/app'
+import { connect } from './ws-helper'
+import { deepseekResponsesStream } from '../fixtures/deepseek-responses-stream'
 
 const request = (method: string, path: string) => exports.default.fetch(new Request(`https://x/api${path}`, { method }))
 const stub = () => env.USER_HUB.getByName('1')
@@ -59,6 +61,71 @@ async function poll(id: string) {
 }
 
 describe('Codex OAuth REST boundary', () => {
+  it('completes the mocked lifecycle while preserving populated chat history on disconnect', async () => {
+    const defaultFetch = globalThis.fetch
+    const refreshRequests: unknown[] = []
+    const generationAuthorization: Array<string | null> = []
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+      const req = new Request(input, init)
+      if (req.url.endsWith('/models')) {
+        return Response.json({ models: [{ slug: 'codex-test' }, { slug: 'codex-second' }] })
+      }
+      if (req.url.endsWith('/responses')) {
+        generationAuthorization.push(req.headers.get('authorization'))
+        return deepseekResponsesStream()
+      }
+      if (req.url.endsWith('/oauth/token') && req.headers.get('content-type') === 'application/json') {
+        refreshRequests.push(await req.clone().json())
+        return Response.json({ access_token: 'rotated-access', refresh_token: 'rotated-refresh', expires_in: 3600 })
+      }
+      if (req.url.endsWith('/oauth/revoke')) return new Response(null, { status: 200 })
+      return defaultFetch(req)
+    })
+
+    const grant = await start()
+    const authorized = await poll(grant.flow_id)
+    if (authorized.status !== 'complete') throw new Error('Missing provider')
+    const providerId = authorized.provider.id
+    expect(authorized.provider).toMatchObject({ kind: 'codex-oauth', oauth: { status: 'connected' } })
+
+    const client = await connect()
+    client.ws.send(JSON.stringify({
+      type: 'send', session_id: null, parent_id: null,
+      parts: [{ type: 'text', text: 'lifecycle message' }],
+      provider_id: providerId, model_id: 'codex-test',
+    }))
+    expect(await client.next('message.done')).toMatchObject({ status: 'done', error: null })
+    expect(generationAuthorization).toEqual(['Bearer private-access'])
+
+    const created = client.events.find(event => event.type === 'session.created')
+    if (!created || created.type !== 'session.created') throw new Error('Missing session')
+    const sessionId = created.session.id
+    const sessionBefore = await env.DB.prepare('SELECT id, title, head_message_id FROM sessions WHERE id = ?').bind(sessionId).first()
+    const messagesBefore = await env.DB.prepare('SELECT id, session_id, parent_id, seq, role, parts, provider_id, model_id, status, error FROM messages WHERE session_id = ? ORDER BY seq').bind(sessionId).all()
+    expect(sessionBefore).toMatchObject({ id: sessionId, title: 'lifecycle message', head_message_id: expect.any(Number) })
+    expect(messagesBefore.results).toHaveLength(2)
+    expect(messagesBefore.results).toEqual(expect.arrayContaining([
+      expect.objectContaining({ role: 'user', parts: expect.stringContaining('lifecycle message'), status: 'done' }),
+      expect.objectContaining({ role: 'assistant', parts: expect.stringContaining('fixture answer'), provider_id: providerId, model_id: 'codex-test', status: 'done' }),
+    ]))
+
+    await runInDurableObject(stub(), async (instance: UserHub) => {
+      expect(await instance.app.codex.getValidCredentials(providerId, true)).toMatchObject({
+        status: 'connected', bundle: { accessToken: 'rotated-access', refreshToken: 'rotated-refresh' },
+      })
+    })
+    expect(refreshRequests).toEqual([{ client_id: expect.any(String), grant_type: 'refresh_token', refresh_token: 'private-refresh' }])
+    expect((await request('POST', `/providers/${providerId}/codex/disconnect`)).status).toBe(204)
+
+    expect(await env.DB.prepare('SELECT status, encrypted_bundle FROM provider_oauth_credentials WHERE provider_id = ?').bind(providerId).first()).toEqual({
+      status: 'disconnected',
+      encrypted_bundle: null,
+    })
+    expect(await env.DB.prepare('SELECT COUNT(*) AS count FROM models WHERE provider_id = ?').bind(providerId).first()).toMatchObject({ count: 2 })
+    expect(await env.DB.prepare('SELECT id, title, head_message_id FROM sessions WHERE id = ?').bind(sessionId).first()).toEqual(sessionBefore)
+    expect((await env.DB.prepare('SELECT id, session_id, parent_id, seq, role, parts, provider_id, model_id, status, error FROM messages WHERE session_id = ? ORDER BY seq').bind(sessionId).all()).results).toEqual(messagesBefore.results)
+  })
+
   it.each(['disconnect', 'delete'] as const)('still performs local %s when revoke fails and sends only the refresh token', async operation => {
     const result = await poll((await start()).flow_id)
     if (result.status !== 'complete') throw new Error('Missing provider')

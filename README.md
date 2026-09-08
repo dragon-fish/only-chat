@@ -22,8 +22,9 @@ Personal AI chat on Cloudflare Workers. Every device sees the same sessions and 
     pnpm db:migrate:local
     pnpm dev                          # http://localhost:5173
 
-Then open `/settings/providers`, choose a catalog provider or a custom provider, configure its
-interfaces and shared API key, add a model, and start a chat.
+Then open `/settings/providers`. Add Codex with its dedicated device-authorization action, or choose
+a catalog/custom provider and configure its interfaces and shared API key. Add a model and start a
+chat.
 
     pnpm typecheck                    # vue-tsc + both tsc projects
     pnpm test                         # vitest (unit + worker pool)
@@ -44,6 +45,10 @@ Every route — the SPA, `/api/*`, `/ws` and attachment downloads — sits behin
 **No public exception path is required, and this release creates none**: generated and uploaded
 images are served by the same authenticated `/api/attachments/:id` route as everything else, and
 the model never receives a link back to this deployment.
+
+Perform real-account Codex acceptance only in that protected deployment and let the account owner
+complete the device-code page in their browser. Never copy credentials, device codes, token payloads,
+or raw authorization responses into logs, fixtures, issue text, or test reports.
 
 ## Upgrading an existing deployment
 
@@ -66,6 +71,17 @@ are unchanged.
 Locally the same ordering applies: run `pnpm db:migrate:local` before `pnpm dev` after a pull.
 
 ## Providers
+
+### Codex OAuth providers
+
+Use **Add Codex** and complete device authorization in the browser. Codex is not configured through
+the custom-provider form, and several distinct Codex accounts can be connected as independent
+providers. The Responses protocol and Codex endpoint are fixed; OAuth credentials remain
+server-side and are never exposed as provider API-key fields.
+
+Codex image inputs are sent inline. Codex Files uploads and image generation are not implemented.
+If a provider becomes **Reconnect required**, an account owner must complete browser device
+authorization again. The scheduled catalog refresh never reauthorizes an account.
 
 ### Interfaces and Vertex-compatible gateways
 
