@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { ExternalLinkIcon } from '@lucide/vue'
+import { CopyIcon, ExternalLinkIcon } from '@lucide/vue'
 import { toast } from 'vue-sonner'
 import { api } from '@/client/lib/api'
 import { Button } from '@/client/ui/button'
@@ -27,6 +27,7 @@ let expiryTimer: ReturnType<typeof setTimeout> | undefined
 let clockTimer: ReturnType<typeof setInterval> | undefined
 let activeFlowId: string | undefined
 let cancelledFlowId: string | undefined
+let pollingRun: number | undefined
 let run = 0
 
 const waitingGrant = computed(() => state.value.type === 'waiting' ? state.value.grant : undefined)
@@ -62,6 +63,8 @@ function stop(cancel = false) {
 
 function expire(version: number) {
   if (version !== run || state.value.type !== 'waiting') return
+  // Credentials may already be committed while this poll finishes model discovery.
+  if (pollingRun === version) return
   run++
   clearTimers()
   cancelActiveFlow()
@@ -76,10 +79,13 @@ function schedulePoll(version: number, nextPollAt: number) {
 async function poll(version: number) {
   const grant = waitingGrant.value
   if (!grant || version !== run) return
+  pollingRun = version
   try {
     const result = await api.pollCodexOAuth(grant.flow_id)
     if (version !== run || state.value.type !== 'waiting') return
+    pollingRun = undefined
     if (result.status === 'pending') {
+      if (Date.now() >= grant.expires_at) { expire(version); return }
       schedulePoll(version, result.next_poll_at)
       return
     }
@@ -94,9 +100,13 @@ async function poll(version: number) {
     state.value = { type: 'failed', message: result.error }
   } catch (cause) {
     if (version !== run) return
+    pollingRun = undefined
+    if (Date.now() >= grant.expires_at) { expire(version); return }
     clearTimers()
     cancelActiveFlow()
     state.value = { type: 'failed', message: cause instanceof Error ? cause.message : String(cause) }
+  } finally {
+    if (pollingRun === version) pollingRun = undefined
   }
 }
 
@@ -125,6 +135,17 @@ async function start() {
 }
 
 function retry() { void start() }
+async function copyCode() {
+  const grant = waitingGrant.value
+  if (!grant) return
+  try {
+    await navigator.clipboard.writeText(grant.user_code)
+    toast.success('一次性代码已复制')
+  } catch {
+    toast.error('无法复制代码，请手动复制')
+  }
+}
+
 function handleOpenChange(open: boolean) {
   if (!open) stop(true)
   emit('update:open', open)
@@ -151,7 +172,10 @@ Dialog(:open="open" @update:open="handleOpenChange")
         FieldGroup(class="gap-4")
           Field
             FieldLabel 一次性代码
-            code.rounded-md.border.bg-muted.px-3.py-2.text-center.text-lg.font-semibold.tracking-widest(data-codex-user-code) {{ state.grant.user_code }}
+            .flex.items-center.gap-2
+              code.flex-1.rounded-md.border.bg-muted.px-3.py-2.text-center.text-lg.font-semibold.tracking-widest(data-codex-user-code) {{ state.grant.user_code }}
+              Button(type="button" variant="outline" size="icon" aria-label="复制一次性代码" data-codex-copy-code @click="copyCode")
+                CopyIcon(data-icon="inline-start")
             FieldDescription 在打开的授权页面中输入这组代码。
           Field
             .flex.items-center.justify-between.gap-3

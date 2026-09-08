@@ -1,13 +1,14 @@
 // @vitest-environment happy-dom
 import { createApp, nextTick } from 'vue'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { toast } from 'vue-sonner'
 import ProviderCreateDialog from '@/client/components/provider-create-dialog.vue'
 import { api } from '@/client/lib/api'
 import { provider } from './provider-fixtures'
 import type { CatalogProviderSummary, CodexOAuthPollResponse, CodexOAuthStartResponse } from '@/shared/api'
 
 let cleanup = () => {}
-afterEach(() => { cleanup(); vi.restoreAllMocks(); document.body.innerHTML = '' })
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); document.body.innerHTML = '' })
 
 const oauthApi = api as typeof api & {
   startCodexOAuth: () => Promise<CodexOAuthStartResponse>
@@ -76,6 +77,31 @@ describe('provider creation', () => {
     vi.useRealTimers()
   })
 
+  it.each(['success', 'rejection'] as const)('copies the device code with accessible feedback on clipboard %s', async outcome => {
+    mockOAuthApi()
+    const write = vi.spyOn(navigator.clipboard, 'writeText')
+    if (outcome === 'success') write.mockResolvedValue()
+    else write.mockRejectedValue(new Error('private-device-auth ABCD-EFGH clipboard denied'))
+    const succeeded = vi.spyOn(toast, 'success').mockReturnValue('toast-success')
+    const failed = vi.spyOn(toast, 'error').mockReturnValue('toast-error')
+    await mountDialog()
+    document.querySelector<HTMLButtonElement>('[data-add-codex]')!.click()
+    await vi.waitFor(() => expect(document.querySelector('[data-codex-user-code]')).not.toBeNull())
+    const copy = document.querySelector<HTMLButtonElement>('button[data-codex-copy-code]')
+    expect(copy).not.toBeNull()
+    expect(copy!.textContent?.trim() || copy!.getAttribute('aria-label')).toBeTruthy()
+    expect(copy!.disabled).toBe(false)
+    expect(copy!.tabIndex).toBe(0)
+    copy!.focus()
+    expect(document.activeElement).toBe(copy)
+    copy!.click()
+
+    await vi.waitFor(() => expect(write).toHaveBeenCalledExactlyOnceWith('ABCD-EFGH'))
+    await vi.waitFor(() => expect(outcome === 'success' ? succeeded : failed).toHaveBeenCalledOnce())
+    expect(outcome === 'success' ? failed : succeeded).not.toHaveBeenCalled()
+    expect(JSON.stringify([succeeded.mock.calls, failed.mock.calls])).not.toMatch(/private-device-auth|ABCD-EFGH/)
+  })
+
   it('waits until the server-specified time before each Codex poll', async () => {
     vi.useFakeTimers()
     const oauth = mockOAuthApi()
@@ -138,6 +164,57 @@ describe('provider creation', () => {
     await vi.waitFor(() => expect(document.querySelector('[role="alert"]')?.textContent).toContain('Network unavailable'))
     expect(oauth.cancelCodexOAuth).toHaveBeenCalledOnce()
     vi.useRealTimers()
+  })
+
+  it.each(['complete', 'pending'] as const)('waits for an in-flight Codex poll at expiry before handling %s', async status => {
+    vi.useFakeTimers()
+    const oauth = mockOAuthApi()
+    let resolvePoll!: (result: CodexOAuthPollResponse) => void
+    oauth.pollCodexOAuth = vi.fn().mockImplementation(() => new Promise<CodexOAuthPollResponse>(resolve => { resolvePoll = resolve }))
+    const { created } = await mountDialog()
+    document.querySelector<HTMLButtonElement>('[data-add-codex]')!.click()
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(oauth.pollCodexOAuth).toHaveBeenCalledOnce()
+
+    await vi.advanceTimersByTimeAsync(39_000)
+    expect(oauth.cancelCodexOAuth).not.toHaveBeenCalled()
+    expect(document.querySelector('[data-codex-expired]')).toBeNull()
+    resolvePoll(status === 'complete' ? { status, provider } : { status, next_poll_at: Date.now() + 5_000 })
+    await vi.advanceTimersByTimeAsync(0)
+
+    if (status === 'complete') {
+      expect(created).toHaveBeenCalledExactlyOnceWith(provider)
+      expect(oauth.cancelCodexOAuth).not.toHaveBeenCalled()
+    } else {
+      expect(created).not.toHaveBeenCalled()
+      expect(document.querySelector('[data-codex-expired]')).not.toBeNull()
+      expect(oauth.cancelCodexOAuth).toHaveBeenCalledExactlyOnceWith(oauthGrant().flow_id)
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(oauth.pollCodexOAuth).toHaveBeenCalledOnce()
+    }
+  })
+
+  it('ignores a late completed poll after its Codex dialog is closed and replaced', async () => {
+    vi.useFakeTimers()
+    const oauth = mockOAuthApi()
+    let resolvePoll!: (result: CodexOAuthPollResponse) => void
+    oauth.pollCodexOAuth = vi.fn().mockImplementation(() => new Promise<CodexOAuthPollResponse>(resolve => { resolvePoll = resolve }))
+    const { created } = await mountDialog()
+    document.querySelector<HTMLButtonElement>('[data-add-codex]')!.click()
+    await vi.advanceTimersByTimeAsync(1_000)
+    const resolveOldPoll = resolvePoll
+    ;[...document.querySelectorAll<HTMLButtonElement>('[data-slot="dialog-close"]')].at(-1)!.click()
+    await vi.advanceTimersByTimeAsync(0)
+    const replacement = { ...oauthGrant(), flow_id: 'b7044b37-1c3e-4914-833d-530c8d1eb999', user_code: 'NEXT-CODE' }
+    oauth.startCodexOAuth = vi.fn().mockResolvedValue(replacement)
+    document.querySelector<HTMLButtonElement>('[data-add-codex]')!.click()
+    await vi.advanceTimersByTimeAsync(0)
+    resolveOldPoll({ status: 'complete', provider })
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(created).not.toHaveBeenCalled()
+    expect(document.querySelector('[data-codex-user-code]')?.textContent).toContain('NEXT-CODE')
+    expect(oauth.cancelCodexOAuth).toHaveBeenCalledExactlyOnceWith(oauthGrant().flow_id)
   })
 
   it('keeps expiry terminal when an in-flight Codex poll rejects afterwards', async () => {

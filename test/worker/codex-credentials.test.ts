@@ -17,6 +17,18 @@ const rotated = { ...bundle, accessToken: 'rotated-access-token', refreshToken: 
 const provider = (id: number) => db.query.providers.findFirst({ where: eq(providers.id, id) })
 const credential = (id: number) => db.query.providerOAuthCredentials.findFirst({ where: eq(providerOAuthCredentials.provider_id, id) })
 
+function expectSanitizedCredentialError(error: unknown, message: string, ciphertext?: string | null) {
+  expect(error).toBeInstanceOf(Error)
+  const exposed = JSON.stringify(error, Object.getOwnPropertyNames(error))
+  for (const secret of [bundle.accessToken, bundle.refreshToken, bundle.idToken, bundle.accountId, bundle.email, rotated.accessToken, rotated.refreshToken]) {
+    expect(exposed).not.toContain(secret)
+  }
+  if (ciphertext) expect(exposed).not.toContain(ciphertext)
+  expect(exposed).not.toMatch(/[A-Za-z0-9+/]{16}\.[A-Za-z0-9+/=]{32,}/)
+  expect((error as Error).message).toBe(message)
+  expect(error).not.toHaveProperty('cause')
+}
+
 beforeEach(async () => {
   await db.delete(providers)
   await db.insert(users).values({ id: 1, name: 'owner', settings: { plugins: {} }, created_at: 0 }).onConflictDoNothing()
@@ -39,7 +51,8 @@ describe('Codex credential persistence', () => {
   it('rolls back the provider and interface when credential insertion fails', async () => {
     await env.DB.prepare("CREATE TRIGGER reject_codex_credentials BEFORE INSERT ON provider_oauth_credentials BEGIN SELECT RAISE(ABORT, 'fixture failure'); END").run()
     try {
-      await expect(store.createProvider(bundle, 10)).rejects.toThrow()
+      const error = await store.createProvider(bundle, 10).then(() => null, error => error)
+      expectSanitizedCredentialError(error, 'Codex credential creation failed')
       expect(await db.select().from(providers)).toEqual([])
       expect(await db.select().from(providerInterfaces)).toEqual([])
     } finally {
@@ -118,7 +131,9 @@ describe('Codex credential persistence', () => {
     const before = await store.read(id)
     await env.DB.prepare("CREATE TRIGGER reject_codex_update BEFORE UPDATE ON provider_oauth_credentials BEGIN SELECT RAISE(ABORT, 'fixture failure'); END").run()
     try {
-      await expect(operation === 'reconnect' ? store.reconnect(id, 1, rotated, 20) : store.disconnect(id, 1, 20)).rejects.toThrow()
+      const result = operation === 'reconnect' ? store.reconnect(id, 1, rotated, 20) : store.disconnect(id, 1, 20)
+      const error = await result.then(() => null, error => error)
+      expectSanitizedCredentialError(error, `Codex credential ${operation} failed`, before?.encryptedBundle)
       expect(await store.read(id)).toEqual(before)
     } finally {
       await env.DB.prepare('DROP TRIGGER reject_codex_update').run()

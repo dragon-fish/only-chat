@@ -25,7 +25,7 @@ describe('UserHub DO', () => {
         id_token: `header.${btoa(JSON.stringify({ email: 'rpc@example.com', 'https://api.openai.com/auth': { chatgpt_account_id: crypto.randomUUID() } }))}.signature`,
         access_token: 'rpc-access', refresh_token: 'rpc-refresh', token_type: 'Bearer', expires_in: 3600,
       })
-      if (url.endsWith('/models')) return Response.json({ models: [{ slug: 'rpc-model' }] })
+      if (new URL(url).pathname.endsWith('/models')) return Response.json({ models: [{ slug: 'rpc-model' }] })
       throw new Error('Unexpected request')
     })
     try {

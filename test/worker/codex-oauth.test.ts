@@ -41,7 +41,7 @@ beforeEach(async () => {
         : Response.json({}, { status: 403 })
     }
     if (req.url.endsWith('/oauth/token')) return Response.json({ id_token: jwt(accountId), access_token: 'private-access', refresh_token: 'private-refresh', token_type: 'Bearer', expires_in: 3600 })
-    if (req.url.endsWith('/models')) return modelFailure
+    if (new URL(req.url).pathname.endsWith('/models')) return modelFailure
       ? Response.json({ error: 'private-upstream-body' }, { status: 500 })
       : Response.json({ models: [{ slug: 'codex-test' }] })
     throw new Error(`Unexpected URL ${req.url}`)
@@ -67,7 +67,7 @@ describe('Codex OAuth REST boundary', () => {
     const generationAuthorization: Array<string | null> = []
     vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
       const req = new Request(input, init)
-      if (req.url.endsWith('/models')) {
+      if (new URL(req.url).pathname.endsWith('/models')) {
         return Response.json({ models: [{ slug: 'codex-test' }, { slug: 'codex-second' }] })
       }
       if (req.url.endsWith('/responses')) {
@@ -275,7 +275,7 @@ describe('Codex OAuth REST boundary', () => {
     let authorization: string | null = null
     vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
       const req = new Request(input, init)
-      if (!req.url.endsWith('/models')) return upstream(input, init)
+      if (!new URL(req.url).pathname.endsWith('/models')) return upstream(input, init)
       authorization = req.headers.get('authorization')
       return Response.json({ models: [{ slug: 'codex-test' }, { slug: 'codex-new' }] })
     })
@@ -523,7 +523,7 @@ describe('Codex OAuth REST boundary', () => {
     const started = new Promise<void>(resolve => { entered = resolve })
     let firstListing = true
     vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
-      if (new Request(input, init).url.endsWith('/models')) {
+      if (new URL(new Request(input, init).url).pathname.endsWith('/models')) {
         if (!firstListing) return Response.json({ models: [{ slug: 'reconnect-model' }] })
         firstListing = false
         entered()
@@ -564,7 +564,7 @@ describe('Codex OAuth REST boundary', () => {
     const started = new Promise<AbortSignal>(resolve => { entered = resolve })
     vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) => {
       const req = new Request(input, init)
-      if (!req.url.endsWith(path)) return upstream(input, init)
+      if (!new URL(req.url).pathname.endsWith(path)) return upstream(input, init)
       return new Promise<Response>((_resolve, reject) => {
         rejectPending = reject
         req.signal.addEventListener('abort', () => reject(new Error('private-abort-detail')), { once: true })

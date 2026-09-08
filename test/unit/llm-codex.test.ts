@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { LanguageModelV4 } from '@ai-sdk/provider'
-import type { Codex } from '@/server/plugins/codex'
+import { CodexReconnectRequiredError, type Codex } from '@/server/plugins/codex'
 import type { CodexCredentialSnapshot } from '@/server/plugins/codex/credentials'
 import type { ModelRow, ProviderInterfaceRow, ProviderRow } from '@/server/db/schema'
 import { createCodexModel, normalizeCodexResponsesBody } from '@/server/plugins/llm/providers/codex'
+import { createFileAwareResponsesModel } from '@/server/plugins/llm/files/references'
 
 const snapshot = (accessToken = 'private-access'): CodexCredentialSnapshot => ({
   providerId: 1, revision: 1, credentialVersion: 1, accountId: 'private-account', status: 'connected', encryptedBundle: 'encrypted',
@@ -27,6 +28,7 @@ describe('Codex Responses transport', () => {
     const normalized = JSON.parse(normalizeCodexResponsesBody(JSON.stringify({
       model: 'gpt-test', input, store: true, previous_response_id: 'remote', conversation: 'remote',
       generate: true, prompt_cache_retention: '24h', safety_identifier: 'private-user', stream_options: {},
+      temperature: 0.5, top_p: 0.9, max_output_tokens: 512,
       include: ['message.output_text.logprobs', 'reasoning.encrypted_content'],
     })))
     expect(normalized).toEqual({ model: 'gpt-test', input, instructions: '', store: false, include: ['message.output_text.logprobs', 'reasoning.encrypted_content'] })
@@ -38,6 +40,16 @@ describe('Codex Responses transport', () => {
 
   it.each(['private-invalid-json', 'null', '[]'])('rejects malformed bodies without exposing their contents (%s)', body => {
     expect(() => normalizeCodexResponsesBody(body)).toThrow('Codex Responses request body must be a JSON object')
+  })
+
+  it('preserves ordinary session parameters in custom Responses requests', async () => {
+    let request!: Request
+    const lm = createFileAwareResponsesModel({
+      name: 'responses', url: 'https://custom.example/responses',
+      fetch: async (input, init) => { request = new Request(input, init); return emptyStream() },
+    }, 'gpt-test')
+    await (await lm.doStream({ prompt, temperature: 0.5, topP: 0.9, maxOutputTokens: 512 })).stream.cancel()
+    expect(await request.json()).toMatchObject({ temperature: 0.5, top_p: 0.9, max_output_tokens: 512 })
   })
 
   it('uses the fixed endpoint and credential headers in the actual SDK request', async () => {
@@ -88,6 +100,39 @@ describe('Codex Responses transport', () => {
     await reader.cancel()
     expect(remote).toHaveBeenCalledTimes(1)
     expect(getValidCredentials.mock.calls.some(([, force]) => force)).toBe(false)
+  })
+
+  it.each(['stream', 'generate'] as const)('preserves only the typed reconnect instruction after pre-stream 401 during %s', async mode => {
+    const { codex, getValidCredentials } = service()
+    getValidCredentials.mockImplementation(async (_id, force) => {
+      if (force) {
+        const error = new CodexReconnectRequiredError(1)
+        error.message = 'private-upstream-text'
+        Object.assign(error, { cause: 'private-refresh', responseBody: 'private-account' })
+        throw error
+      }
+      return snapshot()
+    })
+    const remote = vi.fn(async () => Response.json({ error: { message: 'private-upstream-body' } }, { status: 401 }))
+    vi.stubGlobal('fetch', remote)
+    const lm = await createCodexModel(codex, provider, endpoint, model) as LanguageModelV4
+    const call = mode === 'stream' ? lm.doStream({ prompt }) : lm.doGenerate({ prompt })
+    const error = await Promise.resolve(call).then(() => null, error => error as Error)
+    expect(error?.message).toBe('Codex reconnect required')
+    expect(JSON.stringify(error)).not.toMatch(/private-|requestBodyValues|responseBody|cause/)
+    expect(remote).toHaveBeenCalledOnce()
+    expect(getValidCredentials.mock.calls.filter(([, force]) => force)).toEqual([[1, true]])
+  })
+
+  it('keeps a forged reconnect error name generic after pre-stream 401', async () => {
+    const { codex, getValidCredentials } = service()
+    getValidCredentials.mockImplementation(async (_id, force) => {
+      if (force) throw Object.assign(new Error('private-refresh'), { name: 'CodexReconnectRequiredError' })
+      return snapshot()
+    })
+    vi.stubGlobal('fetch', async () => new Response(null, { status: 401 }))
+    const lm = await createCodexModel(codex, provider, endpoint, model) as LanguageModelV4
+    await expect(lm.doStream({ prompt })).rejects.toThrow('Codex Responses request failed')
   })
 
   it('never refreshes or replays an authentication failure delivered inside an accepted SSE stream', async () => {

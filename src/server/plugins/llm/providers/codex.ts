@@ -3,16 +3,16 @@ import type { LanguageModel } from 'ai'
 import type { LanguageModelV4, LanguageModelV4StreamPart } from '@ai-sdk/provider'
 import type { FetchFunction } from '@ai-sdk/provider-utils'
 import type { ModelRow, ProviderInterfaceRow, ProviderRow } from '@/server/db/schema'
-import type { Codex } from '../../codex'
+import { CodexReconnectRequiredError, type Codex } from '../../codex'
 import { CODEX_API_BASE_URL, CODEX_ORIGINATOR } from '../../codex/constants'
 import { createFileAwareResponsesModel } from '../files/references'
 import { observedProviderFetch, type LlmRequestTrace } from '../observability'
 import { readResponsesReasoningDelta, RESPONSES_PROVIDER_NAME } from '../responses-reasoning'
 
-function modelError(signal?: AbortSignal): Error {
-  return signal?.aborted
-    ? new DOMException('Codex Responses request aborted', 'AbortError')
-    : new Error('Codex Responses request failed')
+function modelError(signal?: AbortSignal, cause?: unknown): Error {
+  if (signal?.aborted) return new DOMException('Codex Responses request aborted', 'AbortError')
+  // Only this application error may change the public instruction; never reuse its properties.
+  return new Error(cause instanceof CodexReconnectRequiredError ? 'Codex reconnect required' : 'Codex Responses request failed')
 }
 
 /** SDK failures can retain prompts, raw events, and upstream errors even after HTTP succeeds. */
@@ -23,7 +23,7 @@ function sanitizeModelErrors(model: LanguageModelV4): LanguageModelV4 {
     modelId: model.modelId,
     supportedUrls: model.supportedUrls,
     async doGenerate(options) {
-      try { return await model.doGenerate(options) } catch { throw modelError(options.abortSignal) }
+      try { return await model.doGenerate(options) } catch (cause) { throw modelError(options.abortSignal, cause) }
     },
     async doStream(options) {
       try {
@@ -57,7 +57,7 @@ function sanitizeModelErrors(model: LanguageModelV4): LanguageModelV4 {
             finally { reader.releaseLock() }
           },
         }) }
-      } catch { throw modelError(options.abortSignal) }
+      } catch (cause) { throw modelError(options.abortSignal, cause) }
     },
   }
 }
@@ -71,7 +71,7 @@ export function normalizeCodexResponsesBody(body: string): string {
   request.instructions ??= ''
   request.include = [...new Set([...(Array.isArray(request.include) ? request.include : []), 'reasoning.encrypted_content'])]
   // Codex replays local history and encrypted reasoning; remote state is never retained.
-  for (const key of ['previous_response_id', 'conversation', 'generate', 'prompt_cache_retention', 'safety_identifier', 'stream_options']) delete request[key]
+  for (const key of ['previous_response_id', 'conversation', 'generate', 'prompt_cache_retention', 'safety_identifier', 'stream_options', 'temperature', 'top_p', 'max_output_tokens']) delete request[key]
   return JSON.stringify(request)
 }
 

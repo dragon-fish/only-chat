@@ -213,13 +213,13 @@ describe('Codex OAuth client', () => {
     expect(requests[0]?.headers.get('originator')).toBe('codex_cli_rs')
   })
 
-  it('lists unique supported model slugs with fixed credentials headers', async () => {
+  it('lists unique ChatGPT model slugs regardless of public API support with fixed credentials headers', async () => {
     const { fetchStub, requests } = recordingFetch([json({ models: [
-      { slug: 'zeta', supported_in_api: true }, { slug: 'alpha' }, { slug: 'zeta' }, { slug: 'disabled', supported_in_api: false },
+      { slug: 'zeta', supported_in_api: true }, { slug: 'alpha' }, { slug: 'zeta' }, { slug: 'chatgpt-only', supported_in_api: false },
     ] })])
 
-    await expect(createCodexClient(fetchStub).listModels({ accessToken: 'access-1', accountId: 'account-1' })).resolves.toEqual(['alpha', 'zeta'])
-    expect(requests[0]).toMatchObject({ url: 'https://chatgpt.com/backend-api/codex/models', method: 'GET' })
+    await expect(createCodexClient(fetchStub).listModels({ accessToken: 'access-1', accountId: 'account-1' })).resolves.toEqual(['alpha', 'chatgpt-only', 'zeta'])
+    expect(requests[0]).toMatchObject({ url: 'https://chatgpt.com/backend-api/codex/models?client_version=0.153.4', method: 'GET' })
     expect(requests[0]?.headers.get('authorization')).toBe('Bearer access-1')
     expect(requests[0]?.headers.get('chatgpt-account-id')).toBe('account-1')
     expect(requests[0]?.headers.get('originator')).toBe('codex_cli_rs')

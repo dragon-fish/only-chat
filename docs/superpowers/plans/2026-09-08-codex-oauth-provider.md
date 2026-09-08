@@ -271,7 +271,7 @@ export interface CodexClient {
 }
 ```
 
-`createCodexClient` accepts a clock so the fixed 15-minute device-code expiry is deterministic in tests. Parse the ID token payload with base64url decoding to obtain account ID and email. Do not log token payloads. Preserve the current token field when a successful refresh omits its replacement. Classify known refresh errors as permanent and all network/5xx failures as transient. Parse model discovery from `{ models: [{ slug, supported_in_api }] }`, retaining only entries whose `supported_in_api` is not false.
+`createCodexClient` accepts a clock so the fixed 15-minute device-code expiry is deterministic in tests. Parse the ID token payload with base64url decoding to obtain account ID and email. Do not log token payloads. Preserve the current token field when a successful refresh omits its replacement. Classify known refresh errors as permanent and all network/5xx failures as transient. Request model discovery with the fixed `CODEX_CLIENT_VERSION = '0.153.4'` as `client_version`. Parse `{ models: [{ slug, supported_in_api }] }` and retain every valid model for ChatGPT authentication, including `supported_in_api: false`; this flag describes public API availability.
 
 - [ ] **Step 5: Run focused tests**
 

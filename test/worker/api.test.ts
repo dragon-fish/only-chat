@@ -76,7 +76,10 @@ describe('provider model reconciliation service', () => {
       removed: 1,
     })
     expect(await reconcileProviderModels(ctx, provider.id, ['model-b', 'model-c'], { enableNew: true })).toMatchObject({ imported: 1 })
-    const rows = await ctx.db.orm.query.models.findMany({ where: (model, { eq }) => eq(model.provider_id, provider.id) })
+    const rows = await ctx.db.orm.query.models.findMany({
+      where: (model, { eq }) => eq(model.provider_id, provider.id),
+      orderBy: (model, { asc }) => asc(model.model_id),
+    })
     expect(rows.map(row => [row.model_id, row.enabled])).toEqual([['model-b', false], ['model-c', true]])
   })
 })

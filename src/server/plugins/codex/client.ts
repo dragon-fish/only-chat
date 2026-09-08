@@ -2,6 +2,7 @@ import {
   CODEX_API_BASE_URL,
   CODEX_AUTH_BASE_URL,
   CODEX_CLIENT_ID,
+  CODEX_CLIENT_VERSION,
   CODEX_DEVICE_REDIRECT_URI,
   CODEX_ORIGINATOR,
 } from './constants'
@@ -246,7 +247,7 @@ export function createCodexClient(fetchFn: typeof fetch = fetch, now: () => numb
 
   async function listModels(credentials: Pick<CodexTokenBundle, 'accessToken' | 'accountId'>, signal?: AbortSignal): Promise<string[]> {
     const operation = 'model listing'
-    const response = await request(operation, `${CODEX_API_BASE_URL}/models`, {
+    const response = await request(operation, `${CODEX_API_BASE_URL}/models?client_version=${CODEX_CLIENT_VERSION}`, {
       headers: {
         Accept: 'application/json',
         Authorization: `Bearer ${credentials.accessToken}`,
@@ -260,8 +261,9 @@ export function createCodexClient(fetchFn: typeof fetch = fetch, now: () => numb
     const slugs = body.models.map(model => {
       if (!isRecord(model) || typeof model.slug !== 'string' || model.slug.trim() === '') throw protocolError(operation, 'upstream', response.status)
       if (model.supported_in_api !== undefined && typeof model.supported_in_api !== 'boolean') throw protocolError(operation, 'upstream', response.status)
-      return model.supported_in_api === false ? null : model.slug
-    }).filter((slug): slug is string => slug !== null)
+      // ChatGPT authentication can use models that are unavailable through the public API.
+      return model.slug
+    })
     return [...new Set(slugs)].sort()
   }
 
