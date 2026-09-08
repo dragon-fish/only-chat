@@ -1,8 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import type { ModelCapabilities, Project, Provider, Session } from '@/shared/models'
+import type { Project, Session } from '@/shared/models'
 import {
   displayInitials,
-  filterModelEntries,
   recentProjects,
   searchProjects,
   searchSessions,
@@ -18,11 +17,6 @@ const session = (id: number, project_id: number | null, updated_at: number, titl
   id, user_id: 1, project_id, title, head_message_id: null,
   provider_id: null, model_id: null, system_prompt: null, params: null,
   created_at: updated_at, updated_at, archived_at: null,
-})
-
-const entry = (providerName: string, model_id: string, display_name: string, capabilities: ModelCapabilities) => ({
-  provider: { id: providerName.length, user_id: 1, name: providerName, protocol: 'openai-responses', base_url: '', enabled: true, has_key: true, native_files: false, extra: null, created_at: 0 } satisfies Provider,
-  model: { id: model_id.length, provider_id: providerName.length, model_id, display_name, capabilities, pricing: null, enabled: true, sort: 0 },
 })
 
 describe('navigation view models', () => {
@@ -53,13 +47,4 @@ describe('navigation view models', () => {
     expect(searchSessions(sessions, 'design', null).map(s => s.id)).toEqual([2])
   })
 
-  it('matches provider, display name, model id, and declared capabilities', () => {
-    const entries = [
-      entry('ZenMux', 'google/gemini', 'Gemini Flash', { vision: true }),
-      entry('DeepSeek', 'deepseek-chat', 'DeepSeek V4', { reasoning: true }),
-    ]
-    expect(filterModelEntries(entries, 'zen', 'all')).toEqual([entries[0]])
-    expect(filterModelEntries(entries, 'deepseek-chat', 'reasoning')).toEqual([entries[1]])
-    expect(filterModelEntries(entries, '', 'vision')).toEqual([entries[0]])
-  })
 })

@@ -20,8 +20,8 @@ function mountControl(isDesktop: boolean, noModel = false) {
   const host = document.createElement('div')
   document.body.append(host)
   const app = createApp({ render: () => h(TooltipProvider, null, () => h(ReasoningControl, {
-    capabilities: { reasoning: true, reasoning_can_disable: true, reasoning_efforts: ['low', 'medium', 'high'] },
-    protocol: 'openai-responses', active: active.value, overridden: true, noModel,
+    metadata: { reasoning: true, reasoning_options: [{ type: 'toggle' }, { type: 'effort', values: ['low', 'medium', 'high'] }] },
+    active: active.value, overridden: true, noModel,
     onUpdate: (choice: ReasoningChoice) => { active.value = choice },
   })) })
   app.mount(host)

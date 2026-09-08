@@ -12,6 +12,7 @@ export default defineConfig({
           cloudflareTest(async () => ({
             wrangler: { configPath: './wrangler.jsonc' },
             miniflare: {
+              d1Databases: ['DB', 'TEST_LEGACY_DB'],
               bindings: {
                 TEST_MIGRATIONS: await readD1Migrations(path.join(import.meta.dirname, 'migrations')),
                 KEY_ENCRYPTION_SECRET: 'test-secret-do-not-use-in-prod',

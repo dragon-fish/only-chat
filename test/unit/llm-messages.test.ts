@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { buildModelMessages, buildProviderOptions, requiredAttachmentIds, type AttachmentInput, type BuildInput } from '@/server/plugins/llm/messages'
-import type { Message, ModelCapabilities } from '@/shared/models'
-import type { Protocol } from '@/shared/models'
+import type { Message } from '@/shared/models'
+import type { ModelMetadata } from '@/shared/model-metadata'
+import type { InterfaceProtocol } from '@/shared/models'
 
 const png = new Uint8Array([137, 80, 78, 71])
 const inlinePng: AttachmentInput = { mime: 'image/png', data: { type: 'data', data: png } }
@@ -18,7 +19,7 @@ const path: Message[] = [
   msg({ id: 2, role: 'assistant', parts: [
     { type: 'reasoning', text: 'hmm', providerOptions: {
       anthropic: { signature: 'SIG', redactedData: 'RED' },
-      openai: { itemId: 'rs_1', reasoningEncryptedContent: 'ENC' },
+      responses: { itemId: 'rs_1', reasoningEncryptedContent: 'ENC' },
     } },
     { type: 'text', text: 'a cat', providerOptions: { google: { thoughtSignature: 'TS_TEXT' } } },
     { type: 'tool_call', id: 'call_1', name: 'lookup', args: { q: 'cat' }, providerOptions: { google: { thoughtSignature: 'TS_TOOL' } } },
@@ -27,7 +28,7 @@ const path: Message[] = [
   msg({ id: 3, role: 'user', parts: [{ type: 'text', text: 'and now?' }] }),
 ]
 
-function input(protocol: Protocol): BuildInput {
+function input(protocol: InterfaceProtocol): BuildInput {
   return { protocol, systemPrompt: 'be brief', path, attachments: new Map([[9, inlinePng]]) }
 }
 
@@ -37,7 +38,7 @@ function assistantContent(out: unknown[]): Array<{ type: string; text?: string; 
   return m.content
 }
 
-const PROTOCOLS: Protocol[] = ['openai-completions', 'openai-responses', 'anthropic', 'vertex', 'vertex-compatible']
+const PROTOCOLS: InterfaceProtocol[] = ['chat-completions', 'responses', 'anthropic', 'vertex-compatible']
 
 describe('buildModelMessages', () => {
   for (const p of PROTOCOLS) {
@@ -55,7 +56,7 @@ describe('buildModelMessages', () => {
   }
 
   it('puts the system prompt first as a system message', () => {
-    const out = buildModelMessages(input('openai-responses'))
+    const out = buildModelMessages(input('responses'))
     expect(out[0]).toMatchObject({ role: 'system', content: 'be brief' })
   })
 
@@ -73,14 +74,14 @@ describe('buildModelMessages', () => {
   it('sends a provider file pointer as a reference part instead of bytes', () => {
     const reference = { openai: 'file-abc123' }
     const out = buildModelMessages({
-      ...input('openai-responses'),
+      ...input('responses'),
       attachments: new Map([[9, { mime: 'image/png', data: { type: 'reference', reference } }]]),
     })
     const user = out[1] as { content: Array<{ type: string; mediaType?: string; data?: unknown }> }
     expect(user.content[1]).toEqual({ type: 'file', mediaType: 'image/png', data: { type: 'reference', reference } })
   })
 
-  it('replays reasoning on every protocol, openai-completions included', () => {
+  it('replays reasoning on every protocol, chat-completions included', () => {
     for (const p of PROTOCOLS) {
       const content = assistantContent(buildModelMessages(input(p)))
       expect(content.map((c) => c.type)).toEqual(['reasoning', 'text', 'tool-call'])
@@ -93,31 +94,59 @@ describe('buildModelMessages', () => {
       msg({ id: 1, role: 'user', parts: [{ type: 'text', text: 'q' }] }),
       msg({ id: 2, role: 'assistant', parts: [{ type: 'reasoning', text: 'analysis' }, { type: 'text', text: 'answer' }] }),
     ]
-    const out = buildModelMessages({ protocol: 'openai-completions', systemPrompt: null, path: plain, attachments: new Map() })
+    const out = buildModelMessages({ protocol: 'chat-completions', systemPrompt: null, path: plain, attachments: new Map() })
     expect(assistantContent(out)).toContainEqual({ type: 'reasoning', text: 'analysis' })
   })
 
-  it('keeps provider metadata on reasoning, text and tool-call parts verbatim', () => {
-    const content = assistantContent(buildModelMessages(input('vertex')))
-    expect(content[0]).toMatchObject({ providerOptions: {
-      anthropic: { signature: 'SIG', redactedData: 'RED' },
-      openai: { itemId: 'rs_1', reasoningEncryptedContent: 'ENC' },
-    } })
+  it('keeps only metadata namespaces understood by the selected protocol', () => {
+    const content = assistantContent(buildModelMessages(input('vertex-compatible')))
+    expect(content[0]).toEqual({ type: 'reasoning', text: 'hmm' })
     expect(content[1]).toMatchObject({ providerOptions: { google: { thoughtSignature: 'TS_TEXT' } } })
     expect(content[2]).toMatchObject({ providerOptions: { google: { thoughtSignature: 'TS_TOOL' } } })
+    expect(assistantContent(buildModelMessages(input('responses')))[0]).toEqual({
+      type: 'reasoning', text: 'hmm', providerOptions: { responses: { itemId: 'rs_1', reasoningEncryptedContent: 'ENC' } },
+    })
+    expect(assistantContent(buildModelMessages(input('anthropic')))[0]).toEqual({
+      type: 'reasoning', text: 'hmm', providerOptions: { anthropic: { signature: 'SIG', redactedData: 'RED' } },
+    })
+    expect(assistantContent(buildModelMessages(input('chat-completions')))[0]).toEqual({ type: 'reasoning', text: 'hmm' })
+  })
+
+  it('preserves foreign reasoning as plain assistant context for Anthropic, which requires signed thinking', () => {
+    const foreign = [msg({ id: 2, role: 'assistant', parts: [
+      { type: 'reasoning', text: 'analysis', providerOptions: { responses: { itemId: 'r1' } } },
+      { type: 'text', text: 'answer' },
+    ] })]
+    const out = buildModelMessages({ protocol: 'anthropic', systemPrompt: null, path: foreign, attachments: new Map() })
+    expect(assistantContent(out)).toEqual([{ type: 'text', text: 'analysis' }, { type: 'text', text: 'answer' }])
+  })
+
+  it('preserves tool results between assistant segments instead of moving them after later reasoning', () => {
+    const ordered = [msg({ id: 2, role: 'assistant', parts: [
+      { type: 'reasoning', text: 'first' },
+      { type: 'tool_call', id: 'c1', name: 'lookup', args: {} },
+      { type: 'tool_result', call_id: 'c1', name: 'lookup', content: { ok: true } },
+      { type: 'reasoning', text: 'second' },
+      { type: 'text', text: 'answer' },
+    ] })]
+    const out = buildModelMessages({ protocol: 'responses', systemPrompt: null, path: ordered, attachments: new Map() })
+    expect(out.map(message => message.role)).toEqual(['assistant', 'tool', 'assistant'])
+    expect(out.map(message => Array.isArray(message.content) ? message.content.map(part => part.type) : [])).toEqual([
+      ['reasoning', 'tool-call'], ['tool-result'], ['reasoning', 'text'],
+    ])
   })
 
   it('replays an empty reasoning summary that only carries encrypted metadata', () => {
     const encrypted: Message[] = [
       msg({ id: 1, role: 'user', parts: [{ type: 'text', text: 'q' }] }),
       msg({ id: 2, role: 'assistant', parts: [
-        { type: 'reasoning', text: '', providerOptions: { openai: { itemId: 'rs_1', reasoningEncryptedContent: 'ENC' } } },
+        { type: 'reasoning', text: '', providerOptions: { responses: { itemId: 'rs_1', reasoningEncryptedContent: 'ENC' } } },
         { type: 'text', text: 'answer' },
       ] }),
     ]
-    const out = buildModelMessages({ protocol: 'openai-responses', systemPrompt: null, path: encrypted, attachments: new Map() })
+    const out = buildModelMessages({ protocol: 'responses', systemPrompt: null, path: encrypted, attachments: new Map() })
     expect(assistantContent(out)[0]).toEqual({
-      type: 'reasoning', text: '', providerOptions: { openai: { itemId: 'rs_1', reasoningEncryptedContent: 'ENC' } },
+      type: 'reasoning', text: '', providerOptions: { responses: { itemId: 'rs_1', reasoningEncryptedContent: 'ENC' } },
     })
   })
 
@@ -139,7 +168,7 @@ describe('buildModelMessages', () => {
     expect(out[0]!.providerOptions).toEqual({ anthropic: { cacheControl: { type: 'ephemeral' } } })
     expect(out[1]!.providerOptions).toBeUndefined()
     expect(out.at(-1)!.providerOptions).toEqual({ anthropic: { cacheControl: { type: 'ephemeral' } } })
-    const oa = buildModelMessages(input('openai-responses')) as Array<{ providerOptions?: unknown }>
+    const oa = buildModelMessages(input('responses')) as Array<{ providerOptions?: unknown }>
     expect(oa.every((m) => m.providerOptions === undefined)).toBe(true)
   })
 
@@ -180,12 +209,12 @@ describe('requiredAttachmentIds', () => {
   })
 })
 
-const REASONING: ModelCapabilities = { reasoning: true }
-const CAN_DISABLE: ModelCapabilities = { reasoning: true, reasoning_can_disable: true }
+const REASONING: ModelMetadata = { reasoning: true }
+const CAN_DISABLE: ModelMetadata = { reasoning: true, reasoning_options: [{ type: 'toggle' }] }
 
 describe('buildProviderOptions', () => {
-  it('forces store:false on openai responses', () => {
-    expect(buildProviderOptions('openai-responses', null, {})).toEqual({ openai: { store: false } })
+  it('leaves Responses reasoning unspecified without model metadata', () => {
+    expect(buildProviderOptions('responses', null, {})).toEqual({})
   })
 
   it('sends nothing reasoning-related for a model without the capability', () => {
@@ -198,33 +227,30 @@ describe('buildProviderOptions', () => {
 
   it('enables reasoning with no effort for an explicit Auto', () => {
     const auto = { reasoning_enabled: true, reasoning_effort: null } as const
-    expect(buildProviderOptions('openai-responses', auto, REASONING))
-      .toEqual({ openai: { store: false, reasoningSummary: 'auto' } })
-    expect(buildProviderOptions('openai-completions', auto, REASONING)).toEqual({})
+    expect(buildProviderOptions('responses', auto, REASONING))
+      .toEqual({})
+    expect(buildProviderOptions('chat-completions', auto, REASONING)).toEqual({})
     expect(buildProviderOptions('anthropic', auto, REASONING))
       .toEqual({ anthropic: { thinking: { type: 'adaptive', display: 'summarized' } } })
-    expect(buildProviderOptions('vertex', auto, REASONING))
+    expect(buildProviderOptions('vertex-compatible', auto, REASONING))
       .toEqual({ googleVertex: { thinkingConfig: { includeThoughts: true } } })
   })
 
   it('treats an inherited-empty reasoning setting as enabled', () => {
-    // Nothing was ever chosen: reasoning stays on, and the protocol still asks for its summary.
-    expect(buildProviderOptions('openai-responses', {}, REASONING))
-      .toEqual({ openai: { store: false, reasoningSummary: 'auto' } })
-    expect(buildProviderOptions('vertex', {}, REASONING))
+    // An inherited-empty setting leaves the reasoning model's default effort in effect.
+    expect(buildProviderOptions('responses', {}, REASONING))
+      .toEqual({})
+    expect(buildProviderOptions('vertex-compatible', {}, REASONING))
       .toEqual({ googleVertex: { thinkingConfig: { includeThoughts: true } } })
   })
 
   it('maps an explicit effort per protocol', () => {
-    expect(buildProviderOptions('openai-responses', { reasoning_effort: 'high' }, REASONING))
-      .toEqual({ openai: { store: false, reasoningSummary: 'auto', reasoningEffort: 'high' } })
-    expect(buildProviderOptions('openai-completions', { reasoning_effort: 'low' }, REASONING))
+    expect(buildProviderOptions('responses', { reasoning_effort: 'high' }, REASONING))
+      .toEqual({ responses: { reasoningEffort: 'high' } })
+    expect(buildProviderOptions('chat-completions', { reasoning_effort: 'low' }, REASONING))
       .toEqual({ compat: { reasoningEffort: 'low' } })
     expect(buildProviderOptions('anthropic', { reasoning_effort: 'medium' }, REASONING))
       .toEqual({ anthropic: { thinking: { type: 'adaptive', display: 'summarized' }, effort: 'medium' } })
-    expect(buildProviderOptions('vertex', { reasoning_effort: 'high' }, REASONING))
-      .toEqual({ googleVertex: { thinkingConfig: { includeThoughts: true, thinkingLevel: 'high' } } })
-    // The Vertex-compatible gateways share Gemini's reasoning mapping (spec §5.5).
     expect(buildProviderOptions('vertex-compatible', { reasoning_effort: 'high' }, REASONING))
       .toEqual({ googleVertex: { thinkingConfig: { includeThoughts: true, thinkingLevel: 'high' } } })
   })
@@ -232,7 +258,7 @@ describe('buildProviderOptions', () => {
   it('never forwards an effort Anthropic does not accept', () => {
     // `minimal` and `ultra` are valid in our slider but absent from Anthropic's effort enum, even
     // when the model itself declares them — the protocol, not the capability list, rejects these.
-    const caps: ModelCapabilities = { reasoning: true, reasoning_efforts: ['minimal', 'ultra'] }
+    const caps: ModelMetadata = { reasoning: true, reasoning_options: [{ type: 'effort', values: ['minimal', 'ultra'] }] }
     for (const effort of ['minimal', 'ultra'] as const) {
       const opts = buildProviderOptions('anthropic', { reasoning_effort: effort }, caps)
       expect(opts).toEqual({ anthropic: { thinking: { type: 'adaptive', display: 'summarized' } } })
@@ -242,8 +268,8 @@ describe('buildProviderOptions', () => {
 
   it('never forwards a thinking level Gemini does not accept', () => {
     // Gemini's thinkingLevel enum stops at `high`; the request stays a thinking request regardless.
-    const caps: ModelCapabilities = { reasoning: true, reasoning_efforts: ['xhigh', 'max', 'ultra'] }
-    for (const protocol of ['vertex', 'vertex-compatible'] as const) {
+    const caps: ModelMetadata = { reasoning: true, reasoning_options: [{ type: 'effort', values: ['xhigh', 'max', 'ultra'] }] }
+    for (const protocol of ['vertex-compatible'] as const) {
       for (const effort of ['xhigh', 'max', 'ultra'] as const) {
         const opts = buildProviderOptions(protocol, { reasoning_effort: effort }, caps)
         expect(opts).toEqual({ googleVertex: { thinkingConfig: { includeThoughts: true } } })
@@ -253,69 +279,69 @@ describe('buildProviderOptions', () => {
   })
 
   it('sends only an effort the model declares, and falls back to Auto for one it does not', () => {
-    const caps: ModelCapabilities = { reasoning: true, reasoning_efforts: ['low', 'high'] }
-    expect(buildProviderOptions('openai-responses', { reasoning_effort: 'high' }, caps))
-      .toEqual({ openai: { store: false, reasoningSummary: 'auto', reasoningEffort: 'high' } })
+    const caps: ModelMetadata = { reasoning: true, reasoning_options: [{ type: 'effort', values: ['low', 'high'] }] }
+    expect(buildProviderOptions('responses', { reasoning_effort: 'high' }, caps))
+      .toEqual({ responses: { reasoningEffort: 'high' } })
     // `medium` is not declared: reasoning stays on, the stale level is simply not sent.
-    expect(buildProviderOptions('openai-responses', { reasoning_effort: 'medium' }, caps))
-      .toEqual({ openai: { store: false, reasoningSummary: 'auto' } })
-    expect(buildProviderOptions('openai-completions', { reasoning_effort: 'medium' }, caps)).toEqual({})
+    expect(buildProviderOptions('responses', { reasoning_effort: 'medium' }, caps))
+      .toEqual({})
+    expect(buildProviderOptions('chat-completions', { reasoning_effort: 'medium' }, caps)).toEqual({})
     expect(buildProviderOptions('anthropic', { reasoning_effort: 'medium' }, caps))
       .toEqual({ anthropic: { thinking: { type: 'adaptive', display: 'summarized' } } })
-    expect(buildProviderOptions('vertex', { reasoning_effort: 'medium' }, caps))
+    expect(buildProviderOptions('vertex-compatible', { reasoning_effort: 'medium' }, caps))
       .toEqual({ googleVertex: { thinkingConfig: { includeThoughts: true } } })
   })
 
   it('keeps the effort when the model declares no level list at all', () => {
     // An absent or empty declaration means "undeclared", never "nothing allowed".
-    for (const caps of [REASONING, { reasoning: true, reasoning_efforts: [] } as ModelCapabilities]) {
-      expect(buildProviderOptions('openai-responses', { reasoning_effort: 'medium' }, caps))
-        .toEqual({ openai: { store: false, reasoningSummary: 'auto', reasoningEffort: 'medium' } })
+    for (const caps of [REASONING, { reasoning: true, reasoning_options: [{ type: 'effort', values: [] }] } as ModelMetadata]) {
+      expect(buildProviderOptions('responses', { reasoning_effort: 'medium' }, caps))
+        .toEqual({ responses: { reasoningEffort: 'medium' } })
     }
   })
 
   it('omits the disable value when the model cannot turn reasoning off', () => {
     const off = { reasoning_enabled: false } as const
-    expect(buildProviderOptions('openai-responses', off, REASONING)).toEqual({ openai: { store: false } })
-    expect(buildProviderOptions('openai-completions', off, REASONING)).toEqual({})
+    expect(buildProviderOptions('responses', off, REASONING)).toEqual({})
+    expect(buildProviderOptions('chat-completions', off, REASONING)).toEqual({})
     expect(buildProviderOptions('anthropic', off, REASONING)).toEqual({})
-    expect(buildProviderOptions('vertex', off, REASONING)).toEqual({})
+    expect(buildProviderOptions('vertex-compatible', off, REASONING)).toEqual({})
   })
 
   it('sends the protocol disable value when the model can turn reasoning off', () => {
     const off = { reasoning_enabled: false } as const
-    expect(buildProviderOptions('openai-responses', off, CAN_DISABLE))
-      .toEqual({ openai: { store: false, reasoningEffort: 'none' } })
-    expect(buildProviderOptions('openai-completions', off, CAN_DISABLE)).toEqual({})
+    expect(buildProviderOptions('responses', off, CAN_DISABLE))
+      .toEqual({ responses: { reasoningEffort: 'none' } })
+    expect(buildProviderOptions('chat-completions', off, CAN_DISABLE)).toEqual({ compat: { reasoningEffort: 'none' } })
     expect(buildProviderOptions('anthropic', off, CAN_DISABLE))
       .toEqual({ anthropic: { thinking: { type: 'disabled' } } })
-    expect(buildProviderOptions('vertex', off, CAN_DISABLE))
+    expect(buildProviderOptions('vertex-compatible', off, CAN_DISABLE))
       .toEqual({ googleVertex: { thinkingConfig: { thinkingBudget: 0, includeThoughts: false } } })
   })
 
   it('ignores an effort once reasoning is explicitly disabled', () => {
     const off = { reasoning_enabled: false, reasoning_effort: 'high' } as const
-    expect(buildProviderOptions('openai-responses', off, CAN_DISABLE))
-      .toEqual({ openai: { store: false, reasoningEffort: 'none' } })
+    expect(buildProviderOptions('responses', off, CAN_DISABLE))
+      .toEqual({ responses: { reasoningEffort: 'none' } })
     expect(buildProviderOptions('anthropic', off, CAN_DISABLE))
       .toEqual({ anthropic: { thinking: { type: 'disabled' } } })
   })
 
   it('asks Gemini for the image modality only when the model declares image output', () => {
-    const caps: ModelCapabilities = { image_output: true }
-    for (const protocol of ['vertex', 'vertex-compatible'] as const) {
+    const caps: ModelMetadata = { modalities: { input: [], output: ['image'] } }
+    for (const protocol of ['vertex-compatible'] as const) {
       expect(buildProviderOptions(protocol, null, caps))
         .toEqual({ googleVertex: { responseModalities: ['TEXT', 'IMAGE'] } })
     }
     // Reasoning and image output are independent settings on the same options object.
-    expect(buildProviderOptions('vertex', { reasoning_effort: 'high' }, { ...caps, reasoning: true }))
+    expect(buildProviderOptions('vertex-compatible', { reasoning_effort: 'high' }, { ...caps, reasoning: true }))
       .toEqual({ googleVertex: { thinkingConfig: { includeThoughts: true, thinkingLevel: 'high' }, responseModalities: ['TEXT', 'IMAGE'] } })
   })
 
   it('never asks for image output from a model that does not declare it', () => {
     // The capability is configured, never inferred from a model id (spec §4.4).
     for (const protocol of PROTOCOLS) {
-      for (const caps of [{}, REASONING, CAN_DISABLE] as ModelCapabilities[]) {
+      for (const caps of [{}, REASONING, CAN_DISABLE] as ModelMetadata[]) {
         expect(JSON.stringify(buildProviderOptions(protocol, { reasoning_enabled: false }, caps))).not.toContain('IMAGE')
         expect(JSON.stringify(buildProviderOptions(protocol, null, caps))).not.toContain('IMAGE')
       }
@@ -324,9 +350,9 @@ describe('buildProviderOptions', () => {
 
   it('leaves the non-Gemini protocols alone for image output', () => {
     // Only the Google protocols carry a modality switch; the rest send nothing extra (spec §5.8).
-    const caps: ModelCapabilities = { image_output: true }
-    expect(buildProviderOptions('openai-responses', null, caps)).toEqual({ openai: { store: false } })
-    expect(buildProviderOptions('openai-completions', null, caps)).toEqual({})
+    const caps: ModelMetadata = { modalities: { input: [], output: ['image'] } }
+    expect(buildProviderOptions('responses', null, caps)).toEqual({})
+    expect(buildProviderOptions('chat-completions', null, caps)).toEqual({})
     expect(buildProviderOptions('anthropic', null, caps)).toEqual({})
   })
 })

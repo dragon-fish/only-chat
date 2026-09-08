@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
-import { isChatHistoryRoute, modelCapabilitiesWithEfforts, createModelWriteQueue, acknowledgedPlugins } from '@/client/lib/settings'
-import type { Model } from '@/shared/models'
+import { isChatHistoryRoute, createModelWriteQueue, acknowledgedPlugins } from '@/client/lib/settings'
+import type { ModelWithMetadata } from '@/shared/models'
+import { modelRecords } from './provider-fixtures'
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -8,10 +9,7 @@ function deferred<T>() {
   return { promise, resolve }
 }
 
-const model: Model = {
-  id: 2, provider_id: 1, model_id: 'example', display_name: 'Example', enabled: true,
-  capabilities: {}, pricing: null, sort: 0,
-}
+const model = modelRecords[0]!
 
 describe('settings navigation and model editing', () => {
   it('acknowledges only plugin switches matching the authoritative server values', () => {
@@ -29,15 +27,6 @@ describe('settings navigation and model editing', () => {
     for (const path of [null, '/settings', '/projects/3', '/project/7/settings', '/c/12/edit', 'https://example.com/c/12']) expect(isChatHistoryRoute(path)).toBe(false)
   })
 
-  it('clears undeclared reasoning efforts without erasing other capability flags', () => {
-    // Storing [] or dropping vision would break the declared-capabilities payload contract.
-    const source = { vision: true, tools: false, reasoning_efforts: ['high'] as const }
-    const capabilities = { ...source, reasoning_efforts: ['high' as const] }
-    expect(modelCapabilitiesWithEfforts(capabilities, [])).toEqual({ vision: true, tools: false })
-    expect(modelCapabilitiesWithEfforts(capabilities, ['max', 'low', 'max'])).toEqual({ vision: true, tools: false, reasoning_efforts: ['low', 'max'] })
-    expect(capabilities.reasoning_efforts).toEqual(['high'])
-  })
-
   it('serializes rapid model writes and only publishes the newest result', async () => {
     // Concurrent writes can reach the server out of order and erase the user's later intent.
     const firstWrite = deferred<void>()
@@ -45,20 +34,20 @@ describe('settings navigation and model editing', () => {
     const apply = vi.fn()
     const read = vi.fn().mockResolvedValue([{ ...model, enabled: false }])
     const queue = createModelWriteQueue({ write, read, apply, onError: vi.fn() })
-    const first = queue(2, { capabilities: { vision: true } })
+    const first = queue(2, { metadata_override: { reasoning: true } })
     const second = queue(2, { enabled: false })
     await Promise.resolve()
-    expect(write.mock.calls).toEqual([[2, { capabilities: { vision: true } }]])
+    expect(write.mock.calls).toEqual([[2, { metadata_override: { reasoning: true } }]])
     firstWrite.resolve()
     await Promise.all([first, second])
-    expect(write.mock.calls).toEqual([[2, { capabilities: { vision: true } }], [2, { enabled: false }]])
+    expect(write.mock.calls).toEqual([[2, { metadata_override: { reasoning: true } }], [2, { enabled: false }]])
     expect(read).toHaveBeenCalledTimes(1)
     expect(apply).toHaveBeenCalledExactlyOnceWith([{ ...model, enabled: false }])
   })
 
   it('discards a reread when another edit arrived while it was in flight', async () => {
     // A sequence check only before the read would repaint the row with stale state.
-    const staleRead = deferred<Model[]>()
+    const staleRead = deferred<ModelWithMetadata[]>()
     const readStarted = deferred<void>()
     const apply = vi.fn()
     const read = vi.fn().mockImplementationOnce(() => { readStarted.resolve(); return staleRead.promise }).mockResolvedValue([{ ...model, enabled: false }])

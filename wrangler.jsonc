@@ -4,6 +4,7 @@
   "main": "./src/server/index.ts",
   "compatibility_date": "2026-09-05",
   "compatibility_flags": ["nodejs_compat"],
+  "secrets": { "required": ["KEY_ENCRYPTION_SECRET"] },
   "workers_dev": false,
   "preview_urls": false,
   "routes": [{ "pattern": "chat.epb.wiki", "custom_domain": true }],
@@ -25,6 +26,7 @@
     }
   ],
   "r2_buckets": [{ "binding": "BUCKET", "bucket_name": "only-chat-attachments" }],
-  // Daily sweep of expired provider file pointers (spec §5.7).
+  "kv_namespaces": [{ "binding": "KV", "id": "cdbd1aa741cb4b77b12564f1e1274bb9" }],
+  // Daily catalog refresh and independent expired provider file pointer sweep.
   "triggers": { "crons": ["0 3 * * *"] }
 }

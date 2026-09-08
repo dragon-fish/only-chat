@@ -4,6 +4,7 @@ import type { Llm } from './plugins/llm'
 import type { Hub } from './plugins/hub'
 import type { BeforeSendPayload } from './plugins/hub/generation'
 import type { ApiApp } from './plugins/api'
+import type { ModelCatalog } from './plugins/model-catalog'
 import type { Message, Project, Session } from '@/shared/models'
 
 declare module 'cordis' {
@@ -14,6 +15,7 @@ declare module 'cordis' {
     assets: Assets
     llm: Llm
     api: ApiApp
+    modelCatalog: ModelCatalog
   }
 }
 

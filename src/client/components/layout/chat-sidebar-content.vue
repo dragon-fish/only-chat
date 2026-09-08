@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import {
-  ArrowLeftIcon, ChevronsUpDownIcon, MessageCircleIcon, PlusIcon,
-  SearchIcon, SettingsIcon, SlidersHorizontalIcon,
+  ArrowLeftIcon, ChevronsUpDownIcon, PlusIcon, SearchIcon, SlidersHorizontalIcon,
 } from '@lucide/vue'
 import { RouterLink, useRoute } from 'vue-router'
 import ProjectAvatar from '@/client/components/project-avatar.vue'
@@ -20,7 +19,7 @@ import {
 } from '@/client/ui/dropdown-menu'
 import { ScrollArea } from '@/client/ui/scroll-area'
 import {
-  SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarHeader,
+  SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarHeader,
   SidebarGroupAction, SidebarInput, SidebarMenu, SidebarMenuButton, SidebarMenuItem,
 } from '@/client/ui/sidebar'
 
@@ -58,10 +57,10 @@ function clearSearch() {
 
 <template>
   <template v-if="isProjectMode && project">
-    <SidebarHeader>
+    <SidebarHeader data-project-context>
       <SidebarMenu>
         <SidebarMenuItem>
-          <SidebarMenuButton as-child class="min-h-10 md:min-h-0" tooltip="返回聊天">
+          <SidebarMenuButton data-project-back as-child class="min-h-10 md:min-h-0" tooltip="返回聊天">
             <RouterLink to="/new" @click="clearSearch">
               <ArrowLeftIcon />
               <span>返回聊天</span>
@@ -71,7 +70,7 @@ function clearSearch() {
         <SidebarMenuItem>
           <DropdownMenu>
             <DropdownMenuTrigger as-child>
-              <SidebarMenuButton size="lg" :tooltip="project.name">
+              <SidebarMenuButton data-project-switcher size="lg" :tooltip="project.name">
                 <ProjectAvatar :name="project.name" />
                 <span class="min-w-0 flex-1 truncate font-medium">{{ project.name }}</span>
                 <ChevronsUpDownIcon />
@@ -94,7 +93,7 @@ function clearSearch() {
 
       <SidebarMenu>
         <SidebarMenuItem>
-          <SidebarMenuButton as-child class="min-h-10 md:min-h-0" tooltip="Project 新对话">
+          <SidebarMenuButton data-project-new-chat as-child class="min-h-10 md:min-h-0" tooltip="Project 新对话">
             <RouterLink :to="`/project/${project.id}/new`">
               <PlusIcon />
               <span>Project 新对话</span>
@@ -108,7 +107,7 @@ function clearSearch() {
       </div>
       <SidebarMenu>
         <SidebarMenuItem>
-          <SidebarMenuButton as-child class="min-h-10 md:min-h-0" tooltip="Project 设置">
+          <SidebarMenuButton data-project-settings as-child class="min-h-10 md:min-h-0" tooltip="Project 设置">
             <RouterLink :to="`/project/${project.id}/settings`">
               <SlidersHorizontalIcon />
               <span>Project 设置</span>
@@ -146,16 +145,6 @@ function clearSearch() {
   <template v-else>
     <SidebarHeader>
       <SidebarMenu>
-        <SidebarMenuItem>
-          <SidebarMenuButton as-child size="lg" tooltip="only-chat">
-            <RouterLink to="/new">
-              <div class="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
-                <MessageCircleIcon />
-              </div>
-              <span class="font-semibold">only-chat</span>
-            </RouterLink>
-          </SidebarMenuButton>
-        </SidebarMenuItem>
         <SidebarMenuItem>
           <SidebarMenuButton as-child class="min-h-10 md:min-h-0" tooltip="新建随心聊">
             <RouterLink to="/new">
@@ -232,16 +221,4 @@ function clearSearch() {
     </SidebarContent>
 
   </template>
-  <SidebarFooter>
-    <SidebarMenu>
-      <SidebarMenuItem>
-        <SidebarMenuButton as-child class="min-h-10 md:min-h-0" :is-active="route.path.startsWith('/settings')" tooltip="设置">
-          <RouterLink to="/settings/providers">
-            <SettingsIcon />
-            <span>设置</span>
-          </RouterLink>
-        </SidebarMenuButton>
-      </SidebarMenuItem>
-    </SidebarMenu>
-  </SidebarFooter>
 </template>

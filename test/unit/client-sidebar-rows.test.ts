@@ -3,6 +3,7 @@ import { createApp, h } from 'vue'
 import { createPinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { afterEach, expect, it, vi } from 'vitest'
+import { compile } from 'tailwindcss'
 import ProjectNavRow from '@/client/components/layout/project-nav-row.vue'
 import SessionNavRow from '@/client/components/layout/session-nav-row.vue'
 import { SidebarMenu, SidebarProvider } from '@/client/ui/sidebar'
@@ -12,7 +13,17 @@ import type { Project, Session } from '@/shared/models'
 let cleanup = () => {}
 afterEach(() => { cleanup(); vi.restoreAllMocks(); document.body.innerHTML = '' })
 
-async function mountRows() {
+async function mountRows(options: { mobile?: boolean } = {}) {
+  vi.spyOn(window, 'matchMedia').mockImplementation(query => ({
+    matches: options.mobile === true && query === '(max-width: 767px)',
+    media: query,
+    onchange: null,
+    addListener: () => {},
+    removeListener: () => {},
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    dispatchEvent: () => false,
+  }))
   const pinia = createPinia()
   const sync = useSyncStore(pinia)
   const project: Project = { id: 7, user_id: 1, name: 'Design', system_prompt: null, provider_id: null, model_id: null, params: null, created_at: 0, updated_at: 0 }
@@ -33,6 +44,37 @@ async function mountRows() {
 function menuItem(text: string) {
   return [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(item => item.textContent?.trim() === text)!
 }
+
+async function applyActionStyles(actions: HTMLElement[]) {
+  const compiler = await compile('@theme inline { --spacing: 0.25rem; --breakpoint-md: 48rem; } @tailwind utilities;')
+  const stylesheet = document.createElement('style')
+  // happy-dom cannot match sibling combinators inside :is(). Unfold the equivalent
+  // selector while preserving specificity so the primitive's peer rules participate.
+  stylesheet.textContent = compiler.build(actions.flatMap(action => [...action.classList]))
+    .replace(/([^\n{}]+):is\((:where\([^)]*\)\[data-size="[^"]+"\]) ~ \*\)/g, '$2 ~ $1')
+  document.body.append(stylesheet)
+}
+
+it.each([
+  ['desktop', false],
+  ['mobile', true],
+])('keeps %s row actions large enough while preserving 16px icons', async (_, mobile) => {
+  await mountRows({ mobile })
+
+  const actions = [...document.querySelectorAll<HTMLElement>('[data-row-action]')]
+  await applyActionStyles(actions)
+  expect(actions).toHaveLength(2)
+  for (const action of actions) {
+    expect(action.classList).toContain('size-8')
+    expect(action.classList).toContain('w-8')
+    expect(action.classList).toContain('h-8')
+    expect(action.classList).toContain('max-md:size-10')
+    expect(['50%', 'calc(1 / 2 * 100%)']).toContain(getComputedStyle(action).top)
+    expect(action.classList).toContain('-translate-y-1/2')
+    expect(action.classList).toContain('after:inset-0')
+    expect(action.querySelector('svg')?.classList).toContain('size-4')
+  }
+})
 
 it('offers session movement and confirmed deletion from one row action menu', async () => {
   const send = await mountRows()

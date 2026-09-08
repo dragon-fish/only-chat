@@ -26,6 +26,7 @@ export const ToolResultPartSchema = z.object({
   call_id: z.string(),
   name: z.string(),
   content: z.unknown(),
+  providerOptions: ProviderOptionsSchema.optional(),
 })
 
 export const PartSchema = z.discriminatedUnion('type', [

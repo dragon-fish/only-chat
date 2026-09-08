@@ -15,7 +15,7 @@ import {
   reasoningStopsFor,
 } from '@/client/stores/sync'
 import type { ReasoningAction, ReasoningChoice, ReasoningStop } from '@/client/stores/sync'
-import type { ModelCapabilities, Protocol } from '@/shared/models'
+import type { ModelMetadata } from '@/shared/model-metadata'
 
 /**
  * The three reasoning controls themselves: the 思考 switch, the 自动 switch and the strength
@@ -27,19 +27,16 @@ import type { ModelCapabilities, Protocol } from '@/shared/models'
  * with no default model constrains nothing, so its axis cannot be derived from a model at all.
  */
 const props = withDefaults(defineProps<{
-  capabilities?: ModelCapabilities | null
-  protocol?: Protocol | null
+  metadata?: ModelMetadata | null
   stops?: ReasoningStop[] | null
   /** The effective choice, already resolved through Project inheritance by the parent. */
   active: ReasoningChoice
   /** True when this layer overrides the one above it, which is what surfaces the 默认 button. */
   overridden: boolean
-}>(), { capabilities: null, protocol: null, stops: null })
+}>(), { metadata: null, stops: null })
 const emit = defineEmits<{ update: [choice: ReasoningChoice] }>()
 
-const stops = computed(() => props.stops ?? (props.capabilities && props.protocol
-  ? reasoningStopsFor(props.capabilities, props.protocol)
-  : []))
+const stops = computed(() => props.stops ?? reasoningStopsFor(props.metadata ?? undefined))
 const model = computed(() => reasoningControlModel(stops.value, props.active))
 
 /**

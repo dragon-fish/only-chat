@@ -2,6 +2,7 @@
 import { createApp, h, nextTick, ref } from 'vue'
 import { createPinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
+import { Storage } from 'happy-dom'
 import { afterEach, expect, it, vi } from 'vitest'
 import ChatView from '@/client/views/chat.vue'
 import { TooltipProvider } from '@/client/ui/tooltip'
@@ -9,14 +10,17 @@ import { useSyncStore } from '@/client/stores/sync'
 import { useConfigStore } from '@/client/stores/config'
 import { api } from '@/client/lib/api'
 import type { Message } from '@/shared/models'
+import { modelRecords, provider } from './provider-fixtures'
 
 let cleanup = () => {}
-afterEach(() => { cleanup(); vi.restoreAllMocks(); document.body.innerHTML = '' })
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); document.body.innerHTML = '' })
 
-async function mountChat(historyLoaded: boolean) {
+async function mountChat(historyLoaded: boolean, rememberedModel = false) {
   const pinia = createPinia()
   const sync = useSyncStore(pinia)
-  useConfigStore(pinia).loaded = true
+  const config = useConfigStore(pinia)
+  config.loaded = true
+  if (rememberedModel) config.providerRecords = [provider]
   sync.sessionsLoaded = true
   const histories = new Map<number, Message[]>()
   for (const id of [1, 2]) {
@@ -41,6 +45,17 @@ async function mountChat(historyLoaded: boolean) {
   await nextTick()
   return { sid }
 }
+
+it('retains a remembered model while its off-page lookup is pending', async () => {
+  vi.stubGlobal('localStorage', new Storage())
+  localStorage.setItem('oc.model', JSON.stringify({ provider_id: 1, model_id: 'off-page' }))
+  let finish!: (model: typeof modelRecords[number]) => void
+  vi.spyOn(api, 'modelByRef').mockImplementation(() => new Promise(resolve => { finish = resolve }))
+  await mountChat(true, true)
+  expect(document.querySelector('[aria-label="选择模型，当前为 off-page"]')).not.toBeNull()
+  finish({ ...modelRecords[0]!, model_id: 'off-page', metadata: { name: 'Remembered model' } })
+  await vi.waitFor(() => expect(document.querySelector('[aria-label="选择模型，当前为 Remembered model"]')).not.toBeNull())
+})
 
 it('keeps arrived first-message content visible while its history request is pending', async () => {
   // The new-session route can mount after a WS message arrives but before its REST read completes.

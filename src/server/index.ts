@@ -1,7 +1,7 @@
 import { DurableObject } from 'cloudflare:workers'
 import type { Context } from 'cordis'
 import { createApp } from './app'
-import { cleanupExpiredProviderFiles } from './plugins/hub/sessions'
+import { cleanupExpiredProviderFiles } from './plugins/files-cleanup'
 
 let workerApp: Promise<Context> | undefined
 
@@ -11,16 +11,14 @@ export default {
     const ctx = await workerApp
     return ctx.api.fetch(request, env, execCtx)
   },
-  /**
-   * The daily pointer sweep (spec §5.7). It only deletes lapsed rows from D1: the provider expires
-   * its own copy on the deadline the upload asked for, and the R2 original is never touched. A
-   * failed run simply leaves the rows for the next one, since generation already refuses an expired
-   * pointer whether or not this ran.
-   */
+  // Catalog publication and remote file cleanup must run independently.
   async scheduled(_controller, env, _execCtx) {
     workerApp ??= createApp({ env, side: 'worker' })
     const ctx = await workerApp
-    await cleanupExpiredProviderFiles(ctx.db.orm, Date.now())
+    await Promise.all([
+      ctx.modelCatalog.refresh('cron').catch(error => console.error('Scheduled catalog refresh failed', error)),
+      cleanupExpiredProviderFiles(ctx, Date.now()).catch(() => console.error('Scheduled provider file cleanup failed')),
+    ])
   },
 } satisfies ExportedHandler<Env>
 

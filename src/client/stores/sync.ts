@@ -3,9 +3,8 @@ import { defineStore } from 'pinia'
 import { api } from '@/client/lib/api'
 import { WsClient, type WsStatus } from '@/client/lib/ws-client'
 import type { ModelRef } from '@/shared/api'
-import type {
-  Message, ModelCapabilities, Project, Protocol, Session, SessionParams, UserSettings,
-} from '@/shared/models'
+import type { Message, Project, Session, SessionParams, UserSettings } from '@/shared/models'
+import type { ModelMetadata } from '@/shared/model-metadata'
 import type { Part } from '@/shared/parts'
 import type { SendCommand, WsCommand, WsEvent } from '@/shared/ws'
 
@@ -22,34 +21,16 @@ export const REASONING_LABELS: Record<ReasoningStop, string> = {
   off: '立即', auto: '自动', minimal: '极低', low: '低', medium: '中', high: '高', xhigh: '超高', max: 'Max', ultra: 'Ultra',
 }
 
-/**
- * Protocols with no way to express "off" (spec §5.4). `buildProviderOptions` sends nothing at all
- * for them, so offering the stop would be a dead affordance no matter what the model declares.
- */
-const NO_DISABLE_VALUE: readonly Protocol[] = ['openai-completions']
-
-/**
- * The stops one model may be set to (spec §3.3/§4.4). A declared `reasoning_efforts` restricts the
- * strengths to exactly what it lists; an absent or empty list means "undeclared", which is *not* a
- * restriction — every strength stays reachable. That is the same reading `buildProviderOptions`
- * already applies server-side (`!declared?.length` there), and gateways that do not advertise
- * levels degrade gracefully on one they cannot honour, so demanding a per-model declaration would
- * be busywork. The per-protocol enums (Anthropic's `effort`, Gemini's `thinkingLevel`) remain the
- * backstop for a strength the protocol cannot carry.
- *
- * `off` is deliberately excluded from that relaxation: sending an explicit disable value a model
- * cannot honour is riskier than sending a strength, so 立即 still needs `reasoning_can_disable`.
- * Nothing here is ever inferred from a model id.
- */
-export function reasoningStopsFor(capabilities: ModelCapabilities | undefined, protocol: Protocol | undefined): ReasoningStop[] {
-  if (!capabilities?.reasoning) return []
-  const declared = capabilities.reasoning_efforts ?? []
-  const canDisable = capabilities.reasoning_can_disable === true
-    && !(protocol !== undefined && NO_DISABLE_VALUE.includes(protocol))
+/** Catalog reasoning options are the only declarations of disable support and effort levels. */
+export function reasoningStopsFor(metadata: ModelMetadata | undefined): ReasoningStop[] {
+  if (metadata?.reasoning !== true) return []
+  const options = metadata.reasoning_options ?? []
+  const declared = options.flatMap(option => option.type === 'effort' ? option.values ?? [] : [])
+  const canDisable = options.some(option => option.type === 'toggle') || declared.includes('none')
   return REASONING_ORDER.filter((stop) => {
     if (stop === 'off') return canDisable
     if (stop === 'auto') return true
-    return declared.length === 0 || declared.includes(stop)
+    return declared.includes(stop)
   })
 }
 
@@ -85,22 +66,7 @@ export type ReasoningAction =
 export function reasoningControlModel(stops: ReasoningStop[], active: ReasoningChoice): ReasoningControlModel {
   const strengths = stops.filter((s): s is ReasoningStop => s !== 'off' && s !== 'auto')
   const canDisable = stops.includes('off')
-  /**
-   * Spec §5.5: when the model does not declare `reasoning_can_disable`, or the protocol cannot
-   * express "off", the 总开关 is disabled and *locked on* — 不假装能关. A stored `off` can reach
-   * this model anyway (a Project sets it, then a session inherits it, then the session picks a
-   * model that cannot honour it). Showing the switch off there would strand the whole control set:
-   * the 思考 switch is disabled, and 自动 and the slider are gated on `enabled`, so nothing on the
-   * panel would be movable and the session could never reason again.
-   *
-   * What the server then sends is protocol-dependent, and the two do not currently agree for every
-   * one. `openai-responses` omits the disable value in this case, so the model reasons and the
-   * locked-on switch is accurate; `anthropic` returns `{}` with no thinking block, so that model
-   * does not reason while the panel says it does. The disagreement is not resolved here: it most
-   * likely lives in the capability data rather than in either branch, because omitting the thinking
-   * block IS how the anthropic protocol expresses "off", which means such a model can disable and
-   * should be declaring `reasoning_can_disable`. Tracked for the round that owns the server.
-   */
+  // A stored off choice must not disable all controls when this model cannot turn reasoning off.
   const lockedOn = active === 'off' && !canDisable
   const enabled = active !== 'off' || lockedOn
   // A locked-on `off` pins no strength, which is the same thing 自动 means: reason, send no effort.

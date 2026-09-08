@@ -16,7 +16,7 @@ import {
   reasoningStopsFor,
 } from '@/client/stores/sync'
 import type { ReasoningChoice, ReasoningStop } from '@/client/stores/sync'
-import type { ModelCapabilities, Protocol } from '@/shared/models'
+import type { ModelMetadata } from '@/shared/model-metadata'
 
 /**
  * The reasoning controls as a chip that opens a responsive secondary overlay. This shape exists
@@ -28,8 +28,7 @@ const props = withDefaults(defineProps<{
   /** The chip's Button variant. Ghost suits the Composer's toolbar; a bordered host may use
    *  `outline` without styling the control through fallthrough attributes. */
   variant?: ButtonVariants['variant']
-  capabilities?: ModelCapabilities | null
-  protocol?: Protocol | null
+  metadata?: ModelMetadata | null
   stops?: ReasoningStop[] | null
   /** The effective choice, already resolved through Project inheritance by the parent. */
   active: ReasoningChoice
@@ -37,12 +36,10 @@ const props = withDefaults(defineProps<{
   overridden: boolean
   /** No model resolved yet — a different disabled reason from "this model cannot reason". */
   noModel: boolean
-}>(), { variant: 'ghost', capabilities: null, protocol: null, stops: null })
+}>(), { variant: 'ghost', metadata: null, stops: null })
 const emit = defineEmits<{ update: [choice: ReasoningChoice] }>()
 
-const stops = computed(() => props.stops ?? (props.capabilities && props.protocol
-  ? reasoningStopsFor(props.capabilities, props.protocol)
-  : []))
+const stops = computed(() => props.stops ?? reasoningStopsFor(props.metadata ?? undefined))
 const model = computed(() => reasoningControlModel(stops.value, props.active))
 
 /**
@@ -111,8 +108,7 @@ function setOpen(next: boolean) {
       <DrawerHeader v-if="!isDesktop"><DrawerTitle>思考强度</DrawerTitle></DrawerHeader>
       <div :class="cn(!isDesktop && 'oc-scroll min-h-0 flex-1 overflow-y-auto px-4 pb-4')">
         <ReasoningControls
-          :capabilities="capabilities"
-          :protocol="protocol"
+          :metadata="metadata"
           :stops="stops"
           :active="active"
           :overridden="overridden"

@@ -2,6 +2,7 @@ import { env } from 'cloudflare:workers'
 import { runInDurableObject } from 'cloudflare:test'
 import type { Context } from 'cordis'
 import type { FilesV4, FilesV4UploadFileCallOptions } from '@ai-sdk/provider'
+import { createOpenResponses } from '@ai-sdk/open-responses'
 import { DefaultGeneratedFile, type GeneratedFile } from 'ai'
 import { MockLanguageModelV4, simulateReadableStream } from 'ai/test'
 import { eq } from 'drizzle-orm'
@@ -17,15 +18,17 @@ import type { Hub } from '@/server/plugins/hub'
 import { persistGeneratedImage } from '@/server/plugins/hub/generated-images'
 import { resolveEffectiveConfig } from '@/server/plugins/hub/effective-config'
 import { getProject } from '@/server/plugins/hub/projects'
-import { createSession, getSession, insertMessage, listMessages, toMessage } from '@/server/plugins/hub/sessions'
-import { attachmentProviderFiles, attachments, models, projects, providers, users } from '@/server/db/schema'
-import type { ProviderRow } from '@/server/db/schema'
+import { createSession, finalizeMessage, getSession, insertMessage, listMessages, toMessage, updateSession } from '@/server/plugins/hub/sessions'
+import { attachmentProviderFiles, attachments, models, projects, providerInterfaces, providers, users } from '@/server/db/schema'
+import type { ProviderInterfaceRow, ProviderRow } from '@/server/db/schema'
 import { sendCommandFor } from '@/client/stores/sync'
 import { DEFAULT_USER_ID } from '@/shared/constants'
-import type { Message, ModelCapabilities, SessionParams } from '@/shared/models'
+import type { Message, SessionParams } from '@/shared/models'
+import type { ModelMetadata } from '@/shared/model-metadata'
 import type { Part } from '@/shared/parts'
 import type { UserHub } from '@/server/index'
 import { connect, type WsHarness } from './ws-helper'
+import { deepseekReasoningItem, deepseekResponsesStream } from '../fixtures/deepseek-responses-stream'
 
 /** The provider-level chunk type, taken from the mock itself so no extra dependency is needed. */
 type StreamPart = Awaited<ReturnType<MockLanguageModelV4['doStream']>>['stream'] extends ReadableStream<infer P> ? P : never
@@ -51,15 +54,16 @@ const STREAM: StreamPart[] = [
   },
 ]
 
-async function seedProvider(name = 'mock', modelId = 'mock-1', nativeFiles = false, capabilities: ModelCapabilities = { reasoning: true }): Promise<number> {
+async function seedProvider(name = 'mock', modelId = 'mock-1', nativeFiles = false, metadata: ModelMetadata = { reasoning: true }): Promise<number> {
   const db = createDb(env.DB)
   await ensureDefaultUser(db)
   const [p] = await db.insert(providers).values({
-    user_id: DEFAULT_USER_ID, name, protocol: 'mock' as never, base_url: 'https://mock',
-    api_key: await encryptSecret(env.KEY_ENCRYPTION_SECRET, 'k'), extra: null, enabled: true,
-    native_files: nativeFiles, created_at: 0,
+    user_id: DEFAULT_USER_ID, name,
+    api_key: await encryptSecret(env.KEY_ENCRYPTION_SECRET, 'k'), enabled: true, created_at: 0,
   }).returning()
-  await db.insert(models).values({ provider_id: p!.id, model_id: modelId, display_name: 'Mock', capabilities, pricing: null, enabled: true, sort: 0 })
+  const [selected] = await db.insert(providerInterfaces).values({ provider_id: p!.id, protocol: 'responses', base_url: 'https://mock.example/responses-api', native_files: nativeFiles, created_at: 0 }).returning()
+  await db.update(providers).set({ default_interface_id: selected!.id }).where(eq(providers.id, p!.id))
+  await db.insert(models).values({ provider_id: p!.id, model_id: modelId, metadata_resolved: metadata, enabled: true, sort: 0 })
   return p!.id
 }
 
@@ -98,6 +102,13 @@ async function inflightSnapshot(): Promise<string> {
   })
 }
 
+async function nextImagePart(c: WsHarness) {
+  for (let count = 1; ; count++) {
+    const event = await c.nextAfter('message.part', count)
+    if (event.type === 'message.part' && event.part.type === 'image') return { ...event, part: event.part }
+  }
+}
+
 /** Every file part the adapter actually received, across all roles of one call's prompt. */
 function filePartsOf(model: MockLanguageModelV4): Array<{ type: string; mediaType: string; data: unknown }> {
   const parts = model.doStreamCalls[0]!.prompt.flatMap((m) => (Array.isArray(m.content) ? (m.content as Array<{ type: string }>) : []))
@@ -131,7 +142,8 @@ function recordingFiles(uploads: Upload[], expiresAt?: Date) {
 
 async function installMock(
   mockFactory: () => MockLanguageModelV4,
-  createFiles?: (provider: ProviderRow, apiKey: string) => FilesV4,
+  createFiles?: (provider: ProviderRow, providerInterface: ProviderInterfaceRow, apiKey: string) => FilesV4,
+  protocols = ['responses'],
 ): Promise<MockLanguageModelV4[]> {
   const created: MockLanguageModelV4[] = []
   const stub = env.USER_HUB.getByName(String(DEFAULT_USER_ID))
@@ -140,9 +152,12 @@ async function installMock(
       name: 'mock-protocol',
       inject: ['llm'],
       apply(c) {
-        c.llm.register('mock', {
+        for (const protocol of protocols) c.llm.register(protocol, {
           createModel: () => { const m = mockFactory(); created.push(m); return m as never },
-          ...(createFiles ? { createFiles } : {}),
+          ...(createFiles ? { createFiles: (provider: ProviderRow, selected: ProviderInterfaceRow, apiKey: string) => ({
+            family: protocol === 'anthropic' ? 'anthropic' as const : 'openai' as const, baseURL: selected.base_url.replace(/\/+$/, ''), credentialVersion: provider.credential_version,
+            files: createFiles(provider, selected, apiKey),
+          }) } : {}),
         })
       },
     })
@@ -440,13 +455,123 @@ describe('project inheritance', () => {
   })
 })
 
+describe('effective model interface', () => {
+  it('follows the default interface, honors a model override and maps resolved metadata to that protocol', async () => {
+    const db = createDb(env.DB)
+    const providerId = await seedProvider('interfaces', 'mock-1', false, {
+      reasoning: true, reasoning_options: [{ type: 'effort', values: ['high'] }],
+    })
+    const [other] = await db.insert(providerInterfaces).values({ provider_id: providerId, protocol: 'anthropic', base_url: 'https://anthropic.example/v1', native_files: false, created_at: 0 }).returning()
+    const created = await installMock(() => new MockLanguageModelV4({
+      doStream: async () => ({ stream: simulateReadableStream({ chunks: [...STREAM], chunkDelayInMs: null, initialDelayInMs: null }) }),
+    }))
+    const selected: ProviderInterfaceRow[] = []
+    await runInDurableObject(env.USER_HUB.getByName(String(DEFAULT_USER_ID)), async (instance: UserHub) => {
+      instance.app.llm.register('anthropic', {
+        createModel(_provider, providerInterface) {
+          selected.push(providerInterface)
+          const model = new MockLanguageModelV4({ doStream: async () => ({ stream: simulateReadableStream({ chunks: [...STREAM], chunkDelayInMs: null, initialDelayInMs: null }) }) })
+          created.push(model)
+          return model
+        },
+      })
+    })
+    const c = await connect()
+    c.ws.send(JSON.stringify({ type: 'send', session_id: null, parent_id: null, parts: [{ type: 'text', text: 'first' }], provider_id: providerId, model_id: 'mock-1', params: { reasoning_effort: 'high' } }))
+    expect(await c.next('message.done')).toMatchObject({ status: 'done' })
+    expect(created[0]!.doStreamCalls[0]!.providerOptions).toEqual({ responses: { reasoningEffort: 'high' } })
+    const sessionId = sessionIdOf(c)
+    await db.update(models).set({ interface_id: other!.id }).where(eq(models.provider_id, providerId))
+    c.ws.send(JSON.stringify({ type: 'send', session_id: sessionId, parent_id: null, parts: [{ type: 'text', text: 'second' }], provider_id: providerId, model_id: 'mock-1' }))
+    expect(await c.nextAfter('message.done', 2)).toMatchObject({ status: 'done' })
+    expect(selected).toMatchObject([{ id: other!.id, protocol: 'anthropic', base_url: 'https://anthropic.example/v1' }])
+    expect(created[1]!.doStreamCalls[0]!.providerOptions).toEqual({ anthropic: { thinking: { type: 'adaptive', display: 'summarized' }, effort: 'high' } })
+  })
+
+  it('rejects a missing effective interface before persisting a session or messages', async () => {
+    const providerId = await seedProvider('no-default')
+    await createDb(env.DB).update(providers).set({ default_interface_id: null }).where(eq(providers.id, providerId))
+    const c = await connect()
+    c.ws.send(JSON.stringify({ type: 'send', request_id: 'missing-interface', session_id: null, parent_id: null, parts: [{ type: 'text', text: 'first' }], provider_id: providerId, model_id: 'mock-1' }))
+    expect(await Promise.race([c.next('error'), c.next('message.done')])).toMatchObject({ request_id: 'missing-interface', message: expect.stringMatching(/interface/) })
+    expect(c.events.some(event => event.type === 'session.created' || event.type === 'message.created')).toBe(false)
+  })
+})
+
+describe('DeepSeek Responses reasoning lifecycle', () => {
+  it.each([
+    { metadataPresent: true, omitReasoningContent: false },
+    { metadataPresent: false, omitReasoningContent: false },
+    { metadataPresent: true, omitReasoningContent: true },
+    { metadataPresent: false, omitReasoningContent: true },
+  ])('streams full reasoning through live events and D1, then replays it with thinking disabled (metadata: $metadataPresent, content omitted: $omitReasoningContent)', async ({ metadataPresent, omitReasoningContent }) => {
+    const db = createDb(env.DB)
+    const providerId = await seedProvider('deepseek', 'deepseek-fixture', false, {
+      reasoning: true, reasoning_options: [{ type: 'effort', values: ['none', 'high'] }],
+    })
+    const requests: Array<{ url: string; body: { input: unknown[]; reasoning?: unknown } }> = []
+    await runInDurableObject(env.USER_HUB.getByName(String(DEFAULT_USER_ID)), async (instance: UserHub) => {
+      instance.app.llm.register('responses', {
+        createModel(_provider, selected, model, apiKey) {
+          return createOpenResponses({
+            name: 'responses', url: `${selected.base_url}/responses`, apiKey,
+            fetch: async (input, init) => {
+              const request = new Request(input, init)
+              requests.push({ url: request.url, body: await request.json() })
+              return deepseekResponsesStream({ omitReasoningContent })
+            },
+          })(model.model_id)
+        },
+      })
+    })
+    const c = await connect()
+    c.ws.send(JSON.stringify({ type: 'send', session_id: null, parent_id: null, parts: [{ type: 'text', text: 'first' }], provider_id: providerId, model_id: 'deepseek-fixture', params: { reasoning_effort: 'high' } }))
+    expect(await c.next('message.done')).toMatchObject({ status: 'done', usage: { prompt: 11, completion: 9, cached: 3, reasoning: 6 } })
+    const sessionId = sessionIdOf(c)
+    const saved = (await listMessages(db, sessionId))[1]!
+    expect(saved.parts.map(part => part.type)).toEqual(['reasoning', 'tool_call', 'text'])
+    expect(saved.parts[0]).toEqual({
+      type: 'reasoning', text: 'complete reasoning', providerOptions: { responses: {
+        itemId: 'rs_fixture', reasoningSummary: deepseekReasoningItem.summary,
+        reasoningContent: deepseekReasoningItem.content, reasoningEncryptedContent: 'fixture-encrypted-state',
+      } },
+    })
+    const live: Part[] = []
+    for (const event of c.events) {
+      if (event.type === 'message.part' && event.message_id === saved.id) live[event.part_index] = event.part
+      if (event.type === 'message.delta' && event.message_id === saved.id) {
+        const part = live[event.part_index]
+        if (!part || (part.type !== 'text' && part.type !== 'reasoning')) throw new Error('missing streamed part')
+        part.text += event.delta
+      }
+    }
+    expect(live).toEqual(saved.parts)
+    // Tool execution is external to this fixture; complete its persisted result before the next turn.
+    await finalizeMessage(db, saved.id, { parts: [...saved.parts, { type: 'tool_result', call_id: 'call_fixture', name: 'lookup', content: { found: true } }], usage: saved.usage, status: 'done', error: null })
+    if (!metadataPresent) await db.update(models).set({ metadata_resolved: {} }).where(eq(models.provider_id, providerId))
+    await updateSession(db, sessionId, { params: { reasoning_enabled: false, reasoning_effort: 'high' } })
+    c.ws.send(JSON.stringify({ type: 'send', session_id: sessionId, parent_id: null, parts: [{ type: 'text', text: 'next' }], provider_id: providerId, model_id: 'deepseek-fixture' }))
+    expect(await c.nextAfter('message.done', 2)).toMatchObject({ status: 'done' })
+    expect(requests.map(request => request.body.reasoning)).toEqual([{ effort: 'high' }, metadataPresent ? { effort: 'none' } : undefined])
+    expect(requests[1]!.body.input).toEqual([
+      { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'first' }] },
+      { type: 'reasoning', id: 'rs_fixture', summary: deepseekReasoningItem.summary, content: deepseekReasoningItem.content, encrypted_content: 'fixture-encrypted-state' },
+      { type: 'function_call', id: 'fc_fixture', call_id: 'call_fixture', name: 'lookup', arguments: '{"q":"fixture"}' },
+      { type: 'message', role: 'assistant', id: 'msg_fixture', content: [{ type: 'output_text', text: 'fixture answer' }] },
+      { type: 'function_call_output', call_id: 'call_fixture', output: '{"found":true}' },
+      { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'next' }] },
+    ])
+    expect((await listMessages(db, sessionId))[3]!.parts).toEqual(saved.parts)
+  })
+})
+
 describe('provider metadata round trip', () => {
-  /** OpenAI Responses shape: no visible summary, but an item id and encrypted content to replay. */
+  /** Responses can return an empty visible block with encrypted state that still needs replay. */
   const META_STREAM: StreamPart[] = [
     { type: 'stream-start', warnings: [] },
     { type: 'response-metadata', id: 'r', modelId: 'mock', timestamp: new Date(0) },
-    { type: 'reasoning-start', id: 'r1', providerMetadata: { openai: { itemId: 'rs_1' } } },
-    { type: 'reasoning-end', id: 'r1', providerMetadata: { openai: { itemId: 'rs_1', reasoningEncryptedContent: 'ENC' } } },
+    { type: 'reasoning-start', id: 'r1', providerMetadata: { responses: { itemId: 'rs_1' } } },
+    { type: 'reasoning-end', id: 'r1', providerMetadata: { responses: { itemId: 'rs_1', reasoningEncryptedContent: 'ENC' } } },
     { type: 'text-start', id: 't1' },
     { type: 'text-delta', id: 't1', delta: 'Hello' },
     // Gemini hangs its thought signature off the text block, not the reasoning block.
@@ -465,7 +590,7 @@ describe('provider metadata round trip', () => {
     const sessionId = (c.events.find((e) => e.type === 'session.created') as { session: { id: number } }).session.id
 
     const stored: Part[] = [
-      { type: 'reasoning', text: '', providerOptions: { openai: { itemId: 'rs_1', reasoningEncryptedContent: 'ENC' } } },
+      { type: 'reasoning', text: '', providerOptions: { responses: { itemId: 'rs_1', reasoningEncryptedContent: 'ENC' } } },
       { type: 'text', text: 'Hello', providerOptions: { google: { thoughtSignature: 'TS_TEXT' } } },
     ]
     // An empty summary is not an absent round trip: the encrypted item still has to reach D1.
@@ -475,8 +600,8 @@ describe('provider metadata round trip', () => {
     await c.nextAfter('message.done', 2)
     const prompt = created[1]!.doStreamCalls[0]!.prompt
     expect(prompt.find((m) => m.role === 'assistant')!.content).toEqual([
-      { type: 'reasoning', text: '', providerOptions: { openai: { itemId: 'rs_1', reasoningEncryptedContent: 'ENC' } } },
-      { type: 'text', text: 'Hello', providerOptions: { google: { thoughtSignature: 'TS_TEXT' } } },
+      { type: 'reasoning', text: '', providerOptions: { responses: { itemId: 'rs_1', reasoningEncryptedContent: 'ENC' } } },
+      { type: 'text', text: 'Hello' },
     ])
   })
 
@@ -499,7 +624,7 @@ describe('provider metadata round trip', () => {
     const inMemory: Message[] = [{ ...toMessage(user), parts: userParts }, { ...toMessage(assistant), parts: assistantParts }]
     const fromD1 = (await listMessages(db, session.id)).map((r) => toMessage(r))
     expect(fromD1).toEqual(inMemory)
-    for (const protocol of ['openai-completions', 'openai-responses', 'anthropic', 'vertex'] as const) {
+    for (const protocol of ['chat-completions', 'responses', 'anthropic', 'vertex-compatible'] as const) {
       const args = { protocol, systemPrompt: null, attachments: new Map() }
       expect(buildModelMessages({ ...args, path: fromD1 })).toEqual(buildModelMessages({ ...args, path: inMemory }))
     }
@@ -531,6 +656,65 @@ describe('provider file transport', () => {
   function send(body: Record<string, unknown>): string {
     return JSON.stringify({ type: 'send', session_id: null, parent_id: null, ...body })
   }
+
+  it('shares normalized OpenAI scopes across Responses and a model-specific Chat interface', async () => {
+    const providerId = await seedProvider('shared-files', 'responses-model', true)
+    const db = createDb(env.DB)
+    const [chat] = await db.insert(providerInterfaces).values({ provider_id: providerId, protocol: 'chat-completions', base_url: 'https://mock.example/responses-api/', native_files: true, created_at: 0 }).returning()
+    await db.insert(models).values({ provider_id: providerId, model_id: 'chat-model', interface_id: chat!.id, enabled: true })
+    const attachmentId = await seedAttachment()
+    const uploads: Upload[] = []
+    const files = recordingFiles(uploads)
+    const factory = vi.fn((provider: ProviderRow, _selected: ProviderInterfaceRow) => files(provider))
+    const created = await installMock(streamingMock, factory, ['responses', 'chat-completions'])
+    const c = await connect()
+    c.ws.send(send({ parts: [{ type: 'image', attachment_id: attachmentId }, { type: 'image', attachment_id: attachmentId }], provider_id: providerId, model_id: 'responses-model' }))
+    expect(await c.next('message.done')).toMatchObject({ status: 'done' })
+    await db.update(attachmentProviderFiles).set({ base_url: 'https://MOCK.example:443/old/../responses-api///' }).where(eq(attachmentProviderFiles.attachment_id, attachmentId))
+    c.ws.send(send({ session_id: sessionIdOf(c), parts: [{ type: 'text', text: 'again' }], provider_id: providerId, model_id: 'chat-model' }))
+    expect(await c.nextAfter('message.done', 2)).toMatchObject({ status: 'done' })
+    expect(uploads).toHaveLength(1)
+    expect(factory).toHaveBeenCalledTimes(2)
+    expect(factory.mock.calls[1]![1]).toMatchObject({ id: chat!.id })
+    expect(filePartsOf(created[1]!)).toEqual(filePartsOf(created[0]!))
+    expect(await pointersOf(attachmentId)).toMatchObject([{ provider_id: providerId, credential_version: 1, file_family: 'openai', base_url: 'https://mock.example/responses-api' }])
+  })
+
+  it.each(['credential', 'family', 'baseURL'] as const)('uploads a new pointer when the %s scope changes', async (change) => {
+    const providerId = await seedProvider('scoped-files', 'model-a', true)
+    const attachmentId = await seedAttachment()
+    const uploads: Upload[] = []
+    const created = await installMock(streamingMock, recordingFiles(uploads), ['responses', 'anthropic'])
+    const c = await connect()
+    c.ws.send(send({ parts: [{ type: 'image', attachment_id: attachmentId }], provider_id: providerId, model_id: 'model-a' }))
+    expect(await c.next('message.done')).toMatchObject({ status: 'done' })
+    const original = (await pointersOf(attachmentId))[0]!
+    const db = createDb(env.DB)
+    if (change === 'credential') await db.update(providers).set({ credential_version: 2 }).where(eq(providers.id, providerId))
+    else await db.update(providerInterfaces).set(change === 'family' ? { protocol: 'anthropic' } : { base_url: 'https://other.example/v1' }).where(eq(providerInterfaces.provider_id, providerId))
+    c.ws.send(send({ session_id: sessionIdOf(c), parts: [{ type: 'text', text: 'again' }], provider_id: providerId, model_id: 'model-a' }))
+    expect(await c.nextAfter('message.done', 2)).toMatchObject({ status: 'done' })
+    expect(uploads).toHaveLength(2)
+    expect(filePartsOf(created[1]!)[0]!.data).toEqual({ type: 'reference', reference: { mock: `file-${providerId}-2` } })
+    const rows = await pointersOf(attachmentId)
+    expect(rows).toHaveLength(2)
+    expect(rows.find(row => row.id === original.id)).toEqual(original)
+    const latest = rows.find(row => row.id !== original.id)!
+    expect(latest).toMatchObject({ credential_version: change === 'credential' ? 2 : 1, file_family: change === 'family' ? 'anthropic' : 'openai', base_url: change === 'baseURL' ? 'https://other.example/v1' : 'https://mock.example/responses-api' })
+    expect(latest.cleanup_after).toBe(latest.expires_at)
+    expect(latest.expires_at).toBeGreaterThanOrEqual(latest.created_at + 604_800_000)
+  })
+
+  it('inlines bytes when the selected adapter has no Files API', async () => {
+    const providerId = await seedProvider('no-files-api', 'model-a', true)
+    const attachmentId = await seedAttachment()
+    const created = await installMock(streamingMock)
+    const c = await connect()
+    c.ws.send(send({ parts: [{ type: 'image', attachment_id: attachmentId }], provider_id: providerId, model_id: 'model-a' }))
+    expect(await c.next('message.done')).toMatchObject({ status: 'done' })
+    expect(filePartsOf(created[0]!)).toEqual([{ type: 'file', mediaType: 'image/png', data: { type: 'data', data: PNG } }])
+    expect(await pointersOf(attachmentId)).toHaveLength(0)
+  })
 
   it('uploads once per provider and reuses the first pointer when the session switches back', async () => {
     const a = await seedProvider('files-a', 'model-a', true)
@@ -570,7 +754,7 @@ describe('provider file transport', () => {
     expect(rows.map((r) => r.provider_reference)).toContainEqual({ mock: `file-${a}-1` })
   })
 
-  it('re-uploads when the stored pointer has expired, replacing the row', async () => {
+  it('re-uploads expired pointers, retains history and reuses the newest upload', async () => {
     const a = await seedProvider('files-a', 'model-a', true)
     const attachmentId = await seedAttachment()
     const uploads: Upload[] = []
@@ -593,9 +777,15 @@ describe('provider file transport', () => {
       { type: 'file', mediaType: 'image/png', data: { type: 'reference', reference: { mock: `file-${a}-2` } } },
     ])
     const rows = await pointersOf(attachmentId)
-    expect(rows).toHaveLength(1)
-    expect(rows[0]!.provider_reference).toEqual({ mock: `file-${a}-2` })
-    expect(rows[0]!.expires_at).toBeGreaterThan(Date.now())
+    expect(rows).toHaveLength(2)
+    const newest = rows.find(row => row.provider_reference.mock === `file-${a}-2`)
+    expect(newest!.expires_at).toBeGreaterThan(Date.now())
+    c.ws.send(send({ session_id: sessionId, parts: [{ type: 'text', text: 'reuse' }], provider_id: a, model_id: 'model-a' }))
+    await c.nextAfter('message.done', 3)
+    expect(uploads).toHaveLength(2)
+    expect(filePartsOf(created[2]!)).toEqual([
+      { type: 'file', mediaType: 'image/png', data: { type: 'reference', reference: { mock: `file-${a}-2` } } },
+    ])
   })
 
   it('persists the provider-reported expiry, and otherwise the requested seven days', async () => {
@@ -615,6 +805,7 @@ describe('provider file transport', () => {
 
     const rows = await pointersOf(attachmentId)
     expect(rows.find((r) => r.provider_id === a)!.expires_at).toBe(reported.getTime())
+    expect(rows.find((r) => r.provider_id === a)!.cleanup_after).toBe(reported.getTime())
     // No reported expiry: the local pointer dies on the deadline the upload asked for.
     const fallback = rows.find((r) => r.provider_id === b)!.expires_at
     expect(fallback).toBeGreaterThanOrEqual(before + 604_800_000)
@@ -685,11 +876,11 @@ describe('generated image output', () => {
     return JSON.stringify({ type: 'send', session_id: null, parent_id: null, parts: [{ type: 'text', text: 'draw a cat' }], provider_id: providerId, model_id: modelId })
   }
 
-  const imageEventsOf = (c: WsHarness) => c.events.filter((e) => e.type === 'message.part') as Array<{ part: { attachment_id: number } }>
+  const imageEventsOf = (c: WsHarness) => c.events.filter((e) => e.type === 'message.part' && e.part.type === 'image') as Array<{ part: { attachment_id: number } }>
 
   it('persists inline image bytes to R2 and gives every device only an attachment id', async () => {
     const bytes = uniqueImageBytes()
-    const providerId = await seedProvider('img-inline', 'img-1', false, { image_output: true })
+    const providerId = await seedProvider('img-inline', 'img-1', false, { modalities: { input: [], output: ['image'] } })
     await installMock(imageMock(textThenFiles([inlineChunk(bytes)])))
 
     const a = await connect()
@@ -698,12 +889,12 @@ describe('generated image output', () => {
     expect(await a.next('message.done')).toMatchObject({ status: 'done' })
     await b.next('message.done')
 
-    const imageEvent = a.events.find((e) => e.type === 'message.part')!
+    const imageEvent = a.events.find((e) => e.type === 'message.part' && e.part.type === 'image')!
     expect((imageEvent as { part: unknown }).part).toEqual({ type: 'image', attachment_id: expect.any(Number) })
     expect(JSON.stringify(imageEvent)).not.toContain('base64')
     expect(JSON.stringify(imageEvent)).not.toContain(toBase64(bytes))
     // Multi-device: the second socket received the very same frame, id and all.
-    expect(b.events.find((e) => e.type === 'message.part')).toEqual(imageEvent)
+    expect(b.events.find((e) => e.type === 'message.part' && e.part.type === 'image')).toEqual(imageEvent)
 
     const attachmentId = (imageEvent as { part: { attachment_id: number } }).part.attachment_id
     const saved = (await createDb(env.DB).query.attachments.findFirst({ where: eq(attachments.id, attachmentId) }))!
@@ -723,7 +914,7 @@ describe('generated image output', () => {
 
   it('decodes a base64 output and stores the decoded bytes', async () => {
     const bytes = uniqueImageBytes()
-    const providerId = await seedProvider('img-b64', 'img-1', false, { image_output: true })
+    const providerId = await seedProvider('img-b64', 'img-1', false, { modalities: { input: [], output: ['image'] } })
     await installMock(imageMock(textThenFiles([base64Chunk(bytes)])))
 
     const c = await connect()
@@ -740,7 +931,7 @@ describe('generated image output', () => {
   it('downloads an HTTPS output from the stream and never lets the URL through', async () => {
     const bytes = uniqueImageBytes()
     const url = 'https://provider.example/tmp/stream.png'
-    const providerId = await seedProvider('img-url', 'img-1', false, { image_output: true })
+    const providerId = await seedProvider('img-url', 'img-1', false, { modalities: { input: [], output: ['image'] } })
     const chunk: StreamPart = { type: 'file', mediaType: 'image/png', data: { type: 'url', url: new URL(url) } }
     await installMock(imageMock(textThenFiles([chunk])))
     vi.stubGlobal('fetch', async () => new Response(bytes, { headers: { 'content-type': 'image/png' } }))
@@ -768,7 +959,7 @@ describe('generated image output', () => {
   it('reuses the existing attachment when the same bytes are emitted twice', async () => {
     const bytes = uniqueImageBytes()
     const digest = await sha256(bytes)
-    const providerId = await seedProvider('img-dupe', 'img-1', false, { image_output: true })
+    const providerId = await seedProvider('img-dupe', 'img-1', false, { modalities: { input: [], output: ['image'] } })
     await installMock(imageMock(textThenFiles([inlineChunk(bytes), inlineChunk(bytes)])))
 
     const c = await connect()
@@ -788,7 +979,7 @@ describe('generated image output', () => {
   it('fails the reply on an unsupported image type, keeping the text and persisting nothing', async () => {
     const bytes = uniqueImageBytes()
     const digest = await sha256(bytes)
-    const providerId = await seedProvider('img-bad-mime', 'img-1', false, { image_output: true })
+    const providerId = await seedProvider('img-bad-mime', 'img-1', false, { modalities: { input: [], output: ['image'] } })
     await installMock(imageMock(textThenFiles([inlineChunk(bytes, 'image/svg+xml')])))
 
     const c = await connect()
@@ -806,7 +997,7 @@ describe('generated image output', () => {
 
   it('does not resolve a generated image on any later turn', async () => {
     const bytes = uniqueImageBytes()
-    const providerId = await seedProvider('img-history', 'img-1', false, { image_output: true })
+    const providerId = await seedProvider('img-history', 'img-1', false, { modalities: { input: [], output: ['image'] } })
     let turn = 0
     const created = await installMock(() => new MockLanguageModelV4({
       doStream: async () => ({
@@ -841,7 +1032,7 @@ describe('generated image output', () => {
 
   it('never writes file content into the DO inflight snapshot', async () => {
     const bytes = uniqueImageBytes()
-    const providerId = await seedProvider('img-inflight', 'img-1', false, { image_output: true })
+    const providerId = await seedProvider('img-inflight', 'img-1', false, { modalities: { input: [], output: ['image'] } })
     const trailing: StreamPart[] = [
       { type: 'text-start', id: 't2' },
       { type: 'text-delta', id: 't2', delta: 'and more' },
@@ -851,8 +1042,8 @@ describe('generated image output', () => {
 
     const c = await connect()
     c.ws.send(send(providerId, 'img-1'))
-    // The image part is broadcast only after `flushInflight`, so storage already holds it here.
-    await c.next('message.part')
+    // Wait for the persisted image part, not an earlier text or reasoning metadata frame.
+    await nextImagePart(c)
     const snapshot = await inflightSnapshot()
     expect(snapshot).toContain('"attachment_id"')
     expect(snapshot).not.toContain('base64')
@@ -1058,7 +1249,7 @@ describe('cross-feature integration', () => {
 
   it('carries one Project chat through Auto reasoning, an uploaded image, an A → B → A switch, a generated image, a reconnect and Project deletion', async () => {
     const db = createDb(env.DB)
-    const providerA = await seedProvider('int-a', 'int-a-1', true, { reasoning: true, image_output: true })
+    const providerA = await seedProvider('int-a', 'int-a-1', true, { reasoning: true, modalities: { input: [], output: ['image'] } })
     const providerB = await seedProvider('int-b', 'int-b-1', true, { reasoning: true })
     const commandProvider = await seedProvider('int-cmd', 'int-cmd-1', true, { reasoning: true })
     const projectId = await seedProject({
@@ -1107,7 +1298,7 @@ describe('cross-feature integration', () => {
         draft: { project_id: projectId, system_prompt: 'SESSION', model: null, params: { reasoning_enabled: true, reasoning_effort: null } },
       })))
 
-      const imageEvent = await c.next('message.part')
+      const imageEvent = await nextImagePart(c)
       const generatedId = (imageEvent as { part: { attachment_id: number } }).part.attachment_id
       expect((imageEvent as { part: unknown }).part).toEqual({ type: 'image', attachment_id: generatedId })
 
@@ -1192,8 +1383,7 @@ describe('cross-feature integration', () => {
       expect(await pointersOf(generatedId)).toEqual([])
       const pointers = await pointersOf(uploadId)
       expect(pointers.map((r) => r.provider_id).sort((x, y) => x - y)).toEqual([providerA, providerB].sort((x, y) => x - y))
-      expect(Object.keys(pointers[0]!).sort())
-        .toEqual(['attachment_id', 'created_at', 'expires_at', 'id', 'provider_id', 'provider_reference'])
+      expect(pointers[0]).not.toHaveProperty('api_key')
 
       // Nothing in this chat's persisted history is bytes, base64 or a provider URL.
       const history = await listMessages(db, sessionId)

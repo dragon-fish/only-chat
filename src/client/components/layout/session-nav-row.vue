@@ -60,7 +60,7 @@ function send(command: Parameters<typeof sync.send>[0]): boolean {
 
 <template>
   <SidebarMenuItem>
-    <SidebarMenuButton as-child class="min-h-10 md:min-h-0" :is-active="active" :tooltip="session.title">
+    <SidebarMenuButton as-child class="min-h-10 md:min-h-0 group-has-data-[sidebar=menu-action]/menu-item:pr-12" :is-active="active" :tooltip="session.title">
       <RouterLink :to="sessionPath(session)" @click="emit('navigate')">
         <MessageCircleIcon />
         <span>{{ session.title }}</span>
@@ -69,8 +69,8 @@ function send(command: Parameters<typeof sync.send>[0]): boolean {
 
     <DropdownMenu>
       <DropdownMenuTrigger as-child>
-        <SidebarMenuAction ref="action" show-on-hover type="button" :aria-label="`对话操作：${session.title}`">
-          <EllipsisIcon />
+        <SidebarMenuAction ref="action" data-row-action show-on-hover type="button" class="peer-data-[size=default]/menu-button:top-1/2 -translate-y-1/2 size-8 w-8 h-8 max-md:size-10 after:inset-0 [&>svg]:size-4" :aria-label="`对话操作：${session.title}`">
+          <EllipsisIcon class="size-4" />
         </SidebarMenuAction>
       </DropdownMenuTrigger>
       <DropdownMenuContent :side="isMobile ? 'bottom' : 'right'" :align="isMobile ? 'end' : 'start'" class="min-w-44" @close-auto-focus="event => { if (deleteOpen) event.preventDefault() }">

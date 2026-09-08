@@ -43,7 +43,7 @@ function remove() {
 
 <template>
   <SidebarMenuItem>
-    <SidebarMenuButton as-child class="min-h-10 md:min-h-0" :is-active="active" :tooltip="project.name">
+    <SidebarMenuButton as-child class="min-h-10 md:min-h-0 group-has-data-[sidebar=menu-action]/menu-item:pr-12" :is-active="active" :tooltip="project.name">
       <RouterLink :to="`/project/${project.id}`" @click="emit('navigate')">
         <ProjectAvatar :name="project.name" size="sm" />
         <span>{{ project.name }}</span>
@@ -51,8 +51,8 @@ function remove() {
     </SidebarMenuButton>
     <DropdownMenu>
       <DropdownMenuTrigger as-child>
-        <SidebarMenuAction ref="action" show-on-hover type="button" :aria-label="`Project 操作：${project.name}`">
-          <EllipsisIcon />
+        <SidebarMenuAction ref="action" data-row-action show-on-hover type="button" class="peer-data-[size=default]/menu-button:top-1/2 -translate-y-1/2 size-8 w-8 h-8 max-md:size-10 after:inset-0 [&>svg]:size-4" :aria-label="`Project 操作：${project.name}`">
+          <EllipsisIcon class="size-4" />
         </SidebarMenuAction>
       </DropdownMenuTrigger>
       <DropdownMenuContent :side="isMobile ? 'bottom' : 'right'" :align="isMobile ? 'end' : 'start'" @close-auto-focus="event => { if (deleteOpen) event.preventDefault() }">

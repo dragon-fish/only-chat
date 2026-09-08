@@ -2,10 +2,12 @@ import type { ModelMessage, AssistantModelMessage, UserModelMessage, ToolModelMe
 import type { SharedV4ProviderReference } from '@ai-sdk/provider'
 import type { AnthropicProviderOptions } from '@ai-sdk/anthropic'
 import type { GoogleVertexImageModelOptions } from '@ai-sdk/google-vertex'
-import type { OpenAIResponsesProviderOptions } from '@ai-sdk/openai'
+import type { OpenResponsesLanguageModelOptions } from '@ai-sdk/open-responses'
 import type { OpenAICompatibleProviderOptions } from '@ai-sdk/openai-compatible'
-import type { Message, ModelCapabilities, Protocol, ReasoningEffort, SessionParams } from '@/shared/models'
+import type { Message, InterfaceProtocol, ReasoningEffort, SessionParams } from '@/shared/models'
+import type { ModelMetadata } from '@/shared/model-metadata'
 import type { Part, ProviderOptions } from '@/shared/parts'
+import { RESPONSES_PROVIDER_NAME, responsesReasoningReplayOptions } from './responses-reasoning'
 
 export const COMPAT_PROVIDER_NAME = 'compat'
 
@@ -21,7 +23,7 @@ export interface AttachmentInput {
 }
 
 export interface BuildInput {
-  protocol: Protocol
+  protocol: InterfaceProtocol
   systemPrompt: string | null
   /** Root → leaf. The last element is the user message being answered. */
   path: Message[]
@@ -53,8 +55,8 @@ function userParts(parts: Part[], attachments: ReadonlyMap<number, AttachmentInp
 export type SdkProviderOptions = NonNullable<AssistantModelMessage['providerOptions']>
 
 /**
- * Adds the stored metadata verbatim, and only when there is some, so parts stay byte-comparable.
- * The one cast is honest: stored metadata is opaque provider JSON we never author or inspect.
+ * Adds the selected metadata only when present, keeping deterministic message shapes.
+ * The cast carries opaque provider JSON after any protocol-specific replay normalization.
  */
 function withOptions<T extends object>(
   part: T,
@@ -63,27 +65,57 @@ function withOptions<T extends object>(
   return providerOptions ? { ...part, providerOptions: providerOptions as SdkProviderOptions } : part
 }
 
-function assistantParts(parts: Part[]): { assistant: AssistantPart[]; tool: ToolPart[] } {
-  const assistant: AssistantPart[] = []
-  const tool: ToolPart[] = []
+/** Namespaces read by the installed adapters, including their documented Gemini aliases. */
+const METADATA_NAMESPACES: Record<InterfaceProtocol, readonly string[]> = {
+  responses: [RESPONSES_PROVIDER_NAME],
+  'chat-completions': [COMPAT_PROVIDER_NAME, 'openaiCompatible', 'google'],
+  anthropic: ['anthropic'],
+  'vertex-compatible': ['googleVertex', 'vertex', 'google'],
+}
+
+function targetOptions(protocol: InterfaceProtocol, stored: ProviderOptions | undefined): ProviderOptions | undefined {
+  if (!stored) return undefined
+  const entries = Object.entries(stored).filter(([namespace]) => METADATA_NAMESPACES[protocol]?.includes(namespace))
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined
+}
+
+function assistantMessages(parts: Part[], protocol: InterfaceProtocol): Array<AssistantModelMessage | ToolModelMessage> {
+  const out: Array<AssistantModelMessage | ToolModelMessage> = []
+  let assistant: AssistantPart[] = []
+  let tool: ToolPart[] = []
+  const flushAssistant = () => {
+    if (assistant.length > 0) out.push({ role: 'assistant', content: assistant })
+    assistant = []
+  }
+  const flushTool = () => {
+    if (tool.length > 0) out.push({ role: 'tool', content: tool })
+    tool = []
+  }
+  const appendAssistant = (part: AssistantPart) => { flushTool(); assistant.push(part) }
   for (const p of parts) {
+    const options = targetOptions(protocol, 'providerOptions' in p ? p.providerOptions : undefined)
     switch (p.type) {
       case 'text':
         // An empty block still matters when it carries a thought signature to replay.
-        if (p.text.length === 0 && !p.providerOptions) break
-        assistant.push(withOptions({ type: 'text', text: p.text }, p.providerOptions))
+        if (p.text.length === 0 && !options) break
+        appendAssistant(withOptions({ type: 'text', text: p.text }, options))
         break
-      case 'reasoning':
-        // Every protocol replays reasoning: the adapter turns it into `reasoning_content`, a thinking
-        // signature, an encrypted item or a thought signature (spec §6.2).
-        if (p.text.length === 0 && !p.providerOptions) break
-        assistant.push(withOptions({ type: 'reasoning', text: p.text }, p.providerOptions))
+      case 'reasoning': {
+        if (p.text.length === 0 && !options) break
+        const reasoningOptions = protocol === 'responses' ? responsesReasoningReplayOptions(p.text, options) : options
+        // Anthropic drops unsigned thinking. Foreign reasoning remains plain historical context;
+        // never manufacture a signature or attach another protocol's opaque state.
+        appendAssistant(protocol === 'anthropic' && !options?.anthropic
+          ? { type: 'text', text: p.text }
+          : withOptions({ type: 'reasoning', text: p.text }, reasoningOptions))
         break
+      }
       case 'tool_call':
-        assistant.push(withOptions({ type: 'tool-call', toolCallId: p.id, toolName: p.name, input: p.args }, p.providerOptions))
+        appendAssistant(withOptions({ type: 'tool-call', toolCallId: p.id, toolName: p.name, input: p.args }, options))
         break
       case 'tool_result':
-        tool.push({ type: 'tool-result', toolCallId: p.call_id, toolName: p.name, output: { type: 'json', value: p.content as never } })
+        flushAssistant()
+        tool.push(withOptions({ type: 'tool-result', toolCallId: p.call_id, toolName: p.name, output: { type: 'json', value: p.content as never } }, options))
         break
       case 'image':
         // Generated images are not replayed to the model in MVP. `requiredAttachmentIds` below is
@@ -91,7 +123,9 @@ function assistantParts(parts: Part[]): { assistant: AssistantPart[]; tool: Tool
         break
     }
   }
-  return { assistant, tool }
+  flushAssistant()
+  flushTool()
+  return out
 }
 
 /**
@@ -99,7 +133,7 @@ function assistantParts(parts: Part[]): { assistant: AssistantPart[]; tool: Tool
  * deliberately next to the builder: "which attachments does the request need?" and "which ones does
  * it use?" have to be one answer, or the caller resolves bytes for parts that are never sent.
  *
- * Only user images qualify today, because `assistantParts` drops generated ones. Resolving those
+ * Only user images qualify today, because `assistantMessages` drops generated ones. Resolving those
  * too would read them out of R2 on every later turn — the quadratic re-read spec §5.6 exists to
  * remove — upload model output to the provider's Files API, and fail the whole turn on a missing R2
  * object that nothing in the request needed.
@@ -142,9 +176,7 @@ export function buildModelMessages(input: BuildInput): ModelMessage[] {
         : { role: 'user', content })
       return
     }
-    const { assistant, tool } = assistantParts(m.parts)
-    if (assistant.length > 0) out.push({ role: 'assistant', content: assistant })
-    if (tool.length > 0) out.push({ role: 'tool', content: tool })
+    out.push(...assistantMessages(m.parts, protocol))
   })
 
   return out
@@ -185,37 +217,32 @@ function accept<T extends ReasoningEffort>(levels: readonly T[], effort: Reasoni
 }
 
 /**
- * Maps the two independent reasoning settings onto one protocol's options (spec §5.4).
- *
- * Enabled and effort never imply each other: `reasoning_enabled !== false` on a reasoning model means
- * on, and a `null` effort is explicit Auto — enabled, with the protocol's summary or thoughts output
- * requested but no effort sent. An explicit "off" value is only ever sent to a model that declares it
- * can be turned off; otherwise the field is omitted rather than filled with a value the model would
- * not honor. Every branch's literal is checked against the provider SDK's own options type.
+ * Reasoning settings affect only this request. Resolved catalog metadata declares model support;
+ * neither these options nor the current capability can remove stored reasoning from history.
  */
 export function buildProviderOptions(
-  protocol: Protocol,
+  protocol: InterfaceProtocol,
   params: SessionParams | null,
-  caps: ModelCapabilities,
+  metadata: ModelMetadata,
 ): SdkProviderOptions {
-  const enabled = Boolean(caps.reasoning) && params?.reasoning_enabled !== false
+  const enabled = metadata.reasoning === true && params?.reasoning_enabled !== false
   const requested = enabled ? (params?.reasoning_effort ?? undefined) : undefined
-  const declared = caps.reasoning_efforts
+  const options = metadata.reasoning_options ?? []
+  const declared = options.flatMap(option => option.type === 'effort' ? option.values ?? [] : [])
   // A model only receives a level it declares. No declaration at all means "undeclared", not
   // "nothing allowed", so an effort survives models that never listed their levels (spec §4.4).
-  const effort = requested === undefined || !declared?.length || declared.includes(requested) ? requested : undefined
-  const disable = !enabled && Boolean(caps.reasoning_can_disable)
+  const effort = requested === undefined || declared.length === 0 || declared.includes(requested) ? requested : undefined
+  const disable = metadata.reasoning === true && params?.reasoning_enabled === false
+    && (options.some(option => option.type === 'toggle') || declared.includes('none'))
   switch (protocol) {
-    case 'openai-responses': {
-      // `store: false` is unconditional: encrypted reasoning items are only returned without storage.
-      const reasoning: OpenAIResponsesProviderOptions = enabled
-        ? { reasoningSummary: 'auto', ...(effort ? { reasoningEffort: effort } : {}) }
-        : disable ? { reasoningEffort: 'none' } : {}
-      return { openai: { store: false, ...reasoning } satisfies OpenAIResponsesProviderOptions }
+    case 'responses': {
+      const value = disable ? 'none' : effort
+      return value ? { [RESPONSES_PROVIDER_NAME]: { reasoningEffort: value } satisfies OpenResponsesLanguageModelOptions } : {}
     }
-    case 'openai-completions':
-      // The compatible protocol has no disable value; Auto sends no effort at all.
-      return effort ? { [COMPAT_PROVIDER_NAME]: { reasoningEffort: effort } satisfies OpenAICompatibleProviderOptions } : {}
+    case 'chat-completions': {
+      const value = disable ? 'none' : effort
+      return value ? { [COMPAT_PROVIDER_NAME]: { reasoningEffort: value } satisfies OpenAICompatibleProviderOptions } : {}
+    }
     case 'anthropic': {
       if (!enabled) return disable ? { anthropic: { thinking: { type: 'disabled' } } satisfies AnthropicProviderOptions } : {}
       const accepted = accept(ANTHROPIC_EFFORTS, effort)
@@ -224,14 +251,13 @@ export function buildProviderOptions(
         ...(accepted ? { effort: accepted } : {}),
       } satisfies AnthropicProviderOptions }
     }
-    // Both Gemini protocols share the same reasoning mapping; only auth and URLs differ (spec §5.5).
-    case 'vertex':
     case 'vertex-compatible': {
       // Image output is asked for only from a model that declares the capability (spec §4.4/§5.8);
       // it is never inferred from a model id, and it is independent of the reasoning settings.
-      const image = caps.image_output ? GEMINI_IMAGE_MODALITIES : {}
+      const hasImageOutput = metadata.modalities?.output.includes('image') === true
+      const image = hasImageOutput ? GEMINI_IMAGE_MODALITIES : {}
       if (!enabled) {
-        if (!disable) return caps.image_output ? { googleVertex: { ...image } } : {}
+        if (!disable) return hasImageOutput ? { googleVertex: { ...image } } : {}
         const off = { thinkingConfig: { thinkingBudget: 0, includeThoughts: false } } satisfies GeminiThinkingOptions
         return { googleVertex: { ...image, ...off } }
       }

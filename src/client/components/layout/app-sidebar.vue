@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import SidebarBrand from '@/client/components/layout/sidebar-brand.vue'
 import ChatSidebarContent from '@/client/components/layout/chat-sidebar-content.vue'
+import SidebarGlobalFooter from '@/client/components/layout/sidebar-global-footer.vue'
 import SettingsSidebarContent from '@/client/components/layout/settings-sidebar-content.vue'
 import { routeParamToId } from '@/client/lib/route-params'
 import { useSyncStore } from '@/client/stores/sync'
@@ -42,8 +44,10 @@ const projectId = computed<number | undefined>(() => {
     :data-sidebar-context="isSettings ? 'settings' : projectId === undefined ? 'chat' : 'project'"
     :data-connection="sync.status"
   >
+    <SidebarBrand :status="sync.status" />
     <SettingsSidebarContent v-if="isSettings" />
     <ChatSidebarContent v-else :project-id="projectId" />
+    <SidebarGlobalFooter />
     <SidebarRail />
   </Sidebar>
 </template>
