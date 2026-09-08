@@ -55,6 +55,12 @@ export class CodexCredentialStore {
     }
   }
 
+  async readForDisconnect(providerId: number) {
+    const row = await this.row(providerId)
+    if (!row) return null
+    return { revision: row.credential.revision, encryptedBundle: row.credential.encrypted_bundle, status: row.credential.status }
+  }
+
   async createProvider(bundle: CodexTokenBundle, now: number): Promise<number> {
     const encrypted = await encryptJson(this.encryptionSecret, bundle)
     const duplicate = this.db.select({ id: providers.id }).from(providers)
@@ -136,9 +142,10 @@ export class CodexCredentialStore {
     return updated.length > 0
   }
 
-  async disconnect(providerId: number, expectedRevision: number, now: number): Promise<boolean> {
+  async disconnect(providerId: number, expectedRevision: number, now: number, expectedEncryptedBundle?: string | null): Promise<boolean> {
     const row = await this.row(providerId)
     if (!row || row.credential.revision !== expectedRevision || row.credential.status === 'disconnected') return false
+    if (expectedEncryptedBundle !== undefined && row.credential.encrypted_bundle !== expectedEncryptedBundle) return false
     const predicate = this.cas(providerId, expectedRevision, row.credential.encrypted_bundle)
     const [, updated] = await this.db.batch([
       this.db.update(providers).set({ credential_version: sql`${providers.credential_version} + 1` })

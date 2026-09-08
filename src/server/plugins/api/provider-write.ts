@@ -2,7 +2,7 @@ import type { Context } from 'cordis'
 import { and, eq, inArray, notInArray, sql } from 'drizzle-orm'
 import type { BatchItem } from 'drizzle-orm/batch'
 import { DEFAULT_USER_ID } from '@/shared/constants'
-import type { ProviderWriteInput } from '@/shared/api'
+import type { CodexProviderUpdate, ProviderWriteInput } from '@/shared/api'
 import { ProviderWithInterfacesSchema } from '@/shared/models'
 import { attachmentProviderFiles, models, providerInterfaces, providers, type ProviderRow, type ProviderInterfaceRow } from '@/server/db/schema'
 import { decryptSecret, encryptSecret } from '../llm/crypto'
@@ -24,6 +24,14 @@ export function toProviderDto(row: ProviderRow, interfaces: ProviderInterfaceRow
 }
 
 type CredentialExpectation = Readonly<Pick<ProviderRow, 'api_key' | 'credential_version'>>
+
+export async function writeCodexProvider(ctx: Context, id: number, input: CodexProviderUpdate): Promise<void> {
+  const updated = await ctx.db.orm.update(providers).set({
+    name: input.name, ...(input.enabled === undefined ? {} : { enabled: input.enabled }),
+  }).where(and(eq(providers.id, id), eq(providers.user_id, DEFAULT_USER_ID), eq(providers.kind, 'codex-oauth')))
+    .returning({ id: providers.id }).catch(() => { throw new Error('Codex provider update failed') })
+  if (!updated.length) throw new ProviderWriteError('not found', 404)
+}
 
 export async function writeProvider(ctx: Context, input: ProviderWriteInput, id?: number) {
   let credentialExpectation: CredentialExpectation | undefined

@@ -74,6 +74,12 @@ export const ProviderWriteInputSchema = z.strictObject({
 })
 export type ProviderWriteInput = z.infer<typeof ProviderWriteInputSchema>
 
+export const CodexProviderUpdateSchema = z.strictObject({
+  name: z.string().min(1).max(100),
+  enabled: z.boolean().optional(),
+})
+export type CodexProviderUpdate = z.infer<typeof CodexProviderUpdateSchema>
+
 /** Model input retains only user intent; catalog metadata never creates model membership. */
 export const ModelWriteInputSchema = z.strictObject({
   model_id: z.string().min(1),

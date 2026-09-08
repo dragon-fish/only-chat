@@ -1,15 +1,15 @@
 import type { Context } from 'cordis'
 import { Hono } from 'hono'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, exists } from 'drizzle-orm'
 import { DEFAULT_USER_ID } from '@/shared/constants'
-import { ProviderWriteInputSchema } from '@/shared/api'
-import { providerInterfaces, providers } from '../../db/schema'
+import { CodexProviderUpdateSchema, ProviderWriteInputSchema } from '@/shared/api'
+import { providerInterfaces, providerOAuthCredentials, providers } from '../../db/schema'
 import { decryptSecret } from '../llm/crypto'
 import { listRemoteModels } from '../llm/list-models'
 import { cleanupProviderFilesBeforeChange, invalidatedProviderFiles } from '../files-cleanup'
 import { parseId } from './params'
-import { ProviderWriteError, writeProvider } from './provider-write'
-import { listProviderDtos } from './provider-read'
+import { ProviderWriteError, writeCodexProvider, writeProvider } from './provider-write'
+import { listProviderDtos, readProviderDto } from './provider-read'
 import { ModelSourceConflict } from './model-write'
 import { ProviderModelSyncNotFound, reconcileProviderModels } from './provider-model-sync'
 
@@ -23,6 +23,19 @@ export function providerRoutes(ctx: Context) {
   r.on(['POST', 'PUT'], ['/providers', '/providers/:id'], async c => {
     const id = c.req.param('id') === undefined ? undefined : parseId(c.req.param('id')!)
     if (id === null || (c.req.method === 'PUT' && id === undefined) || (c.req.method === 'POST' && id !== undefined)) return c.json({ error: 'not found' }, 404)
+    const provider = id === undefined ? undefined : await db.query.providers.findFirst({ where: owned(id) })
+    if (id !== undefined && !provider) return c.json({ error: 'not found' }, 404)
+    if (provider?.kind === 'codex-oauth') {
+      const parsed = CodexProviderUpdateSchema.safeParse(await c.req.json().catch(() => null))
+      if (!parsed.success) return c.json({ error: 'invalid input' }, 400)
+      try {
+        await writeCodexProvider(ctx, provider.id, parsed.data)
+        return c.json(await readProviderDto(ctx, provider.id))
+      } catch (error) {
+        if (error instanceof ProviderWriteError) return c.json({ error: error.message }, error.status)
+        return c.json({ error: 'Codex provider update failed' }, 500)
+      }
+    }
     const parsed = ProviderWriteInputSchema.safeParse(await c.req.json())
     if (!parsed.success) return c.json({ error: 'invalid input', issues: parsed.error.issues }, 400)
     try {
@@ -39,6 +52,20 @@ export function providerRoutes(ctx: Context) {
     const id = parseId(c.req.param('id'))
     if (id === null) return c.json({ error: 'not found' }, 404)
     const provider = await db.query.providers.findFirst({ where: owned(id) })
+    if (provider?.kind === 'codex-oauth') {
+      try {
+        const result = await c.env.USER_HUB.getByName(String(DEFAULT_USER_ID)).prepareCodexDelete(id)
+        if (result.status === 'conflict') return c.json({ error: 'Codex credentials changed concurrently; reload and retry' }, 409)
+        if (result.status === 'not-found') return c.json({ error: 'Codex provider not found' }, 404)
+        const deleted = await db.delete(providers).where(and(owned(id), eq(providers.kind, 'codex-oauth'), exists(
+          db.select().from(providerOAuthCredentials).where(and(
+            eq(providerOAuthCredentials.provider_id, id), eq(providerOAuthCredentials.status, 'disconnected'), eq(providerOAuthCredentials.revision, result.revision),
+          )),
+        ))).returning({ id: providers.id })
+        if (!deleted.length && await db.query.providers.findFirst({ where: owned(id) })) return c.json({ error: 'Codex credentials changed concurrently; reload and retry' }, 409)
+        return c.body(null, 204)
+      } catch { return c.json({ error: 'Could not delete Codex provider' }, 502) }
+    }
     if (provider) {
       const interfaces = await db.select().from(providerInterfaces).where(eq(providerInterfaces.provider_id, id))
       await cleanupProviderFilesBeforeChange(ctx, provider, interfaces, invalidatedProviderFiles(provider))

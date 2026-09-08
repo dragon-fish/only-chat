@@ -76,6 +76,14 @@ export class UserHub extends DurableObject<Env> {
     return this._app.codex.listModels(providerId)
   }
 
+  async disconnectCodexProvider(providerId: number) {
+    return this._app.codex.disconnect(providerId)
+  }
+
+  async prepareCodexDelete(providerId: number) {
+    return this._app.codex.disconnect(providerId)
+  }
+
   async fetch(request: Request): Promise<Response> {
     if (request.headers.get('Upgrade') !== 'websocket') return new Response('Expected websocket', { status: 426 })
     const pair = new WebSocketPair()

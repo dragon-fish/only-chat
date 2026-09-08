@@ -149,6 +149,7 @@ describe('Codex credential persistence', () => {
     await db.update(providerOAuthCredentials).set({ encrypted_bundle: await encryptJson(env.KEY_ENCRYPTION_SECRET, rotated) }).where(eq(providerOAuthCredentials.provider_id, id))
     expect(await store.storeRefresh(snapshot, bundle, 20)).toBe(false)
     expect(await store.markReconnectRequired(snapshot, 'Reconnect required', 20)).toBe(false)
+    expect(await store.disconnect(id, snapshot.revision, 20, snapshot.encryptedBundle)).toBe(false)
     expect(await store.read(id)).toMatchObject({ bundle: rotated, revision: 1, status: 'connected' })
   })
 

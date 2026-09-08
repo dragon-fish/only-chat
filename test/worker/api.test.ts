@@ -10,9 +10,55 @@ import { catalogApp } from './provider-catalog-fixture'
 import { decryptSecret } from '@/server/plugins/llm/crypto'
 import { createApp } from '@/server/app'
 import { reconcileProviderModels } from '@/server/plugins/api/provider-model-sync'
+import { CodexCredentialStore } from '@/server/plugins/codex/credentials'
 
 const json = (method: string, path: string, body?: unknown) =>
   exports.default.fetch(new Request(`https://x${path}`, { method, headers: { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) }))
+
+describe('managed Codex provider writes', () => {
+  it('rejects malformed managed updates without reflecting request bodies into errors or logs', async () => {
+    const { ctx } = await catalogApp()
+    const store = new CodexCredentialStore(ctx.db.orm, env.KEY_ENCRYPTION_SECRET)
+    const id = await store.createProvider({ idToken: 'private-id', accessToken: 'private-access', refreshToken: 'private-refresh', tokenType: 'Bearer', accountId: crypto.randomUUID(), email: 'owner@example.com', expiresAt: Date.now() + 3600000 }, Date.now())
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const response = await ctx.api.fetch(new Request(`https://x/api/providers/${id}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: 'private-malformed-json' }), env)
+      expect(response.status).toBe(400)
+      expect(await response.text()).not.toContain('private-malformed-json')
+      expect(JSON.stringify(logged.mock.calls)).not.toContain('private-malformed-json')
+    } finally { logged.mockRestore() }
+  })
+
+  it('updates only name and enabled while preserving credentials, interfaces and association', async () => {
+    const { ctx, request } = await catalogApp()
+    const store = new CodexCredentialStore(ctx.db.orm, env.KEY_ENCRYPTION_SECRET)
+    const id = await store.createProvider({ idToken: 'private-id', accessToken: 'private-access', refreshToken: 'private-refresh', tokenType: 'Bearer', accountId: crypto.randomUUID(), email: 'owner@example.com', expiresAt: Date.now() + 3600000 }, Date.now())
+    const before = (await (await request('GET', '/providers')).json() as { id: number }[]).find(row => row.id === id)!
+    const credentials = await store.read(id)
+    const response = await request('PUT', `/providers/${id}`, { name: 'Personal Codex', enabled: false })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ ...before, name: 'Personal Codex', enabled: false })
+    expect(await store.read(id)).toEqual(credentials)
+    expect((await request('PUT', `/providers/${id}`, { name: 'Renamed' })).status).toBe(200)
+    expect(await ctx.db.orm.query.providers.findFirst({ where: eq(providers.id, id) })).toMatchObject({ name: 'Renamed', enabled: false })
+  })
+
+  it('rejects custom connection fields and managed creation without mutating Codex rows', async () => {
+    const { ctx, request } = await catalogApp()
+    const store = new CodexCredentialStore(ctx.db.orm, env.KEY_ENCRYPTION_SECRET)
+    const id = await store.createProvider({ idToken: 'private-id', accessToken: 'private-access', refreshToken: 'private-refresh', tokenType: 'Bearer', accountId: crypto.randomUUID(), email: 'owner@example.com', expiresAt: Date.now() + 3600000 }, Date.now())
+    const before = await store.read(id)
+    const custom = { name: 'Hijacked', interfaces: [{ protocol: 'responses', base_url: 'https://evil.test/v1' }], default_protocol: 'responses' }
+    for (const fields of [custom, { api_key: 'private-key' }, { base_url: 'https://evil.test' }, { protocol: 'anthropic' }, { default_protocol: 'anthropic' }, { models_dev_provider: { source: 'manual', provider_id: 'openai' } }, { models_dev_provider_id: 'openai' }, { kind: 'custom' }, { oauth: { status: 'connected' } }]) {
+      const response = await request('PUT', `/providers/${id}`, { name: 'Hijacked', ...fields })
+      expect(response.status).toBe(400)
+      expect(await response.text()).not.toContain('private-key')
+    }
+    expect((await request('POST', '/providers', { ...custom, kind: 'codex-oauth' })).status).toBe(400)
+    expect(await store.read(id)).toEqual(before)
+    expect(await ctx.db.orm.query.providers.findFirst({ where: eq(providers.id, id) })).toMatchObject({ kind: 'codex-oauth', api_key: null, models_dev_provider_id: null })
+  })
+})
 
 describe('provider model reconciliation service', () => {
   it('reconciles imported and removed models while enabling only opted-in imports', async () => {

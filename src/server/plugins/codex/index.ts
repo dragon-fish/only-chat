@@ -2,8 +2,9 @@ import { Context, Service } from 'cordis'
 import { createCodexClient } from './client'
 import { CodexCredentialStore, type CodexCredentialSnapshot } from './credentials'
 import { CodexOAuthFlowStore } from './flow'
-import { CodexProtocolError } from './types'
+import { CodexProtocolError, type CodexTokenBundle } from './types'
 import { CODEX_REFRESH_SKEW_MS } from './constants'
+import { decryptJson } from '../llm/crypto'
 
 type ConnectedCredentials = CodexCredentialSnapshot & { status: 'connected' }
 
@@ -18,6 +19,8 @@ export type CodexOAuthPollResult =
   | { status: 'pending'; next_poll_at: number }
   | { status: 'complete'; providerId: number; initialConnection: boolean; modelIds: string[]; modelListError: string | null }
   | { status: 'failed'; error: string }
+
+export type CodexDisconnectResult = { status: 'disconnected'; revision: number } | { status: 'not-found' } | { status: 'conflict' }
 
 const missingFlow = (): CodexOAuthPollResult => ({ status: 'failed', error: 'Codex authorization expired or was cancelled' })
 const credentialErrors = new Set([
@@ -154,6 +157,28 @@ export class Codex extends Service {
   async cancel(flowId: string): Promise<void> {
     this.polling.get(flowId)?.abort()
     await this.flows.delete(flowId)
+  }
+
+  async disconnect(providerId: number): Promise<CodexDisconnectResult> {
+    try {
+      const current = await this.credentials.readForDisconnect(providerId)
+      if (!current) return { status: 'not-found' }
+      if (current.status === 'disconnected') return { status: 'disconnected', revision: current.revision }
+      try {
+        // Unreadable credentials must still be locally removable with the captured CAS guard.
+        const bundle = await decryptJson<CodexTokenBundle>(this.ctx.env.KEY_ENCRYPTION_SECRET, current.encryptedBundle!)
+        await requestWithDeadline(signal => this.client.revoke(bundle.refreshToken, signal))
+      } catch (error) {
+        console.warn('Codex revoke failed', error instanceof CodexProtocolError ? error.category : 'upstream')
+      }
+      // Revocation belongs to the captured connection. Never clear a newer reconnect or rotation.
+      if (await this.credentials.disconnect(providerId, current.revision, Date.now(), current.encryptedBundle)) {
+        return { status: 'disconnected', revision: current.revision + 1 }
+      }
+      const latest = await this.credentials.readForDisconnect(providerId)
+      if (!latest) return { status: 'not-found' }
+      return latest.status === 'disconnected' ? { status: 'disconnected', revision: latest.revision } : { status: 'conflict' }
+    } catch { throw new Error('Codex disconnect failed') }
   }
 }
 

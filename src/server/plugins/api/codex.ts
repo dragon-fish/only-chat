@@ -28,6 +28,17 @@ export function codexRoutes(ctx: Context) {
     } catch { return c.json({ error: 'Could not start Codex authorization' }, 502) }
   })
 
+  r.post('/providers/:id/codex/disconnect', async c => {
+    const id = parseId(c.req.param('id'))
+    if (id === null) return c.json({ error: 'Codex provider not found' }, 404)
+    try {
+      const result = await c.env.USER_HUB.getByName(String(DEFAULT_USER_ID)).disconnectCodexProvider(id)
+      if (result.status === 'not-found') return c.json({ error: 'Codex provider not found' }, 404)
+      if (result.status === 'conflict') return c.json({ error: 'Codex credentials changed concurrently; reload and retry' }, 409)
+      return c.body(null, 204)
+    } catch { return c.json({ error: 'Could not disconnect Codex provider' }, 502) }
+  })
+
   r.post('/codex/oauth/:flowId/poll', async c => {
     const flowId = flowIdSchema.safeParse(c.req.param('flowId'))
     if (!flowId.success) return c.json({ error: 'Invalid authorization flow' }, 400)

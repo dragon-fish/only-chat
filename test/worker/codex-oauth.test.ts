@@ -7,6 +7,8 @@ import { providers } from '@/server/db/schema'
 import { CodexCredentialStore } from '@/server/plugins/codex/credentials'
 import { decryptJson, encryptJson } from '@/server/plugins/llm/crypto'
 import { CodexOAuthPollResponseSchema, CodexOAuthStartResponseSchema } from '@/shared/api'
+import { createCodexModel } from '@/server/plugins/llm/providers/codex'
+import { createApp } from '@/server/app'
 
 const request = (method: string, path: string) => exports.default.fetch(new Request(`https://x/api${path}`, { method }))
 const stub = () => env.USER_HUB.getByName('1')
@@ -57,6 +59,148 @@ async function poll(id: string) {
 }
 
 describe('Codex OAuth REST boundary', () => {
+  it.each(['disconnect', 'delete'] as const)('still performs local %s when revoke fails and sends only the refresh token', async operation => {
+    const result = await poll((await start()).flow_id)
+    if (result.status !== 'complete') throw new Error('Missing provider')
+    const id = result.provider.id
+    const beforeModels = await db.query.models.findMany()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const revoked: unknown[] = []
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+      const req = new Request(input, init)
+      expect(req.url).toBe('https://auth.openai.com/oauth/revoke')
+      expect(req.method).toBe('POST')
+      revoked.push(await req.json())
+      expect(await store.read(id)).toMatchObject({ status: 'connected' })
+      return Response.json({ error: 'private-revoke-body', access_token: 'private-access' }, { status: 500 })
+    })
+    const response = await request(operation === 'delete' ? 'DELETE' : 'POST', operation === 'delete' ? `/providers/${id}` : `/providers/${id}/codex/disconnect`)
+    expect(response.status).toBe(204)
+    expect(revoked).toEqual([{ token: 'private-refresh', token_type_hint: 'refresh_token', client_id: expect.any(String) }])
+    expect(JSON.stringify(warn.mock.calls)).not.toMatch(/private-|owner@example|account/)
+    expect(warn).toHaveBeenCalled()
+    if (operation === 'delete') {
+      expect(await store.read(id)).toBeNull()
+      expect(await db.query.providerInterfaces.findMany()).toEqual([])
+      expect(await db.query.models.findMany()).toEqual([])
+    } else {
+      expect(await store.read(id)).toMatchObject({ status: 'disconnected', bundle: null, revision: 2, credentialVersion: 2 })
+      expect(await db.query.models.findMany()).toEqual(beforeModels)
+      expect((await request('POST', `/providers/${id}/codex/disconnect`)).status).toBe(204)
+      expect(revoked).toHaveLength(1)
+      expect(await store.read(id)).toMatchObject({ revision: 2, credentialVersion: 2 })
+    }
+  })
+
+  it('rejects generation from a model created before local disconnect without upstream I/O', async () => {
+    const result = await poll((await start()).flow_id)
+    if (result.status !== 'complete') throw new Error('Missing provider')
+    await runInDurableObject(stub(), async (instance: UserHub) => {
+      const provider = (await db.query.providers.findFirst())!
+      const endpoint = (await db.query.providerInterfaces.findFirst())!
+      const model = (await db.query.models.findFirst())!
+      const languageModel = await createCodexModel(instance.app.codex, provider, endpoint, model)
+      if (typeof languageModel === 'string') throw new Error('Expected a resolved model')
+      vi.stubGlobal('fetch', async () => new Response(null, { status: 200 }))
+      expect((await request('POST', `/providers/${provider.id}/codex/disconnect`)).status).toBe(204)
+      const upstream = vi.fn(async () => { throw new Error('Upstream must not be called') })
+      vi.stubGlobal('fetch', upstream)
+      await expect(languageModel.doGenerate({ prompt: [{ role: 'user', content: [{ type: 'text', text: 'hello' }] }] })).rejects.toThrow(/Codex/)
+      expect(upstream).not.toHaveBeenCalled()
+    })
+  })
+
+  it.each([
+    { operation: 'disconnect', change: 'reconnect' }, { operation: 'delete', change: 'reconnect' },
+    { operation: 'disconnect', change: 'refresh' }, { operation: 'delete', change: 'refresh' },
+  ])('preserves a concurrent $change when a stale $operation finishes revoking', async ({ operation, change }) => {
+    const result = await poll((await start()).flow_id)
+    if (result.status !== 'complete') throw new Error('Missing provider')
+    const id = result.provider.id
+    const original = (await store.read(id))!
+    vi.stubGlobal('fetch', async () => {
+      const rotated = { ...original.bundle!, refreshToken: 'new-refresh' }
+      if (change === 'reconnect') await store.reconnect(id, original.revision, rotated, Date.now())
+      else await store.storeRefresh(original, rotated, Date.now())
+      return new Response(null, { status: 200 })
+    })
+    const response = await request(operation === 'delete' ? 'DELETE' : 'POST', operation === 'delete' ? `/providers/${id}` : `/providers/${id}/codex/disconnect`)
+    expect(response.status).toBe(409)
+    expect(await store.read(id)).toMatchObject({ status: 'connected', bundle: { refreshToken: 'new-refresh' }, revision: 2, credentialVersion: change === 'reconnect' ? 2 : 1 })
+  })
+
+  it('does not delete a reconnect committed after prepare-delete cleared the old connection', async () => {
+    const result = await poll((await start()).flow_id)
+    if (result.status !== 'complete') throw new Error('Missing provider')
+    const id = result.provider.id
+    const original = (await store.read(id))!
+    vi.stubGlobal('fetch', async () => new Response(null, { status: 200 }))
+    const hub = stub()
+    const app = await createApp({ side: 'worker', env: { ...env, USER_HUB: new Proxy(env.USER_HUB, {
+      get(target, property) {
+        if (property === 'getByName') return () => new Proxy(hub, {
+          get(stubTarget, key) {
+            if (key === 'prepareCodexDelete') return async (providerId: number) => {
+              const prepared = await stubTarget.prepareCodexDelete(providerId)
+              if (prepared.status !== 'disconnected') throw new Error('Expected local clear')
+              await store.reconnect(id, prepared.revision, { ...original.bundle!, refreshToken: 'new-refresh' }, Date.now())
+              return prepared
+            }
+            return Reflect.get(stubTarget, key)
+          },
+        })
+        return Reflect.get(target, property)
+      },
+    }) } })
+    const response = await app.api.fetch(new Request(`https://x/api/providers/${id}`, { method: 'DELETE' }), app.env)
+    expect(response.status).toBe(409)
+    expect(await store.read(id)).toMatchObject({ status: 'connected', bundle: { refreshToken: 'new-refresh' }, revision: 3, credentialVersion: 3 })
+  })
+
+  it.each(['disconnect', 'delete'] as const)('clears unreadable local credentials during %s without exposing ciphertext', async operation => {
+    const result = await poll((await start()).flow_id)
+    if (result.status !== 'complete') throw new Error('Missing provider')
+    const id = result.provider.id
+    await env.DB.prepare('UPDATE provider_oauth_credentials SET encrypted_bundle = ? WHERE provider_id = ?').bind('private-invalid-ciphertext', id).run()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const response = await request(operation === 'delete' ? 'DELETE' : 'POST', operation === 'delete' ? `/providers/${id}` : `/providers/${id}/codex/disconnect`)
+    expect(response.status).toBe(204)
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('private-invalid-ciphertext')
+    expect(await store.read(id)).toEqual(operation === 'delete' ? null : expect.objectContaining({ status: 'disconnected', bundle: null }))
+  })
+
+  it('rejects invalid, missing, and custom disconnect targets before upstream I/O', async () => {
+    const [custom] = await db.insert(providers).values({ user_id: 1, name: 'Custom', created_at: 0 }).returning()
+    for (const id of ['no', '999999', custom!.id]) expect((await request('POST', `/providers/${id}/codex/disconnect`)).status).toBe(404)
+    expect(calls).toEqual([])
+  })
+
+  it.each(['disconnect', 'delete'] as const)('aborts stalled revoke before completing local %s', async operation => {
+    const result = await poll((await start()).flow_id)
+    if (result.status !== 'complete') throw new Error('Missing provider')
+    const id = result.provider.id
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    let entered!: (signal: AbortSignal) => void
+    let rejectPending!: (error: Error) => void
+    const started = new Promise<AbortSignal>(resolve => { entered = resolve })
+    vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      const req = new Request(input, init)
+      rejectPending = reject
+      req.signal.addEventListener('abort', () => reject(new Error('private-revoke-timeout')), { once: true })
+      entered(req.signal)
+    }))
+    const pending = request(operation === 'delete' ? 'DELETE' : 'POST', operation === 'delete' ? `/providers/${id}` : `/providers/${id}/codex/disconnect`)
+    try {
+      const signal = await started
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(signal.aborted).toBe(true)
+      expect((await pending).status).toBe(204)
+      expect(await store.read(id)).toEqual(operation === 'delete' ? null : expect.objectContaining({ status: 'disconnected', bundle: null }))
+      expect(JSON.stringify(warn.mock.calls)).not.toContain('private-revoke-timeout')
+    } finally { rejectPending(new Error('fixture cleanup')); await pending }
+  })
+
   it('refreshes the catalog through hub credentials and leaves newly discovered models disabled', async () => {
     const result = await poll((await start()).flow_id)
     if (result.status !== 'complete') throw new Error('Missing provider')
