@@ -65,6 +65,21 @@ export async function updateSession(
   return row
 }
 
+/** Moves a Session head only if it still equals the caller's observed parent. */
+export async function compareAndSwapSessionHead(
+  db: DB,
+  id: number,
+  expectedHead: number | null,
+  nextHead: number,
+): Promise<SessionRow | undefined> {
+  const expected = expectedHead === null ? isNull(sessions.head_message_id) : eq(sessions.head_message_id, expectedHead)
+  const [row] = await db.update(sessions)
+    .set({ head_message_id: nextHead, updated_at: Date.now() })
+    .where(and(eq(sessions.id, id), expected))
+    .returning()
+  return row
+}
+
 export async function deleteSession(db: DB, id: number): Promise<void> {
   await db.delete(sessions).where(eq(sessions.id, id)) // messages cascade
 }
@@ -151,7 +166,7 @@ export async function replaceMessagePartsIfCurrentHead(
   expected: MessageRow,
   nextParts: Part[],
 ): Promise<boolean> {
-  const result = await db.$client.prepare(`
+  const updated = await db.$client.prepare(`
     UPDATE messages
        SET parts = json(?)
      WHERE id = ?
@@ -162,16 +177,21 @@ export async function replaceMessagePartsIfCurrentHead(
        AND EXISTS (
          SELECT 1 FROM sessions WHERE id = ? AND head_message_id = ?
        )
+    RETURNING id
   `).bind(
     JSON.stringify(nextParts), expected.id, expected.session_id, JSON.stringify(expected.parts),
     expected.session_id, expected.id,
-  ).run()
-  return result.meta.changes === 1
+  ).first<{ id: number }>()
+  return updated?.id === expected.id
 }
 
 export async function insertMessage(db: DB, row: Omit<MessageRow, 'id'>): Promise<MessageRow> {
   const [inserted] = await db.insert(messages).values(row).returning()
   return inserted!
+}
+
+export async function deleteMessage(db: DB, id: number): Promise<void> {
+  await db.delete(messages).where(eq(messages.id, id))
 }
 
 /** Creates the sole assistant continuation for one tool-call parent with an atomic SQLite fence. */

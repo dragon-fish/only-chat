@@ -760,6 +760,126 @@ describe('generation', () => {
     expect(created).toHaveLength(1)
   })
 
+  it('rejects a stale ordinary send whose resolved parent is no longer the Session head', async () => {
+    const providerId = await seedProvider('stale-resolved-provider', 'stale-resolved-model', false, { tool_call: true })
+    const db = createDb(env.DB)
+    const session = await createSession(db, {
+      user_id: DEFAULT_USER_ID, title: 'advanced', provider_id: providerId, model_id: 'stale-resolved-model',
+    })
+    const oldParent = await insertMessage(db, {
+      session_id: session.id, parent_id: null, seq: 1, role: 'assistant', status: 'done', error: null,
+      provider_id: providerId, model_id: 'stale-resolved-model', usage: null, created_at: 0,
+      parts: [{ type: 'text', text: 'old' }],
+    })
+    const newer = await insertMessage(db, {
+      session_id: session.id, parent_id: oldParent.id, seq: 2, role: 'user', status: 'done', error: null,
+      provider_id: null, model_id: null, usage: null, created_at: 1, parts: [{ type: 'text', text: 'newer' }],
+    })
+    await updateSession(db, session.id, { head_message_id: newer.id })
+    const created = await installMock(() => new MockLanguageModelV4({
+      doStream: async () => ({ stream: simulateReadableStream({ chunks: STREAM, chunkDelayInMs: null, initialDelayInMs: null }) }),
+    }))
+    const c = await connect()
+    c.ws.send(JSON.stringify({
+      type: 'send', request_id: 'stale-resolved', session_id: session.id, parent_id: oldParent.id,
+      parts: [{ type: 'text', text: 'stale reply' }], provider_id: providerId, model_id: 'stale-resolved-model',
+    }))
+    expect(await c.next('error')).toMatchObject({ request_id: 'stale-resolved', message: expect.stringMatching(/head|resync/i) })
+    expect(await listMessages(db, session.id)).toHaveLength(2)
+    expect(created).toHaveLength(0)
+  })
+
+  it('deletes an unreachable continuation shell when the head advances between child insert and head CAS', async () => {
+    const providerId = await seedProvider('child-cas-provider', 'child-cas-model', false, { tool_call: true })
+    const db = createDb(env.DB)
+    const session = await createSession(db, {
+      user_id: DEFAULT_USER_ID, title: 'child race', provider_id: providerId, model_id: 'child-cas-model',
+    })
+    const toolMessage = await insertMessage(db, {
+      session_id: session.id, parent_id: null, seq: 1, role: 'assistant', status: 'done', error: null,
+      provider_id: providerId, model_id: 'child-cas-model', usage: null, created_at: 0,
+      parts: [
+        { type: 'tool_call', id: 'child-race', name: 'ask_user', args: ASK_USER_INPUT },
+        {
+          type: 'tool_result', call_id: 'child-race', name: 'ask_user',
+          content: { status: 'answered', answers: [{ id: 'framework', value: 'Vue' }] },
+        },
+      ],
+    })
+    const newer = await insertMessage(db, {
+      session_id: session.id, parent_id: toolMessage.id, seq: 2, role: 'user', status: 'done', error: null,
+      provider_id: null, model_id: null, usage: null, created_at: 1, parts: [{ type: 'text', text: 'new head' }],
+    })
+    await updateSession(db, session.id, { head_message_id: toolMessage.id })
+    await db.$client.prepare(`
+      CREATE TRIGGER continuation_head_race AFTER INSERT ON messages
+      WHEN NEW.parent_id = ${toolMessage.id} AND NEW.role = 'assistant'
+      BEGIN
+        UPDATE sessions SET head_message_id = ${newer.id} WHERE id = ${session.id};
+      END
+    `).run()
+    const created = await installMock(() => new MockLanguageModelV4({
+      doStream: async () => ({ stream: simulateReadableStream({ chunks: STREAM, chunkDelayInMs: null, initialDelayInMs: null }) }),
+    }))
+    const c = await connect()
+    c.events.length = 0
+    try {
+      await runInDurableObject(env.USER_HUB.getByName(String(DEFAULT_USER_ID)), async (instance: UserHub) => {
+        await instance.app.hub.handleCommand(JSON.stringify({
+          type: 'tool.continue', request_id: 'child-race', message_id: toolMessage.id,
+        }))
+      })
+    } finally {
+      await db.$client.exec('DROP TRIGGER continuation_head_race')
+    }
+    expect((await getSession(db, session.id))!.head_message_id).toBe(newer.id)
+    expect(await listMessages(db, session.id)).toHaveLength(2)
+    expect(created).toHaveLength(0)
+    expect(c.events.some(event => event.type === 'message.created' || event.type === 'head.changed')).toBe(false)
+  })
+
+  it('does not persist a stale user reply when the head advances immediately after implicit skip CAS', async () => {
+    const providerId = await seedProvider('skip-head-race-provider', 'skip-head-race-model', false, { tool_call: true })
+    const db = createDb(env.DB)
+    const session = await createSession(db, {
+      user_id: DEFAULT_USER_ID, title: 'skip race', provider_id: providerId, model_id: 'skip-head-race-model',
+    })
+    const waiting = await insertMessage(db, {
+      session_id: session.id, parent_id: null, seq: 1, role: 'assistant', status: 'done', error: null,
+      provider_id: providerId, model_id: 'skip-head-race-model', usage: null, created_at: 0,
+      parts: [{ type: 'tool_call', id: 'skip-race', name: 'ask_user', args: ASK_USER_INPUT }],
+    })
+    const newer = await insertMessage(db, {
+      session_id: session.id, parent_id: waiting.id, seq: 2, role: 'user', status: 'done', error: null,
+      provider_id: null, model_id: null, usage: null, created_at: 1, parts: [{ type: 'text', text: 'won race' }],
+    })
+    await updateSession(db, session.id, { head_message_id: waiting.id })
+    await db.$client.prepare(`
+      CREATE TRIGGER skip_head_race AFTER UPDATE OF parts ON messages
+      WHEN NEW.id = ${waiting.id}
+      BEGIN
+        UPDATE sessions SET head_message_id = ${newer.id} WHERE id = ${session.id};
+      END
+    `).run()
+    const created = await installMock(() => new MockLanguageModelV4({
+      doStream: async () => ({ stream: simulateReadableStream({ chunks: STREAM, chunkDelayInMs: null, initialDelayInMs: null }) }),
+    }))
+    const c = await connect()
+    try {
+      c.ws.send(JSON.stringify({
+        type: 'send', request_id: 'skip-head-race', session_id: session.id, parent_id: waiting.id,
+        parts: [{ type: 'text', text: 'must not persist' }], provider_id: providerId, model_id: 'skip-head-race-model',
+      }))
+      await c.next('message.part')
+      expect(await c.next('error')).toMatchObject({ request_id: 'skip-head-race' })
+    } finally {
+      await db.$client.exec('DROP TRIGGER skip_head_race')
+    }
+    expect((await getSession(db, session.id))!.head_message_id).toBe(newer.id)
+    expect(await listMessages(db, session.id)).toHaveLength(2)
+    expect(created).toHaveLength(0)
+  })
+
   it('streams a reply to every socket and persists it', async () => {
     const providerId = await seedProvider()
     const created = await installMock(() => new MockLanguageModelV4({

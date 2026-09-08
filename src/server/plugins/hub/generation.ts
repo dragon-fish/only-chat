@@ -17,9 +17,9 @@ import {
 import { persistGeneratedImage } from './generated-images'
 import { getProject } from './projects'
 import {
-  appendToolResult, createSession, finalizeMessage, getMessage, getModel, getProvider, getProviderInterface, getSession, getUser,
-  insertAssistantChildIfAbsent, insertMessage, lastGenerationModel, listAssistantChildren, listMessages, maxSeq,
-  replaceMessagePartsIfCurrentHead, toMessage, updateSession,
+  appendToolResult, compareAndSwapSessionHead, createSession, deleteMessage, finalizeMessage, getMessage, getModel, getProvider,
+  getProviderInterface, getSession, getUser, insertAssistantChildIfAbsent, insertMessage, lastGenerationModel,
+  listAssistantChildren, listMessages, maxSeq, replaceMessagePartsIfCurrentHead, toMessage, updateSession,
 } from './sessions'
 import { resolveAttachmentInputs } from './attachment-transport'
 import { pathToRoot, titleFromParts } from './tree'
@@ -125,13 +125,30 @@ async function resolveTarget(hub: Hub, args: ResolveArgs): Promise<Target> {
 
 // ---- stage 2: persist a user message
 
-async function persistUserMessage(hub: Hub, session: SessionRow, parentId: number | null, parts: Part[]): Promise<Message> {
+async function persistUserMessage(
+  hub: Hub,
+  session: SessionRow,
+  parentId: number | null,
+  parts: Part[],
+  announce = true,
+): Promise<Message> {
   const seq = await hub.seq.allocate(session.id, () => maxSeq(hub.db, session.id))
   const row = await insertMessage(hub.db, {
     session_id: session.id, parent_id: parentId, seq, role: 'user', parts,
     provider_id: null, model_id: null, usage: null, status: 'done', error: null, created_at: Date.now(),
   })
   const message = toMessage(row)
+  if (announce) hub.broadcast({ type: 'message.created', message })
+  return message
+}
+
+async function reserveUserMessage(hub: Hub, session: SessionRow, parentId: number | null, parts: Part[]): Promise<Message> {
+  const message = await persistUserMessage(hub, session, parentId, parts, false)
+  const updated = await compareAndSwapSessionHead(hub.db, session.id, parentId, message.id)
+  if (!updated) {
+    await deleteMessage(hub.db, message.id)
+    throw new Error('session head changed; resync before sending')
+  }
   hub.broadcast({ type: 'message.created', message })
   return message
 }
@@ -154,6 +171,25 @@ async function openAssistantShell(hub: Hub, target: Target, parentId: number): P
   return message
 }
 
+async function openReservedAssistantShell(hub: Hub, target: Target, parentId: number): Promise<Message> {
+  const seq = await hub.seq.allocate(target.session.id, () => maxSeq(hub.db, target.session.id))
+  const row = await insertMessage(hub.db, {
+    session_id: target.session.id, parent_id: parentId, seq, role: 'assistant', parts: [],
+    provider_id: target.provider.id, model_id: target.model.model_id, usage: null,
+    status: 'error', error: 'interrupted', created_at: Date.now(),
+  })
+  const session = await compareAndSwapSessionHead(hub.db, target.session.id, parentId, row.id)
+  if (!session) {
+    await deleteMessage(hub.db, row.id)
+    throw new Error('session head changed; resync before generation')
+  }
+  const message = toMessage(row, 'streaming')
+  hub.broadcast({ type: 'message.created', message })
+  hub.broadcast({ type: 'head.changed', session_id: session.id, message_id: row.id })
+  hub.emitSessionUpdated(session)
+  return message
+}
+
 async function openContinuationShell(hub: Hub, target: Target, parentId: number): Promise<Message | undefined> {
   const seq = await hub.seq.allocate(target.session.id, () => maxSeq(hub.db, target.session.id))
   const row = await insertAssistantChildIfAbsent(hub.db, {
@@ -162,9 +198,13 @@ async function openContinuationShell(hub: Hub, target: Target, parentId: number)
     status: 'error', error: 'interrupted', created_at: Date.now(),
   })
   if (!row) return undefined
+  const session = await compareAndSwapSessionHead(hub.db, target.session.id, parentId, row.id)
+  if (!session) {
+    await deleteMessage(hub.db, row.id)
+    return undefined
+  }
   const message = toMessage(row, 'streaming')
   hub.broadcast({ type: 'message.created', message })
-  const session = await updateSession(hub.db, target.session.id, { head_message_id: row.id })
   hub.broadcast({ type: 'head.changed', session_id: session.id, message_id: row.id })
   hub.emitSessionUpdated(session)
   return message
@@ -309,6 +349,8 @@ const SKIPPED_ASK_USER_MESSAGE = '用户跳过了问题并继续回复'
 async function resolveSendParent(hub: Hub, session: SessionRow, parentId: number) {
   const parent = await getMessage(hub.db, parentId)
   if (!parent || parent.session_id !== session.id) throw new Error('parent message not in session')
+  const current = await getSession(hub.db, session.id)
+  if (!current || current.head_message_id !== parent.id) throw new Error('session head changed; resync before sending')
   const results = new Set(parent.parts.filter(part => part.type === 'tool_result').map(part => part.call_id))
   const pending = parent.parts.filter((part): part is ToolCallPart => part.type === 'tool_call' && !results.has(part.id))
   if (pending.length === 0) return parent
@@ -358,8 +400,8 @@ export async function runSend(hub: Hub, cmd: SendCommand): Promise<void> {
   })
   const parentId = cmd.session_id === null ? null : (cmd.parent_id ?? target.session.head_message_id)
   if (parentId !== null) await resolveSendParent(hub, target.session, parentId)
-  const user = await persistUserMessage(hub, target.session, parentId, cmd.parts)
-  const shell = await openAssistantShell(hub, target, user.id)
+  const user = await reserveUserMessage(hub, target.session, parentId, cmd.parts)
+  const shell = await openReservedAssistantShell(hub, target, user.id)
   await generate(hub, target, shell, user.id)
 }
 
@@ -426,21 +468,19 @@ function completedToolState(parts: Part[]): 'waiting' | 'cancelled' | 'answered'
   return 'answered'
 }
 
-async function continueFromToolMessage(hub: Hub, messageId: number, requireHead: boolean): Promise<void> {
+async function continueFromToolMessage(hub: Hub, messageId: number): Promise<void> {
   const { message, session } = await ownedTerminalToolMessage(hub, messageId)
   const state = completedToolState(message.parts)
   if (state === 'waiting') throw new Error('tool calls are still waiting for responses')
   if (state === 'cancelled') throw new Error('cancelled tool calls cannot continue automatically')
 
-  const reconcileChildHead = async (child: Message, rejectOtherHead: boolean): Promise<void> => {
+  const reconcileChildHead = async (child: Message): Promise<void> => {
     const current = await getSession(hub.db, session.id)
     if (!current) throw new Error('session not found')
     if (current.head_message_id === child.id) return
-    if (current.head_message_id !== message.id) {
-      if (rejectOtherHead) throw new Error('tool-call message is no longer the session head')
-      return
-    }
-    const updated = await updateSession(hub.db, current.id, { head_message_id: child.id })
+    if (current.head_message_id !== message.id) return
+    const updated = await compareAndSwapSessionHead(hub.db, current.id, message.id, child.id)
+    if (!updated) return
     hub.broadcast({ type: 'head.changed', session_id: updated.id, message_id: child.id })
     hub.emitSessionUpdated(updated)
   }
@@ -449,7 +489,7 @@ async function continueFromToolMessage(hub: Hub, messageId: number, requireHead:
   if (existingChildren.length > 1) throw new Error('tool-call message has multiple continuation children')
   if (existingChildren.length === 1) {
     const child = toMessage(existingChildren[0]!)
-    await reconcileChildHead(child, requireHead)
+    await reconcileChildHead(child)
     return
   }
 
@@ -457,7 +497,6 @@ async function continueFromToolMessage(hub: Hub, messageId: number, requireHead:
     const current = await getSession(hub.db, session.id)
     if (!current) throw new Error('session not found')
     if (current.head_message_id === message.id) return true
-    if (requireHead) throw new Error('tool-call message is no longer the session head')
     return false
   }
   if (!(await headStillParent())) return
@@ -475,7 +514,7 @@ async function continueFromToolMessage(hub: Hub, messageId: number, requireHead:
       throw new Error('continuation child could not be resolved')
     }
     if (raced.length !== 1) throw new Error('tool-call message has multiple continuation children')
-    await reconcileChildHead(toMessage(raced[0]!), requireHead)
+    await reconcileChildHead(toMessage(raced[0]!))
     return
   }
   await generate(hub, target, shell, message.id)
@@ -498,7 +537,7 @@ export async function runToolRespond(hub: Hub, cmd: Extract<WsCommand, { type: '
       throw new Error('tool result conflict')
     }
     if (current && completedToolState(current.parts) === 'answered') {
-      await continueFromToolMessage(hub, current.id, false)
+      await continueFromToolMessage(hub, current.id)
     }
     return
   }
@@ -509,9 +548,9 @@ export async function runToolRespond(hub: Hub, cmd: Extract<WsCommand, { type: '
     type: 'message.part', message_id: updated.id, part_index: updated.parts.length - 1,
     part: updated.parts.at(-1)!,
   })
-  if (completedToolState(updated.parts) === 'answered') await continueFromToolMessage(hub, updated.id, false)
+  if (completedToolState(updated.parts) === 'answered') await continueFromToolMessage(hub, updated.id)
 }
 
 export async function runToolContinue(hub: Hub, cmd: Extract<WsCommand, { type: 'tool.continue' }>): Promise<void> {
-  await continueFromToolMessage(hub, cmd.message_id, true)
+  await continueFromToolMessage(hub, cmd.message_id)
 }
