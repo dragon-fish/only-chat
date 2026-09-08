@@ -2,8 +2,8 @@ import { z } from 'zod'
 import { DEFAULT_USER_ID } from '@/shared/constants'
 import { ModelQuerySchema, ModelWithMetadataSchema, type ModelPage, type ModelQuery } from '@/shared/models'
 
-export interface ModelCursor { sort: number; id: number }
-const CursorSchema = z.strictObject({ sort: z.number().int(), id: z.number().int().positive() })
+export interface ModelCursor { provider_id: number; sort: number; id: number }
+const CursorSchema = z.strictObject({ provider_id: z.number().int().positive(), sort: z.number().int(), id: z.number().int().positive() })
 
 export class ModelQueryError extends Error {}
 
@@ -34,13 +34,13 @@ export function buildModelQuery(input: ModelQuery, userId = DEFAULT_USER_ID) {
     let cursor: ModelCursor
     try { cursor = CursorSchema.parse(JSON.parse(atob(query.cursor))) }
     catch { throw new ModelQueryError('Invalid model cursor') }
-    filter('(m.sort > ? OR (m.sort = ? AND m.id > ?))', cursor.sort, cursor.sort, cursor.id)
+    filter('(p.id > ? OR (p.id = ? AND (m.sort > ? OR (m.sort = ? AND m.id > ?))))', cursor.provider_id, cursor.provider_id, cursor.sort, cursor.sort, cursor.id)
   }
   params.push(query.limit + 1)
   return {
     sql: `SELECT m.id, m.provider_id, m.model_id, m.interface_id, m.metadata_resolved, m.metadata_override, m.catalog_matches, m.lab_id, m.enabled, m.manual_pinned, m.upstream_available, m.sort
       FROM models m JOIN providers p ON p.id = m.provider_id
-      WHERE ${predicates.join(' AND ')} ORDER BY m.sort, m.id LIMIT ?`,
+      WHERE ${predicates.join(' AND ')} ORDER BY p.id, m.sort, m.id LIMIT ?`,
     params,
   }
 }
@@ -61,6 +61,6 @@ export async function queryModels(db: D1Database, input: ModelQuery): Promise<Mo
       catalog_matches: JSON.parse(row.catalog_matches), lab_id: row.lab_id, enabled: Boolean(row.enabled),
       manual_pinned: Boolean(row.manual_pinned), upstream_available: row.upstream_available === null ? null : Boolean(row.upstream_available), sort: row.sort,
     })),
-    next_cursor: result.results.length > input.limit && last ? btoa(JSON.stringify({ sort: last.sort, id: last.id })) : null,
+    next_cursor: result.results.length > input.limit && last ? btoa(JSON.stringify({ provider_id: last.provider_id, sort: last.sort, id: last.id })) : null,
   }
 }

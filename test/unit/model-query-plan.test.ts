@@ -9,7 +9,7 @@ afterEach(() => databases.splice(0).forEach(db => db.close()))
 describe('indexed model query plans', () => {
   it.each([
     { provider_id: 1, enabled: true, vision: true },
-    { provider_id: 1, enabled: true, vision: true, cursor: btoa(JSON.stringify({ sort: 0, id: 500 })) },
+    { provider_id: 1, enabled: true, vision: true, cursor: btoa(JSON.stringify({ provider_id: 1, sort: 0, id: 500 })) },
     { enabled: true, reasoning: true },
     { enabled: true, tools: true },
     { enabled: true, image_output: true },

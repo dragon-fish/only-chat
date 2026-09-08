@@ -27,7 +27,9 @@ function groupEntries(group: typeof groups.value[number]) { return group.labs.fl
 </script>
 
 <template lang="pug">
-component(v-for="group in groups" :is="command ? CommandGroup : 'section'" :key="group.provider.id" class="flex flex-col gap-2")
+component(
+  v-for="group in groups" :is="command ? CommandGroup : 'section'" :key="group.provider.id"
+  :class="cn('flex flex-col gap-2', command && stickyProviders && 'overflow-visible')")
   .flex.min-h-8.items-center.gap-1.px-2.text-xs.font-medium.text-muted-foreground(
     v-if="command && showProviders" data-model-provider-heading
     :class="cn(stickyProviders && 'sticky top-0 z-10 border-b bg-popover/95 backdrop-blur-sm')")

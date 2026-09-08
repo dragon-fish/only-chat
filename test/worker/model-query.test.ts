@@ -259,7 +259,7 @@ describe('catalog-backed model membership and queries', () => {
       expect(page.results[0]!.model_id).toBe(`scale-${((pageNumber - 1) * limit + 1) * interval}`)
       expect(page.meta.rows_read).toBeLessThan(250)
       const last = page.results[limit - 1]!
-      cursor = btoa(JSON.stringify({ sort: last.sort, id: last.id }))
+      cursor = btoa(JSON.stringify({ provider_id: provider.id, sort: last.sort, id: last.id }))
       console.info('Model query diagnostic', { seeded_models: 2000, match_interval: interval, page: pageNumber, returned_rows: page.results.length, rows_read: page.meta.rows_read, plan: plan.results.map(row => row.detail) })
     }
   })
@@ -393,5 +393,23 @@ describe('catalog-backed model membership and queries', () => {
     expect((await request('GET', '/models?search=ab')).status).toBe(400)
     expect((await request('GET', '/models?cursor=invalid')).status).toBe(400)
     expect((await request('GET', '/models?enabled=anything')).status).toBe(400)
+  })
+
+  it('keeps each provider contiguous across the global picker cursor', async () => {
+    const { request, createProvider } = await catalogApp()
+    await env.DB.exec('DELETE FROM models')
+    const firstProvider = await createProvider({ name: 'First', interfaces: [{ protocol: 'responses', base_url: 'https://first.test/v1' }] })
+    const secondProvider = await createProvider({ name: 'Second', interfaces: [{ protocol: 'responses', base_url: 'https://second.test/v1' }] })
+    expect((await request('POST', `/providers/${firstProvider.id}/models`, { model_id: 'first-early', sort: -100 })).status).toBe(201)
+    expect((await request('POST', `/providers/${secondProvider.id}/models`, { model_id: 'second-early', sort: -100 })).status).toBe(201)
+    expect((await request('POST', `/providers/${secondProvider.id}/models`, { model_id: 'second-late', sort: -100 })).status).toBe(201)
+    expect((await request('POST', `/providers/${firstProvider.id}/models`, { model_id: 'first-late', sort: -100 })).status).toBe(201)
+
+    const first = ModelPageSchema.parse(await (await request('GET', '/models?enabled=true&limit=2')).json())
+    expect(first.models.map(model => model.model_id)).toEqual(['first-early', 'first-late'])
+    expect(first.next_cursor).not.toBeNull()
+    const second = ModelPageSchema.parse(await (await request('GET', `/models?enabled=true&limit=2&cursor=${encodeURIComponent(first.next_cursor!)}`)).json())
+    expect(second.models.map(model => model.model_id)).toEqual(['second-early', 'second-late'])
+    expect(second.next_cursor).toBeNull()
   })
 })
