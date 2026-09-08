@@ -307,6 +307,12 @@ function findFirstUnhandledAnchor(
   return null
 }
 
+function rememberScrollAnchors(elements: HTMLElement[], handled: WeakSet<HTMLElement>) {
+  for (const element of elements) {
+    if (element.dataset.scrollAnchor === 'true') handled.add(element)
+  }
+}
+
 function hasMultipleAnchorsFrom(
   elements: HTMLElement[],
   startIndex: number,
@@ -703,6 +709,10 @@ function createEngine(props: MessageScrollerProviderProps) {
     }
     if (applied) {
       defaultScrollPositionApplied = true
+      if (mode === 'anchored-to-message' && content?.getAttribute('aria-busy') !== 'true') {
+        streamingTurn = null
+        mode = 'free-scrolling'
+      }
       return true
     }
     return false
@@ -776,12 +786,22 @@ function createEngine(props: MessageScrollerProviderProps) {
     firstItem = children[0] ?? null
 
     applyContentChange(children, previousCount, previousFirst)
+    // Existing anchors are history, not future turns. Remember all of them only after change
+    // handling so a genuinely new user message can still become the live generation anchor.
+    rememberScrollAnchors(children, handledScrollAnchors)
     capturePrependAnchor()
   }
 
   function handleResize() {
     if (mode === 'following-bottom' && autoScroll()) {
       scrollToEnd({ behavior: 'auto' })
+      return
+    }
+    if (mode === 'anchored-to-message' && content?.getAttribute('aria-busy') !== 'true') {
+      streamingTurn = null
+      mode = 'free-scrolling'
+      scheduleStateCommit()
+      scheduleVisibilitySync()
       return
     }
     const previousSpacerHeight = spacerHeight
