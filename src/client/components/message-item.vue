@@ -92,7 +92,7 @@ MessageRoot(:align="message.role === 'user' ? 'end' : 'start'")
           p.mb-2.flex.items-center.gap-2.text-xs.text-muted-foreground(v-if="wait.waiting")
             LoaderCircle(class="size-3.5 animate-spin")
             span 正在思考…
-          MarkdownRender(mode="chat" :content="markdown" :final="!streaming" smooth-streaming="auto" :fade="false")
+          MarkdownRender(mode="chat" :content="markdown" :final="!streaming" :smooth-streaming="false" :fade="true")
           //- Generated images are served by the same authenticated attachment route as uploads.
           .flex.flex-wrap.gap-2.pt-2(v-if="images.length")
             img.max-h-80.rounded.border(v-for="(img, i) in images" :key="i" :src="api.attachmentUrl(img.attachment_id)")
