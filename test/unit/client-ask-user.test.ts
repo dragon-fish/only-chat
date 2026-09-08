@@ -1,11 +1,15 @@
 // @vitest-environment happy-dom
-import { createApp, h } from 'vue'
+import { createApp, h, nextTick, ref } from 'vue'
+import { createPinia } from 'pinia'
 import { afterEach, describe, expect, it } from 'vitest'
 import AskUserCard from '@/plugins/ask-user/client/ask-user-card.vue'
+import Composer from '@/client/components/composer.vue'
+import ToolPartRenderer from '@/client/components/tool-part-renderer.vue'
 import { buildAnsweredResult, initialAnswers } from '@/plugins/ask-user/client/answers'
 import type { AskUserInput } from '@/plugins/ask-user/shared'
-import { canContinueToolMessage, hasPendingToolCalls } from '@/client/components/tool-part-renderer'
+import { canContinueToolMessage, hasPendingToolCalls, pendingAskUserCalls } from '@/client/components/tool-part-renderer'
 import type { Message } from '@/shared/models'
+import { TooltipProvider } from '@/client/ui/tooltip'
 
 const input: AskUserInput = {
   questions: [
@@ -113,6 +117,80 @@ describe('ask_user answer serialization', () => {
     expect(hasPendingToolCalls([{ ...message([valid]), status: 'aborted' }])).toBe(false)
     expect(hasPendingToolCalls([message([{ ...valid, name: 'unknown_tool' }])])).toBe(false)
     expect(hasPendingToolCalls([message([{ ...valid, args: { questions: [] } }])])).toBe(false)
+  })
+
+  it('selects only unresolved ask_user calls from the current Session head for the composer', () => {
+    const first = { type: 'tool_call' as const, id: 'first', name: 'ask_user', args: input }
+    const second = { type: 'tool_call' as const, id: 'second', name: 'ask_user', args: input }
+    const old = message([{ ...first, id: 'old' }], 19)
+    const head = message([
+      first,
+      { type: 'tool_result', call_id: 'first', name: 'ask_user', content: { status: 'answered' } },
+      second,
+    ])
+    expect(pendingAskUserCalls([old, head], head.id)).toEqual([{ messageId: head.id, call: second }])
+    expect(pendingAskUserCalls([old, head], old.id)).toEqual([{ messageId: old.id, call: { ...first, id: 'old' } }])
+  })
+
+  it('replaces the composer input without discarding its draft', async () => {
+    const replaced = ref(false)
+    const root = document.createElement('div')
+    document.body.append(root)
+    const app = createApp({
+      render: () => h(TooltipProvider, null, { default: () => h(Composer, {
+        streaming: false, connected: true, canSend: true, replaced: replaced.value,
+      }, { replacement: () => h('div', { 'data-test': 'questionnaire-slot' }, 'questionnaire') }) }),
+    })
+    app.mount(root)
+    const textarea = root.querySelector<HTMLTextAreaElement>('textarea')!
+    textarea.value = '保留这段草稿'
+    textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+    replaced.value = true
+    await nextTick()
+    expect(root.querySelector('textarea')).toBeNull()
+    expect(root.querySelector('[data-test="questionnaire-slot"]')).not.toBeNull()
+    replaced.value = false
+    await nextTick()
+    expect(root.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('保留这段草稿')
+    app.unmount()
+    root.remove()
+  })
+
+  it('shows a compact message placeholder instead of duplicating pending choices', async () => {
+    const root = document.createElement('div')
+    document.body.append(root)
+    const app = createApp({ render: () => h(ToolPartRenderer, {
+      messageId: 20,
+      call: { type: 'tool_call', id: 'call-1', name: 'ask_user', args: input },
+      result: null,
+      canContinue: false,
+      placement: 'message',
+      deferPending: true,
+    }) })
+    app.use(createPinia())
+    app.provide('clientPluginHost', null)
+    app.mount(root)
+    await nextTick()
+    expect(root.textContent).toContain('请在下方回答')
+    expect(root.textContent).not.toContain('Choose one')
+    app.unmount()
+
+    const historical = createApp({ render: () => h(ToolPartRenderer, {
+      messageId: 20,
+      call: { type: 'tool_call', id: 'call-1', name: 'ask_user', args: input },
+      result: null,
+      canContinue: false,
+      placement: 'message',
+      deferPending: false,
+    }) })
+    historical.use(createPinia())
+    historical.provide('clientPluginHost', null)
+    historical.mount(root)
+    await nextTick()
+    expect(root.textContent).not.toContain('请在下方回答')
+    historical.unmount()
+    root.remove()
   })
 
   it('hides recovery for cancellation, a non-head message, or an existing assistant child', () => {

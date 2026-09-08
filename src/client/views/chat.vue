@@ -12,8 +12,9 @@ import SessionSettings from '@/client/components/session-settings.vue'
 import CollectionState from '@/client/components/collection-state.vue'
 import ContextUsageIndicator from '@/client/components/context-usage-indicator.vue'
 import ToolSelector from '@/client/components/tool-selector.vue'
+import ToolPartRenderer from '@/client/components/tool-part-renderer.vue'
 import { defaultToolsForSettings, sessionToolBlockReason, toolSelectionSupported } from '@/client/components/tool-selector'
-import { hasPendingToolCalls } from '@/client/components/tool-part-renderer'
+import { pendingAskUserCalls } from '@/client/components/tool-part-renderer'
 import { pluginManifests } from '@/client/plugins/loaders'
 import { projectPresentation, sessionPath } from '@/client/lib/ui-models'
 import {
@@ -124,6 +125,7 @@ const contextUsage = computed(() => {
 // While the config is still loading nothing is known to be unavailable, so sending stays possible.
 const modelAvailable = computed(() => !config.loaded || config.isAvailable(effective.value.model))
 const selectedTools = computed(() => sid.value === null ? (draftTools.value ?? []) : (session.value?.tools ?? []))
+const pendingToolCall = computed(() => pendingAskUserCalls(path.value, session.value?.head_message_id)[0] ?? null)
 const globallyAvailableTools = computed(() => new Set(defaultToolsForSettings(pluginManifests, sync.settings.plugins)))
 const toolsSupported = computed(() => toolSelectionSupported(
   selectedTools.value,
@@ -133,7 +135,7 @@ const toolsSupported = computed(() => toolSelectionSupported(
 const toolBlockReason = computed(() => sessionToolBlockReason({
   draft: sid.value === null,
   settingsLoaded: sync.settingsLoaded,
-  pending: hasPendingToolCalls(path.value),
+  pending: pendingToolCall.value !== null,
   toolsSupported: toolsSupported.value,
 }))
 const canSend = computed(() => effective.value.model !== null && modelAvailable.value && toolBlockReason.value === null)
@@ -374,7 +376,13 @@ function onToolsChange(tools: string[]) {
           Button(variant="outline" class="min-h-10" @click="focusComposer") 输入消息
   Composer(
     ref="composer" :streaming="streaming" :connected="sync.status === 'open'"
-    :can-send="canSend" :hint="sendHint" @send="onSend" @stop="onStop")
+    :can-send="canSend" :hint="sendHint" :replaced="pendingToolCall !== null"
+    @send="onSend" @stop="onStop")
+    template(#replacement)
+      .oc-scroll.flex.max-h-96.flex-col.overflow-y-auto(class="md:max-h-[60vh]")
+        ToolPartRenderer(
+          v-if="pendingToolCall" placement="composer" :message-id="pendingToolCall.messageId"
+          :call="pendingToolCall.call" :result="null" :can-continue="false")
     template(#left-controls)
       ToolSelector(
         :model-value="selectedTools" :plugins="sync.settings.plugins" :desktop="isDesktop"

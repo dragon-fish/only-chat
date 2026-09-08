@@ -18,6 +18,8 @@ const props = defineProps<{
   canSend: boolean
   /** Why sending is blocked, e.g. an inherited model that is no longer available (spec §9). */
   hint?: string | null
+  /** Replaces the editor surface while a tool needs focused user interaction. */
+  replaced?: boolean
 }>()
 const emit = defineEmits<{ send: [parts: Part[]]; stop: [] }>()
 
@@ -150,7 +152,9 @@ onBeforeUnmount(() => { releasePreviews(images.value); dropSent() })
 
 <template lang="pug">
 .p-3(@drop="onDrop" @dragover.prevent)
-  InputGroup.mx-auto(class="max-w-3xl rounded-xl")
+  .mx-auto.w-full.max-w-3xl(v-if="replaced")
+    slot(name="replacement")
+  InputGroup.mx-auto(v-else class="max-w-3xl rounded-xl")
     //- `w-full`: InputGroup is `items-center`, so without it the row of previews sits centred.
     AttachmentGroup.w-full.px-2(v-if="images.length")
       //- No `size`: the vendored CSS emits `group-data-[size=xs]:w-7` after

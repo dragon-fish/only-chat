@@ -13,6 +13,28 @@ function toolState(message: Message) {
   return { calls, results }
 }
 
+export interface PendingAskUserCall {
+  messageId: number
+  call: ToolCallPart
+}
+
+/** The Composer only owns interactive calls on the current durable Session head. */
+export function pendingAskUserCalls(
+  messages: readonly Message[],
+  sessionHeadId: number | null | undefined,
+): PendingAskUserCall[] {
+  const message = messages.find(candidate => candidate.id === sessionHeadId)
+  if (!message || message.role !== 'assistant' || message.status !== 'done') return []
+  const { calls, results } = toolState(message)
+  return calls
+    .filter(call => (
+      call.name === ASK_USER_TOOL_ID
+      && AskUserInputSchema.safeParse(call.args).success
+      && !results.has(call.id)
+    ))
+    .map(call => ({ messageId: message.id, call }))
+}
+
 export function hasPendingToolCalls(messages: readonly Message[]): boolean {
   return messages.some((message) => {
     if (message.status !== 'done') return false

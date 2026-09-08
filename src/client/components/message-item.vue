@@ -52,6 +52,7 @@ const canContinueTools = computed(() => canContinueToolMessage(
   [...(sync.messages.get(props.message.session_id)?.values() ?? [])],
   sync.sessions.get(props.message.session_id)?.head_message_id,
 ))
+const isSessionHead = computed(() => sync.sessions.get(props.message.session_id)?.head_message_id === props.message.id)
 /** Spec §7.4: the shell is visible the moment it arrives, and never claims reasoning it lacks. */
 const wait = computed(() => assistantWaitState(props.message))
 const { pending: forkPending, fork } = useSessionFork()
@@ -104,7 +105,8 @@ MessageRoot(:align="message.role === 'user' ? 'end' : 'start'")
           MarkdownRender(mode="chat" :content="markdown" :final="!streaming" :smooth-streaming="false" :fade="true")
           ToolPartRenderer(
             v-for="row in toolRows" :key="row.call.id" :message-id="message.id"
-            :call="row.call" :result="row.result" :can-continue="canContinueTools")
+            :call="row.call" :result="row.result" :can-continue="canContinueTools"
+            :defer-pending="isSessionHead")
           //- Generated images are served by the same authenticated attachment route as uploads.
           .flex.flex-wrap.gap-2.pt-2(v-if="images.length")
             img.max-h-80.rounded.border(v-for="(img, i) in images" :key="i" :src="api.attachmentUrl(img.attachment_id)")

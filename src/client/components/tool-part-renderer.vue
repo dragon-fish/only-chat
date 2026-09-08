@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { inject, shallowRef, watch } from 'vue'
-import { BracesIcon } from '@lucide/vue'
+import { computed, inject, shallowRef, watch } from 'vue'
+import { BracesIcon, CircleHelpIcon } from '@lucide/vue'
 import type { Component } from 'vue'
 import type { ClientPluginHost } from '@/client/plugins/host'
 import { DISCONNECTED_MESSAGE, useSyncStore } from '@/client/stores/sync'
@@ -8,18 +8,29 @@ import { Alert, AlertDescription, AlertTitle } from '@/client/ui/alert'
 import { Skeleton } from '@/client/ui/skeleton'
 import type { ToolCallPart, ToolResultPart } from '@/shared/parts'
 import type { AskUserResult } from '@/plugins/ask-user/shared'
+import { AskUserInputSchema } from '@/plugins/ask-user/shared'
+import { ASK_USER_TOOL_ID } from '@/shared/plugins'
 
 const props = defineProps<{
   messageId: number
   call: ToolCallPart
   result: ToolResultPart | null
   canContinue: boolean
+  placement?: 'message' | 'composer'
+  deferPending?: boolean
 }>()
 const sync = useSyncStore()
 const host = inject<ClientPluginHost | null>('clientPluginHost', null)
 const renderer = shallowRef<Component | null>(null)
 const loading = shallowRef(false)
 const busy = shallowRef(false)
+const compactPending = computed(() => (
+  props.placement !== 'composer'
+  && props.deferPending === true
+  && props.result === null
+  && props.call.name === ASK_USER_TOOL_ID
+  && AskUserInputSchema.safeParse(props.call.args).success
+))
 
 watch(() => props.call.name, async (name) => {
   renderer.value = null
@@ -52,7 +63,11 @@ function continueGeneration() {
 </script>
 
 <template lang="pug">
-.flex.flex-col.gap-2(v-if="loading")
+Alert(v-if="compactPending")
+  CircleHelpIcon
+  AlertTitle 正在等待你的回答
+  AlertDescription 请在下方回答问题后继续。
+.flex.flex-col.gap-2(v-else-if="loading")
   Skeleton(class="h-5 w-36")
   Skeleton(class="h-20 w-full")
 component(
