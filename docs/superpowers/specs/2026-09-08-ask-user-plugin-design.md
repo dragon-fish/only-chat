@@ -1,0 +1,141 @@
+# Ask User Plugin
+
+## Purpose
+
+`ask_user` is the first built-in feature plugin. It validates the shared plugin registry, stable per-Session tool configuration, cross-protocol tool calls, durable human input, client Part rendering, and generation continuation.
+
+## Plugin registry
+
+A shared built-in plugin catalog declares stable IDs, display metadata, and default tool IDs. The first entry is `ask_user`.
+
+The server registry maps tool IDs to AI SDK tool factories. The client registry maps tool IDs to tool-call renderers. Settings render from the shared catalog; database settings only store whether each plugin is globally enabled.
+
+Unknown plugin and tool IDs fail closed. Registries return tools in stable ID order so request prefixes do not change between turns.
+
+## Global and Session state
+
+Sessions add a non-null JSON `tools` array with an empty-array default. Existing Sessions therefore keep their current tool-free request prefix.
+
+Enabling a plugin changes only the defaults for newly drafted Sessions. A new draft starts with every tool from globally enabled plugins selected. The first `send` persists that selected list atomically with Session creation.
+
+Existing Sessions read their own stored list. Users may change it from the Composer tool selector; that explicit change is allowed to invalidate the Session's model prefix cache. Enabling another plugin globally never edits existing Session rows.
+
+Globally disabling a plugin removes its tools from subsequent model requests while retaining the stored Session selection. Re-enabling the plugin restores the selection. Pending calls created before disablement remain answerable or cancellable.
+
+The Composer's left controls contain a tool button with the selected count. It opens a Popover on desktop and a Drawer on mobile. Each available plugin tool has a Switch, title, and description. A selected tool that the current model cannot call blocks sending with a clear model-capability message.
+
+## Tool schema
+
+`ask_user` is registered as an AI SDK tool without an `execute` function. Its input contains one to three questions.
+
+Each question contains:
+
+- stable `id`;
+- short `header`;
+- full `question`;
+- `type`: `single`, `multiple`, or `text`;
+- optional explanatory `description`;
+- optional text `placeholder`;
+- two to nine `options` for choice questions, each with `label` and optional `description`.
+
+IDs must be unique within one call. Choice options are forbidden for text questions and required for choice questions. The schema is strict and shared between the AI tool and client renderer.
+
+## Generation behavior
+
+Before `streamText`, the server resolves the Session tool snapshot against the globally enabled plugin registry and the selected model's declared tool capability. It passes the resulting tools in stable ID order.
+
+Because `ask_user` has no `execute`, a model call that emits it finishes the current generation normally. The assistant Message persists its `tool_call` Part and remains `done`. An unmatched `tool_call` is the complete durable waiting state; no Worker invocation, Durable Object task, Queue message, or Workflow remains active while waiting for a person.
+
+Multiple calls in one assistant Message are allowed. Generation continues only after every call has a terminal result and none was cancelled.
+
+## Questionnaire rendering
+
+The client renders an unmatched `ask_user` call as a Questionnaire card inside the assistant Message.
+
+- Questions are shown one at a time.
+- Single-choice answers use radio choices.
+- Multiple-choice answers use checkbox choices.
+- Text answers use Questionnaire input.
+- Choice shortcuts use Questionnaire's numeric mode.
+- Back/next/progress controls use the bundled Questionnaire components.
+- Answers are submitted together after the last question.
+- Partial answers remain local and are discarded on full-page reload.
+
+An answered card becomes a compact read-only summary. A cancelled card becomes a compact “用户取消了回答” state. Terminal cards cannot be submitted again.
+
+## Tool results
+
+The client sends a `tool.respond` WebSocket command containing:
+
+- `request_id`;
+- assistant `message_id`;
+- `call_id`;
+- either an answered result or cancelled result.
+
+Answered result:
+
+```json
+{
+  "status": "answered",
+  "answers": [
+    { "id": "framework", "value": "Vue" },
+    { "id": "features", "value": ["缓存", "工具"] }
+  ]
+}
+```
+
+Cancelled result:
+
+```json
+{
+  "status": "cancelled",
+  "message": "用户选择了取消回答"
+}
+```
+
+The server verifies ownership, finds the matching unresolved call, validates answers against the original call arguments, and atomically appends one `tool_result` to the Message's JSON Parts only when that call has no result. The conditional D1 update is the exactly-once fence. A repeated identical command is idempotent; a conflicting second result is rejected.
+
+The server broadcasts the appended result through `message.part`, so every connected client closes the same card. Reloads receive it through the existing messages API.
+
+## Continue or cancel
+
+After an answered result is stored, the server checks all tool calls in that assistant Message:
+
+- unresolved calls keep the Session waiting;
+- any cancelled result stops continuation;
+- all answered results start one continuation.
+
+Continuation uses the existing Session/project/model resolution. It creates a new assistant shell whose parent is the tool-call Message and generates with the path including the appended tool results. `assembleContext` accepts any leaf Message ID rather than assuming the leaf is a user Message.
+
+Continuation is retry-safe. If the response was already stored, the handler checks for an existing child assistant shell before creating one. A crash after shell creation uses the existing interrupted-shell behavior and can be regenerated. An answered card that is still the Session head and has no child assistant exposes a “继续” recovery action; it sends `tool.continue`, which performs the same idempotent child check and continuation without rewriting the tool result.
+
+Cancellation stores the tool result but does not create a child assistant. The next ordinary user Message may use the cancelled tool result as historical context. Verified protocol serialization is:
+
+- Chat Completions: `user → assistant(tool_calls) → tool(cancelled) → user`;
+- Responses: `user → function_call → function_call_output(cancelled) → user`;
+- Anthropic: `user → assistant(tool_use) → user[tool_result, text]`.
+
+## Error handling
+
+- Invalid tool arguments are persisted as a visible generation error, not rendered as an interactive form.
+- Unknown, disabled, or unselected tools are never sent to the model.
+- Invalid answers leave the Questionnaire editable and return a correlated error.
+- Disconnects do not clear persisted pending calls or local completed results.
+- A response to a foreign Session, unknown call, already-conflicting result, or streaming Message fails without mutation.
+- Pending calls remain resolvable after the plugin is globally disabled.
+
+## Verification
+
+Tests cover product-owned behavior:
+
+- plugin catalog/default selection and stable tool ordering;
+- Session tool snapshot creation and updates without rewriting existing Sessions;
+- strict `ask_user` arguments and answer validation;
+- tool-call stream persistence without server execution;
+- atomic exactly-once result append and duplicate/conflict behavior;
+- answer continuation, cancellation without continuation, multiple-call gating, and reconnect reads;
+- current Chat, Responses, and Anthropic tool-result replay ordering;
+- Questionnaire answer serialization and terminal rendering;
+- desktop/mobile tool selector behavior and numeric shortcuts.
+
+Third-party AI SDK and Questionnaire internals are not unit-tested.
