@@ -23,6 +23,8 @@ export const useConfigStore = defineStore('config', () => {
   const pickerError = ref<string | null>(null)
   const keyFor = (model: ModelRef) => `${model.provider_id}:${model.model_id}`
   let loadToken = 0
+  let appliedLoadToken = 0
+  const providerRefreshTokens = new Map<number, number>()
   let pickerToken = 0
   let pickerController: AbortController | undefined
   let pickerQuery = ''
@@ -104,6 +106,7 @@ export const useConfigStore = defineStore('config', () => {
       const result = await api.providers()
       if (token !== loadToken) return
       providerRecords.value = result
+      appliedLoadToken = token
       const existing = new Set(result.map(provider => provider.id))
       for (const model of Object.values(modelsByRef.value)) if (!existing.has(model.provider_id)) forgetModel(model)
       loaded.value = true
@@ -111,6 +114,18 @@ export const useConfigStore = defineStore('config', () => {
       if (token === loadToken) loadError.value = error instanceof Error ? error.message : String(error)
       throw error
     }
+  }
+  async function refreshProvider(providerId: number): Promise<void> {
+    const token = (providerRefreshTokens.get(providerId) ?? 0) + 1
+    providerRefreshTokens.set(providerId, token)
+    const loadStarted = loadToken
+    const appliedLoadStarted = appliedLoadToken
+    const result = await api.providers()
+    if (providerRefreshTokens.get(providerId) !== token || loadToken !== loadStarted || appliedLoadToken !== appliedLoadStarted) return
+    const current = providerRecords.value.find(provider => provider.id === providerId)
+    const refreshed = result.find(provider => provider.id === providerId)
+    if (!current || !refreshed) return
+    providerRecords.value = providerRecords.value.map(provider => provider.id === providerId ? refreshed : provider)
   }
   async function loadEnabledModels(append = false, query: Partial<ModelQuery> = {}) {
     const token = ++pickerToken
@@ -199,6 +214,6 @@ export const useConfigStore = defineStore('config', () => {
   }
   return {
     providerRecords, providers, catalogProviders, modelsByRef, modelsByProvider, loaded, loadError, pickerRefs, pickerCursor, pickerLoaded, pickerLoading, pickerError,
-    load, loadCatalogProviders, loadEnabledModels, cancelPickerQuery, loadProviderPage, ensureModel, refreshSelectedModels, invalidateProviderModels, beginModelWrite, refreshModel, retainModels, forgetModel, enabledModels, modelFor, isAvailable,
+    load, refreshProvider, loadCatalogProviders, loadEnabledModels, cancelPickerQuery, loadProviderPage, ensureModel, refreshSelectedModels, invalidateProviderModels, beginModelWrite, refreshModel, retainModels, forgetModel, enabledModels, modelFor, isAvailable,
   }
 })

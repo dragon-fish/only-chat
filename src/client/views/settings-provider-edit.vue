@@ -240,6 +240,7 @@ async function save() {
 async function reloadCodexProvider(id: number, token: number) {
   if (token !== loadToken || providerId.value !== id) {
     config.invalidateProviderModels(id)
+    await config.refreshProvider(id)
     return
   }
   config.invalidateProviderModels(id)
@@ -273,6 +274,7 @@ async function disconnectCodexProvider() {
     await api.disconnectCodexProvider(id)
     if (token !== loadToken || providerId.value !== id) {
       config.invalidateProviderModels(id)
+      await config.refreshProvider(id)
       return
     }
     codexDisconnectOpen.value = false

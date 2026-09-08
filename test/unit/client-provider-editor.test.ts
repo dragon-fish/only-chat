@@ -262,6 +262,9 @@ describe('provider model editor', () => {
 
     expect(document.querySelector<HTMLInputElement>('#provider-name')?.value).toBe('Other provider')
     expect(document.querySelector('[data-codex-account]')).toBeNull()
+
+    await router.push(`/settings/providers/${codexProvider.id}`)
+    await vi.waitFor(() => expect(document.querySelector('[data-codex-status]')?.getAttribute('data-codex-status')).toBe('disconnected'))
   })
 
   it('leaves a newer Codex disconnect dialog and model page untouched after an old disconnect completes', async () => {
