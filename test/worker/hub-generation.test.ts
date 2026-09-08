@@ -18,7 +18,10 @@ import type { Hub } from '@/server/plugins/hub'
 import { persistGeneratedImage } from '@/server/plugins/hub/generated-images'
 import { resolveEffectiveConfig } from '@/server/plugins/hub/effective-config'
 import { getProject } from '@/server/plugins/hub/projects'
-import { appendToolResult, createSession, finalizeMessage, getMessage, getSession, insertMessage, listMessages, toMessage, updateSession } from '@/server/plugins/hub/sessions'
+import {
+  appendToolResult, createSession, finalizeMessage, getMessage, getSession, insertMessage, listMessages,
+  replaceMessagePartsIfCurrentHead, toMessage, updateSession,
+} from '@/server/plugins/hub/sessions'
 import { attachmentProviderFiles, attachments, models, projects, providerInterfaces, providers, users } from '@/server/db/schema'
 import type { ProviderInterfaceRow, ProviderRow } from '@/server/db/schema'
 import { sendCommandFor } from '@/client/stores/sync'
@@ -615,7 +618,7 @@ describe('generation', () => {
     expect(c.events.some(event => event.type === 'error')).toBe(false)
   })
 
-  it('rejects an ordinary send from a parent with an unmatched tool call', async () => {
+  it('atomically cancels a pending ask_user call before continuing an ordinary stale-client send', async () => {
     const providerId = await seedProvider('stale-send-provider', 'stale-send-model', false, { tool_call: true })
     const db = createDb(env.DB)
     const session = await createSession(db, {
@@ -636,9 +639,95 @@ describe('generation', () => {
       parts: [{ type: 'text', text: 'bypass pending tool' }], provider_id: providerId, model_id: 'stale-send-model',
     }))
 
-    expect(await c.next('error')).toMatchObject({ request_id: 'stale-send', message: expect.stringMatching(/tool/i) })
-    expect(await listMessages(db, session.id)).toHaveLength(1)
-    expect(created).toHaveLength(0)
+    expect(await c.next('message.part')).toMatchObject({
+      message_id: waiting.id,
+      part: {
+        type: 'tool_result', call_id: 'still-waiting', name: 'ask_user',
+        content: { status: 'cancelled', message: '用户跳过了问题并继续回复' },
+      },
+    })
+    expect(await c.next('message.done')).toMatchObject({ status: 'done' })
+    expect(await listMessages(db, session.id)).toHaveLength(3)
+    expect(created).toHaveLength(1)
+  })
+
+  it('cancels every pending ask_user call in one parent before persisting the user reply', async () => {
+    const providerId = await seedProvider('multi-skip-provider', 'multi-skip-model', false, { tool_call: true })
+    const db = createDb(env.DB)
+    const session = await createSession(db, {
+      user_id: DEFAULT_USER_ID, title: 'multi waiting', provider_id: providerId, model_id: 'multi-skip-model',
+    })
+    const waiting = await insertMessage(db, {
+      session_id: session.id, parent_id: null, seq: 1, role: 'assistant', status: 'done', error: null,
+      provider_id: providerId, model_id: 'multi-skip-model', usage: null, created_at: 0,
+      parts: [
+        { type: 'tool_call', id: 'skip-one', name: 'ask_user', args: ASK_USER_INPUT },
+        {
+          type: 'tool_call', id: 'skip-two', name: 'ask_user',
+          args: { questions: [{ id: 'detail', header: '补充', question: '补充说明', type: 'text' }] },
+        },
+      ],
+    })
+    await updateSession(db, session.id, { head_message_id: waiting.id })
+    await installMock(() => new MockLanguageModelV4({
+      doStream: async () => ({ stream: simulateReadableStream({ chunks: STREAM, chunkDelayInMs: null, initialDelayInMs: null }) }),
+    }))
+    const c = await connect()
+    c.ws.send(JSON.stringify({
+      type: 'send', session_id: session.id, parent_id: waiting.id,
+      parts: [{ type: 'text', text: 'skip both' }], provider_id: providerId, model_id: 'multi-skip-model',
+    }))
+    const first = await c.nextAfter('message.part', 1)
+    const second = await c.nextAfter('message.part', 2)
+    expect([first, second].map(event => event.type === 'message.part' && event.part.type === 'tool_result' ? event.part.call_id : null))
+      .toEqual(['skip-one', 'skip-two'])
+    await c.next('message.done')
+    const stored = (await getMessage(db, waiting.id))!
+    expect(stored.parts.filter(part => part.type === 'tool_result')).toHaveLength(2)
+  })
+
+  it('answer-wins CAS leaves the answered result intact and rejects the stale skip snapshot', async () => {
+    const db = createDb(env.DB)
+    await ensureDefaultUser(db)
+    const session = await createSession(db, { user_id: DEFAULT_USER_ID, title: 'answer wins', provider_id: null, model_id: null })
+    const waiting = await insertMessage(db, {
+      session_id: session.id, parent_id: null, seq: 1, role: 'assistant', status: 'done', error: null,
+      provider_id: null, model_id: null, usage: null, created_at: 0,
+      parts: [{ type: 'tool_call', id: 'race-call', name: 'ask_user', args: ASK_USER_INPUT }],
+    })
+    await updateSession(db, session.id, { head_message_id: waiting.id })
+    const skipped = [...waiting.parts, {
+      type: 'tool_result' as const, call_id: 'race-call', name: 'ask_user',
+      content: { status: 'cancelled', message: '用户跳过了问题并继续回复' },
+    }]
+    expect(await appendToolResult(db, waiting.id, session.id, {
+      type: 'tool_result', call_id: 'race-call', name: 'ask_user',
+      content: { status: 'answered', answers: [{ id: 'framework', value: 'Vue' }] },
+    })).toBe(true)
+    expect(await replaceMessagePartsIfCurrentHead(db, waiting, skipped)).toBe(false)
+    expect((await getMessage(db, waiting.id))!.parts.at(-1)).toMatchObject({ content: { status: 'answered' } })
+  })
+
+  it('skip-wins CAS makes a late tool response lose the existing call-id fence', async () => {
+    const db = createDb(env.DB)
+    await ensureDefaultUser(db)
+    const session = await createSession(db, { user_id: DEFAULT_USER_ID, title: 'skip wins', provider_id: null, model_id: null })
+    const waiting = await insertMessage(db, {
+      session_id: session.id, parent_id: null, seq: 1, role: 'assistant', status: 'done', error: null,
+      provider_id: null, model_id: null, usage: null, created_at: 0,
+      parts: [{ type: 'tool_call', id: 'race-call', name: 'ask_user', args: ASK_USER_INPUT }],
+    })
+    await updateSession(db, session.id, { head_message_id: waiting.id })
+    const skipped = [...waiting.parts, {
+      type: 'tool_result' as const, call_id: 'race-call', name: 'ask_user',
+      content: { status: 'cancelled', message: '用户跳过了问题并继续回复' },
+    }]
+    expect(await replaceMessagePartsIfCurrentHead(db, waiting, skipped)).toBe(true)
+    expect(await appendToolResult(db, waiting.id, session.id, {
+      type: 'tool_result', call_id: 'race-call', name: 'ask_user',
+      content: { status: 'answered', answers: [{ id: 'framework', value: 'Vue' }] },
+    })).toBe(false)
+    expect((await getMessage(db, waiting.id))!.parts.at(-1)).toMatchObject({ content: { status: 'cancelled' } })
   })
 
   it('allows an ordinary send after every parent tool call has a terminal result', async () => {

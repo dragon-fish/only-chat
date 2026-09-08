@@ -142,6 +142,33 @@ export async function appendToolResult(
   return result.meta.changes === 1
 }
 
+/**
+ * Replaces one current head's complete Parts snapshot. Both the old JSON and Session head are part
+ * of the same SQLite compare-and-swap, so a concurrent answer and a stale send cannot both win.
+ */
+export async function replaceMessagePartsIfCurrentHead(
+  db: DB,
+  expected: MessageRow,
+  nextParts: Part[],
+): Promise<boolean> {
+  const result = await db.$client.prepare(`
+    UPDATE messages
+       SET parts = json(?)
+     WHERE id = ?
+       AND session_id = ?
+       AND role = 'assistant'
+       AND status = 'done'
+       AND json(parts) = json(?)
+       AND EXISTS (
+         SELECT 1 FROM sessions WHERE id = ? AND head_message_id = ?
+       )
+  `).bind(
+    JSON.stringify(nextParts), expected.id, expected.session_id, JSON.stringify(expected.parts),
+    expected.session_id, expected.id,
+  ).run()
+  return result.meta.changes === 1
+}
+
 export async function insertMessage(db: DB, row: Omit<MessageRow, 'id'>): Promise<MessageRow> {
   const [inserted] = await db.insert(messages).values(row).returning()
   return inserted!

@@ -18,7 +18,8 @@ import { persistGeneratedImage } from './generated-images'
 import { getProject } from './projects'
 import {
   appendToolResult, createSession, finalizeMessage, getMessage, getModel, getProvider, getProviderInterface, getSession, getUser,
-  insertAssistantChildIfAbsent, insertMessage, lastGenerationModel, listAssistantChildren, listMessages, maxSeq, toMessage, updateSession,
+  insertAssistantChildIfAbsent, insertMessage, lastGenerationModel, listAssistantChildren, listMessages, maxSeq,
+  replaceMessagePartsIfCurrentHead, toMessage, updateSession,
 } from './sessions'
 import { resolveAttachmentInputs } from './attachment-transport'
 import { pathToRoot, titleFromParts } from './tree'
@@ -303,6 +304,39 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
 
 /** Fields that initialize a brand-new session and are therefore meaningless on an existing one. */
 const INIT_FIELDS = ['project_id', 'system_prompt', 'params', 'session_provider_id', 'session_model_id', 'tools'] as const
+const SKIPPED_ASK_USER_MESSAGE = '用户跳过了问题并继续回复'
+
+async function resolveSendParent(hub: Hub, session: SessionRow, parentId: number) {
+  const parent = await getMessage(hub.db, parentId)
+  if (!parent || parent.session_id !== session.id) throw new Error('parent message not in session')
+  const results = new Set(parent.parts.filter(part => part.type === 'tool_result').map(part => part.call_id))
+  const pending = parent.parts.filter((part): part is ToolCallPart => part.type === 'tool_call' && !results.has(part.id))
+  if (pending.length === 0) return parent
+  if (parent.role !== 'assistant' || parent.status !== 'done' || hub.inflight().some(job => job.message.id === parent.id)) {
+    throw new Error('cannot skip tool calls on an incomplete message')
+  }
+
+  for (const call of pending) {
+    if (call.name !== ASK_USER_TOOL_ID) throw new Error(`cannot skip unsupported tool: ${call.name}`)
+    AskUserInputSchema.parse(call.args)
+  }
+  const skipped = pending.map(call => ({
+    type: 'tool_result' as const,
+    call_id: call.id,
+    name: call.name,
+    content: { status: 'cancelled' as const, message: SKIPPED_ASK_USER_MESSAGE },
+  }))
+  const nextParts: Part[] = [...parent.parts, ...skipped]
+  if (!(await replaceMessagePartsIfCurrentHead(hub.db, parent, nextParts))) {
+    throw new Error('pending tool state changed; resync before sending')
+  }
+  for (const [offset, part] of skipped.entries()) {
+    hub.broadcast({
+      type: 'message.part', message_id: parent.id, part_index: parent.parts.length + offset, part,
+    })
+  }
+  return { ...parent, parts: nextParts }
+}
 
 export async function runSend(hub: Hub, cmd: SendCommand): Promise<void> {
   // Dropping them silently would let a client believe it had changed a session's settings (spec §9).
@@ -323,14 +357,7 @@ export async function runSend(hub: Hub, cmd: SendCommand): Promise<void> {
     },
   })
   const parentId = cmd.session_id === null ? null : (cmd.parent_id ?? target.session.head_message_id)
-  if (parentId !== null) {
-    const parent = await getMessage(hub.db, parentId)
-    if (!parent || parent.session_id !== target.session.id) throw new Error('parent message not in session')
-    const results = new Set(parent.parts.filter(part => part.type === 'tool_result').map(part => part.call_id))
-    if (parent.parts.some(part => part.type === 'tool_call' && !results.has(part.id))) {
-      throw new Error('parent message has unresolved tool calls')
-    }
-  }
+  if (parentId !== null) await resolveSendParent(hub, target.session, parentId)
   const user = await persistUserMessage(hub, target.session, parentId, cmd.parts)
   const shell = await openAssistantShell(hub, target, user.id)
   await generate(hub, target, shell, user.id)
