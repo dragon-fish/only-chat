@@ -6,9 +6,20 @@
 
 ## Plugin registry
 
-A shared built-in plugin catalog declares stable IDs, display metadata, and default tool IDs. The first entry is `ask_user`.
+Feature plugins live under `src/plugins/<plugin-id>/` with optional `client/` and `server/` entrypoints plus shared files:
 
-The server registry maps tool IDs to AI SDK tool factories. The client registry maps tool IDs to tool-call renderers. Settings render from the shared catalog; database settings only store whether each plugin is globally enabled.
+- `manifest.ts` exports lightweight display metadata and default tool IDs;
+- `shared.ts` owns wire schemas and types;
+- `client/index.ts` exports `setup(ctx)` and registers Vue renderers or controls;
+- `server/index.ts` exports a Cordis plugin and registers AI SDK tools or command handlers.
+
+The client eagerly discovers only manifests with `import.meta.glob`; it keeps client entrypoints as lazy loaders. A client plugin chunk loads when the plugin is enabled, a Session selects one of its tools, or historical Parts require its renderer. The server deploys all built-in server entrypoints in the Worker bundle and uses Cordis lifecycle registration.
+
+Client rendering is declarative: a tool registry maps tool IDs to Vue components and schemas. Global hooks are available for side effects but never act as the source of truth for a card that must survive reloads.
+
+This version does not expose a global RLQ or load external URLs. A future classic-script adapter may forward queued `setup(ctx)` functions into the same client host without changing plugin APIs.
+
+Settings render from the discovered manifests; database settings only store whether each plugin is globally enabled. The first built-in plugin is `ask_user`.
 
 Unknown plugin and tool IDs fail closed. Registries return tools in stable ID order so request prefixes do not change between turns.
 
