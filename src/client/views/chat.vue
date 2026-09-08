@@ -92,7 +92,16 @@ const sources = computed(() => sessionSettingSources(configSource.value, project
 
 /** Only a deliberate pick is remembered globally; it is the lowest layer of the precedence. */
 const picked = ref<ModelRef | null>(readModel())
-const effective = computed(() => effectiveModelFor(override.value, project.value, picked.value))
+/** A deliberate choice on an existing chat outranks its history until that choice produces a message. */
+const sessionPick = ref<ModelRef | null | undefined>(undefined)
+watch(sid, () => { sessionPick.value = undefined }, { flush: 'sync' })
+const effective = computed(() => effectiveModelFor(override.value, project.value, picked.value, sid.value === null
+  ? undefined
+  : {
+      localPick: sessionPick.value,
+      messagesLoaded: sync.loadedMessageSessions.has(sid.value),
+      messages: path.value,
+    }))
 const entry = computed(() => config.modelFor(effective.value.model))
 // While the config is still loading nothing is known to be unavailable, so sending stays possible.
 const modelAvailable = computed(() => !config.loaded || config.isAvailable(effective.value.model))
@@ -275,6 +284,7 @@ function setOverride(value: ModelRef | null) {
 function onModelChange(value: ModelRef | null) {
   picked.value = value
   localStorage.setItem('oc.model', JSON.stringify(value))
+  if (sid.value !== null) sessionPick.value = value
   const next = modelOverrideAfterPick(value, project.value, override.value)
   if (next !== undefined) setOverride(next)
 }

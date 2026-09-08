@@ -350,17 +350,45 @@ export interface EffectiveModel {
   source: ModelSource | null
 }
 
+export interface ExistingChatModelContext {
+  /** `undefined` means this page has not made a deliberate model choice for the session. */
+  localPick: ModelRef | null | undefined
+  messagesLoaded: boolean
+  /** The selected message branch, oldest first. */
+  messages: readonly Message[]
+}
+
+function lastGenerationModel(messages: readonly Message[]): ModelRef | null {
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index]!
+    if (message.provider_id !== null && message.model_id !== null) {
+      return { provider_id: message.provider_id, model_id: message.model_id }
+    }
+  }
+  return null
+}
+
 /**
  * The client's mirror of the server's precedence: session override → Project default → the model
  * this command carries. The Composer shows the result, so it never claims a model the generation
  * would not actually use.
  */
-export function effectiveModelFor(override: ModelRef | null, project: Project | undefined, picked: ModelRef | null): EffectiveModel {
+export function effectiveModelFor(
+  override: ModelRef | null,
+  project: Project | undefined,
+  picked: ModelRef | null,
+  chat?: ExistingChatModelContext,
+): EffectiveModel {
   if (override) return { model: override, source: 'session' }
   if (project?.provider_id != null && project.model_id != null) {
     return { model: { provider_id: project.provider_id, model_id: project.model_id }, source: 'project' }
   }
-  return picked ? { model: picked, source: 'command' } : { model: null, source: null }
+  const command = chat
+    ? chat.localPick !== undefined
+      ? chat.localPick
+      : lastGenerationModel(chat.messages) ?? (chat.messagesLoaded ? picked : null)
+    : picked
+  return command ? { model: command, source: 'command' } : { model: null, source: null }
 }
 
 /**

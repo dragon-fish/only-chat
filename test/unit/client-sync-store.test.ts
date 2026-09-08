@@ -417,7 +417,14 @@ describe('session settings form', () => {
 
 describe('composer model precedence', () => {
   const picked: ModelRef = { provider_id: 9, model_id: 'picked' }
+  const historical: ModelRef = { provider_id: 8, model_id: 'historical' }
+  const local: ModelRef = { provider_id: 7, model_id: 'local' }
   const projectModel = mkProject(1, { provider_id: 1, model_id: 'project-model' })
+  const messages: Message[] = [
+    { id: 1, session_id: 1, parent_id: null, seq: 1, role: 'assistant', parts: [], provider_id: 6, model_id: 'older', usage: null, status: 'done', error: null, created_at: 1 },
+    { id: 2, session_id: 1, parent_id: 1, seq: 2, role: 'user', parts: [], provider_id: null, model_id: null, usage: null, status: 'done', error: null, created_at: 2 },
+    { id: 3, session_id: 1, parent_id: 2, seq: 3, role: 'assistant', parts: [], provider_id: historical.provider_id, model_id: historical.model_id, usage: null, status: 'done', error: null, created_at: 3 },
+  ]
 
   it('shows the model the generation will actually use', () => {
     expect(effectiveModelFor(null, undefined, null)).toEqual({ model: null, source: null })
@@ -428,6 +435,25 @@ describe('composer model precedence', () => {
       .toEqual({ model: { provider_id: 2, model_id: 'own' }, source: 'session' })
     // A Project with no default model contributes nothing.
     expect(effectiveModelFor(null, mkProject(2), picked)).toEqual({ model: picked, source: 'command' })
+  })
+
+  it('restores an existing chat from its current branch instead of the global remembered model', () => {
+    const context = { localPick: undefined, messagesLoaded: true, messages }
+    expect(effectiveModelFor(null, undefined, picked, context)).toEqual({ model: historical, source: 'command' })
+    expect(effectiveModelFor(null, projectModel, picked, context))
+      .toEqual({ model: { provider_id: 1, model_id: 'project-model' }, source: 'project' })
+  })
+
+  it('keeps an existing chat blocked until history arrives and lets a deliberate local pick win', () => {
+    expect(effectiveModelFor(null, undefined, picked, {
+      localPick: undefined, messagesLoaded: false, messages: [],
+    })).toEqual({ model: null, source: null })
+    expect(effectiveModelFor(null, undefined, picked, {
+      localPick: local, messagesLoaded: false, messages: [],
+    })).toEqual({ model: local, source: 'command' })
+    expect(effectiveModelFor(null, undefined, picked, {
+      localPick: undefined, messagesLoaded: true, messages: [],
+    })).toEqual({ model: picked, source: 'command' })
   })
 
   it('persists a pick as a session override only when `send` would otherwise ignore it', () => {

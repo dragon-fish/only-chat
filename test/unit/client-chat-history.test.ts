@@ -9,25 +9,29 @@ import { TooltipProvider } from '@/client/ui/tooltip'
 import { useSyncStore } from '@/client/stores/sync'
 import { useConfigStore } from '@/client/stores/config'
 import { api } from '@/client/lib/api'
+import type { ModelRef } from '@/shared/api'
 import type { Message } from '@/shared/models'
 import { modelRecords, provider } from './provider-fixtures'
 
 let cleanup = () => {}
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); document.body.innerHTML = '' })
 
-async function mountChat(historyLoaded: boolean, rememberedModel = false) {
+async function mountChat(historyLoaded: boolean, rememberedModel = false, lastModel?: ModelRef) {
   const pinia = createPinia()
   const sync = useSyncStore(pinia)
   const config = useConfigStore(pinia)
   config.loaded = true
-  if (rememberedModel) config.providerRecords = [provider]
+  if (rememberedModel || lastModel) config.providerRecords = [provider]
+  if (lastModel) config.retainModels([{ ...modelRecords[0]!, provider_id: lastModel.provider_id, model_id: lastModel.model_id, metadata: { name: 'Session model' } }])
   sync.sessionsLoaded = true
   const histories = new Map<number, Message[]>()
   for (const id of [1, 2]) {
     const messages: Message[] = Array.from({ length: 10 }, (_, index) => ({
       id: id * 100 + index, session_id: id, parent_id: index ? id * 100 + index - 1 : null,
-      seq: index, role: 'user', parts: [{ type: 'text', text: `Chat ${id} message ${index}` }],
-      provider_id: null, model_id: null, usage: null, status: 'done', error: null, created_at: index,
+      seq: index, role: lastModel && id === 1 && index === 9 ? 'assistant' : 'user', parts: [{ type: 'text', text: `Chat ${id} message ${index}` }],
+      provider_id: lastModel && id === 1 && index === 9 ? lastModel.provider_id : null,
+      model_id: lastModel && id === 1 && index === 9 ? lastModel.model_id : null,
+      usage: null, status: 'done', error: null, created_at: index,
     }))
     histories.set(id, messages)
     sync.sessions.set(id, { id, user_id: 1, project_id: null, title: `Chat ${id}`, head_message_id: id * 100 + 9, provider_id: null, model_id: null, system_prompt: null, params: null, archived_at: null, created_at: 0, updated_at: id })
@@ -55,6 +59,13 @@ it('retains a remembered model while its off-page lookup is pending', async () =
   expect(document.querySelector('[aria-label="选择模型，当前为 off-page"]')).not.toBeNull()
   finish({ ...modelRecords[0]!, model_id: 'off-page', metadata: { name: 'Remembered model' } })
   await vi.waitFor(() => expect(document.querySelector('[aria-label="选择模型，当前为 Remembered model"]')).not.toBeNull())
+})
+
+it('restores an existing chat from the model used by its latest generation', async () => {
+  vi.stubGlobal('localStorage', new Storage())
+  localStorage.setItem('oc.model', JSON.stringify({ provider_id: 1, model_id: 'global-model' }))
+  await mountChat(true, true, { provider_id: 1, model_id: 'session-model' })
+  await vi.waitFor(() => expect(document.querySelector('[aria-label="选择模型，当前为 Session model"]')).not.toBeNull())
 })
 
 it('keeps arrived first-message content visible while its history request is pending', async () => {
