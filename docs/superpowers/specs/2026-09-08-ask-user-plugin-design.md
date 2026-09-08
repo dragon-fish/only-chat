@@ -126,6 +126,13 @@ Cancellation stores the tool result but does not create a child assistant. The n
 - Responses: `user → function_call → function_call_output(cancelled) → user`;
 - Anthropic: `user → assistant(tool_use) → user[tool_result, text]`.
 
+The current client blocks ordinary sends while a valid `ask_user` call is pending. A stale or
+multi-device client may still bypass that guard. When its parent is still the Session head, the
+server atomically appends cancelled results for every pending `ask_user` call with the message
+“用户跳过了问题并继续回复”, broadcasts those Parts, and then accepts the user Message. A concurrent
+explicit answer and this implicit skip use the same exactly-once fence: whichever persists first
+wins, and the losing command must resync instead of creating a second continuation branch.
+
 ## Error handling
 
 - Invalid tool arguments are persisted as a visible generation error, not rendered as an interactive form.
@@ -133,6 +140,7 @@ Cancellation stores the tool result but does not create a child assistant. The n
 - Invalid answers leave the Questionnaire editable and return a correlated error.
 - Disconnects do not clear persisted pending calls or local completed results.
 - A response to a foreign Session, unknown call, already-conflicting result, or streaming Message fails without mutation.
+- Unknown, invalid, or incomplete tool calls are never implicitly cancelled by an ordinary send.
 - Pending calls remain resolvable after the plugin is globally disabled.
 
 ## Verification
