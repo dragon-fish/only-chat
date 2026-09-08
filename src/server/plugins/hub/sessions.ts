@@ -194,6 +194,17 @@ export async function deleteMessage(db: DB, id: number): Promise<void> {
   await db.delete(messages).where(eq(messages.id, id))
 }
 
+/** Deletes an unannounced shell only while no Session head references it. */
+export async function deleteMessageIfUnreferenced(db: DB, id: number): Promise<boolean> {
+  const deleted = await db.$client.prepare(`
+    DELETE FROM messages
+     WHERE id = ?
+       AND NOT EXISTS (SELECT 1 FROM sessions WHERE head_message_id = ?)
+    RETURNING id
+  `).bind(id, id).first<{ id: number }>()
+  return deleted?.id === id
+}
+
 /** Creates the sole assistant continuation for one tool-call parent with an atomic SQLite fence. */
 export async function insertAssistantChildIfAbsent(
   db: DB,

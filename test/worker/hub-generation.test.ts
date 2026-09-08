@@ -19,8 +19,8 @@ import { persistGeneratedImage } from '@/server/plugins/hub/generated-images'
 import { resolveEffectiveConfig } from '@/server/plugins/hub/effective-config'
 import { getProject } from '@/server/plugins/hub/projects'
 import {
-  appendToolResult, createSession, finalizeMessage, getMessage, getSession, insertMessage, listMessages,
-  replaceMessagePartsIfCurrentHead, toMessage, updateSession,
+  appendToolResult, createSession, deleteMessageIfUnreferenced, finalizeMessage, getMessage, getSession, insertMessage,
+  listMessages, replaceMessagePartsIfCurrentHead, toMessage, updateSession,
 } from '@/server/plugins/hub/sessions'
 import { attachmentProviderFiles, attachments, models, projects, providerInterfaces, providers, users } from '@/server/db/schema'
 import type { ProviderInterfaceRow, ProviderRow } from '@/server/db/schema'
@@ -886,6 +886,59 @@ describe('generation', () => {
     expect(c.events.some(event => event.type === 'message.done')).toBe(true)
   })
 
+  it('conditional shell cleanup preserves a child claimed by recovery before cleanup starts', async () => {
+    const db = createDb(env.DB)
+    await ensureDefaultUser(db)
+    const session = await createSession(db, {
+      user_id: DEFAULT_USER_ID, title: 'cleanup race', provider_id: null, model_id: null,
+    })
+    const parent = await insertMessage(db, {
+      session_id: session.id, parent_id: null, seq: 1, role: 'assistant', status: 'done', error: null,
+      provider_id: null, model_id: null, usage: null, created_at: 0, parts: [{ type: 'text', text: 'parent' }],
+    })
+    const child = await insertMessage(db, {
+      session_id: session.id, parent_id: parent.id, seq: 2, role: 'assistant', status: 'error', error: 'interrupted',
+      provider_id: null, model_id: null, usage: null, created_at: 1, parts: [],
+    })
+    await updateSession(db, session.id, { head_message_id: child.id })
+
+    expect(await deleteMessageIfUnreferenced(db, child.id)).toBe(false)
+    expect(await getMessage(db, child.id)).toBeDefined()
+    expect((await getSession(db, session.id))!.head_message_id).toBe(child.id)
+  })
+
+  it('publishes the reserved user head when assistant shell creation fails', async () => {
+    const providerId = await seedProvider('shell-failure-provider', 'shell-failure-model', false, {})
+    const db = createDb(env.DB)
+    const session = await createSession(db, {
+      user_id: DEFAULT_USER_ID, title: 'shell failure', provider_id: providerId, model_id: 'shell-failure-model',
+    })
+    await db.$client.prepare(`
+      CREATE TRIGGER fail_assistant_shell BEFORE INSERT ON messages
+      WHEN NEW.session_id = ${session.id} AND NEW.role = 'assistant'
+      BEGIN
+        SELECT RAISE(ABORT, 'assistant shell failed');
+      END
+    `).run()
+    const c = await connect()
+    c.events.length = 0
+    try {
+      c.ws.send(JSON.stringify({
+        type: 'send', request_id: 'shell-failure', session_id: session.id, parent_id: null,
+        parts: [{ type: 'text', text: 'persist me' }], provider_id: providerId, model_id: 'shell-failure-model',
+      }))
+      expect(await c.next('error')).toMatchObject({ request_id: 'shell-failure' })
+    } finally {
+      await db.$client.exec('DROP TRIGGER fail_assistant_shell')
+    }
+    const rows = await listMessages(db, session.id)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ role: 'user', parts: [{ type: 'text', text: 'persist me' }] })
+    expect((await getSession(db, session.id))!.head_message_id).toBe(rows[0]!.id)
+    expect(c.events.find(event => event.type === 'head.changed')).toMatchObject({ message_id: rows[0]!.id })
+    expect(c.events.find(event => event.type === 'session.updated')).toMatchObject({ session: { head_message_id: rows[0]!.id } })
+  })
+
   it('does not persist a stale user reply when the head advances immediately after implicit skip CAS', async () => {
     const providerId = await seedProvider('skip-head-race-provider', 'skip-head-race-model', false, { tool_call: true })
     const db = createDb(env.DB)
@@ -940,7 +993,10 @@ describe('generation', () => {
     expect(done).toMatchObject({ type: 'message.done', status: 'done', usage: { prompt: 10, completion: 5, cached: 2, reasoning: 2 }, error: null })
 
     const types = a.events.map((e) => e.type)
-    expect(types.slice(0, 5)).toEqual(['snapshot', 'session.created', 'message.created', 'message.created', 'head.changed'])
+    expect(types.slice(0, 8)).toEqual([
+      'snapshot', 'session.created', 'message.created', 'head.changed', 'session.updated',
+      'message.created', 'head.changed', 'session.updated',
+    ])
     expect(types.filter((t) => t === 'message.delta')).toHaveLength(3)
     await b.next('message.done')
     expect(b.events.filter((e) => e.type === 'message.delta')).toEqual(a.events.filter((e) => e.type === 'message.delta'))

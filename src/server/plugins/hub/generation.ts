@@ -17,9 +17,9 @@ import {
 import { persistGeneratedImage } from './generated-images'
 import { getProject } from './projects'
 import {
-  appendToolResult, compareAndSwapSessionHead, createSession, deleteMessage, finalizeMessage, getMessage, getModel, getProvider,
-  getProviderInterface, getSession, getUser, insertAssistantChildIfAbsent, insertMessage, lastGenerationModel,
-  listAssistantChildren, listMessages, maxSeq, replaceMessagePartsIfCurrentHead, toMessage, updateSession,
+  appendToolResult, compareAndSwapSessionHead, createSession, deleteMessage, deleteMessageIfUnreferenced, finalizeMessage,
+  getMessage, getModel, getProvider, getProviderInterface, getSession, getUser, insertAssistantChildIfAbsent, insertMessage,
+  lastGenerationModel, listAssistantChildren, listMessages, maxSeq, replaceMessagePartsIfCurrentHead, toMessage, updateSession,
 } from './sessions'
 import { resolveAttachmentInputs } from './attachment-transport'
 import { pathToRoot, titleFromParts } from './tree'
@@ -150,6 +150,8 @@ async function reserveUserMessage(hub: Hub, session: SessionRow, parentId: numbe
     throw new Error('session head changed; resync before sending')
   }
   hub.broadcast({ type: 'message.created', message })
+  hub.broadcast({ type: 'head.changed', session_id: updated.id, message_id: message.id })
+  hub.emitSessionUpdated(updated)
   return message
 }
 
@@ -178,10 +180,16 @@ async function openReservedAssistantShell(hub: Hub, target: Target, parentId: nu
     provider_id: target.provider.id, model_id: target.model.model_id, usage: null,
     status: 'error', error: 'interrupted', created_at: Date.now(),
   })
-  const session = await compareAndSwapSessionHead(hub.db, target.session.id, parentId, row.id)
+  let session = await compareAndSwapSessionHead(hub.db, target.session.id, parentId, row.id)
   if (!session) {
-    await deleteMessage(hub.db, row.id)
-    throw new Error('session head changed; resync before generation')
+    if (await deleteMessageIfUnreferenced(hub.db, row.id)) {
+      throw new Error('session head changed; resync before generation')
+    }
+    const current = await getSession(hub.db, target.session.id)
+    if (current?.head_message_id !== row.id || !(await getMessage(hub.db, row.id))) {
+      throw new Error('session head changed; resync before generation')
+    }
+    session = current
   }
   const message = toMessage(row, 'streaming')
   hub.broadcast({ type: 'message.created', message })
@@ -200,14 +208,12 @@ async function openContinuationShell(hub: Hub, target: Target, parentId: number)
   if (!row) return undefined
   let session = await compareAndSwapSessionHead(hub.db, target.session.id, parentId, row.id)
   if (!session) {
+    if (await deleteMessageIfUnreferenced(hub.db, row.id)) return undefined
     const current = await getSession(hub.db, target.session.id)
     // A concurrent recovery may have observed this inserted shell and completed the exact same
     // parent → child transition. The creator still owns announcing and generating that shell.
-    if (current?.head_message_id === row.id) session = current
-    else {
-      await deleteMessage(hub.db, row.id)
-      return undefined
-    }
+    if (current?.head_message_id !== row.id || !(await getMessage(hub.db, row.id))) return undefined
+    session = current
   }
   const message = toMessage(row, 'streaming')
   hub.broadcast({ type: 'message.created', message })
