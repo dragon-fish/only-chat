@@ -9,15 +9,21 @@ let cleanup = () => {}
 afterEach(() => { cleanup(); document.body.innerHTML = '' })
 
 describe('model Lab presentation', () => {
-  it('falls back to the provider avatar after a remote logo error without retrying on rerender', async () => {
+  it('tries colored Iconify variants before the models.dev logo and provider avatar', async () => {
     const host = document.createElement('div')
     document.body.append(host)
     const app = createApp(LabAvatar, { labId: 'deepseek', providerName: 'Example Gateway' })
     app.mount(host)
     cleanup = () => app.unmount()
     const image = host.querySelector('img')!
-    expect(image.getAttribute('src')).toBe('https://models.dev/logos/labs/deepseek.svg')
+    expect(image.getAttribute('src')).toBe('https://api.iconify.design/logos:deepseek-icon.svg')
     image.dispatchEvent(new Event('error'))
+    await nextTick()
+    expect(host.querySelector('img')?.getAttribute('src')).toBe('https://api.iconify.design/logos:deepseek.svg')
+    host.querySelector('img')!.dispatchEvent(new Event('error'))
+    await nextTick()
+    expect(host.querySelector('img')?.getAttribute('src')).toBe('https://models.dev/logos/labs/deepseek.svg')
+    host.querySelector('img')!.dispatchEvent(new Event('error'))
     await vi.waitFor(() => expect(host.textContent).toContain('EG'))
     await nextTick()
     expect(host.querySelector('img')).toBeNull()
