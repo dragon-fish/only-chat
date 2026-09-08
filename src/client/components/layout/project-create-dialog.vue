@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, watch, watchEffect } from 'vue'
+import { useRouter } from 'vue-router'
 import { PlusIcon } from '@lucide/vue'
 import { cn } from '@/client/lib/utils'
 import { DISCONNECTED_MESSAGE, useSyncStore } from '@/client/stores/sync'
@@ -18,6 +19,7 @@ withDefaults(defineProps<{
 })
 
 const sync = useSyncStore()
+const router = useRouter()
 const open = ref(false)
 const name = ref('')
 const submittedName = ref<string | null>(null)
@@ -35,8 +37,11 @@ watchEffect(() => {
   const submitted = submittedName.value
   const previousIds = idsBeforeSubmit.value
   if (submitted === null || previousIds === null) return
-  const created = sync.projectList.some(project => !previousIds.has(project.id) && project.name === submitted)
-  if (created) open.value = false
+  const created = sync.projectList.find(project => !previousIds.has(project.id) && project.name === submitted)
+  if (created) {
+    open.value = false
+    void router.push(`/project/${created.id}`)
+  }
 })
 
 watch(() => sync.lastError, (error) => {
