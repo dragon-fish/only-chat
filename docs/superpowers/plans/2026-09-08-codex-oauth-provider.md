@@ -61,9 +61,7 @@
 **Files:**
 - Modify: `src/server/db/schema.ts`
 - Modify: `src/shared/models.ts`
-- Modify: `src/shared/api.ts`
 - Create: `migrations/0006_codex-oauth.sql`
-- Create/Modify: `migrations/meta/0006_snapshot.json`, `migrations/meta/_journal.json`
 - Modify: `test/unit/shared-models.test.ts`
 - Modify: `test/worker/db.test.ts`
 - Modify: `test/unit/provider-fixtures.ts`
@@ -153,15 +151,9 @@ const provider = await env.DB.prepare('SELECT kind FROM providers ORDER BY id LI
 expect(provider?.kind).toBe('custom')
 ```
 
-- [ ] **Step 5: Generate and inspect the migration**
+- [ ] **Step 5: Add and inspect the migration**
 
-Add `kind` and `providerOAuthCredentials` to `src/server/db/schema.ts`, then run:
-
-```bash
-pnpm db:generate -- --name codex-oauth
-```
-
-Verify the generated SQL contains:
+Add `kind` and `providerOAuthCredentials` to `src/server/db/schema.ts`. Create `migrations/0006_codex-oauth.sql` by hand because `0005_project-icons.sql` is intentionally not represented in the current Drizzle journal; running `db:generate` from the 0004 snapshot would reproduce unrelated project-icon state. The migration contains:
 
 ```sql
 ALTER TABLE `providers` ADD `kind` text DEFAULT 'custom' NOT NULL;
@@ -179,7 +171,7 @@ CREATE TABLE `provider_oauth_credentials` (
 );
 ```
 
-Add checks for provider kind, OAuth status, and bundle presence: `disconnected` requires a null bundle, while `connected` and `reconnect-required` require a non-null bundle. If another branch has occupied migration number `0006` before execution, regenerate this migration at the next available number instead of hand-merging journal indices.
+Add checks for provider kind, OAuth status, and bundle presence: `disconnected` requires a null bundle, while `connected` and `reconnect-required` require a non-null bundle. Do not modify `migrations/meta`; this repository's current migration sequence already treats 0005 as a hand-written migration outside the journal. If another branch has occupied migration number `0006` before integration, renumber this migration during the later rebase.
 
 - [ ] **Step 6: Run schema and database tests**
 
@@ -190,7 +182,7 @@ Expected: PASS.
 - [ ] **Step 7: Commit the persistence contract**
 
 ```bash
-git add src/server/db/schema.ts src/shared/models.ts src/shared/api.ts migrations test/unit/shared-models.test.ts test/worker/db.test.ts test/unit/provider-fixtures.ts
+git add src/server/db/schema.ts src/shared/models.ts migrations/0006_codex-oauth.sql test/unit/shared-models.test.ts test/worker/db.test.ts test/unit/provider-fixtures.ts
 git commit -m "feat(providers): add OAuth credential schema"
 ```
 
@@ -846,7 +838,6 @@ git commit -m "feat(codex): add device login UI"
 
 **Files:**
 - Modify: `src/client/views/settings-provider-edit.vue`
-- Modify: `src/client/components/provider-settings-form.vue`
 - Modify: `src/client/lib/provider-settings.ts`
 - Modify: `src/client/lib/api.ts`
 - Modify: `test/unit/client-provider-editor.test.ts`
@@ -905,7 +896,7 @@ Expected: PASS.
 - [ ] **Step 7: Commit managed settings**
 
 ```bash
-git add src/client/views/settings-provider-edit.vue src/client/components/provider-settings-form.vue src/client/lib/provider-settings.ts src/client/lib/api.ts test/unit/client-provider-editor.test.ts test/unit/provider-fixtures.ts
+git add src/client/views/settings-provider-edit.vue src/client/lib/provider-settings.ts src/client/lib/api.ts test/unit/client-provider-editor.test.ts test/unit/provider-fixtures.ts
 git commit -m "feat(codex): add managed provider settings"
 ```
 
@@ -976,7 +967,7 @@ Deploy the branch only after explicit user instruction. In the protected deploym
 - [ ] **Step 6: Commit documentation and any verified corrections**
 
 ```bash
-git add README.md src test migrations
+git add README.md
 git commit -m "docs: document Codex OAuth providers"
 ```
 
