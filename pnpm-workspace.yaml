@@ -3,6 +3,7 @@ allowBuilds:
   esbuild: true
   vue-demi: true
   workerd: true
+dangerouslyAllowAllBuilds: true
 minimumReleaseAgeExclude:
   - markdown-it-ts@1.1.2
   - markstream-core@2.0.8
