@@ -11,6 +11,9 @@ import ReasoningControl from '@/client/components/reasoning-control.vue'
 import SessionSettings from '@/client/components/session-settings.vue'
 import CollectionState from '@/client/components/collection-state.vue'
 import ContextUsageIndicator from '@/client/components/context-usage-indicator.vue'
+import ToolSelector from '@/client/components/tool-selector.vue'
+import { defaultToolsForSettings, toolSelectionSupported } from '@/client/components/tool-selector'
+import { pluginManifests } from '@/client/plugins/loaders'
 import { projectPresentation, sessionPath } from '@/client/lib/ui-models'
 import {
   choiceFromParams, DISCONNECTED_MESSAGE, effectiveModelFor, modelOverrideAfterPick, nextSendState,
@@ -35,6 +38,7 @@ const session = computed(() => (sid.value === null ? undefined : sync.sessions.g
 const path = computed(() => (sid.value === null ? [] : sync.pathFor(sid.value)))
 const streaming = computed(() => sid.value !== null && sync.isStreaming(sid.value))
 const composer = ref<InstanceType<typeof Composer> | null>(null)
+const draftTools = ref<string[] | null>(null)
 
 // ---- draft and session settings
 
@@ -74,7 +78,10 @@ const override = computed<ModelRef | null>(() => {
 // update from another device must not overwrite what is being typed. A draft starts blank.
 watch(sid, (id) => {
   formLoaded.value = id === null
-  if (id === null) Object.assign(form, sessionFormFrom(undefined))
+  if (id === null) {
+    Object.assign(form, sessionFormFrom(undefined))
+    draftTools.value = null
+  }
 }, { immediate: true })
 watchEffect(() => {
   const s = session.value
@@ -115,9 +122,17 @@ const contextUsage = computed(() => {
 })
 // While the config is still loading nothing is known to be unavailable, so sending stays possible.
 const modelAvailable = computed(() => !config.loaded || config.isAvailable(effective.value.model))
-const canSend = computed(() => effective.value.model !== null && modelAvailable.value)
+const selectedTools = computed(() => sid.value === null ? (draftTools.value ?? []) : (session.value?.tools ?? []))
+const globallyAvailableTools = computed(() => new Set(defaultToolsForSettings(pluginManifests, sync.settings.plugins)))
+const toolsSupported = computed(() => toolSelectionSupported(
+  selectedTools.value,
+  globallyAvailableTools.value,
+  entry.value?.model.metadata.tool_call === true,
+))
+const canSend = computed(() => effective.value.model !== null && modelAvailable.value && toolsSupported.value)
 const sendHint = computed(() => {
   if (effective.value.model === null) return '未选择模型'
+  if (!toolsSupported.value) return '当前模型不支持工具调用，请更换模型或停用已选工具'
   if (modelAvailable.value) return null
   const source = effective.value.source
   return `模型不可用（来源：${source === 'session' ? '会话' : source === 'project' ? 'Project' : '当前选择'}）`
@@ -128,6 +143,11 @@ const sendHint = computed(() => {
  * Both are `null` until the config loads, which is also what `noModel` below reports.
  */
 const metadata = computed(() => entry.value?.model.metadata ?? null)
+watchEffect(() => {
+  if (sid.value === null && sync.settingsLoaded && draftTools.value === null) {
+    draftTools.value = defaultToolsForSettings(pluginManifests, sync.settings.plugins)
+  }
+})
 /** What the session inherits when it sets nothing itself. */
 const inheritedReasoning = computed<ReasoningChoice>(() => choiceFromParams(project.value?.params))
 /** The three widgets always show the effective value, never the raw override (spec §5.6). */
@@ -250,6 +270,7 @@ function onSend(parts: Part[]) {
       system_prompt: form.system_prompt,
       model: draftModel.value,
       params: paramsFromFields(form),
+      tools: selectedTools.value,
     },
   }))
 }
@@ -303,6 +324,14 @@ function onReasoningChange(choice: ReasoningChoice) {
   form.reasoning = choice
   commitSettings()
 }
+
+function onToolsChange(tools: string[]) {
+  if (sid.value === null) {
+    draftTools.value = tools
+    return
+  }
+  send({ type: 'session.update', session_id: sid.value, tools })
+}
 </script>
 
 <template lang="pug">
@@ -339,6 +368,10 @@ function onReasoningChange(choice: ReasoningChoice) {
   Composer(
     ref="composer" :streaming="streaming" :connected="sync.status === 'open'"
     :can-send="canSend" :hint="sendHint" @send="onSend" @stop="onStop")
+    template(#left-controls)
+      ToolSelector(
+        :model-value="selectedTools" :plugins="sync.settings.plugins" :desktop="isDesktop"
+        @update:model-value="onToolsChange")
     template(#controls)
       ContextUsageIndicator(v-if="contextUsage" :usage="contextUsage.usage" :limit="contextUsage.limit")
       ReasoningControl(

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { isChatHistoryRoute, createModelWriteQueue, acknowledgedPlugins } from '@/client/lib/settings'
 import type { ModelWithMetadata } from '@/shared/models'
 import { modelRecords } from './provider-fixtures'
+import { pluginSettingsRows } from '@/client/views/settings-plugins.vue'
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -12,6 +13,12 @@ function deferred<T>() {
 const model = modelRecords[0]!
 
 describe('settings navigation and model editing', () => {
+  it('renders built-in manifests even when the persisted settings key is absent', () => {
+    const manifests = [{ id: 'ask_user', name: 'Ask User', description: 'Ask questions', defaultTools: ['ask_user'] }]
+    expect(pluginSettingsRows(manifests, {})).toEqual([
+      expect.objectContaining({ id: 'ask_user', name: 'Ask User', enabled: false }),
+    ])
+  })
   it('acknowledges only plugin switches matching the authoritative server values', () => {
     // One settings.updated may acknowledge one of several toggles; an unrelated broadcast must
     // not clear the other pending switch or falsely announce success.

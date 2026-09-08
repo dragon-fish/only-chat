@@ -1,3 +1,18 @@
+<script lang="ts">
+import type { PluginManifest } from '@/shared/plugins'
+
+export interface PluginSettingsRow extends PluginManifest { enabled: boolean }
+
+export function pluginSettingsRows(
+  manifests: readonly PluginManifest[],
+  settings: Readonly<Record<string, boolean>>,
+): PluginSettingsRow[] {
+  return [...manifests]
+    .sort((a, b) => a.id.localeCompare(b.id))
+    .map(manifest => ({ ...manifest, enabled: settings[manifest.id] === true }))
+}
+</script>
+
 <script setup lang="ts">
 import { computed, reactive, watch } from 'vue'
 import { PlugIcon } from '@lucide/vue'
@@ -11,9 +26,10 @@ import { Button } from '@/client/ui/button'
 import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle } from '@/client/ui/item'
 import { Switch } from '@/client/ui/switch'
 import { DISCONNECTED_MESSAGE, useSyncStore } from '@/client/stores/sync'
+import { pluginManifests } from '@/client/plugins/loaders'
 
 const sync = useSyncStore()
-const plugins = computed(() => Object.entries(sync.settings.plugins))
+const plugins = computed(() => pluginSettingsRows(pluginManifests, sync.settings.plugins))
 const pending = reactive(new Map<string, boolean>())
 
 watch(() => sync.settings, settings => {
@@ -32,7 +48,7 @@ watch(() => sync.status, status => {
 })
 
 function toggle(key: string, value: boolean) {
-  if (pending.has(key) || !Object.hasOwn(sync.settings.plugins, key)) return
+  if (pending.has(key)) return
   sync.lastError = null
   if (sync.status !== 'open' || !sync.send({ type: 'settings.update', settings: { plugins: { [key]: value } } })) {
     sync.lastError = DISCONNECTED_MESSAGE
@@ -57,13 +73,14 @@ function toggle(key: string, value: boolean) {
           Button(as-child variant="outline" class="min-h-10")
             RouterLink(to="/chats") 返回聊天
         ItemGroup(class="gap-2")
-          Item(v-for="[key, on] in plugins" :key="key" variant="outline")
+          Item(v-for="plugin in plugins" :key="plugin.id" variant="outline")
             ItemMedia(variant="icon")
               PlugIcon
             ItemContent(class="min-w-0")
-              ItemTitle(class="break-all") {{ key }}
-              ItemDescription
-                Badge(:variant="on ? 'secondary' : 'outline'") {{ pending.has(key) ? '更新中…' : on ? '已启用' : '已停用' }}
+              ItemTitle.flex.items-center.gap-2(class="break-all")
+                span {{ plugin.name }}
+                Badge(:variant="plugin.enabled ? 'secondary' : 'outline'") {{ pending.has(plugin.id) ? '更新中…' : plugin.enabled ? '已启用' : '已停用' }}
+              ItemDescription {{ plugin.description }}
             ItemActions
-              Switch(:model-value="on" :aria-label="`启用 ${key}`" :disabled="pending.has(key) || sync.status !== 'open'" :title="sync.status === 'open' ? undefined : DISCONNECTED_MESSAGE" class="after:-inset-y-3" @update:model-value="toggle(key, $event)")
+              Switch(:model-value="plugin.enabled" :aria-label="`启用 ${plugin.name}`" :disabled="pending.has(plugin.id) || sync.status !== 'open'" :title="sync.status === 'open' ? undefined : DISCONNECTED_MESSAGE" class="after:-inset-y-3" @update:model-value="toggle(plugin.id, $event)")
 </template>
