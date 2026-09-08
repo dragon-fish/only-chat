@@ -9,9 +9,31 @@ import { ProviderWithInterfacesSchema } from '@/shared/models'
 import { catalogApp } from './provider-catalog-fixture'
 import { decryptSecret } from '@/server/plugins/llm/crypto'
 import { createApp } from '@/server/app'
+import { reconcileProviderModels } from '@/server/plugins/api/provider-model-sync'
 
 const json = (method: string, path: string, body?: unknown) =>
   exports.default.fetch(new Request(`https://x${path}`, { method, headers: { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) }))
+
+describe('provider model reconciliation service', () => {
+  it('reconciles imported and removed models while enabling only opted-in imports', async () => {
+    const { ctx, createProvider } = await catalogApp()
+    const provider = await createProvider()
+
+    expect(await reconcileProviderModels(ctx, provider.id, ['model-a', 'model-b'])).toEqual({
+      imported: 2,
+      removed: 0,
+      unavailable: 0,
+      models: ['model-a', 'model-b'],
+    })
+    expect(await reconcileProviderModels(ctx, provider.id, ['model-b'])).toMatchObject({
+      imported: 0,
+      removed: 1,
+    })
+    expect(await reconcileProviderModels(ctx, provider.id, ['model-b', 'model-c'], { enableNew: true })).toMatchObject({ imported: 1 })
+    const rows = await ctx.db.orm.query.models.findMany({ where: (model, { eq }) => eq(model.provider_id, provider.id) })
+    expect(rows.map(row => [row.model_id, row.enabled])).toEqual([['model-b', false], ['model-c', true]])
+  })
+})
 
 describe('provider file cleanup before configuration changes', () => {
   afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })

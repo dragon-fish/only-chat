@@ -1,16 +1,16 @@
 import type { Context } from 'cordis'
 import { Hono } from 'hono'
 import { and, eq } from 'drizzle-orm'
-import type { BatchItem } from 'drizzle-orm/batch'
 import { DEFAULT_USER_ID } from '@/shared/constants'
 import { ProviderWriteInputSchema } from '@/shared/api'
-import { models, providerInterfaces, providers } from '../../db/schema'
+import { providerInterfaces, providers } from '../../db/schema'
 import { decryptSecret } from '../llm/crypto'
 import { listRemoteModels } from '../llm/list-models'
 import { cleanupProviderFilesBeforeChange, invalidatedProviderFiles } from '../files-cleanup'
 import { parseId } from './params'
 import { ProviderWriteError, toProviderDto, writeProvider } from './provider-write'
-import { catalogForModels, changedModelFields, ModelSourceConflict, modelSourceColumns, modelSourceFence, modelSourceMatches, providerSourceFence, resolveModelFields, retryModelSource } from './model-write'
+import { ModelSourceConflict } from './model-write'
+import { ProviderModelSyncNotFound, reconcileProviderModels } from './provider-model-sync'
 
 export function providerRoutes(ctx: Context) {
   const r = new Hono<{ Bindings: Env }>()
@@ -65,45 +65,9 @@ export function providerRoutes(ctx: Context) {
     const key = provider.api_key ? await decryptSecret(ctx.env.KEY_ENCRYPTION_SECRET, provider.api_key) : null
     const ids = [...new Set(await listRemoteModels(endpoint, key))]
     try {
-      return await retryModelSource(async () => {
-        const currentProvider = await db.query.providers.findFirst({ where: owned(id) })
-        if (!currentProvider) return c.json({ error: 'not found' }, 404)
-        const existing = await db.select(modelSourceColumns).from(models).where(eq(models.provider_id, id))
-        const catalog = await catalogForModels(ctx, currentProvider.models_dev_provider_id, [...ids, ...existing.map(model => model.model_id)])
-        const operations: BatchItem<'sqlite'>[] = [providerSourceFence(db, currentProvider, catalog.version, existing)]
-        const existingIds = new Set(existing.map(model => model.model_id))
-        const returnedIds = new Set(ids)
-        const missing = ids.filter(modelId => !existingIds.has(modelId))
-        const insertResultIndexes: number[] = []
-        for (const model_id of missing) {
-          insertResultIndexes.push(operations.length)
-          operations.push(db.insert(models).values({
-            provider_id: id, model_id, enabled: false, manual_pinned: false, upstream_available: true,
-            ...resolveModelFields(catalog, currentProvider.models_dev_provider_id, model_id, {}),
-          }).onConflictDoNothing().returning({ id: models.id }))
-        }
-        let removed = 0
-        let unavailable = 0
-        for (const model of existing) {
-          const upstreamAvailable = returnedIds.has(model.model_id)
-          operations.push(modelSourceFence(db, model, currentProvider, catalog.version))
-          if (!upstreamAvailable && !model.manual_pinned && !model.enabled) {
-            removed++
-            operations.push(db.delete(models).where(modelSourceMatches(model, currentProvider, catalog.version)))
-            continue
-          }
-          if (!upstreamAvailable) unavailable++
-          const changed = changedModelFields(model, {
-            upstream_available: upstreamAvailable,
-            ...resolveModelFields(catalog, currentProvider.models_dev_provider_id, model.model_id, model.metadata_override),
-          })
-          if (Object.keys(changed).length) operations.push(db.update(models).set(changed).where(modelSourceMatches(model, currentProvider, catalog.version)))
-        }
-        const results = await db.batch(operations as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]])
-        const imported = insertResultIndexes.reduce((count, index) => count + (results[index] as unknown[]).length, 0)
-        return c.json({ imported, removed, unavailable, models: ids })
-      })
+      return c.json(await reconcileProviderModels(ctx, id, ids))
     } catch (error) {
+      if (error instanceof ProviderModelSyncNotFound) return c.json({ error: error.message }, 404)
       if (error instanceof ModelSourceConflict) return c.json({ error: error.message }, 409)
       throw error
     }
