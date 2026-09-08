@@ -483,6 +483,33 @@ export interface SendStep {
   effect: SendEffect
 }
 
+export function optimisticUserMessage(input: {
+  id: number
+  sessionId: number
+  parentId: number | null
+  parts: Part[]
+  createdAt: number
+}): Message {
+  return {
+    id: input.id,
+    session_id: input.sessionId,
+    parent_id: input.parentId,
+    seq: Number.MAX_SAFE_INTEGER,
+    role: 'user',
+    parts: input.parts.map(part => ({ ...part })),
+    provider_id: null,
+    model_id: null,
+    usage: null,
+    status: 'done',
+    error: null,
+    created_at: input.createdAt,
+  }
+}
+
+export function withOptimisticUserMessage(path: Message[], optimistic: Message | null): Message[] {
+  return optimistic ? [...path, optimistic] : path
+}
+
 /**
  * The whole rule as a pure reducer; the view only performs the effect. Only a rejection puts the
  * message back (spec §9). Landing, giving up and leaving all end the wait and drop the copy, which

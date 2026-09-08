@@ -12,6 +12,7 @@ import {
   modelOverrideAfterPick,
   moveSessionCommand,
   nextSendState,
+  optimisticUserMessage,
   paramsFromFields,
   projectFormFrom,
   projectParamsFromForm,
@@ -31,6 +32,7 @@ import {
   type SendEvent,
   type SessionConfigSource,
   useSyncStore,
+  withOptimisticUserMessage,
 } from '@/client/stores/sync'
 import type { ModelRef } from '@/shared/api'
 import type { Message, Project, Session } from '@/shared/models'
@@ -564,6 +566,26 @@ describe('outstanding send lifecycle', () => {
     const afterSwitch = step(afterSend.state, 'abandoned')
     expect(afterSwitch).toEqual({ state: 'idle', effect: 'confirm' })
     expect(step(afterSwitch.state, 'error').effect).toBe('none')
+  })
+})
+
+describe('optimistic user messages', () => {
+  it('appends a local user row immediately without mutating the confirmed path', () => {
+    const confirmed = [msg(1, null, 'user')]
+    const optimistic = optimisticUserMessage({
+      id: -7,
+      sessionId: 3,
+      parentId: 1,
+      parts: [{ type: 'text', text: 'instant' }],
+      createdAt: 123,
+    })
+    expect(optimistic).toMatchObject({
+      id: -7, session_id: 3, parent_id: 1, role: 'user', status: 'done', created_at: 123,
+      parts: [{ type: 'text', text: 'instant' }],
+    })
+    expect(withOptimisticUserMessage(confirmed, optimistic).map(message => message.id)).toEqual([1, -7])
+    expect(confirmed.map(message => message.id)).toEqual([1])
+    expect(withOptimisticUserMessage(confirmed, null)).toBe(confirmed)
   })
 })
 

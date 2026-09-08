@@ -30,6 +30,7 @@ const props = defineProps<{
   assistantProviderName?: string
   assistantLabId?: string | null
   assistantModelFamily?: string
+  optimistic?: boolean
 }>()
 const sync = useSyncStore()
 const streaming = computed(() => props.message.status === 'streaming')
@@ -72,7 +73,9 @@ function regenerate() {
 </script>
 
 <template lang="pug">
-MessageRoot(:align="message.role === 'user' ? 'end' : 'start'")
+MessageRoot(
+  :align="message.role === 'user' ? 'end' : 'start'"
+  :data-optimistic="optimistic || undefined" :class="cn(optimistic && 'opacity-70')")
   MessageAvatar(v-if="message.role === 'assistant'" class="self-start group-has-data-[slot=message-footer]/message:translate-y-0")
     ProjectAvatar(v-if="project" :project="project")
     LabAvatar(v-else :model-id="message.model_id" :lab-id="assistantLabId ?? null" :family="assistantModelFamily" :provider-name="assistantProviderName ?? assistantName ?? '助手'")
@@ -116,7 +119,7 @@ MessageRoot(:align="message.role === 'user' ? 'end' : 'start'")
             AlertDescription {{ message.error ?? '未知错误' }}
           p.text-xs.text-muted-foreground(v-else-if="message.status === 'aborted'") 已停止
 
-    MessageFooter(class="gap-1")
+    MessageFooter(v-if="!optimistic" class="gap-1")
       BranchSwitcher(:message="message")
       Button(
         v-if="message.role === 'assistant' && !streaming" variant="ghost" size="icon-xs"

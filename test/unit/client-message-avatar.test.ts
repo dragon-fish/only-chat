@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
+import { createMemoryHistory, createRouter } from 'vue-router'
 import { afterEach, expect, it } from 'vitest'
 import MessageItem from '@/client/components/message-item.vue'
 import type { Message, Project } from '@/shared/models'
@@ -23,7 +24,10 @@ function mount(project?: Project, assistantModelFamily?: string, modelId = messa
     assistantProviderName: 'DeepSeek',
     assistantLabId: 'deepseek',
     assistantModelFamily,
-  }).use(createPinia())
+  }).use(createPinia()).use(createRouter({
+    history: createMemoryHistory(),
+    routes: [{ path: '/', component: { template: '<div />' } }],
+  }))
   app.mount(host)
   cleanup = () => app.unmount()
   return host
@@ -44,4 +48,25 @@ it('keeps the workspace avatar for Project assistant messages', () => {
   const host = mount(project)
   expect(host.querySelector('[aria-label="Design Workspace"]')).not.toBeNull()
   expect(host.querySelector('[aria-label="deepseek"]')).toBeNull()
+})
+
+it('marks an optimistic user bubble as pending and hides actions that require a real ID', () => {
+  const host = document.createElement('div')
+  document.body.append(host)
+  const app = createApp(MessageItem, {
+    message: {
+      ...message,
+      id: -1,
+      role: 'user',
+      provider_id: null,
+      model_id: null,
+      parts: [{ type: 'text', text: 'Sending now' }],
+    },
+    optimistic: true,
+  }).use(createPinia())
+  app.mount(host)
+  cleanup = () => app.unmount()
+  expect(host.querySelector('[data-optimistic]')).not.toBeNull()
+  expect(host.querySelector('[aria-label="编辑消息"]')).toBeNull()
+  expect(host.querySelector('[data-slot="message-footer"]')).toBeNull()
 })

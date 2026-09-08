@@ -19,7 +19,8 @@ import { pluginManifests } from '@/client/plugins/loaders'
 import { projectPresentation, sessionPath } from '@/client/lib/ui-models'
 import {
   choiceFromParams, DISCONNECTED_MESSAGE, effectiveModelFor, modelOverrideAfterPick, nextSendState,
-  paramsFromFields, sendCommandFor, sessionFormFrom, sessionSettingSources, useSyncStore,
+  optimisticUserMessage, paramsFromFields, sendCommandFor, sessionFormFrom, sessionSettingSources, useSyncStore,
+  withOptimisticUserMessage,
   type OutstandingSend, type ReasoningChoice, type SendEvent, type SessionConfigSource,
   type SessionSettingsForm,
 } from '@/client/stores/sync'
@@ -27,6 +28,7 @@ import { useConfigStore } from '@/client/stores/config'
 import { Button } from '@/client/ui/button'
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from '@/client/ui/empty'
 import type { ModelRef } from '@/shared/api'
+import type { Message } from '@/shared/models'
 import type { Part } from '@/shared/parts'
 
 const props = withDefaults(defineProps<{ sessionId: number | null; projectId?: number | null }>(), { projectId: null })
@@ -41,6 +43,11 @@ const path = computed(() => (sid.value === null ? [] : sync.pathFor(sid.value)))
 const streaming = computed(() => sid.value !== null && sync.isStreaming(sid.value))
 const composer = ref<InstanceType<typeof Composer> | null>(null)
 const draftTools = ref<string[] | null>(null)
+const outstanding = ref<OutstandingSend>('idle')
+const optimisticMessage = ref<Message | null>(null)
+const optimisticBaseIds = ref(new Set<number>())
+let nextOptimisticId = -1
+const visiblePath = computed(() => withOptimisticUserMessage(path.value, optimisticMessage.value))
 
 // ---- draft and session settings
 
@@ -138,8 +145,17 @@ const toolBlockReason = computed(() => sessionToolBlockReason({
   pending: pendingToolCall.value !== null,
   toolsSupported: toolsSupported.value,
 }))
-const canSend = computed(() => effective.value.model !== null && modelAvailable.value && toolBlockReason.value === null)
+const messageHistoryReady = computed(() => sid.value === null || sync.loadedMessageSessions.has(sid.value))
+const canSend = computed(() => (
+  effective.value.model !== null
+  && modelAvailable.value
+  && toolBlockReason.value === null
+  && messageHistoryReady.value
+  && outstanding.value === 'idle'
+))
 const sendHint = computed(() => {
+  if (!messageHistoryReady.value) return '正在加载对话…'
+  if (outstanding.value === 'outstanding') return '消息发送中…'
   if (toolBlockReason.value) return toolBlockReason.value
   if (effective.value.model === null) return '未选择模型'
   if (modelAvailable.value) return null
@@ -208,7 +224,6 @@ async function retryChat() {
  * cleared before every command and any error that follows is treated as this one's: the worst case
  * is restoring a message that did arrive, which is still better than swallowing one (spec §9).
  */
-const outstanding = ref<OutstandingSend>('idle')
 let outstandingTimer: ReturnType<typeof setTimeout> | undefined
 
 function dispatch(event: SendEvent) {
@@ -216,6 +231,10 @@ function dispatch(event: SendEvent) {
   outstanding.value = step.state
   clearTimeout(outstandingTimer)
   outstandingTimer = step.state === 'outstanding' ? setTimeout(() => dispatch('timeout'), 10_000) : undefined
+  if (step.effect !== 'none') {
+    optimisticMessage.value = null
+    optimisticBaseIds.value = new Set()
+  }
   if (step.effect === 'confirm') composer.value?.confirmSend()
   else if (step.effect === 'restore') composer.value?.restoreSend()
 }
@@ -224,18 +243,29 @@ function dispatch(event: SendEvent) {
 // switch and has to drop everything belonging to the previous chat: an outstanding send resolved
 // against the next chat would restore the previous chat's message into its Composer. Not
 // `immediate` — nothing is outstanding before the first send, and `outstanding` is declared here.
-watch(sid, () => dispatch('abandoned'))
+watch(sid, (id, previous) => {
+  if (previous === null && id !== null && optimisticMessage.value?.session_id === -1) {
+    optimisticMessage.value = { ...optimisticMessage.value, session_id: id }
+    return
+  }
+  dispatch('abandoned')
+})
 
 // A `send` on a fresh page creates the session server-side; jump to it when it appears. `/new` and
 // `/c/:id` share one aliased route record, so only this prop changes and the focused Composer stays.
 watch(() => sync.sessionList[0]?.id, (newest) => {
   if (outstanding.value === 'outstanding' && newest !== undefined && sid.value === null) {
-    dispatch('abandoned')
     const created = sync.sessions.get(newest)
     if (created) void router.push(sessionPath(created))
   }
 })
-watch(() => path.value.length, () => dispatch('landed'))
+watch(() => path.value.map(message => message.id), () => {
+  if (!optimisticMessage.value) return
+  const landed = path.value.some(message => (
+    message.id > 0 && message.role === 'user' && !optimisticBaseIds.value.has(message.id)
+  ))
+  if (landed) dispatch('landed')
+})
 watch(() => sync.lastError, (e) => { if (e !== null) dispatch('error') })
 onBeforeUnmount(() => clearTimeout(outstandingTimer))
 
@@ -268,6 +298,14 @@ function send(command: Parameters<typeof sync.send>[0]): boolean {
 function onSend(parts: Part[]) {
   const model = effective.value.model
   if (!model) return
+  optimisticBaseIds.value = new Set(path.value.map(message => message.id))
+  optimisticMessage.value = optimisticUserMessage({
+    id: nextOptimisticId--,
+    sessionId: sid.value ?? -1,
+    parentId: session.value?.head_message_id ?? null,
+    parts,
+    createdAt: Date.now(),
+  })
   dispatch('send')
   send(sendCommandFor({
     sessionId: sid.value,
@@ -366,8 +404,10 @@ function onToolsChange(tools: string[]) {
           :form="form" :sources="sources" :project="project" :has-session="sid !== null"
           @commit="commitSettings")
   .min-h-0.flex-1
-    CollectionState(:loaded="path.length > 0 || sid === null || (sync.sessionsLoaded && sync.loadedMessageSessions.has(sid))" :error="messageLoadError || (sid !== null ? sync.sessionsError : null)" :retry="retryChat")
-      MessageList(v-if="path.length" :key="sid ?? 'draft'" :messages="path" :project="project")
+    CollectionState(:loaded="visiblePath.length > 0 || sid === null || (sync.sessionsLoaded && sync.loadedMessageSessions.has(sid))" :error="messageLoadError || (sid !== null ? sync.sessionsError : null)" :retry="retryChat")
+      MessageList(
+        v-if="visiblePath.length" :key="sid ?? 'draft'" :messages="visiblePath" :project="project"
+        :optimistic-id="optimisticMessage?.id")
       Empty(v-else class="h-full")
         EmptyHeader
           EmptyTitle 开始一段新对话

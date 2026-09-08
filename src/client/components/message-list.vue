@@ -16,18 +16,21 @@ import { projectPresentation } from '@/client/lib/ui-models'
 const props = defineProps<{
   messages: Message[]
   project?: Project
+  optimisticId?: number | null
 }>()
 const config = useConfigStore()
 const streaming = computed(() => props.messages.some(message => message.status === 'streaming'))
 
 const rows = computed(() => props.messages.map((message) => {
-  if (message.role !== 'assistant') return { message }
+  const optimistic = props.optimisticId === message.id
+  if (message.role !== 'assistant') return { message, optimistic }
   const actual = message.provider_id !== null && message.model_id !== null
     ? config.modelFor({ provider_id: message.provider_id, model_id: message.model_id })
     : undefined
   const actualModelName = actual?.model.metadata.name ?? message.model_id ?? '助手'
   return {
     message,
+    optimistic,
     assistantName: props.project ? projectPresentation(props.project.name).title : actualModelName,
     assistantModelName: props.project && message.model_id !== null ? actualModelName : undefined,
     assistantProviderName: actual?.provider.name ?? actualModelName,
@@ -47,6 +50,7 @@ MessageScrollerProvider(:auto-scroll="true" default-scroll-position="last-anchor
           :scroll-anchor="row.message.role === 'user'")
           MessageItem(
             :message="row.message" :project="project" :assistant-name="row.assistantName"
+            :optimistic="row.optimistic"
             :assistant-model-name="row.assistantModelName" :assistant-provider-name="row.assistantProviderName"
             :assistant-lab-id="row.assistantLabId" :assistant-model-family="row.assistantModelFamily")
     MessageScrollerButton(direction="end" class="size-10 md:size-7")
