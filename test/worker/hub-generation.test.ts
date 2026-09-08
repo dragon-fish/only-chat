@@ -576,7 +576,99 @@ describe('generation', () => {
 
     expect((await getSession(db, session.id))!.head_message_id).toBe(newer.id)
     expect(c.events.some(event => event.type === 'head.changed')).toBe(false)
+    expect(c.events.some(event => event.type === 'error')).toBe(false)
     expect(c.events.some(event => event.type === 'session.updated')).toBe(false)
+  })
+
+  it('stores a delayed answer on an old branch without creating a continuation or rewinding the head', async () => {
+    const db = createDb(env.DB)
+    await ensureDefaultUser(db)
+    const session = await createSession(db, {
+      user_id: DEFAULT_USER_ID, title: 'delayed answer', provider_id: null, model_id: null,
+    })
+    const toolMessage = await insertMessage(db, {
+      session_id: session.id, parent_id: null, seq: 1, role: 'assistant', status: 'done', error: null,
+      provider_id: null, model_id: null, usage: null, created_at: 0,
+      parts: [{ type: 'tool_call', id: 'delayed-call', name: 'ask_user', args: ASK_USER_INPUT }],
+    })
+    const newer = await insertMessage(db, {
+      session_id: session.id, parent_id: toolMessage.id, seq: 2, role: 'user', status: 'done', error: null,
+      provider_id: null, model_id: null, usage: null, created_at: 1, parts: [{ type: 'text', text: 'moved on' }],
+    })
+    await updateSession(db, session.id, { head_message_id: newer.id })
+    const c = await connect()
+    c.events.length = 0
+
+    await runInDurableObject(env.USER_HUB.getByName(String(DEFAULT_USER_ID)), async (instance: UserHub) => {
+      await instance.app.hub.handleCommand(JSON.stringify({
+        type: 'tool.respond', request_id: 'delayed', message_id: toolMessage.id, call_id: 'delayed-call',
+        result: { status: 'answered', answers: [{ id: 'framework', value: 'Vue' }] },
+      }))
+    })
+
+    expect((await getMessage(db, toolMessage.id))!.parts.at(-1)).toMatchObject({
+      type: 'tool_result', call_id: 'delayed-call', content: { status: 'answered' },
+    })
+    expect(await listMessages(db, session.id)).toHaveLength(2)
+    expect((await getSession(db, session.id))!.head_message_id).toBe(newer.id)
+    expect(c.events.some(event => event.type === 'head.changed')).toBe(false)
+    expect(c.events.some(event => event.type === 'error')).toBe(false)
+  })
+
+  it('rejects an ordinary send from a parent with an unmatched tool call', async () => {
+    const providerId = await seedProvider('stale-send-provider', 'stale-send-model', false, { tool_call: true })
+    const db = createDb(env.DB)
+    const session = await createSession(db, {
+      user_id: DEFAULT_USER_ID, title: 'waiting', provider_id: providerId, model_id: 'stale-send-model',
+    })
+    const waiting = await insertMessage(db, {
+      session_id: session.id, parent_id: null, seq: 1, role: 'assistant', status: 'done', error: null,
+      provider_id: providerId, model_id: 'stale-send-model', usage: null, created_at: 0,
+      parts: [{ type: 'tool_call', id: 'still-waiting', name: 'ask_user', args: ASK_USER_INPUT }],
+    })
+    await updateSession(db, session.id, { head_message_id: waiting.id })
+    const created = await installMock(() => new MockLanguageModelV4({
+      doStream: async () => ({ stream: simulateReadableStream({ chunks: STREAM, chunkDelayInMs: null, initialDelayInMs: null }) }),
+    }))
+    const c = await connect()
+    c.ws.send(JSON.stringify({
+      type: 'send', request_id: 'stale-send', session_id: session.id, parent_id: waiting.id,
+      parts: [{ type: 'text', text: 'bypass pending tool' }], provider_id: providerId, model_id: 'stale-send-model',
+    }))
+
+    expect(await c.next('error')).toMatchObject({ request_id: 'stale-send', message: expect.stringMatching(/tool/i) })
+    expect(await listMessages(db, session.id)).toHaveLength(1)
+    expect(created).toHaveLength(0)
+  })
+
+  it('allows an ordinary send after every parent tool call has a terminal result', async () => {
+    const providerId = await seedProvider('resolved-send-provider', 'resolved-send-model', false, { tool_call: true })
+    const db = createDb(env.DB)
+    const session = await createSession(db, {
+      user_id: DEFAULT_USER_ID, title: 'resolved', provider_id: providerId, model_id: 'resolved-send-model',
+    })
+    const resolved = await insertMessage(db, {
+      session_id: session.id, parent_id: null, seq: 1, role: 'assistant', status: 'done', error: null,
+      provider_id: providerId, model_id: 'resolved-send-model', usage: null, created_at: 0,
+      parts: [
+        { type: 'tool_call', id: 'cancelled-call', name: 'ask_user', args: ASK_USER_INPUT },
+        {
+          type: 'tool_result', call_id: 'cancelled-call', name: 'ask_user',
+          content: { status: 'cancelled', message: '用户选择了取消回答' },
+        },
+      ],
+    })
+    await updateSession(db, session.id, { head_message_id: resolved.id })
+    const created = await installMock(() => new MockLanguageModelV4({
+      doStream: async () => ({ stream: simulateReadableStream({ chunks: STREAM, chunkDelayInMs: null, initialDelayInMs: null }) }),
+    }))
+    const c = await connect()
+    c.ws.send(JSON.stringify({
+      type: 'send', session_id: session.id, parent_id: resolved.id,
+      parts: [{ type: 'text', text: 'continue after cancel' }], provider_id: providerId, model_id: 'resolved-send-model',
+    }))
+    expect(await c.next('message.done')).toMatchObject({ status: 'done' })
+    expect(created).toHaveLength(1)
   })
 
   it('streams a reply to every socket and persists it', async () => {

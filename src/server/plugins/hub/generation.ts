@@ -323,6 +323,14 @@ export async function runSend(hub: Hub, cmd: SendCommand): Promise<void> {
     },
   })
   const parentId = cmd.session_id === null ? null : (cmd.parent_id ?? target.session.head_message_id)
+  if (parentId !== null) {
+    const parent = await getMessage(hub.db, parentId)
+    if (!parent || parent.session_id !== target.session.id) throw new Error('parent message not in session')
+    const results = new Set(parent.parts.filter(part => part.type === 'tool_result').map(part => part.call_id))
+    if (parent.parts.some(part => part.type === 'tool_call' && !results.has(part.id))) {
+      throw new Error('parent message has unresolved tool calls')
+    }
+  }
   const user = await persistUserMessage(hub, target.session, parentId, cmd.parts)
   const shell = await openAssistantShell(hub, target, user.id)
   await generate(hub, target, shell, user.id)
@@ -417,16 +425,29 @@ async function continueFromToolMessage(hub: Hub, messageId: number, requireHead:
     await reconcileChildHead(child, requireHead)
     return
   }
-  if (requireHead && session.head_message_id !== message.id) throw new Error('tool-call message is no longer the session head')
+
+  const headStillParent = async (): Promise<boolean> => {
+    const current = await getSession(hub.db, session.id)
+    if (!current) throw new Error('session not found')
+    if (current.head_message_id === message.id) return true
+    if (requireHead) throw new Error('tool-call message is no longer the session head')
+    return false
+  }
+  if (!(await headStillParent())) return
 
   const fallbackModel = message.provider_id !== null && message.model_id !== null
     ? { provider_id: message.provider_id, model_id: message.model_id }
     : await lastGenerationModel(hub.db, message.session_id)
   const target = await resolveTarget(hub, { sessionId: message.session_id, fallbackModel, firstParts: [] })
+  if (!(await headStillParent())) return
   const shell = await openContinuationShell(hub, target, message.id)
   if (!shell) {
     const raced = await listAssistantChildren(hub.db, message.id)
-    if (raced.length !== 1) throw new Error('continuation child could not be resolved')
+    if (raced.length === 0) {
+      if (!(await headStillParent())) return
+      throw new Error('continuation child could not be resolved')
+    }
+    if (raced.length !== 1) throw new Error('tool-call message has multiple continuation children')
     await reconcileChildHead(toMessage(raced[0]!), requireHead)
     return
   }

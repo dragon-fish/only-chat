@@ -160,10 +160,14 @@ export async function insertAssistantChildIfAbsent(
      WHERE NOT EXISTS (
        SELECT 1 FROM messages WHERE parent_id = ? AND role = 'assistant'
      )
+       AND EXISTS (
+         SELECT 1 FROM sessions WHERE id = ? AND head_message_id = ?
+       )
     RETURNING id
   `).bind(
     row.session_id, row.parent_id, row.seq, JSON.stringify(row.parts), row.provider_id, row.model_id,
     row.usage === null ? null : JSON.stringify(row.usage), row.status, row.error, row.created_at, row.parent_id,
+    row.session_id, row.parent_id,
   ).first<{ id: number }>()
   return inserted ? getMessage(db, inserted.id) : undefined
 }
