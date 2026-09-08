@@ -23,21 +23,17 @@ const QuestionBase = {
   required: z.boolean().default(false).describe('Whether this question must be answered. Defaults to false.'),
 }
 
-export const AskUserQuestionSchema = z.discriminatedUnion('type', [
-  z.strictObject({
-    ...QuestionBase,
-    type: z.literal('single'),
-    options: ChoiceOptionsSchema,
-    allowOther: z.boolean().default(true).describe('Whether the user may enter one custom option. Defaults to true.'),
-  }),
-  z.strictObject({
-    ...QuestionBase,
-    type: z.literal('multiple'),
-    options: ChoiceOptionsSchema,
-    allowOther: z.boolean().default(true).describe('Whether the user may enter one custom option. Defaults to true.'),
-  }),
-  z.strictObject({ ...QuestionBase, type: z.literal('text'), placeholder: z.string().max(500).optional() }),
-])
+export const AskUserQuestionSchema = z.strictObject({
+  ...QuestionBase,
+  type: z.enum(['single', 'multiple', 'text']),
+  options: ChoiceOptionsSchema.optional().describe('Required for single and multiple choice questions.'),
+  allowOther: z.boolean().default(true).describe('Whether the user may enter one custom option. Defaults to true.'),
+  placeholder: z.string().max(500).optional(),
+}).superRefine((question, ctx) => {
+  if (question.type !== 'text' && question.options === undefined) {
+    ctx.addIssue({ code: 'custom', path: ['options'], message: 'choice questions require options' })
+  }
+})
 export type AskUserQuestion = z.infer<typeof AskUserQuestionSchema>
 
 export const AskUserInputSchema = z.strictObject({

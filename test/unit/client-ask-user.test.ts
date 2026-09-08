@@ -15,7 +15,7 @@ const input: AskUserInput = {
   questions: [
     { id: 'framework', header: 'Framework', question: 'Choose one', type: 'single', options: [{ label: 'Vue' }, { label: 'React' }], allowOther: true, required: false },
     { id: 'features', header: 'Features', question: 'Choose many', type: 'multiple', options: [{ label: 'Tools' }, { label: 'Cache' }], allowOther: true, required: false },
-    { id: 'notes', header: 'Notes', question: 'Say more', type: 'text', placeholder: 'Optional detail', required: false },
+    { id: 'notes', header: 'Notes', question: 'Say more', type: 'text', placeholder: 'Optional detail', allowOther: true, required: false },
   ],
 }
 
@@ -292,6 +292,26 @@ describe('ask_user answer serialization', () => {
     await nextTick()
     expect(root.textContent).not.toContain('请在下方回答')
     historical.unmount()
+    root.remove()
+  })
+
+  it('shows one generating placeholder while ask_user input is still streaming', async () => {
+    const root = document.createElement('div')
+    document.body.append(root)
+    const app = createApp({ render: () => h(ToolPartRenderer, {
+      messageId: 20,
+      call: { type: 'tool_call', id: 'call-streaming', name: 'ask_user', args: '{"questions":' },
+      result: null,
+      canContinue: false,
+      inputPending: true,
+    }) })
+    app.use(createPinia())
+    app.provide('clientPluginHost', null)
+    app.mount(root)
+    await nextTick()
+    expect(root.textContent).toContain('正在生成问答')
+    expect(root.textContent).not.toContain('工具调用已完成')
+    app.unmount()
     root.remove()
   })
 

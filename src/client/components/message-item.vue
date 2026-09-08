@@ -117,7 +117,7 @@ MessageRoot(
           ToolPartRenderer(
             v-for="row in toolRows" :key="row.call.id" :message-id="message.id"
             :call="row.call" :result="row.result" :can-continue="canContinueTools"
-            :defer-pending="isSessionHead")
+            :defer-pending="isSessionHead" :input-pending="streaming && typeof row.call.args === 'string'")
           //- Generated images are served by the same authenticated attachment route as uploads.
           .flex.flex-wrap.gap-2.pt-2(v-if="images.length")
             img.max-h-80.rounded.border(v-for="(img, i) in images" :key="i" :src="api.attachmentUrl(img.attachment_id)")

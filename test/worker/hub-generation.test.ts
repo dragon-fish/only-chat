@@ -226,13 +226,13 @@ describe('generation', () => {
     expect(created[0]!.doStreamCalls[0]!.tools?.map(tool => tool.name)).toEqual(['ask_user'])
   })
 
-  it('persists invalid ask_user arguments as a visible generation error', async () => {
+  it('repairs invalid ask_user arguments before persisting the completed call', async () => {
     const providerId = await seedProvider('invalid-tool-provider', 'invalid-tool-model', false, { tool_call: true })
     const db = createDb(env.DB)
     await db.update(users).set({ settings: { plugins: { ask_user: true } } }).where(eq(users.id, DEFAULT_USER_ID))
     const invalidStream: StreamPart[] = [
       { type: 'stream-start', warnings: [] },
-      { type: 'tool-call', toolCallId: 'bad-call', toolName: 'ask_user', input: { questions: [] } },
+      { type: 'tool-call', toolCallId: 'bad-call', toolName: 'ask_user', input: JSON.stringify({ questions: [] }) },
       {
         type: 'finish', finishReason: { unified: 'tool-calls', raw: 'tool_calls' },
         usage: {
@@ -241,16 +241,30 @@ describe('generation', () => {
         },
       },
     ] as StreamPart[]
-    await installMock(() => new MockLanguageModelV4({
+    const created = await installMock(() => new MockLanguageModelV4({
       doStream: async () => ({ stream: simulateReadableStream({ chunks: invalidStream, chunkDelayInMs: null, initialDelayInMs: null }) }),
+      doGenerate: {
+        content: [{ type: 'text', text: JSON.stringify(ASK_USER_INPUT) }],
+        finishReason: { unified: 'stop', raw: 'stop' },
+        usage: {
+          inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 },
+          outputTokens: { total: 1, text: 1, reasoning: 0 }, raw: {},
+        },
+        warnings: [],
+      },
     }))
     const c = await connect()
     c.ws.send(JSON.stringify({
       type: 'send', session_id: null, parent_id: null, parts: [{ type: 'text', text: 'bad ask' }],
       provider_id: providerId, model_id: 'invalid-tool-model', tools: ['ask_user'],
     }))
-    expect(await c.next('message.done')).toMatchObject({ status: 'error', error: expect.any(String) })
-    expect((await listMessages(db, sessionIdOf(c)))[1]).toMatchObject({ status: 'error', error: expect.any(String) })
+    expect(await c.next('message.done')).toMatchObject({ status: 'done', error: null })
+    expect((await listMessages(db, sessionIdOf(c)))[1]).toMatchObject({
+      status: 'done', error: null,
+      parts: [{ type: 'tool_call', id: 'bad-call', name: 'ask_user', args: ASK_USER_INPUT }],
+    })
+    expect(created[0]!.doGenerateCalls).toHaveLength(1)
+    expect(created[0]!.doGenerateCalls[0]!.tools).toBeUndefined()
   })
 
   it('rejects enabled selected tools before generation when the model lacks tool-call support', async () => {

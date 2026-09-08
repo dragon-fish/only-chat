@@ -106,7 +106,10 @@ export class PartAccumulator {
         if (idx === undefined) throw new Error('tool input received before its start')
         if (part.type === 'tool-input-delta') (this.parts[idx] as ToolCallPart).args += part.delta
         this._setMeta(idx, part.providerMetadata)
-        return part.providerMetadata ? [this._partEvent(idx)] : []
+        // The start event already exposed one stable placeholder. Keep partial JSON and metadata
+        // server-side until the SDK emits the validated tool call; broadcasting every delta makes
+        // clients repeatedly parse and render knowingly incomplete input.
+        return []
       }
       case 'tool-call': {
         const idx = this._ensure(part.toolCallId, { type: 'tool_call', id: part.toolCallId, name: part.toolName, args: part.input })

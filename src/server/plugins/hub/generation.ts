@@ -5,6 +5,7 @@ import type { Part, ToolCallPart, ToolResultPart } from '@/shared/parts'
 import type { SendCommand, WsCommand } from '@/shared/ws'
 import { ASK_USER_TOOL_ID } from '@/shared/plugins'
 import { AskUserInputSchema, AskUserResultSchema, validateAskUserResult } from '@/plugins/ask-user/shared'
+import { createAskUserToolCallRepair } from '@/plugins/ask-user/server/repair'
 import type { ModelRow, ProviderInterfaceRow, ProviderRow, SessionRow } from '../../db/schema'
 import { PartAccumulator } from '../llm/accumulator'
 import { buildModelMessages, buildProviderOptions, requiredAttachmentIds, type AttachmentInput } from '../llm/messages'
@@ -281,6 +282,7 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
       temperature: params.temperature,
       topP: params.top_p,
       maxOutputTokens: params.max_tokens,
+      repairToolCall: createAskUserToolCallRepair(model, controller.signal),
       providerOptions: buildProviderOptions(target.providerInterface.protocol, params, target.model.metadata_resolved),
     })
 

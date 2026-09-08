@@ -18,6 +18,7 @@ const props = defineProps<{
   canContinue: boolean
   placement?: 'message' | 'composer'
   deferPending?: boolean
+  inputPending?: boolean
 }>()
 const sync = useSyncStore()
 const host = inject<ClientPluginHost | null>('clientPluginHost', null)
@@ -26,6 +27,9 @@ const loading = shallowRef(false)
 const busy = shallowRef(false)
 const optimisticResult = computed(() => sync.optimisticToolResult(props.messageId, props.call.id))
 const effectiveResult = computed(() => props.result ?? optimisticResult.value ?? null)
+const inputPendingLabel = computed(() => props.call.name === ASK_USER_TOOL_ID
+  ? '正在生成问答…'
+  : `正在生成 ${props.call.name} 参数…`)
 const compactPending = computed(() => (
   props.placement !== 'composer'
   && props.deferPending === true
@@ -72,7 +76,12 @@ function continueGeneration() {
 </script>
 
 <template lang="pug">
-Alert(v-if="compactPending")
+.flex.flex-col.gap-2(v-if="inputPending")
+  .flex.items-center.gap-2.text-sm.text-muted-foreground
+    CircleHelpIcon(class="size-4")
+    span {{ inputPendingLabel }}
+  Skeleton(class="h-20 w-full")
+Alert(v-else-if="compactPending")
   CircleHelpIcon
   AlertTitle 正在等待你的回答
   AlertDescription 请在下方回答问题后继续。

@@ -75,6 +75,47 @@ describe('PartAccumulator', () => {
     ])
   })
 
+  it('emits one tool-input placeholder and waits for the complete call before updating it', () => {
+    const acc = new PartAccumulator()
+    const started = acc.apply({
+      type: 'tool-input-start', id: 'c1', toolName: 'ask_user',
+      providerMetadata: { responses: { itemId: 'fc_1' } },
+    })
+    const firstDelta = acc.apply({
+      type: 'tool-input-delta', id: 'c1', delta: '{"questions":',
+      providerMetadata: { responses: { signature: 'SIG_1' } },
+    })
+    const secondDelta = acc.apply({
+      type: 'tool-input-delta', id: 'c1', delta: '[]}',
+      providerMetadata: { responses: { signature: 'SIG_2' } },
+    })
+    const ended = acc.apply({
+      type: 'tool-input-end', id: 'c1',
+      providerMetadata: { responses: { opaque: 'END' } },
+    })
+    const completed = acc.apply({
+      type: 'tool-call', toolCallId: 'c1', toolName: 'ask_user', input: { questions: [] },
+    } as never)
+
+    expect(started).toEqual([{
+      kind: 'part', part_index: 0,
+      part: {
+        type: 'tool_call', id: 'c1', name: 'ask_user', args: '',
+        providerOptions: { responses: { itemId: 'fc_1' } },
+      },
+    }])
+    expect(firstDelta).toEqual([])
+    expect(secondDelta).toEqual([])
+    expect(ended).toEqual([])
+    expect(completed).toEqual([{
+      kind: 'part', part_index: 0,
+      part: {
+        type: 'tool_call', id: 'c1', name: 'ask_user', args: { questions: [] },
+        providerOptions: { responses: { itemId: 'fc_1', signature: 'SIG_2', opaque: 'END' } },
+      },
+    }])
+  })
+
   it('starts fresh id bindings at the next model step', () => {
     const acc = new PartAccumulator()
     acc.apply({ type: 'text-delta', id: 'reused', text: 'first' })

@@ -44,7 +44,7 @@ const terminal = computed(() => parsedResult.value?.success ? parsedResult.value
 const definitions = computed<QuestionnaireItemDefinition[]>(() => input.value?.questions.map(question => ({
   name: question.id,
   required: question.required,
-  ...(question.type === 'text' ? {} : { choices: question.options.map(option => ({ value: option.label })) }),
+  ...(question.type === 'text' ? {} : { choices: (question.options ?? []).map(option => ({ value: option.label })) }),
 })) ?? [])
 
 async function focusFirstAnswer() {
@@ -162,7 +162,7 @@ Card(v-else class="my-2 w-full")
         QuestionnaireDescription(v-if="question.description") {{ question.description }}
         QuestionnaireChoices(v-if="question.type !== 'text'" class="mt-4")
           QuestionnaireChoice(
-            v-for="option in question.options" :key="option.label" :value="option.label"
+            v-for="option in question.options ?? []" :key="option.label" :value="option.label"
             :checked="choiceChecked(question.id, option.label)"
             @update:checked="setChoice(question.id, option.label, question.type === 'multiple', $event)")
             span {{ option.label }}
