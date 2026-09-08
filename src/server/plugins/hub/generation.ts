@@ -185,11 +185,12 @@ async function openReservedAssistantShell(hub: Hub, target: Target, parentId: nu
     if (await deleteMessageIfUnreferenced(hub.db, row.id)) {
       throw new Error('session head changed; resync before generation')
     }
-    const current = await getSession(hub.db, target.session.id)
-    if (current?.head_message_id !== row.id || !(await getMessage(hub.db, row.id))) {
+    // Reconfirm ownership atomically immediately before announcing: a separate read would leave
+    // another interleaving window where this shell could stop being the durable head.
+    session = await compareAndSwapSessionHead(hub.db, target.session.id, row.id, row.id)
+    if (!session) {
       throw new Error('session head changed; resync before generation')
     }
-    session = current
   }
   const message = toMessage(row, 'streaming')
   hub.broadcast({ type: 'message.created', message })
@@ -209,11 +210,10 @@ async function openContinuationShell(hub: Hub, target: Target, parentId: number)
   let session = await compareAndSwapSessionHead(hub.db, target.session.id, parentId, row.id)
   if (!session) {
     if (await deleteMessageIfUnreferenced(hub.db, row.id)) return undefined
-    const current = await getSession(hub.db, target.session.id)
     // A concurrent recovery may have observed this inserted shell and completed the exact same
     // parent → child transition. The creator still owns announcing and generating that shell.
-    if (current?.head_message_id !== row.id || !(await getMessage(hub.db, row.id))) return undefined
-    session = current
+    session = await compareAndSwapSessionHead(hub.db, target.session.id, row.id, row.id)
+    if (!session) return undefined
   }
   const message = toMessage(row, 'streaming')
   hub.broadcast({ type: 'message.created', message })
