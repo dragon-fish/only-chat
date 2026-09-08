@@ -3,8 +3,8 @@ import { computed, ref } from 'vue'
 import MarkdownRender from 'markstream-vue'
 import { LoaderCircle, PencilIcon, RefreshCwIcon, TriangleAlertIcon } from '@lucide/vue'
 import BranchSwitcher from '@/client/components/branch-switcher.vue'
+import LabAvatar from '@/client/components/lab-avatar.vue'
 import ProjectAvatar from '@/client/components/project-avatar.vue'
-import ProviderAvatar from '@/client/components/provider-avatar.vue'
 import { api } from '@/client/lib/api'
 import { cn } from '@/client/lib/utils'
 import { assistantWaitState, useSyncStore } from '@/client/stores/sync'
@@ -22,6 +22,7 @@ const props = defineProps<{
   assistantName?: string
   assistantModelName?: string
   assistantProviderName?: string
+  assistantLabId?: string | null
 }>()
 const sync = useSyncStore()
 const streaming = computed(() => props.message.status === 'streaming')
@@ -63,7 +64,7 @@ function regenerate() {
 MessageRoot(:align="message.role === 'user' ? 'end' : 'start'")
   MessageAvatar(v-if="message.role === 'assistant'" class="self-start group-has-data-[slot=message-footer]/message:translate-y-0")
     ProjectAvatar(v-if="project" :name="project.name")
-    ProviderAvatar(v-else :name="assistantProviderName ?? assistantName ?? '助手'")
+    LabAvatar(v-else :lab-id="assistantLabId ?? null" :provider-name="assistantProviderName ?? assistantName ?? '助手'")
 
   MessageContent
     MessageHeader(v-if="message.role === 'assistant'" class="gap-2")
