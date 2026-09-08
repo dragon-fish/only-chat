@@ -23,8 +23,7 @@ export const useConfigStore = defineStore('config', () => {
   const pickerError = ref<string | null>(null)
   const keyFor = (model: ModelRef) => `${model.provider_id}:${model.model_id}`
   let loadToken = 0
-  let appliedLoadToken = 0
-  const providerRefreshTokens = new Map<number, number>()
+  const providerReadGenerations = new Map<number, number>()
   let pickerToken = 0
   let pickerController: AbortController | undefined
   let pickerQuery = ''
@@ -37,6 +36,12 @@ export const useConfigStore = defineStore('config', () => {
 
   function readRevisions() {
     return { models: new Map(revisions), providers: new Map(providerRevisions) }
+  }
+  function providerReadGeneration(providerId: number) { return providerReadGenerations.get(providerId) ?? 0 }
+  function advanceProviderReadGeneration(providerId: number) {
+    const generation = providerReadGeneration(providerId) + 1
+    providerReadGenerations.set(providerId, generation)
+    return generation
   }
 
   function retainModels(models: readonly ModelWithMetadata[]) {
@@ -101,13 +106,26 @@ export const useConfigStore = defineStore('config', () => {
   }
   async function load(): Promise<void> {
     const token = ++loadToken
+    const started = new Map(providerReadGenerations)
     loadError.value = null
     try {
       const result = await api.providers()
       if (token !== loadToken) return
-      providerRecords.value = result
-      appliedLoadToken = token
-      const existing = new Set(result.map(provider => provider.id))
+      const current = new Map(providerRecords.value.map(provider => [provider.id, provider]))
+      const resultIds = new Set(result.map(provider => provider.id))
+      const merged = result.flatMap(provider => {
+        if (providerReadGeneration(provider.id) !== (started.get(provider.id) ?? 0)) {
+          const retained = current.get(provider.id)
+          return retained ? [retained] : []
+        }
+        advanceProviderReadGeneration(provider.id)
+        return [provider]
+      })
+      for (const [providerId, provider] of current) {
+        if (!resultIds.has(providerId) && providerReadGeneration(providerId) !== (started.get(providerId) ?? 0)) merged.push(provider)
+      }
+      providerRecords.value = merged
+      const existing = new Set(merged.map(provider => provider.id))
       for (const model of Object.values(modelsByRef.value)) if (!existing.has(model.provider_id)) forgetModel(model)
       loaded.value = true
     } catch (error) {
@@ -116,16 +134,14 @@ export const useConfigStore = defineStore('config', () => {
     }
   }
   async function refreshProvider(providerId: number): Promise<void> {
-    const token = (providerRefreshTokens.get(providerId) ?? 0) + 1
-    providerRefreshTokens.set(providerId, token)
-    const loadStarted = loadToken
-    const appliedLoadStarted = appliedLoadToken
+    const generation = advanceProviderReadGeneration(providerId)
     const result = await api.providers()
-    if (providerRefreshTokens.get(providerId) !== token || loadToken !== loadStarted || appliedLoadToken !== appliedLoadStarted) return
+    if (providerReadGeneration(providerId) !== generation) return
     const current = providerRecords.value.find(provider => provider.id === providerId)
     const refreshed = result.find(provider => provider.id === providerId)
     if (!current || !refreshed) return
     providerRecords.value = providerRecords.value.map(provider => provider.id === providerId ? refreshed : provider)
+    advanceProviderReadGeneration(providerId)
   }
   async function loadEnabledModels(append = false, query: Partial<ModelQuery> = {}) {
     const token = ++pickerToken

@@ -2,11 +2,41 @@ import { createPinia } from 'pinia'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/client/lib/api'
 import { useConfigStore } from '@/client/stores/config'
-import { modelRecords, provider } from './provider-fixtures'
+import { codexProvider, modelRecords, provider } from './provider-fixtures'
+import type { ProviderWithInterfaces } from '@/shared/models'
 
 afterEach(() => vi.restoreAllMocks())
 
 describe('catalog config cache', () => {
+  it.each(['scoped', 'full'] as const)('keeps a newer scoped provider refresh when the older full read finishes %s', async first => {
+    const config = useConfigStore(createPinia())
+    const connected = { ...codexProvider, id: 1 }
+    const disconnected = { ...connected, oauth: { ...connected.oauth, status: 'disconnected' as const, access_expires_at: null } }
+    const initialOther = { ...provider, id: 2, name: 'Initial other' }
+    const refreshedOther = { ...provider, id: 2, name: 'Refreshed other' }
+    config.providerRecords = [connected, initialOther]
+    let finishFull!: (value: ProviderWithInterfaces[]) => void
+    let finishScoped!: (value: ProviderWithInterfaces[]) => void
+    vi.spyOn(api, 'providers').mockImplementationOnce(() => new Promise(resolve => { finishFull = resolve }))
+      .mockImplementationOnce(() => new Promise(resolve => { finishScoped = resolve }))
+    const full = config.load()
+    const scoped = config.refreshProvider(connected.id)
+
+    if (first === 'scoped') {
+      finishScoped([disconnected, initialOther])
+      await scoped
+      finishFull([connected, refreshedOther])
+      await full
+    } else {
+      finishFull([connected, refreshedOther])
+      await full
+      finishScoped([disconnected, initialOther])
+      await scoped
+    }
+
+    expect(config.providerRecords).toEqual([disconnected, refreshedOther])
+  })
+
   it('fences obsolete write metadata and an exact refresh overtaken by another provider revision', async () => {
     const config = useConfigStore(createPinia())
     const model = modelRecords[0]!
