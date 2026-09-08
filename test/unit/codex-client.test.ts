@@ -177,6 +177,14 @@ describe('Codex OAuth client', () => {
     })
   })
 
+  it.each([{}, { exp: '3600' }])('rejects a missing or malformed access-token exp when refresh omits expires_in', async claims => {
+    const { fetchStub } = recordingFetch([json({ access_token: jwt(claims) })])
+
+    await expect(createCodexClient(fetchStub, () => 100).refreshTokens(currentTokens)).rejects.toMatchObject({
+      name: 'CodexProtocolError', operation: 'token refresh', category: 'upstream',
+    })
+  })
+
   it('classifies known refresh credential failures as permanent without exposing upstream bodies', async () => {
     const { fetchStub } = recordingFetch([json({ error: { code: 'refresh_token_reused', message: 'old-refresh should never surface' } }, 400)])
 
