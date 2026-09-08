@@ -14,7 +14,7 @@ describe('ToolRegistry', () => {
     registry.register('plugin-a', 'a', () => registeredTool('a'))
     expect(registry.resolve(['z', 'a'], { 'plugin-a': true }).map(([id]) => id)).toEqual(['a', 'z'])
     expect(() => registry.resolve(['missing'], { 'plugin-a': true })).toThrow(/unknown tool/i)
-    expect(() => registry.resolve(['a'], { 'plugin-a': false })).toThrow(/disabled/i)
+    expect(registry.resolve(['a'], { 'plugin-a': false })).toEqual([])
   })
 
   it('removes registrations through their disposer', () => {

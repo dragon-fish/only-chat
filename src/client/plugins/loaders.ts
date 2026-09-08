@@ -6,11 +6,19 @@ const clientModules = import.meta.glob('../../plugins/*/client/index.ts')
 
 export const pluginManifests = Object.values(manifestModules) as PluginManifest[]
 
+const manifestIdsByDirectory = new Map(
+  Object.entries(manifestModules).map(([path, manifest]) => [
+    path.slice(0, -'/manifest.ts'.length),
+    (manifest as PluginManifest).id,
+  ]),
+)
+
 /** Manifest modules are eager; client modules remain lazy chunks until the host asks for one. */
 export const pluginLoaders: Record<string, ClientPluginLoader> = Object.fromEntries(
   Object.entries(clientModules).map(([path, load]) => {
-    const pluginId = path.split('/').at(-3)
-    if (!pluginId) throw new Error(`cannot determine plugin ID from ${path}`)
+    const directory = path.slice(0, -'/client/index.ts'.length)
+    const pluginId = manifestIdsByDirectory.get(directory)
+    if (!pluginId) throw new Error(`client plugin has no manifest: ${path}`)
     return [pluginId, async () => load() as Promise<ClientPluginModule>]
   }),
 )

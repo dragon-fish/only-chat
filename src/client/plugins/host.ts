@@ -29,29 +29,43 @@ export class ClientPluginHost {
   constructor({ manifests, loaders }: ClientPluginHostOptions) {
     this.manifests = manifests
     this.loaders = loaders
-    for (const manifest of manifests) for (const toolId of manifest.defaultTools) this.toolPlugins.set(toolId, manifest.id)
+    for (const manifest of manifests) {
+      for (const toolId of manifest.defaultTools) {
+        const owner = this.toolPlugins.get(toolId)
+        if (owner) throw new Error(`tool ${toolId} is owned by multiple plugins: ${owner}, ${manifest.id}`)
+        this.toolPlugins.set(toolId, manifest.id)
+      }
+    }
   }
 
   renderer(toolId: string): ToolRenderer | undefined {
     return this.renderers.get(toolId)
   }
 
-  install(setup: ClientPluginSetup, pluginId = 'manual'): () => void {
+  install(setup: ClientPluginSetup, pluginId: string): () => void {
     this.disposePlugin(pluginId)
     const registrations: (() => void)[] = []
-    const cleanup = setup({
-      manifests: this.manifests,
-      tools: {
-        register: (toolId, renderer) => {
-          this.renderers.set(toolId, renderer)
-          const unregister = () => {
-            if (this.renderers.get(toolId) === renderer) this.renderers.delete(toolId)
-          }
-          registrations.push(unregister)
-          return unregister
+    let cleanup: void | (() => void)
+    try {
+      cleanup = setup({
+        manifests: this.manifests,
+        tools: {
+          register: (toolId, renderer) => {
+            if (this.toolPlugins.get(toolId) !== pluginId) throw new Error(`plugin ${pluginId} does not own tool ${toolId}`)
+            if (this.renderers.has(toolId)) throw new Error(`tool renderer already registered: ${toolId}`)
+            this.renderers.set(toolId, renderer)
+            const unregister = () => {
+              if (this.renderers.get(toolId) === renderer) this.renderers.delete(toolId)
+            }
+            registrations.push(unregister)
+            return unregister
+          },
         },
-      },
-    })
+      })
+    } catch (error) {
+      for (const unregister of registrations.splice(0)) unregister()
+      throw error
+    }
     const dispose = () => {
       for (const unregister of registrations.splice(0)) unregister()
       if (typeof cleanup === 'function') cleanup()

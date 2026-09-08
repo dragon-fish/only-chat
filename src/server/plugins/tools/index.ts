@@ -36,12 +36,12 @@ export class ToolRegistry extends Service {
     return normalized
   }
 
-  /** Resolves selected tools in stable order and rejects globally disabled plugin tools. */
+  /** Resolves selected tools in stable order; global disablement suppresses without rewriting snapshots. */
   resolve(ids: readonly string[], enabledPlugins: Record<string, boolean>): [string, Tool][] {
-    return this.normalize(ids).map((id) => {
+    return this.normalize(ids).flatMap((id) => {
       const entry = this.entries.get(id)!
-      if (enabledPlugins[entry.pluginId] !== true) throw new Error(`tool is disabled: ${id}`)
-      return [id, entry.factory()]
+      if (enabledPlugins[entry.pluginId] !== true) return []
+      return [[id, entry.factory()]]
     })
   }
 }
