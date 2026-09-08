@@ -3,8 +3,8 @@ import { ASK_USER_PLUGIN_ID, ASK_USER_TOOL_ID } from '@/shared/plugins'
 
 const manifest = {
   id: ASK_USER_PLUGIN_ID,
-  name: 'Ask User',
-  description: 'Ask the user focused follow-up questions.',
+  name: '询问用户',
+  description: '让模型在继续前向你提出一至三个问题。',
   defaultTools: [ASK_USER_TOOL_ID],
 } satisfies PluginManifest
 
