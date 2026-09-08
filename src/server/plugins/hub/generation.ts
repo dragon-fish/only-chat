@@ -198,10 +198,16 @@ async function openContinuationShell(hub: Hub, target: Target, parentId: number)
     status: 'error', error: 'interrupted', created_at: Date.now(),
   })
   if (!row) return undefined
-  const session = await compareAndSwapSessionHead(hub.db, target.session.id, parentId, row.id)
+  let session = await compareAndSwapSessionHead(hub.db, target.session.id, parentId, row.id)
   if (!session) {
-    await deleteMessage(hub.db, row.id)
-    return undefined
+    const current = await getSession(hub.db, target.session.id)
+    // A concurrent recovery may have observed this inserted shell and completed the exact same
+    // parent → child transition. The creator still owns announcing and generating that shell.
+    if (current?.head_message_id === row.id) session = current
+    else {
+      await deleteMessage(hub.db, row.id)
+      return undefined
+    }
   }
   const message = toMessage(row, 'streaming')
   hub.broadcast({ type: 'message.created', message })

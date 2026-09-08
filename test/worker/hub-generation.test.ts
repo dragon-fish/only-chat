@@ -838,6 +838,54 @@ describe('generation', () => {
     expect(c.events.some(event => event.type === 'message.created' || event.type === 'head.changed')).toBe(false)
   })
 
+  it('keeps and generates the inserted continuation when a concurrent recovery already moved head to it', async () => {
+    const providerId = await seedProvider('child-recovered-provider', 'child-recovered-model', false, { tool_call: true })
+    const db = createDb(env.DB)
+    const session = await createSession(db, {
+      user_id: DEFAULT_USER_ID, title: 'child recovered', provider_id: providerId, model_id: 'child-recovered-model',
+    })
+    const toolMessage = await insertMessage(db, {
+      session_id: session.id, parent_id: null, seq: 1, role: 'assistant', status: 'done', error: null,
+      provider_id: providerId, model_id: 'child-recovered-model', usage: null, created_at: 0,
+      parts: [
+        { type: 'tool_call', id: 'recovered-race', name: 'ask_user', args: ASK_USER_INPUT },
+        {
+          type: 'tool_result', call_id: 'recovered-race', name: 'ask_user',
+          content: { status: 'answered', answers: [{ id: 'framework', value: 'Vue' }] },
+        },
+      ],
+    })
+    await updateSession(db, session.id, { head_message_id: toolMessage.id })
+    await db.$client.prepare(`
+      CREATE TRIGGER continuation_recovered_race AFTER INSERT ON messages
+      WHEN NEW.parent_id = ${toolMessage.id} AND NEW.role = 'assistant'
+      BEGIN
+        UPDATE sessions SET head_message_id = NEW.id WHERE id = ${session.id};
+      END
+    `).run()
+    const created = await installMock(() => new MockLanguageModelV4({
+      doStream: async () => ({ stream: simulateReadableStream({ chunks: STREAM, chunkDelayInMs: null, initialDelayInMs: null }) }),
+    }))
+    const c = await connect()
+    c.events.length = 0
+    try {
+      await runInDurableObject(env.USER_HUB.getByName(String(DEFAULT_USER_ID)), async (instance: UserHub) => {
+        await instance.app.hub.handleCommand(JSON.stringify({
+          type: 'tool.continue', request_id: 'recovered-race', message_id: toolMessage.id,
+        }))
+      })
+    } finally {
+      await db.$client.exec('DROP TRIGGER continuation_recovered_race')
+    }
+    const rows = await listMessages(db, session.id)
+    expect(rows).toHaveLength(2)
+    expect((await getSession(db, session.id))!.head_message_id).toBe(rows[1]!.id)
+    expect(rows[1]).toMatchObject({ parent_id: toolMessage.id, status: 'done' })
+    expect(created).toHaveLength(1)
+    expect(c.events.some(event => event.type === 'message.created')).toBe(true)
+    expect(c.events.some(event => event.type === 'message.done')).toBe(true)
+  })
+
   it('does not persist a stale user reply when the head advances immediately after implicit skip CAS', async () => {
     const providerId = await seedProvider('skip-head-race-provider', 'skip-head-race-model', false, { tool_call: true })
     const db = createDb(env.DB)
