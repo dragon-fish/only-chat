@@ -1,5 +1,6 @@
 import type { Context } from 'cordis'
 import { Hono } from 'hono'
+import { disposeRpcStub } from '@/server/rpc'
 
 export function modelCatalogRoutes(ctx: Context) {
   const app = new Hono<{ Bindings: Env }>()
@@ -14,14 +15,18 @@ export function modelCatalogRoutes(ctx: Context) {
       id: `catalog-manual-${crypto.randomUUID()}`,
       params: { source: 'manual' },
     })
-    return c.json({ instanceId: instance.id }, 202)
+    try { return c.json({ instanceId: instance.id }, 202) }
+    finally { disposeRpcStub(instance) }
   })
   app.get('/model-catalog/refresh/:instanceId', async c => {
     const id = c.req.param('instanceId')
     if (!/^catalog-(?:manual|cron)-[a-zA-Z0-9-]{1,128}$/u.test(id)) return c.json({ error: 'not found' }, 404)
     try {
-      const status = await (await ctx.env.MODEL_CATALOG_REFRESH.get(id)).status()
-      return c.json({ status: status.status, ...(status.error?.message ? { error: status.error.message } : {}) })
+      const instance = await ctx.env.MODEL_CATALOG_REFRESH.get(id)
+      try {
+        const status = await instance.status()
+        return c.json({ status: status.status, ...(status.error?.message ? { error: status.error.message } : {}) })
+      } finally { disposeRpcStub(instance) }
     } catch {
       return c.json({ error: 'not found' }, 404)
     }
