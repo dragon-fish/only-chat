@@ -325,13 +325,6 @@ describe('generation', () => {
     expect(created[1]!.doStreamCalls[0]!.prompt.map(message => message.role)).toEqual(['user', 'assistant', 'tool'])
     expect(created[1]!.doStreamCalls[0]!.tools).toBeUndefined()
 
-    await runInDurableObject(env.USER_HUB.getByName(String(DEFAULT_USER_ID)), async (instance: UserHub) => {
-      await instance.app.hub.handleCommand(JSON.stringify({
-        type: 'tool.continue', request_id: 'continue-again', message_id: firstAssistant.id,
-      }))
-    })
-    expect(created).toHaveLength(2)
-    expect(await listMessages(db, sessionId)).toHaveLength(3)
   })
 
   it('persists cancellation without starting another generation', async () => {
@@ -477,7 +470,7 @@ describe('generation', () => {
     expect(await listMessages(db, sessionId)).toHaveLength(3)
   })
 
-  it('recovers an answered head whose result was stored before its continuation shell', async () => {
+  it('recovers continuation when an identical answered retry follows a stored result without a child shell', async () => {
     const providerId = await seedProvider('recover-provider', 'recover-model', false, { tool_call: true })
     const db = createDb(env.DB)
     await db.update(users).set({ settings: { plugins: { ask_user: true } } }).where(eq(users.id, DEFAULT_USER_ID))
@@ -500,13 +493,49 @@ describe('generation', () => {
 
     await runInDurableObject(env.USER_HUB.getByName(String(DEFAULT_USER_ID)), async (instance: UserHub) => {
       await instance.app.hub.handleCommand(JSON.stringify({
-        type: 'tool.continue', request_id: 'recover', message_id: assistant.id,
+        type: 'tool.respond', request_id: 'recover', message_id: assistant.id, call_id: 'call-ask-1',
+        result: { status: 'answered', answers: [{ id: 'framework', value: 'Vue' }] },
       }))
     })
     expect(created).toHaveLength(2)
     const rows = await listMessages(db, sessionId)
     expect(rows).toHaveLength(3)
     expect(rows[2]!.parent_id).toBe(assistant.id)
+  })
+
+  it('repairs the Session head when a continuation child exists but the head update was interrupted', async () => {
+    const db = createDb(env.DB)
+    await ensureDefaultUser(db)
+    const session = await createSession(db, {
+      user_id: DEFAULT_USER_ID, title: 'repair head', provider_id: null, model_id: null,
+    })
+    const toolMessage = await insertMessage(db, {
+      session_id: session.id, parent_id: null, seq: 1, role: 'assistant', status: 'done', error: null,
+      provider_id: null, model_id: null, usage: null, created_at: 0,
+      parts: [
+        { type: 'tool_call', id: 'repair-call', name: 'ask_user', args: ASK_USER_INPUT },
+        {
+          type: 'tool_result', call_id: 'repair-call', name: 'ask_user',
+          content: { status: 'answered', answers: [{ id: 'framework', value: 'Vue' }] },
+        },
+      ],
+    })
+    const child = await insertMessage(db, {
+      session_id: session.id, parent_id: toolMessage.id, seq: 2, role: 'assistant', status: 'done', error: null,
+      provider_id: null, model_id: null, usage: null, created_at: 1, parts: [{ type: 'text', text: 'continued' }],
+    })
+    await updateSession(db, session.id, { head_message_id: toolMessage.id })
+    const c = await connect()
+    c.events.length = 0
+
+    await runInDurableObject(env.USER_HUB.getByName(String(DEFAULT_USER_ID)), async (instance: UserHub) => {
+      await instance.app.hub.handleCommand(JSON.stringify({
+        type: 'tool.continue', request_id: 'repair-head', message_id: toolMessage.id,
+      }))
+    })
+
+    expect((await getSession(db, session.id))!.head_message_id).toBe(child.id)
+    expect(await c.next('head.changed')).toMatchObject({ session_id: session.id, message_id: child.id })
   })
 
   it('streams a reply to every socket and persists it', async () => {

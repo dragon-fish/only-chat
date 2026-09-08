@@ -396,15 +396,39 @@ async function continueFromToolMessage(hub: Hub, messageId: number, requireHead:
   const state = completedToolState(message.parts)
   if (state === 'waiting') throw new Error('tool calls are still waiting for responses')
   if (state === 'cancelled') throw new Error('cancelled tool calls cannot continue automatically')
+
+  const reconcileChildHead = async (child: Message): Promise<void> => {
+    const current = await getSession(hub.db, session.id)
+    if (!current) throw new Error('session not found')
+    if (current.head_message_id === child.id) return
+    const updated = await updateSession(hub.db, current.id, { head_message_id: child.id })
+    hub.broadcast({ type: 'head.changed', session_id: updated.id, message_id: child.id })
+    hub.emitSessionUpdated(updated)
+  }
+
+  const existingChildren = await listAssistantChildren(hub.db, message.id)
+  if (existingChildren.length > 1) throw new Error('tool-call message has multiple continuation children')
+  if (existingChildren.length === 1) {
+    const child = toMessage(existingChildren[0]!)
+    if (requireHead && session.head_message_id !== message.id && session.head_message_id !== child.id) {
+      throw new Error('tool-call message is no longer the session head')
+    }
+    await reconcileChildHead(child)
+    return
+  }
   if (requireHead && session.head_message_id !== message.id) throw new Error('tool-call message is no longer the session head')
-  if ((await listAssistantChildren(hub.db, message.id)).length > 0) return
 
   const fallbackModel = message.provider_id !== null && message.model_id !== null
     ? { provider_id: message.provider_id, model_id: message.model_id }
     : await lastGenerationModel(hub.db, message.session_id)
   const target = await resolveTarget(hub, { sessionId: message.session_id, fallbackModel, firstParts: [] })
   const shell = await openContinuationShell(hub, target, message.id)
-  if (!shell) return
+  if (!shell) {
+    const raced = await listAssistantChildren(hub.db, message.id)
+    if (raced.length !== 1) throw new Error('continuation child could not be resolved')
+    await reconcileChildHead(toMessage(raced[0]!))
+    return
+  }
   await generate(hub, target, shell, message.id)
 }
 
@@ -423,6 +447,9 @@ export async function runToolRespond(hub: Hub, cmd: Extract<WsCommand, { type: '
     const existing = current && toolResultFor(current.parts, call.id)
     if (!existing || existing.name !== part.name || !sameJson(existing.content, part.content)) {
       throw new Error('tool result conflict')
+    }
+    if (current && completedToolState(current.parts) === 'answered') {
+      await continueFromToolMessage(hub, current.id, false)
     }
     return
   }
