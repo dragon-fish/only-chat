@@ -21,15 +21,15 @@ describe('catalog-backed model membership and queries', () => {
     const current = await ctx.modelCatalog.refresh('manual')
     const before = await env.DB.prepare('SELECT * FROM models WHERE id = ?').bind(created.id).first()
     const key = `models-dev:${current.version}:${shard}`
-    const contents = (await env.MODEL_CATALOG.get(key))!
-    expect(await env.MODEL_CATALOG.get(`models-dev:${previous}:${shard}`)).not.toBeNull()
-    await env.MODEL_CATALOG.delete(key)
+    const contents = (await env.KV.get(key))!
+    expect(await env.KV.get(`models-dev:${previous}:${shard}`)).not.toBeNull()
+    await env.KV.delete(key)
     try {
       const response = await request('PUT', `/providers/${provider.id}/models/${created.id}`, { metadata_override: { description: 'Pending edit' } })
       expect(response.status).toBe(503)
       expect(await env.DB.prepare('SELECT * FROM models WHERE id = ?').bind(created.id).first()).toEqual(before)
     } finally {
-      await env.MODEL_CATALOG.put(key, contents)
+      await env.KV.put(key, contents)
     }
     expect(await ctx.modelCatalog.refresh('manual')).toMatchObject({ version: current.version, changed: false })
     const saved = await request('PUT', `/providers/${provider.id}/models/${created.id}`, { metadata_override: { description: 'Pending edit' } })
@@ -46,17 +46,17 @@ describe('catalog-backed model membership and queries', () => {
     const created = ModelWithMetadataSchema.parse(await (await request('POST', `/providers/${provider.id}/models`, { model_id: 'lab/alpha' })).json())
     const version = (await ctx.modelCatalog.status()).version!
     const key = `models-dev:${version}:manifest`
-    const contents = (await env.MODEL_CATALOG.get(key))!
+    const contents = (await env.KV.get(key))!
     const manifest = JSON.parse(contents)
     if (mismatch === 'generation') manifest.version = 'different-generation'
     if (mismatch === 'required shard') manifest.shards = manifest.shards.filter((shard: string) => !shard.endsWith(':provider:gateway'))
     if (mismatch === 'provider index') manifest.providers += 1
-    await env.MODEL_CATALOG.put(key, JSON.stringify(manifest))
+    await env.KV.put(key, JSON.stringify(manifest))
     try {
       const response = await request('PUT', `/providers/${provider.id}/models/${created.id}`, { metadata_override: { name: 'Must not persist' } })
       expect(response.status).toBe(503)
       expect(await env.DB.prepare('SELECT metadata_override FROM models WHERE id = ?').bind(created.id).first()).toEqual({ metadata_override: '{}' })
-    } finally { await env.MODEL_CATALOG.put(key, contents) }
+    } finally { await env.KV.put(key, contents) }
   })
 
   it.each(['create', 'import', 'reassociate'] as const)('leaves provider and model state intact when %s cannot read a required current Lab shard', async operation => {
@@ -69,7 +69,7 @@ describe('catalog-backed model membership and queries', () => {
     const current = await ctx.modelCatalog.refresh('manual')
     const beforeModels = (await env.DB.prepare('SELECT * FROM models WHERE provider_id = ?').bind(provider.id).all()).results
     const beforeProvider = await env.DB.prepare('SELECT * FROM providers WHERE id = ?').bind(provider.id).first()
-    await env.MODEL_CATALOG.delete(`models-dev:${current.version}:provider:lab`)
+    await env.KV.delete(`models-dev:${current.version}:provider:lab`)
     vi.stubGlobal('fetch', async () => Response.json({ data: [{ id: 'lab/new' }] }))
     const response = operation === 'create'
       ? await request('POST', `/providers/${provider.id}/models`, { model_id: 'lab/new' })

@@ -30,7 +30,7 @@ function pauseStaging() {
   let signal!: () => void
   const resume = new Promise<void>(resolve => { release = resolve })
   const paused = new Promise<void>(resolve => { signal = resolve })
-  const kv = new Proxy(env.MODEL_CATALOG, {
+  const kv = new Proxy(env.KV, {
     get(target, property) {
       if (property === 'put') return async (key: string, value: string, options?: KVNamespacePutOptions) => {
         if (key.endsWith(':manifest')) { signal(); await resume }
@@ -52,8 +52,8 @@ async function seedLeasedModel() {
 
 async function clearCatalog() {
   await env.DB.exec('DELETE FROM model_catalog_refresh')
-  const listed = await env.MODEL_CATALOG.list()
-  await Promise.all(listed.keys.map(key => env.MODEL_CATALOG.delete(key.name)))
+  const listed = await env.KV.list()
+  await Promise.all(listed.keys.map(key => env.KV.delete(key.name)))
 }
 
 async function publication() {
@@ -109,8 +109,8 @@ describe('model catalog', () => {
     expect((await delayed.modelCatalog.providerIndex()).acme?.name).toBe('Winner provider')
     expect((await delayed.modelCatalog.globalModels(winner.version))['acme/model']?.name).toBe('Winner global')
     expect((await delayed.modelCatalog.providerModels('acme', winner.version))['acme/model']?.name).toBe('Winner')
-    expect(await env.MODEL_CATALOG.get('models-dev:active')).toBeNull()
-    expect(await env.MODEL_CATALOG.get('models-dev:status')).toBeNull()
+    expect(await env.KV.get('models-dev:active')).toBeNull()
+    expect(await env.KV.get('models-dev:status')).toBeNull()
   })
 
   it('reclaims an expired lease and fences commits and release by its previous owner', async () => {
@@ -137,7 +137,7 @@ describe('model catalog', () => {
     serve()
     await ctx.modelCatalog.refresh('manual')
     const gate = pauseStaging()
-    const stale = await createApp({ env: { ...env, MODEL_CATALOG: gate.kv }, side: 'worker' })
+    const stale = await createApp({ env: { ...env, KV: gate.kv }, side: 'worker' })
     serve(catalog('Stale owner'))
     const pending = stale.modelCatalog.refresh('manual')
     await gate.paused
@@ -167,8 +167,8 @@ describe('model catalog', () => {
     serve()
     const initial = await ctx.modelCatalog.refresh('manual')
     const gate = pauseStaging()
-    const owner = await createApp({ env: { ...env, MODEL_CATALOG: gate.kv }, side: 'worker' })
-    const staleKV = new Proxy(env.MODEL_CATALOG, {
+    const owner = await createApp({ env: { ...env, KV: gate.kv }, side: 'worker' })
+    const staleKV = new Proxy(env.KV, {
       get(target, property) {
         if (property === 'get') return async (key: string, type: 'json') => key === 'models-dev:active'
           ? { current: initial.version, previous: null }
@@ -177,7 +177,7 @@ describe('model catalog', () => {
         return typeof member === 'function' ? member.bind(target) : member
       },
     })
-    const contender = await createApp({ env: { ...env, MODEL_CATALOG: staleKV }, side: 'worker' })
+    const contender = await createApp({ env: { ...env, KV: staleKV }, side: 'worker' })
     serve(catalog('Owner version'))
     const publishing = owner.modelCatalog.refresh('manual')
     await gate.paused
@@ -206,16 +206,16 @@ describe('model catalog', () => {
     serve()
     const first = await ctx.modelCatalog.refresh('manual')
     expect(first).toMatchObject({ changed: true, providers: 1, globalModels: 1, providerModels: 2 })
-    const oldShard = await env.MODEL_CATALOG.get(`models-dev:${first.version}:provider:acme`)
+    const oldShard = await env.KV.get(`models-dev:${first.version}:provider:acme`)
     serve(catalog('Changed'))
     const second = await ctx.modelCatalog.refresh('manual')
     expect(second.version).not.toBe(first.version)
     expect(await publication()).toEqual({ current: second.version, previous: first.version })
-    expect(await env.MODEL_CATALOG.get(`models-dev:${first.version}:provider:acme`)).toBe(oldShard)
+    expect(await env.KV.get(`models-dev:${first.version}:provider:acme`)).toBe(oldShard)
     expect((await ctx.modelCatalog.providerIndex()).acme).toEqual({ id: 'acme', name: 'Acme', api: 'https://acme.test/v1' })
     expect((await ctx.modelCatalog.globalModels(second.version))['acme/model']?.name).toBe('Global model')
     expect((await ctx.modelCatalog.providerModels('acme', second.version))['acme/model']?.name).toBe('Changed')
-    expect(await env.MODEL_CATALOG.get(`models-dev:${second.version}:manifest`, 'json')).toMatchObject({
+    expect(await env.KV.get(`models-dev:${second.version}:manifest`, 'json')).toMatchObject({
       version: second.version, schemaVersion: 1, hash: expect.stringMatching(/^[a-f0-9]{64}$/u),
       shards: expect.arrayContaining([`models-dev:${second.version}:models`, `models-dev:${second.version}:providers`, `models-dev:${second.version}:provider:acme`]),
     })
@@ -225,12 +225,12 @@ describe('model catalog', () => {
     const ctx = await createApp({ env, side: 'worker' })
     serve()
     const first = await ctx.modelCatalog.refresh('manual')
-    const before = await env.MODEL_CATALOG.list({ prefix: `models-dev:${first.version}:` })
-    const contents = await Promise.all(before.keys.map(key => env.MODEL_CATALOG.getWithMetadata(key.name)))
+    const before = await env.KV.list({ prefix: `models-dev:${first.version}:` })
+    const contents = await Promise.all(before.keys.map(key => env.KV.getWithMetadata(key.name)))
     const again = await ctx.modelCatalog.refresh('manual')
     expect(again).toEqual({ ...first, changed: false })
-    expect((await env.MODEL_CATALOG.list({ prefix: 'models-dev:' })).keys.filter(key => key.name.endsWith(':manifest'))).toHaveLength(1)
-    expect(await Promise.all(before.keys.map(key => env.MODEL_CATALOG.getWithMetadata(key.name)))).toEqual(contents)
+    expect((await env.KV.list({ prefix: 'models-dev:' })).keys.filter(key => key.name.endsWith(':manifest'))).toHaveLength(1)
+    expect(await Promise.all(before.keys.map(key => env.KV.getWithMetadata(key.name)))).toEqual(contents)
   })
 
   it('leaves an unaffected stored model unwritten when unrelated catalog metadata changes', async () => {
@@ -298,7 +298,7 @@ describe('model catalog', () => {
     const ctx = await createApp({ env, side: 'worker' })
     serve()
     const first = await ctx.modelCatalog.refresh('manual')
-    const failingKV = new Proxy(env.MODEL_CATALOG, {
+    const failingKV = new Proxy(env.KV, {
       get(target, property) {
         if (property === 'put') return async (key: string, value: string, options?: KVNamespacePutOptions) => {
           if (key.endsWith(':provider:acme')) throw new Error('KV unavailable')
@@ -308,7 +308,7 @@ describe('model catalog', () => {
         return typeof member === 'function' ? member.bind(target) : member
       },
     })
-    const failing = await createApp({ env: { ...env, MODEL_CATALOG: failingKV }, side: 'worker' })
+    const failing = await createApp({ env: { ...env, KV: failingKV }, side: 'worker' })
     serve(catalog('Changed'))
     await expect(failing.modelCatalog.refresh('manual')).rejects.toThrow('storage')
     expect(await publication()).toEqual({ current: first.version, previous: null })
@@ -319,7 +319,7 @@ describe('model catalog', () => {
     const ctx = await createApp({ env, side: 'worker' })
     serve()
     const first = await ctx.modelCatalog.refresh('manual')
-    const immutableKV = new Proxy(env.MODEL_CATALOG, {
+    const immutableKV = new Proxy(env.KV, {
       get(target, property) {
         if (property === 'put') return async (key: string, value: string, options?: KVNamespacePutOptions) => {
           if (!/^models-dev:[^:]+:/u.test(key)) throw new Error('Unversioned KV write')
@@ -333,7 +333,7 @@ describe('model catalog', () => {
         return typeof member === 'function' ? member.bind(target) : member
       },
     })
-    const isolated = await createApp({ env: { ...env, MODEL_CATALOG: immutableKV }, side: 'worker' })
+    const isolated = await createApp({ env: { ...env, KV: immutableKV }, side: 'worker' })
     serve(catalog('Committed'))
     const committed = await isolated.modelCatalog.refresh('manual')
     expect(await publication()).toEqual({ current: committed.version, previous: first.version })
@@ -351,7 +351,7 @@ describe('model catalog', () => {
     const first = await ctx.modelCatalog.refresh('manual')
     serve(catalog('Changed'))
     const second = await ctx.modelCatalog.refresh('manual')
-    for (const shard of ['providers', 'models', 'provider:acme']) await env.MODEL_CATALOG.delete(`models-dev:${second.version}:${shard}`)
+    for (const shard of ['providers', 'models', 'provider:acme']) await env.KV.delete(`models-dev:${second.version}:${shard}`)
     expect((await ctx.modelCatalog.providerIndex()).acme?.name).toBe('Acme')
     expect((await ctx.modelCatalog.globalModels(second.version))['acme/model']?.name).toBe('Global model')
     expect((await ctx.modelCatalog.providerModels('acme', second.version))['acme/model']?.name).toBe('Catalog model')
@@ -375,18 +375,18 @@ describe('model catalog', () => {
     const second = await ctx.modelCatalog.refresh('manual')
     const now = Date.now()
     const old = now - 48 * 60 * 60 * 1000 - 1
-    await env.MODEL_CATALOG.put('models-dev:abandoned:models', '{}', { metadata: { fetchedAt: old } })
-    await env.MODEL_CATALOG.put('models-dev:recent:models', '{}', { metadata: { fetchedAt: now } })
+    await env.KV.put('models-dev:abandoned:models', '{}', { metadata: { fetchedAt: old } })
+    await env.KV.put('models-dev:recent:models', '{}', { metadata: { fetchedAt: now } })
     for (const version of [first.version, second.version]) {
       const key = `models-dev:${version}:models`
-      await env.MODEL_CATALOG.put(key, (await env.MODEL_CATALOG.get(key))!, { metadata: { fetchedAt: old } })
+      await env.KV.put(key, (await env.KV.get(key))!, { metadata: { fetchedAt: old } })
     }
     serve({}, 503)
     await expect(ctx.modelCatalog.refresh('cron')).rejects.toThrow()
-    expect(await env.MODEL_CATALOG.get('models-dev:abandoned:models')).toBeNull()
-    expect(await env.MODEL_CATALOG.get('models-dev:recent:models')).toBe('{}')
-    expect(await env.MODEL_CATALOG.get(`models-dev:${first.version}:models`)).not.toBeNull()
-    expect(await env.MODEL_CATALOG.get(`models-dev:${second.version}:models`)).not.toBeNull()
+    expect(await env.KV.get('models-dev:abandoned:models')).toBeNull()
+    expect(await env.KV.get('models-dev:recent:models')).toBe('{}')
+    expect(await env.KV.get(`models-dev:${first.version}:models`)).not.toBeNull()
+    expect(await env.KV.get(`models-dev:${second.version}:models`)).not.toBeNull()
   })
 
   it('exposes status, searchable provider index and refresh counts through the Worker routes', async () => {

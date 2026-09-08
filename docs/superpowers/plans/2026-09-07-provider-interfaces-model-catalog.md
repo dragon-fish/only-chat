@@ -265,11 +265,11 @@ git commit -m "feat(catalog): resolve provider and model metadata"
 
 **Interfaces:**
 - Produces: Cordis service `ctx.modelCatalog`; methods `refresh('manual'): Promise<CatalogRefreshResult>`, `refresh('cron'): Promise<CatalogRefreshResult | null>` (null when another publisher holds the lease), `status(): Promise<CatalogStatus>`, `providerIndex()`, `globalModels(version)`, and `providerModels(id, version)`. Status and reader publication pointers come only from D1.
-- Consumes: `Env.MODEL_CATALOG: KVNamespace`, D1 models, and pure resolver functions from Task 3.
+- Consumes: `Env.KV: KVNamespace`, D1 models, and pure resolver functions from Task 3.
 
 - [ ] **Step 1: Add the KV test binding and failing service tests**
 
-Add `kv_namespaces: [{ "binding": "MODEL_CATALOG" }]` for local/test configuration, regenerate Worker types with `pnpm types`, and expose the binding in the test environment. Test immutable shard writes, unchanged hash no-op, active/previous pointer, failed fetch/validation preserving active, missing-current fallback, and 48-hour garbage collection.
+Add `kv_namespaces: [{ "binding": "KV" }]` for local/test configuration, regenerate Worker types with `pnpm types`, and expose the binding in the test environment. Test immutable shard writes, unchanged hash no-op, active/previous pointer, failed fetch/validation preserving active, missing-current fallback, and 48-hour garbage collection.
 
 ```ts
 expect(await ctx.modelCatalog.status()).toMatchObject({
@@ -310,11 +310,11 @@ After immutable KV shards are written, atomically commit changed materialized fi
 Run the authenticated Wrangler command only after confirming it targets the repository's intended Cloudflare account:
 
 ```bash
-pnpm exec wrangler kv namespace create only-chat-model-catalog --binding MODEL_CATALOG --update-config
+pnpm exec wrangler kv namespace create only-chat-cache --binding KV --update-config
 pnpm types
 ```
 
-Expected: Wrangler creates the namespace, writes its ID into `wrangler.jsonc`, and regenerated Worker types contain `MODEL_CATALOG: KVNamespace`.
+Expected: Wrangler creates the namespace, writes its ID into `wrangler.jsonc`, and regenerated Worker types contain `KV: KVNamespace`.
 
 - [ ] **Step 5: Wire Cordis, cron, and Hono routes**
 

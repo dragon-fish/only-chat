@@ -21,7 +21,7 @@ export class ModelCatalog extends Service {
 
   constructor(ctx: Context) {
     super(ctx, 'modelCatalog')
-    this.storage = new CatalogStorage(ctx.env.MODEL_CATALOG)
+    this.storage = new CatalogStorage(ctx.env.KV)
   }
 
   refresh(source: 'manual'): Promise<CatalogRefreshResult>
