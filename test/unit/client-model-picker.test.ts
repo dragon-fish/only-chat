@@ -69,7 +69,7 @@ describe('model picker modality', () => {
     await vi.waitFor(() => expect(document.querySelector('[role="alert"]')?.textContent).toContain('Enabled model query offline'))
     query.mockResolvedValue({ models: [modelRecords[0]!], next_cursor: null })
     ;[...document.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.trim() === '重试')!.click()
-    await vi.waitFor(() => expect(document.querySelector('[role="option"]')?.textContent).toContain('First model'))
+    await vi.waitFor(() => expect([...document.querySelectorAll('[role="option"]')].some(option => option.textContent?.includes('First model'))).toBe(true))
     document.querySelector<HTMLElement>('[role="option"]')!.click()
     await vi.waitFor(() => expect(document.querySelector('[data-slot="popover-content"]')).toBeNull())
   })
@@ -82,17 +82,28 @@ describe('model picker modality', () => {
     await vi.waitFor(() => expect(document.querySelector('[data-slot="popover-content"]')).toBeNull())
     vi.mocked(api.queryModels).mockResolvedValue({ models: [{ ...modelRecords[0]!, id: 99, model_id: 'new-model', metadata: { name: 'Newly enabled model' } }], next_cursor: null })
     host.querySelector<HTMLButtonElement>('button')!.click()
-    await vi.waitFor(() => expect(document.querySelector('[role="option"]')?.textContent).toContain('Newly enabled model'))
+    await vi.waitFor(() => expect([...document.querySelectorAll('[role="option"]')].some(option => option.textContent?.includes('Newly enabled model'))).toBe(true))
   })
 
   it('loads a selected model outside the enabled page and keeps it renderable', async () => {
-    vi.spyOn(api, 'modelByRef').mockResolvedValue({ ...modelRecords[1]!, model_id: 'test-model', metadata: { name: 'Retained selection' } })
+    vi.spyOn(api, 'modelByRef').mockResolvedValue({ ...modelRecords[1]!, enabled: true, model_id: 'test-model', metadata: { name: 'Retained selection' } })
     vi.spyOn(api, 'queryModels').mockResolvedValue({ models: [modelRecords[0]!], next_cursor: null })
     const host = await mountPicker(false, true, false)
     await vi.waitFor(() => expect(host.textContent).toContain('Retained selection'))
     host.querySelector<HTMLButtonElement>('button')!.click()
-    await vi.waitFor(() => expect(document.querySelector('[role="option"]')?.textContent).toContain('First model'))
+    await vi.waitFor(() => expect([...document.querySelectorAll('[role="option"]')].some(option => option.textContent?.includes('First model'))).toBe(true))
+    expect([...document.querySelectorAll('[role="option"]')].some(option => option.textContent?.includes('Retained selection'))).toBe(true)
     expect(host.textContent).toContain('Retained selection')
+  })
+
+  it('reveals the active model after the picker page renders', async () => {
+    const revealed: string[] = []
+    vi.spyOn(HTMLElement.prototype, 'scrollIntoView').mockImplementation(function (this: HTMLElement) {
+      revealed.push(this.textContent ?? '')
+    })
+    const host = await mountPicker(false, true)
+    host.querySelector<HTMLButtonElement>('button')!.click()
+    await vi.waitFor(() => expect(revealed.some(text => text.includes('Test model'))).toBe(true))
   })
 
   it('shows only declared true capabilities on each selectable model', async () => {

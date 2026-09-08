@@ -185,8 +185,9 @@ export const useConfigStore = defineStore('config', () => {
     const endpoint = provider?.interfaces.find(endpoint => endpoint.id === (record?.interface_id ?? provider.default_interface_id))
     return provider && record ? { provider, model: record, interface: endpoint } : undefined
   }
-  function enabledModels() {
-    return pickerRefs.value.flatMap(key => {
+  function enabledModels(additional: readonly ModelRef[] = []) {
+    const keys = [...new Set([...additional.map(keyFor), ...pickerRefs.value])]
+    return keys.flatMap(key => {
       const record = modelsByRef.value[key]
       const entry = record && modelFor(record)
       return entry?.provider.enabled && entry.model.enabled ? [entry] : []

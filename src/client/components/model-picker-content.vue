@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from 'vue'
 import { Settings2Icon } from '@lucide/vue'
 import LabAvatar from '@/client/components/lab-avatar.vue'
 import CollectionState from '@/client/components/collection-state.vue'
@@ -19,6 +19,7 @@ const emit = defineEmits<{ select: [ModelRef]; editProvider: [providerId: number
 const config = useConfigStore()
 const filters = ref<Partial<ModelQuery>>({})
 const searchKey = ref(0)
+const root = useTemplateRef<HTMLElement>('root')
 const validationError = computed(() => {
   const search = filters.value.search?.trim()
   if (search && Array.from(search).length < 3) return '搜索模型至少需要 3 个字符。'
@@ -34,9 +35,18 @@ async function loadModels(append = false) {
 onMounted(() => { void loadModels(); void config.loadCatalogProviders() })
 onBeforeUnmount(() => config.cancelPickerQuery())
 watch(filters, () => { void loadModels() }, { deep: true })
-const entries = computed(() => validationError.value ? [] : config.enabledModels())
 const currentKey = computed(() => props.modelValue ? `${props.modelValue.provider_id}:${props.modelValue.model_id}` : '')
+const filtered = computed(() => Object.values(filters.value).some(value => value !== undefined && value !== ''))
+const entries = computed(() => validationError.value
+  ? []
+  : config.enabledModels(!filtered.value && props.modelValue ? [props.modelValue] : []))
 const keyFor = (entry: EnabledModelEntry) => `${entry.provider.id}:${entry.model.model_id}`
+async function revealCurrent() {
+  if (!currentKey.value || filtered.value) return
+  await nextTick()
+  root.value?.querySelector<HTMLElement>('[role="option"][data-state="checked"]')?.scrollIntoView({ block: 'nearest' })
+}
+watch([entries, currentKey], revealCurrent, { immediate: true, flush: 'post' })
 function onSearch(event: Event) { filters.value = { ...filters.value, search: (event.target as HTMLInputElement).value } }
 function updateFilters(value: Partial<ModelQuery>) {
   if (!value.search && filters.value.search) searchKey.value++
@@ -49,28 +59,31 @@ function onSelect(value: unknown) {
 </script>
 
 <template lang="pug">
-Command(:key="searchKey" :model-value="currentKey" :should-filter="false" class="min-h-0" @update:model-value="onSelect")
-  CommandInput(placeholder="搜索模型名称或 ID…" @input="onSearch")
-  .px-3.py-2
-    ModelFilterBar(:model-value="filters" :providers="config.providers" :search="false" @update:model-value="updateFilters")
-  CommandList(class="max-h-[min(32rem,65vh)]")
-    CollectionState(:loaded="config.loaded && config.pickerLoaded" :error="validationError ?? config.pickerError ?? config.loadError" :retry="loadModels" :empty="entries.length === 0" empty-title="没有可用模型" empty-description="当前筛选条件下没有已启用的模型。")
-      template(#empty-action)
-        Button(v-if="Object.keys(filters).length" variant="outline" class="min-h-10" @click="updateFilters({})") 清除筛选
-        Button(v-else as-child variant="outline" class="min-h-10")
-          RouterLink(to="/settings/providers") 配置模型
-      ModelGroupList(:entries="entries" :catalog-providers="config.catalogProviders" command)
-        template(#provider-actions="{ provider }")
-          Button(type="button" variant="ghost" size="icon-sm" class="size-8" :aria-label="`设置供应商 ${provider.name}`" @click.stop="emit('editProvider', provider.id)")
-            Settings2Icon
-        template(#default="{ entry }")
-          CommandItem(:value="keyFor(entry)" class="min-h-10 md:min-h-0")
-            LabAvatar(:model-id="entry.model.model_id" :lab-id="entry.model.lab_id" :family="entry.model.metadata.family" :provider-name="entry.provider.name" size="sm")
-            .min-w-0.flex-1
-              p.truncate {{ modelName(entry.model) }}
-              p.truncate.text-xs.text-muted-foreground {{ entry.model.model_id }}
-              .mt-1.flex.flex-wrap.gap-1
-                Badge(v-for="badge in modelBadges(entry.model)" :key="badge.key" variant="secondary") {{ badge.label }}
-            span.sr-only {{ entry.provider.name }}
-  Button(v-if="config.pickerCursor && !validationError" variant="ghost" :disabled="config.pickerLoading" @click="loadModels(true)") 加载更多模型
+.contents(ref="root")
+  Command(:key="searchKey" :model-value="currentKey" :should-filter="false" class="min-h-0" @update:model-value="onSelect")
+    CommandInput(placeholder="搜索模型名称或 ID…" @input="onSearch")
+    .px-3.py-2
+      ModelFilterBar(:model-value="filters" :providers="config.providers" :search="false" :lab="false" @update:model-value="updateFilters")
+    CommandList(class="max-h-[min(32rem,65vh)]")
+      CollectionState(:loaded="config.loaded && config.pickerLoaded" :error="validationError ?? config.pickerError ?? config.loadError" :retry="loadModels" :empty="entries.length === 0" empty-title="没有可用模型" empty-description="当前筛选条件下没有已启用的模型。")
+        template(#empty-action)
+          Button(v-if="Object.keys(filters).length" variant="outline" class="min-h-10" @click="updateFilters({})") 清除筛选
+          Button(v-else as-child variant="outline" class="min-h-10")
+            RouterLink(to="/settings/providers") 配置模型
+        ModelGroupList(
+          :entries="entries" :catalog-providers="config.catalogProviders"
+          command :show-labs="false" sticky-providers)
+          template(#provider-actions="{ provider }")
+            Button(type="button" variant="ghost" size="icon-sm" class="size-8" :aria-label="`设置供应商 ${provider.name}`" @click.stop="emit('editProvider', provider.id)")
+              Settings2Icon
+          template(#default="{ entry }")
+            CommandItem(:value="keyFor(entry)" class="min-h-10 md:min-h-0")
+              LabAvatar(:model-id="entry.model.model_id" :lab-id="entry.model.lab_id" :family="entry.model.metadata.family" :provider-name="entry.provider.name" size="sm")
+              .min-w-0.flex-1
+                p.truncate {{ modelName(entry.model) }}
+                p.truncate.text-xs.text-muted-foreground {{ entry.model.model_id }}
+                .mt-1.flex.flex-wrap.gap-1
+                  Badge(v-for="badge in modelBadges(entry.model)" :key="badge.key" variant="secondary") {{ badge.label }}
+              span.sr-only {{ entry.provider.name }}
+    Button(v-if="config.pickerCursor && !validationError" variant="ghost" :disabled="config.pickerLoading" @click="loadModels(true)") 加载更多模型
 </template>
