@@ -30,7 +30,7 @@ describe('UserHub DO', () => {
     })
     try {
       const result = await stub.pollCodexOAuth(flowId)
-      expect(result).toEqual({ status: 'complete', providerId: expect.any(Number), modelIds: ['rpc-model'], modelListError: null })
+      expect(result).toEqual({ status: 'complete', providerId: expect.any(Number), initialConnection: true, modelIds: ['rpc-model'], modelListError: null })
       await runInDurableObject(stub, async (_instance: UserHub, state) => {
         expect(await state.storage.get(`codex-oauth:${flowId}`)).toBeUndefined()
       })

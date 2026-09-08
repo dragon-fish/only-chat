@@ -6,7 +6,7 @@ import { CodexProtocolError } from './types'
 
 export type CodexOAuthPollResult =
   | { status: 'pending'; next_poll_at: number }
-  | { status: 'complete'; providerId: number; modelIds: string[]; modelListError: string | null }
+  | { status: 'complete'; providerId: number; initialConnection: boolean; modelIds: string[]; modelListError: string | null }
   | { status: 'failed'; error: string }
 
 const missingFlow = (): CodexOAuthPollResult => ({ status: 'failed', error: 'Codex authorization expired or was cancelled' })
@@ -14,6 +14,20 @@ const credentialErrors = new Set([
   'This Codex account already has a provider', 'Reconnect must use the same Codex account',
   'Codex credentials changed concurrently; reload and retry', 'Codex provider not found',
 ])
+
+async function requestWithDeadline<T>(request: (signal: AbortSignal) => Promise<T>, callerSignal?: AbortSignal, expiresAt = Infinity): Promise<T> {
+  const controller = new AbortController()
+  const signal = callerSignal ? AbortSignal.any([callerSignal, controller.signal]) : controller.signal
+  const timeoutMs = Math.max(0, Math.min(30_000, expiresAt - Date.now()))
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    if (timeoutMs === 0) controller.abort()
+    signal.throwIfAborted()
+    return await request(signal)
+  } finally {
+    clearTimeout(timer)
+  }
+}
 
 export class Codex extends Service {
   static readonly provide = 'codex'
@@ -33,7 +47,7 @@ export class Codex extends Service {
   async start(providerId?: number) {
     const snapshot = providerId === undefined ? null : await this.credentials.read(providerId)
     if (providerId !== undefined && !snapshot) throw new Error('Codex provider not found')
-    const grant = await this.client.requestDeviceCode()
+    const grant = await requestWithDeadline(signal => this.client.requestDeviceCode(signal))
     return this.flows.create({
       ...grant, flowId: crypto.randomUUID(), nextPollAt: Date.now(),
       ...(snapshot ? { reconnect: { providerId: snapshot.providerId, revision: snapshot.revision } } : {}),
@@ -55,10 +69,12 @@ export class Codex extends Service {
       flow.nextPollAt = now + flow.intervalMs
       await this.flows.update(flow)
       if (controller.signal.aborted) return missingFlow()
-      const authorization = await this.client.pollDeviceCode(flow.deviceAuthId, flow.userCode, controller.signal)
+      const authorization = await requestWithDeadline(
+        signal => this.client.pollDeviceCode(flow.deviceAuthId, flow.userCode, signal), controller.signal, flow.expiresAt,
+      )
       if (controller.signal.aborted || !await this.flows.read(flowId, Date.now())) return missingFlow()
       if (authorization.status === 'pending') return { status: 'pending', next_poll_at: flow.nextPollAt }
-      const bundle = await this.client.exchangeDeviceCode(authorization, controller.signal)
+      const bundle = await requestWithDeadline(signal => this.client.exchangeDeviceCode(authorization, signal), controller.signal, flow.expiresAt)
       if (controller.signal.aborted || !await this.flows.read(flowId, Date.now())) return missingFlow()
       // Deletion claims completion against cancellation before the D1 credential transaction.
       if (!await this.flows.delete(flowId)) return missingFlow()
@@ -70,10 +86,10 @@ export class Codex extends Service {
         providerId = await this.credentials.createProvider(bundle, Date.now())
       }
       try {
-        const modelIds = await this.client.listModels(bundle)
-        return { status: 'complete', providerId, modelIds, modelListError: null }
+        const modelIds = await requestWithDeadline(signal => this.client.listModels(bundle, signal))
+        return { status: 'complete', providerId, initialConnection: !flow.reconnect, modelIds, modelListError: null }
       } catch (error) {
-        return { status: 'complete', providerId, modelIds: [], modelListError: error instanceof CodexProtocolError ? error.message : 'Codex model listing failed' }
+        return { status: 'complete', providerId, initialConnection: !flow.reconnect, modelIds: [], modelListError: error instanceof CodexProtocolError ? error.message : 'Codex model listing failed' }
       }
     } catch (error) {
       await this.flows.delete(flowId)

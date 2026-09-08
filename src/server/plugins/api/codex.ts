@@ -39,8 +39,7 @@ export function codexRoutes(ctx: Context) {
       let warning = result.modelListError ?? undefined
       if (!warning) {
         try {
-          // Only creation starts at version 1; every reconnect increments the connection version.
-          await reconcileProviderModels(ctx, result.providerId, result.modelIds, { enableNew: provider.credential_version === 1 })
+          await reconcileProviderModels(ctx, result.providerId, result.modelIds, { enableNew: result.initialConnection })
         } catch { warning = 'Codex connected, but model synchronization failed' }
       }
       return c.json(CodexOAuthPollResponseSchema.parse({ status: 'complete', provider, ...(warning ? { model_sync_warning: warning } : {}) }))

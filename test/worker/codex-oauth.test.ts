@@ -43,7 +43,7 @@ beforeEach(async () => {
     throw new Error(`Unexpected URL ${req.url}`)
   })
 })
-afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
 async function start(path = '/codex/oauth/start') {
   const response = await request('POST', path)
@@ -151,6 +151,107 @@ describe('Codex OAuth REST boundary', () => {
     await env.DB.prepare('DELETE FROM models WHERE provider_id = ?').bind(id).run()
     expect(await poll((await start(`/providers/${id}/codex/reconnect`)).flow_id)).toMatchObject({ status: 'complete', provider: { id, credential_version: 2 } })
     expect(await db.query.models.findMany()).toMatchObject([{ model_id: 'codex-test', enabled: false }])
+  })
+
+  it('enables initial models when reconnect commits while the initial model listing is pending', async () => {
+    const upstream = globalThis.fetch
+    let release!: () => void
+    let entered!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const started = new Promise<void>(resolve => { entered = resolve })
+    let firstListing = true
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (new Request(input, init).url.endsWith('/models')) {
+        if (!firstListing) return Response.json({ models: [{ slug: 'reconnect-model' }] })
+        firstListing = false
+        entered()
+        await gate
+        return Response.json({ models: [{ slug: 'initial-model' }, { slug: 'reconnect-model' }] })
+      }
+      return upstream(input, init)
+    })
+    const initial = poll((await start()).flow_id)
+    try {
+      await started
+      const provider = (await db.select().from(providers))[0]!
+      expect(await poll((await start(`/providers/${provider.id}/codex/reconnect`)).flow_id)).toMatchObject({ status: 'complete', provider: { credential_version: 2 } })
+      release()
+      expect(await initial).toMatchObject({ status: 'complete' })
+      const rows = await db.query.models.findMany()
+      expect(rows.find(row => row.model_id === 'initial-model')).toMatchObject({ enabled: true })
+      expect(rows.find(row => row.model_id === 'reconnect-model')).toMatchObject({ enabled: false })
+    } finally { release(); await initial }
+  })
+
+  it.each([
+    { path: '/deviceauth/token', lifetime: 900_000, deadline: 30_000 },
+    { path: '/oauth/token', lifetime: 900_000, deadline: 30_000 },
+    { path: '/deviceauth/token', lifetime: 1250, deadline: 1250 },
+    { path: '/oauth/token', lifetime: 1250, deadline: 1250 },
+    { path: '/models', lifetime: 900_000, deadline: 30_000 },
+  ])('aborts stalled $path after $deadline ms with flow lifetime $lifetime ms', async ({ path, lifetime, deadline }) => {
+    const grant = await start()
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] })
+    await runInDurableObject(stub(), async (instance: UserHub) => {
+      const flow = (await instance.app.codex.flows.read(grant.flow_id, Date.now()))!
+      await instance.app.codex.flows.update({ ...flow, expiresAt: Date.now() + lifetime })
+    })
+    const upstream = globalThis.fetch
+    let rejectPending!: (reason: Error) => void
+    let entered!: (signal: AbortSignal) => void
+    const started = new Promise<AbortSignal>(resolve => { entered = resolve })
+    vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) => {
+      const req = new Request(input, init)
+      if (!req.url.endsWith(path)) return upstream(input, init)
+      return new Promise<Response>((_resolve, reject) => {
+        rejectPending = reject
+        req.signal.addEventListener('abort', () => reject(new Error('private-abort-detail')), { once: true })
+        entered(req.signal)
+      })
+    })
+    const operation = poll(grant.flow_id)
+    try {
+      const signal = await started
+      await vi.advanceTimersByTimeAsync(deadline - 1)
+      expect(signal.aborted).toBe(false)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(signal.aborted).toBe(true)
+      const result = await operation
+      expect(result).toMatchObject(path === '/models'
+        ? { status: 'complete', provider: { oauth: { status: 'connected' } }, model_sync_warning: expect.any(String) }
+        : { status: 'failed' })
+      expect(JSON.stringify(result)).not.toMatch(/private-abort-detail|private-access|private-refresh/)
+      expect(await db.select().from(providers)).toHaveLength(path === '/models' ? 1 : 0)
+      expect(await poll(grant.flow_id)).toMatchObject({ status: 'failed' })
+    } finally {
+      rejectPending(new Error('fixture cleanup'))
+      await operation
+    }
+  })
+
+  it('aborts stalled authorization starts after 30 seconds', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] })
+    let rejectPending!: (reason: Error) => void
+    let entered!: (signal: AbortSignal) => void
+    const started = new Promise<AbortSignal>(resolve => { entered = resolve })
+    vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      const req = new Request(input, init)
+      rejectPending = reject
+      req.signal.addEventListener('abort', () => reject(new Error('private-abort-detail')), { once: true })
+      entered(req.signal)
+    }))
+    const operation = request('POST', '/codex/oauth/start')
+    try {
+      const signal = await started
+      await vi.advanceTimersByTimeAsync(29_999)
+      expect(signal.aborted).toBe(false)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(signal.aborted).toBe(true)
+      const response = await operation
+      expect(response.status).toBe(502)
+      expect(await response.text()).not.toContain('private-abort-detail')
+      expect(await db.select().from(providers)).toEqual([])
+    } finally { rejectPending(new Error('fixture cleanup')); await operation }
   })
 
   it('retains credentials and returns a sanitized warning when model listing fails', async () => {
