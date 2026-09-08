@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import MarkdownRender from 'markstream-vue'
+import type { NodeRendererProps } from 'markstream-vue'
 import { EllipsisIcon, GitForkIcon, LoaderCircle, PencilIcon, RefreshCwIcon, TriangleAlertIcon } from '@lucide/vue'
 import BranchSwitcher from '@/client/components/branch-switcher.vue'
 import LabAvatar from '@/client/components/lab-avatar.vue'
@@ -20,6 +21,7 @@ import { Textarea } from '@/client/ui/textarea'
 import type { Message, Project } from '@/shared/models'
 import type { ToolCallPart, ToolResultPart } from '@/shared/parts'
 import { useSessionFork } from '@/client/composables/use-session-fork'
+import { useTheme } from '@/client/composables/use-theme'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/client/ui/dropdown-menu'
 
 const props = defineProps<{
@@ -33,6 +35,10 @@ const props = defineProps<{
   optimistic?: boolean
 }>()
 const sync = useSyncStore()
+const { resolved: resolvedTheme } = useTheme()
+const codeBlockProps: NonNullable<NodeRendererProps['codeBlockProps']> = {
+  theme: { light: 'one-light', dark: 'one-dark-pro' },
+}
 const streaming = computed(() => props.message.status === 'streaming')
 const editing = ref(false)
 const draft = ref('')
@@ -105,7 +111,9 @@ MessageRoot(
           p.mb-2.flex.items-center.gap-2.text-xs.text-muted-foreground(v-if="wait.waiting")
             LoaderCircle(class="size-3.5 animate-spin")
             span 正在思考…
-          MarkdownRender(mode="chat" :content="markdown" :final="!streaming" :smooth-streaming="false" :fade="true")
+          MarkdownRender(
+            mode="chat" :content="markdown" :final="!streaming" :smooth-streaming="false" :fade="true"
+            :is-dark="resolvedTheme === 'dark'" :code-block-props="codeBlockProps")
           ToolPartRenderer(
             v-for="row in toolRows" :key="row.call.id" :message-id="message.id"
             :call="row.call" :result="row.result" :can-continue="canContinueTools"
