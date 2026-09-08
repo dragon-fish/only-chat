@@ -83,20 +83,31 @@ function decodeBase64Url(value: string, operation: string): string {
   }
 }
 
-export function parseCodexIdentity(idToken: string): CodexIdentity {
-  const operation = 'token response'
-  const parts = idToken.split('.')
+function parseJwtPayload(token: string, operation: string): JsonRecord {
+  const parts = token.split('.')
   if (parts.length !== 3 || parts.some(part => part === '')) throw protocolError(operation, 'upstream', null)
 
-  let claims: JsonRecord
   try {
     const decoded: unknown = JSON.parse(decodeBase64Url(parts[1]!, operation))
     if (!isRecord(decoded)) throw protocolError(operation, 'upstream', null)
-    claims = decoded
+    return decoded
   } catch (error) {
     if (error instanceof CodexProtocolError) throw error
     throw protocolError(operation, 'upstream', null)
   }
+}
+
+function parseAccessTokenExpiry(accessToken: string, operation: string, currentTime: number): number {
+  const exp = parseJwtPayload(accessToken, operation).exp
+  if (typeof exp !== 'number' || !Number.isSafeInteger(exp) || exp < 0) throw protocolError(operation, 'upstream', null)
+  const expiresAt = exp * 1_000
+  if (!Number.isSafeInteger(expiresAt) || expiresAt <= currentTime) throw protocolError(operation, 'upstream', null)
+  return expiresAt
+}
+
+export function parseCodexIdentity(idToken: string): CodexIdentity {
+  const operation = 'token response'
+  const claims = parseJwtPayload(idToken, operation)
 
   const auth = claims['https://api.openai.com/auth']
   const profile = claims['https://api.openai.com/profile']
@@ -210,14 +221,16 @@ export function createCodexClient(fetchFn: typeof fetch = fetch, now: () => numb
     const tokens = await parseJson(response, operation)
     const idToken = optionalString(tokens, 'id_token', operation) ?? current.idToken
     const identity = tokens.id_token === undefined ? { accountId: current.accountId, email: current.email } : parseCodexIdentity(idToken)
+    if (identity.accountId !== current.accountId) throw protocolError(operation, 'permanent', response.status)
+    const accessToken = optionalString(tokens, 'access_token', operation) ?? current.accessToken
     const expiresIn = tokens.expires_in === undefined ? undefined : parseExpiresIn(tokens.expires_in, operation)
     return {
       idToken,
-      accessToken: optionalString(tokens, 'access_token', operation) ?? current.accessToken,
+      accessToken,
       refreshToken: optionalString(tokens, 'refresh_token', operation) ?? current.refreshToken,
       tokenType: optionalString(tokens, 'token_type', operation) ?? current.tokenType,
       ...identity,
-      expiresAt: expiresIn === undefined ? current.expiresAt : now() + expiresIn,
+      expiresAt: expiresIn === undefined ? parseAccessTokenExpiry(accessToken, operation, now()) : now() + expiresIn,
     }
   }
 
