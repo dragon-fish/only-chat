@@ -40,7 +40,7 @@ watch([() => props.open, () => props.providerId], ([open]) => {
 }, { immediate: true })
 
 async function setOpen(next: boolean) {
-  if (next || await leaveGuard.value?.confirmLeave()) emit('update:open', next)
+  if (next || !leaveGuard.value || await leaveGuard.value.confirmLeave()) emit('update:open', next)
 }
 async function save() {
   if (!form.value || !valid.value || saving.value || props.providerId === null) return
@@ -64,7 +64,7 @@ async function save() {
   finally { saving.value = false }
 }
 async function openFullSettings() {
-  if (!await leaveGuard.value?.confirmLeave()) return
+  if (leaveGuard.value && !await leaveGuard.value.confirmLeave()) return
   emit('update:open', false)
   if (props.providerId !== null) await router.push(`/settings/providers/${props.providerId}`)
 }

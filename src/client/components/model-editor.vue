@@ -22,7 +22,7 @@ import {
 } from '@/shared/model-metadata'
 import type { ProviderInterface } from '@/shared/models'
 
-const props = defineProps<{ open: boolean; session: ModelEditorSession; interfaces: ProviderInterface[]; defaultInterfaceId: number | null; saving?: boolean }>()
+const props = withDefaults(defineProps<{ open: boolean; session: ModelEditorSession; interfaces: ProviderInterface[]; defaultInterfaceId: number | null; saving?: boolean; allowInterfaceSelection?: boolean }>(), { allowInterfaceSelection: true })
 const emit = defineEmits<{ 'update:open': [value: boolean]; save: [patch: Partial<ModelWriteInput>]; delete: [] }>()
 const form = props.session.form
 const model = computed(() => props.session.model)
@@ -219,7 +219,7 @@ ResponsiveOverlay(:open="open" title="编辑模型" @update:open="setOpen")
         FieldLabel(:for="`${prefix}-id`") 模型 ID
         Input(:id="`${prefix}-id`" v-model="form.model_id" required class="min-h-10")
         FieldDescription 供应商 API 使用的模型标识。
-      Field
+      Field(v-if="allowInterfaceSelection")
         FieldLabel(:for="`${prefix}-interface`") 模型接口
         Select(:model-value="String(form.interface_id ?? 'default')" @update:model-value="form.interface_id = $event === 'default' ? null : Number($event)")
           SelectTrigger(:id="`${prefix}-interface`" class="min-h-10 w-full")

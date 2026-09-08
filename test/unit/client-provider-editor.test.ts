@@ -47,10 +47,10 @@ async function mountEditor() {
   return { router, config: useConfigStore(pinia) }
 }
 
-async function mountCodexEditor(status: 'connected' | 'reconnect-required' | 'disconnected' = 'connected') {
+async function mountCodexEditor(status: 'connected' | 'reconnect-required' | 'disconnected' = 'connected', records: ModelWithMetadata[] = []) {
   const codex = { ...codexProvider, oauth: { ...codexProvider.oauth, status } }
   vi.spyOn(api, 'providers').mockResolvedValue([codex])
-  vi.spyOn(api, 'queryModels').mockResolvedValue({ models: [], next_cursor: null })
+  vi.spyOn(api, 'queryModels').mockResolvedValue({ models: records, next_cursor: null })
   vi.spyOn(api, 'catalogStatus').mockResolvedValue(catalogStatus)
   vi.spyOn(api, 'catalogProviders').mockResolvedValue([])
   const pinia = createPinia()
@@ -186,6 +186,23 @@ describe('provider model editor', () => {
     await vi.waitFor(() => expect(update).toHaveBeenCalledWith(codexProvider.id, { name: 'Personal Codex', enabled: false }))
   })
 
+  it('keeps a newer Codex name dirty after an earlier save finishes', async () => {
+    await mountCodexEditor()
+    let finishSave!: (value: ProviderWithInterfaces) => void
+    vi.spyOn(api, 'updateCodexProvider').mockImplementation(() => new Promise(resolve => { finishSave = resolve }))
+    const name = document.querySelector<HTMLInputElement>('#provider-name')!
+    await type(name, 'Submitted Codex')
+    name.closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(finishSave).toBeTypeOf('function'))
+    await type(name, 'Newer Codex draft')
+
+    finishSave({ ...codexProvider, name: 'Submitted Codex' })
+    await vi.waitFor(() => expect(document.querySelector('[aria-label="供应商操作"]')?.textContent).not.toContain('保存中'))
+
+    expect(name.value).toBe('Newer Codex draft')
+    expect(document.querySelector('[data-provider-save-bar]')?.textContent).toContain('有未保存的更改')
+  })
+
   it('reconnects the current Codex provider and refreshes its models', async () => {
     vi.useFakeTimers()
     await mountCodexEditor('reconnect-required')
@@ -245,6 +262,66 @@ describe('provider model editor', () => {
 
     expect(document.querySelector<HTMLInputElement>('#provider-name')?.value).toBe('Other provider')
     expect(document.querySelector('[data-codex-account]')).toBeNull()
+  })
+
+  it('leaves a newer Codex disconnect dialog and model page untouched after an old disconnect completes', async () => {
+    const { config, router } = await mountCodexEditor()
+    const nextProvider = { ...codexProvider, id: 5, name: 'Other Codex' }
+    config.providerRecords.push(nextProvider)
+    const disconnected = { ...codexProvider, oauth: { ...codexProvider.oauth, status: 'disconnected' as const, access_expires_at: null } }
+    vi.mocked(api.providers).mockResolvedValue([disconnected, nextProvider])
+    let finishDisconnect!: () => void
+    vi.spyOn(api, 'disconnectCodexProvider').mockImplementation(() => new Promise<void>(resolve => { finishDisconnect = resolve }))
+
+    ;[...document.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.trim() === '断开连接')!.click()
+    await vi.waitFor(() => expect(document.querySelector('[role="alertdialog"]')).not.toBeNull())
+    ;[...document.querySelectorAll<HTMLButtonElement>('[role="alertdialog"] button')].find(button => button.textContent?.trim() === '断开连接')!.click()
+    await vi.waitFor(() => expect(finishDisconnect).toBeTypeOf('function'))
+    await router.push(`/settings/providers/${nextProvider.id}`)
+    await vi.waitFor(() => expect(document.querySelector<HTMLInputElement>('#provider-name')?.value).toBe('Other Codex'))
+    ;[...document.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.trim() === '断开连接')!.click()
+    await vi.waitFor(() => expect(document.querySelector('[role="alertdialog"]')).not.toBeNull())
+    vi.mocked(api.queryModels).mockClear()
+
+    finishDisconnect()
+    await nextTick()
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(document.querySelector('[role="alertdialog"]')).not.toBeNull()
+    expect(api.queryModels).not.toHaveBeenCalled()
+  })
+
+  it('hides managed Codex model interface selection while retaining the model editor', async () => {
+    const codexModel = { ...models[0]!, provider_id: codexProvider.id, metadata: { name: 'Codex model' } }
+    await mountCodexEditor('connected', [codexModel])
+    await vi.waitFor(() => expect(document.querySelector('[aria-label="编辑 Codex model"]')).not.toBeNull())
+    document.querySelector<HTMLButtonElement>('[aria-label="编辑 Codex model"]')!.click()
+    await vi.waitFor(() => expect(document.querySelector('#model-4-2-name')).not.toBeNull())
+
+    expect(document.querySelector('#model-4-2-interface')).toBeNull()
+    expect(document.querySelector('#model-4-2-enabled')).not.toBeNull()
+  })
+
+  it('blocks provider, model, and credential actions while a Codex disconnect is pending', async () => {
+    const codexModel = { ...models[0]!, provider_id: codexProvider.id, metadata: { name: 'Codex model' } }
+    await mountCodexEditor('connected', [codexModel])
+    await vi.waitFor(() => expect(document.querySelector('[aria-label="编辑 Codex model"]')).not.toBeNull())
+    await type(document.querySelector<HTMLInputElement>('#provider-name')!, 'Unsaved Codex')
+    let finishDisconnect!: () => void
+    vi.spyOn(api, 'disconnectCodexProvider').mockImplementation(() => new Promise<void>(resolve => { finishDisconnect = resolve }))
+
+    ;[...document.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.trim() === '断开连接')!.click()
+    await vi.waitFor(() => expect(document.querySelector('[role="alertdialog"]')).not.toBeNull())
+    ;[...document.querySelectorAll<HTMLButtonElement>('[role="alertdialog"] button')].find(button => button.textContent?.trim() === '断开连接')!.click()
+    await vi.waitFor(() => expect(finishDisconnect).toBeTypeOf('function'))
+
+    expect(document.querySelector<HTMLButtonElement>('[data-provider-save-bar] button[type="submit"]')?.disabled).toBe(true)
+    expect([...document.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.trim() === '全部启用')?.disabled).toBe(true)
+    expect(document.querySelector<HTMLButtonElement>('[aria-label="编辑 Codex model"]')?.disabled).toBe(true)
+    expect(document.querySelector<HTMLButtonElement>('[aria-label="删除供应商"]')?.disabled).toBe(true)
+    expect([...document.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.trim() === '重新连接')?.disabled).toBe(true)
+
+    finishDisconnect()
   })
 
   it.each(['filter', 'provider'] as const)('refreshes an exact off-page model after an old association acknowledgement across a %s change', async context => {

@@ -79,7 +79,8 @@ const editorOpen = ref(false)
 const modelToDelete = ref<ModelWithMetadata | null>(null)
 const modelDeleteOpen = ref(false)
 const busyModels = computed(() => modelAction.value || (pendingWrites.get(providerId.value ?? -1) ?? 0) > 0)
-const credentialActionsBusy = computed(() => saving.value || busyModels.value || codexAction.value || codexReconnectOpen.value)
+const codexActionPending = computed(() => codexAction.value || codexReconnectOpen.value)
+const credentialActionsBusy = computed(() => saving.value || busyModels.value || deletingProvider.value || codexActionPending.value)
 const canFetchModels = computed(() => savedProvider.value?.interfaces.find(endpoint => endpoint.id === savedProvider.value?.default_interface_id)?.protocol !== 'vertex-compatible' && !!savedProvider.value?.default_interface_id)
 const hasKey = computed(() => config.providers.find(provider => provider.id === providerId.value)?.has_key)
 
@@ -198,7 +199,7 @@ function updateProviderForm(value: ProviderWriteInput) {
 }
 
 async function save() {
-  if (saving.value || !validProvider.value) return
+  if (saving.value || deletingProvider.value || codexActionPending.value || !validProvider.value) return
   const id = requireId()
   const token = loadToken
   const submitted = JSON.parse(JSON.stringify(form)) as ProviderSettingsDraft
@@ -228,7 +229,7 @@ async function save() {
         if (form.input.api_key === submitted.input.api_key) form.input.api_key = ''
         markSaved(JSON.stringify({ kind: 'custom', input: { ...submitted.input, api_key: '' } }))
       } else {
-        markSaved()
+        markSaved(JSON.stringify(submitted))
       }
       toast.success('已保存供应商')
     }
@@ -237,6 +238,10 @@ async function save() {
 }
 
 async function reloadCodexProvider(id: number, token: number) {
+  if (token !== loadToken || providerId.value !== id) {
+    config.invalidateProviderModels(id)
+    return
+  }
   config.invalidateProviderModels(id)
   await Promise.all([config.load(), loadModelPage()])
   if (token !== loadToken || providerId.value !== id) return
@@ -246,11 +251,17 @@ async function codexReconnected() {
   const id = providerId.value
   if (id === null) return
   const token = loadToken
+  codexAction.value = true
   codexReconnectOpen.value = false
   try {
     await reloadCodexProvider(id, token)
     if (token === loadToken) toast.success('已重新连接 Codex')
   } catch (error) { if (token === loadToken) report(error) }
+  finally { if (token === loadToken) codexAction.value = false }
+}
+
+function openCodexReconnect() {
+  if (!credentialActionsBusy.value) codexReconnectOpen.value = true
 }
 
 async function disconnectCodexProvider() {
@@ -260,6 +271,10 @@ async function disconnectCodexProvider() {
   codexAction.value = true
   try {
     await api.disconnectCodexProvider(id)
+    if (token !== loadToken || providerId.value !== id) {
+      config.invalidateProviderModels(id)
+      return
+    }
     codexDisconnectOpen.value = false
     await reloadCodexProvider(id, token)
     if (token === loadToken) toast.success('已断开 Codex')
@@ -268,7 +283,7 @@ async function disconnectCodexProvider() {
 }
 
 async function remove() {
-  if (busyModels.value || deletingProvider.value) return
+  if (busyModels.value || deletingProvider.value || saving.value || codexActionPending.value) return
   const id = requireId()
   const token = loadToken
   deletingProvider.value = true
@@ -282,7 +297,7 @@ async function remove() {
 }
 
 async function fetchModels() {
-  if (!canFetchModels.value || busyModels.value) return
+  if (!canFetchModels.value || busyModels.value || deletingProvider.value || codexActionPending.value) return
   const id = requireId()
   const token = loadToken
   modelAction.value = true
@@ -300,7 +315,7 @@ async function fetchModels() {
 
 async function addModel() {
   const model_id = newModelId.value.trim()
-  if (!model_id || busyModels.value) return
+  if (!model_id || busyModels.value || deletingProvider.value || codexActionPending.value) return
   const id = requireId()
   const token = loadToken
   modelAction.value = true
@@ -318,7 +333,7 @@ async function addModel() {
 }
 
 async function setModelsEnabled(enabled: boolean, lab_id?: string | null) {
-  if (busyModels.value || deletingProvider.value) return
+  if (busyModels.value || deletingProvider.value || codexActionPending.value) return
   const id = requireId()
   const token = loadToken
   modelAction.value = true
@@ -335,6 +350,7 @@ async function setModelsEnabled(enabled: boolean, lab_id?: string | null) {
 }
 
 async function setModelEnabled(model: ModelWithMetadata, enabled: boolean) {
+  if (codexActionPending.value) return
   if (enabled || model.manual_pinned || model.upstream_available !== false) {
     await applyModel(model, { enabled })
     return
@@ -400,6 +416,7 @@ function queueFor(id: number) {
 }
 
 async function applyModel(target: Pick<ModelWithMetadata, 'id' | 'provider_id'>, patch: Partial<ModelWriteInput>) {
+  if (codexActionPending.value) return
   modelLoadToken++
   loadController?.abort()
   refreshing.value = false
@@ -419,6 +436,7 @@ async function applyModel(target: Pick<ModelWithMetadata, 'id' | 'provider_id'>,
 }
 
 function openModel(model: ModelWithMetadata) {
+  if (codexActionPending.value) return
   const authoritative = Object.values(config.modelsByRef).find(record => record.id === model.id && record.provider_id === model.provider_id)
   if (!authoritative) { report(new Error('Missing model record')); return }
   editingSession.value = createModelEditorSession(authoritative, model)
@@ -426,6 +444,7 @@ function openModel(model: ModelWithMetadata) {
 }
 
 async function saveModel(patch: Partial<ModelWriteInput>) {
+  if (codexActionPending.value) return
   const editor = modelEditor.value
   const session = editingSession.value
   if (!session || !editor) return
@@ -438,13 +457,14 @@ async function saveModel(patch: Partial<ModelWriteInput>) {
 }
 
 function confirmModelDelete() {
+  if (codexActionPending.value) return
   modelToDelete.value = editingSession.value?.model ?? null
   editorOpen.value = false
   modelDeleteOpen.value = true
 }
 
 async function removeModel() {
-  if (!modelToDelete.value || busyModels.value) return
+  if (!modelToDelete.value || busyModels.value || codexActionPending.value) return
   const target = { id: modelToDelete.value.id, provider_id: modelToDelete.value.provider_id, model_id: modelToDelete.value.model_id }
   const id = target.provider_id
   const token = loadToken
@@ -516,7 +536,7 @@ async function removeModel() {
               AlertTitle 上次连接错误
               AlertDescription {{ savedProvider.oauth.last_error }}
             .flex.flex-wrap.gap-2(aria-label="Codex 凭据操作")
-              Button(type="button" variant="outline" class="min-h-10" :disabled="credentialActionsBusy" @click="codexReconnectOpen = true")
+              Button(type="button" variant="outline" class="min-h-10" :disabled="credentialActionsBusy" @click="openCodexReconnect")
                 Link2Icon(data-icon="inline-start")
                 | 重新连接
               AlertDialog(v-model:open="codexDisconnectOpen")
@@ -538,11 +558,11 @@ async function removeModel() {
             .flex.min-w-0.flex-1.items-center.gap-2
               h2#provider-models-title.text-lg.font-semibold 模型
               Badge(variant="secondary") {{ models.length }}
-            Button(type="button" variant="outline" size="sm" class="min-h-10" :disabled="dirty || !canFetchModels || busyModels || deletingProvider" @click="fetchModels")
+            Button(type="button" variant="outline" size="sm" class="min-h-10" :disabled="dirty || !canFetchModels || busyModels || deletingProvider || codexActionPending" @click="fetchModels")
               DownloadIcon(data-icon="inline-start")
               | {{ modelAction ? '处理中…' : '拉取模型' }}
-            Button(type="button" variant="ghost" size="sm" class="min-h-10" :disabled="busyModels || deletingProvider" @click="setModelsEnabled(true)") 全部启用
-            Button(type="button" variant="ghost" size="sm" class="min-h-10" :disabled="busyModels || deletingProvider" @click="setModelsEnabled(false)") 全部禁用
+            Button(type="button" variant="ghost" size="sm" class="min-h-10" :disabled="busyModels || deletingProvider || codexActionPending" @click="setModelsEnabled(true)") 全部启用
+            Button(type="button" variant="ghost" size="sm" class="min-h-10" :disabled="busyModels || deletingProvider || codexActionPending" @click="setModelsEnabled(false)") 全部禁用
           p.text-sm.text-muted-foreground 通过供应商拉取或手动添加模型。目录只提供元数据。
           ModelFilterBar(v-model="modelFilters" :providers="savedProvider ? [savedProvider] : []")
           p.min-h-5.text-sm.text-muted-foreground(role="status") {{ modelLoadError ?? '' }}
@@ -551,15 +571,15 @@ async function removeModel() {
               Field
                 FieldLabel.sr-only(for="new-model-id") 新模型 ID
                 ButtonGroup(class="w-full" aria-label="添加模型")
-                  Input#new-model-id(v-model="newModelId" placeholder="模型 ID，例如 gpt-5.1" class="min-h-10 min-w-0" :disabled="modelAction")
-                  Button(type="submit" variant="outline" class="min-h-10" :disabled="!newModelId.trim() || busyModels || deletingProvider")
+                  Input#new-model-id(v-model="newModelId" placeholder="模型 ID，例如 gpt-5.1" class="min-h-10 min-w-0" :disabled="modelAction || codexActionPending")
+                  Button(type="submit" variant="outline" class="min-h-10" :disabled="!newModelId.trim() || busyModels || deletingProvider || codexActionPending")
                     PlusIcon(data-icon="inline-start")
                     | 添加
           ItemGroup(class="gap-2")
             ModelGroupList(:entries="modelEntries" :catalog-providers="catalogProviders" :show-providers="false" collapsible show-single-lab)
               template(#lab-actions="{ lab }")
-                Button(type="button" variant="ghost" size="xs" class="min-h-10" :aria-label="`启用 ${lab.id ?? '其他'} 分组`" :disabled="busyModels || deletingProvider" @click="setModelsEnabled(true, lab.id)") 启用
-                Button(type="button" variant="ghost" size="xs" class="min-h-10" :aria-label="`禁用 ${lab.id ?? '其他'} 分组`" :disabled="busyModels || deletingProvider" @click="setModelsEnabled(false, lab.id)") 禁用
+                Button(type="button" variant="ghost" size="xs" class="min-h-10" :aria-label="`启用 ${lab.id ?? '其他'} 分组`" :disabled="busyModels || deletingProvider || codexActionPending" @click="setModelsEnabled(true, lab.id)") 启用
+                Button(type="button" variant="ghost" size="xs" class="min-h-10" :aria-label="`禁用 ${lab.id ?? '其他'} 分组`" :disabled="busyModels || deletingProvider || codexActionPending" @click="setModelsEnabled(false, lab.id)") 禁用
               template(#default="{ entry: { model, provider } }")
                 Item(variant="outline")
                   LabAvatar(:model-id="model.model_id" :lab-id="model.lab_id" :family="model.metadata.family" :provider-name="provider.name" size="sm")
@@ -571,8 +591,8 @@ async function removeModel() {
                       Badge(v-if="model.manual_pinned" variant="outline") 手动
                       Badge(v-else-if="model.upstream_available === false" variant="outline" class="border-warning text-warning") 运营商已移除
                   ItemActions(class="gap-4")
-                    Switch(:model-value="model.enabled" :aria-label="`启用 ${modelName(model)}`" class="after:-inset-y-3" :disabled="modelAction || deletingProvider" @update:model-value="setModelEnabled(model, $event)")
-                    Button(variant="ghost" size="icon" class="size-10" :aria-label="`编辑 ${modelName(model)}`" :disabled="modelAction || deletingProvider" @click="openModel(model)")
+                    Switch(:model-value="model.enabled" :aria-label="`启用 ${modelName(model)}`" class="after:-inset-y-3" :disabled="modelAction || deletingProvider || codexActionPending" @update:model-value="setModelEnabled(model, $event)")
+                    Button(variant="ghost" size="icon" class="size-10" :aria-label="`编辑 ${modelName(model)}`" :disabled="modelAction || deletingProvider || codexActionPending" @click="openModel(model)")
                       Settings2Icon
             template(v-if="refreshing && !visibleModels.length")
               Skeleton(v-for="index in 3" :key="index" class="h-16 w-full")
@@ -582,13 +602,13 @@ async function removeModel() {
                 EmptyDescription {{ hasModelFilters ? '试试其他筛选条件。' : canFetchModels ? '从供应商拉取模型，或输入模型 ID 手动添加。' : '输入模型 ID，添加此供应商支持的模型。' }}
               EmptyContent
                 Button(v-if="hasModelFilters" variant="outline" class="min-h-10" @click="modelFilters = {}") 清除筛选
-                Button(v-else-if="canFetchModels" variant="outline" class="min-h-10" :disabled="dirty || busyModels || deletingProvider" @click="fetchModels") 拉取模型
+                Button(v-else-if="canFetchModels" variant="outline" class="min-h-10" :disabled="dirty || busyModels || deletingProvider || codexActionPending" @click="fetchModels") 拉取模型
                 Button(v-else variant="outline" class="min-h-10" @click="focusNewModel") 输入模型 ID
-          Button(v-if="nextCursor" variant="outline" :disabled="refreshing || busyModels" @click="loadModelPage(true)") 加载更多模型
+          Button(v-if="nextCursor" variant="outline" :disabled="refreshing || busyModels || codexActionPending" @click="loadModelPage(true)") 加载更多模型
         .sticky.bottom-0.-mx-4.flex.items-center.justify-between.gap-3.border-t.p-4.backdrop-blur(data-provider-save-bar class="bg-background/95 pb-[calc(1rem+env(safe-area-inset-bottom))] md:-mx-6 md:px-6 lg:-mx-8 lg:px-8")
           AlertDialog(v-model:open="providerDeleteOpen")
             AlertDialogTrigger(as-child)
-              Button(type="button" variant="ghost" size="icon" class="size-10" aria-label="删除供应商" :disabled="busyModels || deletingProvider || saving")
+              Button(type="button" variant="ghost" size="icon" class="size-10" aria-label="删除供应商" :disabled="busyModels || deletingProvider || saving || codexActionPending")
                 Trash2Icon
             AlertDialogContent
               AlertDialogHeader
@@ -596,12 +616,12 @@ async function removeModel() {
                 AlertDialogDescription 此供应商及其模型配置将被删除。
               AlertDialogFooter
                 AlertDialogCancel(class="min-h-10") 取消
-                AlertDialogAction(variant="destructive" class="min-h-10" :disabled="busyModels || deletingProvider" @click="remove") 删除供应商
+                AlertDialogAction(variant="destructive" class="min-h-10" :disabled="busyModels || deletingProvider || saving || codexActionPending" @click="remove") 删除供应商
           .flex.items-center.gap-2(aria-label="供应商操作")
             span.text-sm.text-muted-foreground {{ dirty ? '有未保存的更改' : '更改已保存' }}
-            Button(type="submit" form="provider-settings-form" class="min-h-10" :disabled="saving || deletingProvider || !validProvider || !dirty") {{ saving ? '保存中…' : '保存' }}
+            Button(type="submit" form="provider-settings-form" class="min-h-10" :disabled="saving || deletingProvider || codexActionPending || !validProvider || !dirty") {{ saving ? '保存中…' : '保存' }}
   CodexOAuthDialog(v-if="codexReconnectOpen && providerId !== null" v-model:open="codexReconnectOpen" :provider-id="providerId" @created="codexReconnected")
-  ModelEditor(v-if="editorOpen && editingSession && savedProvider && providerId !== null" ref="modelEditor" v-model:open="editorOpen" :key="editingSession.target.id" :session="editingSession" :interfaces="savedProvider.interfaces" :default-interface-id="savedProvider.default_interface_id" :saving="busyModels" @save="saveModel" @delete="confirmModelDelete")
+  ModelEditor(v-if="editorOpen && editingSession && savedProvider && providerId !== null" ref="modelEditor" v-model:open="editorOpen" :key="editingSession.target.id" :session="editingSession" :interfaces="savedProvider.interfaces" :default-interface-id="savedProvider.default_interface_id" :allow-interface-selection="savedProvider.kind === 'custom'" :saving="busyModels || codexActionPending" @save="saveModel" @delete="confirmModelDelete")
   AlertDialog(v-model:open="modelDeleteOpen")
     AlertDialogContent
       AlertDialogHeader
@@ -609,5 +629,5 @@ async function removeModel() {
         AlertDialogDescription 此模型将从当前供应商中移除。
       AlertDialogFooter
         AlertDialogCancel(class="min-h-10") 取消
-        AlertDialogAction(variant="destructive" class="min-h-10" :disabled="busyModels" @click="removeModel") 删除模型
+        AlertDialogAction(variant="destructive" class="min-h-10" :disabled="busyModels || codexActionPending" @click="removeModel") 删除模型
 </template>

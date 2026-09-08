@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import ModelPicker from '@/client/components/model-picker.vue'
 import { useConfigStore } from '@/client/stores/config'
 import { api } from '@/client/lib/api'
-import { modelRecords, provider } from './provider-fixtures'
+import { codexProvider, modelRecords, provider } from './provider-fixtures'
 
 const desktop = ref(false)
 vi.mock('@vueuse/core', async (importOriginal) => ({
@@ -17,13 +17,13 @@ vi.mock('@vueuse/core', async (importOriginal) => ({
 let cleanup = () => {}
 afterEach(() => { cleanup(); vi.restoreAllMocks(); document.body.innerHTML = '' })
 
-async function mountPicker(compact: boolean, isDesktop: boolean, loaded = true) {
+async function mountPicker(compact: boolean, isDesktop: boolean, loaded = true, selectedProvider = provider) {
   vi.spyOn(api, 'catalogProviders').mockResolvedValue([])
   desktop.value = isDesktop
   const pinia = createPinia()
   const config = useConfigStore(pinia)
   config.loaded = true
-  config.providerRecords = [provider]
+  config.providerRecords = [selectedProvider]
   config.pickerLoaded = loaded
   if (loaded) {
     const records = [{ ...modelRecords[0]!, model_id: 'test-model', metadata: { name: 'Test model', tool_call: false, modalities: { input: ['text' as const, 'image' as const], output: ['text' as const] } } }]
@@ -137,6 +137,24 @@ describe('model picker modality', () => {
     await vi.waitFor(() => expect(update).toHaveBeenCalledWith(1, expect.objectContaining({ name: 'Renamed provider', api_key: undefined }), expect.any(Function)))
     await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull())
     expect(host.querySelector('button')?.getAttribute('aria-label')).toContain('Test model')
+  })
+
+  it('closes and opens full settings from a managed provider quick dialog without a draft guard', async () => {
+    const managedProvider = { ...codexProvider, id: 1 }
+    const host = await mountPicker(false, true, true, managedProvider)
+    host.querySelector<HTMLButtonElement>('button')!.click()
+    await vi.waitFor(() => expect(document.querySelector('[role="option"]')).not.toBeNull())
+    document.querySelector<HTMLButtonElement>('[aria-label="设置供应商 Codex"]')!.click()
+    await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')?.textContent).toContain('只能在完整设置中管理'))
+
+    document.querySelector<HTMLButtonElement>('[data-slot="dialog-close"]')!.click()
+    await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull())
+    host.querySelector<HTMLButtonElement>('button')!.click()
+    await vi.waitFor(() => expect(document.querySelector('[role="option"]')).not.toBeNull())
+    document.querySelector<HTMLButtonElement>('[aria-label="设置供应商 Codex"]')!.click()
+    await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull())
+    ;[...document.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.trim() === '打开完整设置')!.click()
+    await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull())
   })
 
   it.each([false, true])('opens a mobile Drawer for either trigger appearance (compact=%s)', async (compact) => {
