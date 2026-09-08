@@ -77,6 +77,16 @@ describe('ws protocol', () => {
     if (cmd.type === 'session.update') expect(cmd.project_id).toBeNull()
   })
 
+  it('carries a first-send tool snapshot and a later session update', () => {
+    const first = parseCommand(JSON.stringify({
+      type: 'send', session_id: null, parent_id: null, parts: [{ type: 'text', text: 'hi' }],
+      provider_id: 1, model_id: 'gpt', tools: ['ask_user'],
+    }))
+    expect(first.type === 'send' && first.tools).toEqual(['ask_user'])
+    const update = parseCommand(JSON.stringify({ type: 'session.update', session_id: 1, tools: ['ask_user'] }))
+    expect(update.type === 'session.update' && update.tools).toEqual(['ask_user'])
+  })
+
   it('round-trips project.created/updated/deleted events', () => {
     const project = {
       id: 1, user_id: 1, name: 'Design', icon_attachment_id: null, system_prompt: null, provider_id: null,

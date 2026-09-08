@@ -107,6 +107,7 @@ export const sessions = sqliteTable('sessions', {
   model_id: text(),
   system_prompt: text(),
   params: text({ mode: 'json' }).$type<SessionParams>(),
+  tools: text({ mode: 'json' }).$type<string[]>().notNull().default([]),
   created_at: integer().notNull(),
   updated_at: integer().notNull(),
   archived_at: integer(),

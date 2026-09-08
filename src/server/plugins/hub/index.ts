@@ -36,7 +36,7 @@ const ALARM_WATCHDOG_MS = 60_000
 
 export class Hub extends Service {
   static readonly provide = 'hub'
-  static readonly inject = ['env', 'doState', 'db', 'assets', 'llm']
+  static readonly inject = ['env', 'doState', 'db', 'assets', 'llm', 'tools']
 
   /** Owning context (this.ctx inside methods is the caller's context, per cordis semantics). */
   readonly app: Context
@@ -147,13 +147,16 @@ export class Hub extends Service {
   }
 
   async sessionUpdate(cmd: Extract<WsCommand, { type: 'session.update' }>): Promise<void> {
-    const { type: _t, request_id: _r, session_id, ...patch } = cmd
+    const { type: _t, request_id: _r, session_id, tools, ...patch } = cmd
     if (!(await getSession(this.db, session_id))) throw new Error('session not found')
     // Moving a session into a Project must never cross into another user's Project (spec §5.1).
     if (patch.project_id != null && !(await getProject(this.db, patch.project_id, DEFAULT_USER_ID))) {
       throw new Error('project not found')
     }
-    const s = await updateSession(this.db, session_id, patch)
+    const s = await updateSession(this.db, session_id, {
+      ...patch,
+      ...(tools === undefined ? {} : { tools: this.app.tools.normalize(tools) }),
+    })
     this.emitSessionUpdated(s)
   }
 

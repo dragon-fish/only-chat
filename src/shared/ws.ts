@@ -29,6 +29,8 @@ export const SendCommandSchema = z.object({
   params: SessionParamsSchema.nullable().optional(),
   session_provider_id: z.number().int().nullable().optional(),
   session_model_id: z.string().nullable().optional(),
+  /** Selected tool snapshot, used only when creating the first Session row. */
+  tools: z.array(z.string()).optional(),
 })
 export const RegenerateCommandSchema = z.object({
   type: z.literal('regenerate'),
@@ -60,6 +62,7 @@ export const SessionUpdateCommandSchema = z.object({
   model_id: z.string().nullable().optional(),
   system_prompt: z.string().nullable().optional(),
   params: SessionParamsSchema.nullable().optional(),
+  tools: z.array(z.string()).optional(),
 })
 export const SessionDeleteCommandSchema = z.object({
   type: z.literal('session.delete'),

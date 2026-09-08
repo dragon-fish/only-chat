@@ -423,6 +423,8 @@ export interface SessionDraft {
   /** The session's persisted model override, not the model this turn will use. */
   model: ModelRef | null
   params: SessionParams | null
+  /** The new Session's immutable tool snapshot. */
+  tools?: string[]
 }
 
 export interface SendInput {
@@ -456,6 +458,7 @@ export function sendCommandFor({ sessionId, parentId, parts, model, draft }: Sen
     params: draft.params,
     session_provider_id: draft.model?.provider_id ?? null,
     session_model_id: draft.model?.model_id ?? null,
+    tools: [...new Set(draft.tools ?? [])].sort(),
   }
 }
 

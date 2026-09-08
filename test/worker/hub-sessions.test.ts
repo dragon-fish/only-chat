@@ -26,6 +26,15 @@ describe('session ops', () => {
     expect(s2.updated_at).toBeGreaterThanOrEqual(s.updated_at)
   })
 
+  it('defaults existing Session snapshots to empty and preserves a selected tool snapshot', async () => {
+    const db = createDb(env.DB)
+    await ensureDefaultUser(db)
+    const empty = await createSession(db, { user_id: 1, title: 'empty', provider_id: null, model_id: null })
+    const selected = await createSession(db, { user_id: 1, title: 'selected', provider_id: null, model_id: null, tools: ['ask_user'] })
+    expect(empty.tools).toEqual([])
+    expect(selected.tools).toEqual(['ask_user'])
+  })
+
   it('forks only the root-to-selected-message path with remapped parents and copied settings', async () => {
     const db = createDb(env.DB)
     await ensureDefaultUser(db)

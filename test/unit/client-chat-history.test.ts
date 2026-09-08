@@ -34,7 +34,7 @@ async function mountChat(historyLoaded: boolean, rememberedModel = false, lastMo
       usage: null, status: 'done', error: null, created_at: index,
     }))
     histories.set(id, messages)
-    sync.sessions.set(id, { id, user_id: 1, project_id: null, title: `Chat ${id}`, head_message_id: id * 100 + 9, provider_id: null, model_id: null, system_prompt: null, params: null, archived_at: null, created_at: 0, updated_at: id })
+    sync.sessions.set(id, { id, user_id: 1, project_id: null, title: `Chat ${id}`, head_message_id: id * 100 + 9, provider_id: null, model_id: null, system_prompt: null, params: null, tools: [], archived_at: null, created_at: 0, updated_at: id })
     sync.ingestMessages(id, messages)
     if (historyLoaded) sync.loadedMessageSessions.add(id)
   }

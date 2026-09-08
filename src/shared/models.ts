@@ -61,6 +61,8 @@ export const SessionSchema = z.object({
   model_id: z.string().nullable(),
   system_prompt: z.string().nullable(),
   params: SessionParamsSchema.nullable(),
+  /** Stable selected tool IDs, captured when the Session is first created. */
+  tools: z.array(z.string()),
   created_at: z.number(),
   updated_at: z.number(),
   archived_at: z.number().nullable(),

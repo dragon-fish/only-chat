@@ -5,6 +5,8 @@ import { LlmPlugin } from './plugins/llm'
 import { HubPlugin } from './plugins/hub'
 import { ApiPlugin } from './plugins/api'
 import { ModelCatalog } from './plugins/model-catalog'
+import { ToolRegistryPlugin } from './plugins/tools'
+import { AskUserServerPlugin } from '@/plugins/ask-user/server'
 
 export type Side = 'worker' | 'hub'
 
@@ -38,6 +40,9 @@ export async function createApp(options: AppOptions): Promise<Context> {
     // `await ctx.plugin()` resolves even when the plugin stays PENDING on a missing injection,
     // so assert the service is actually reachable rather than failing later at first use.
     if (!ctx.get('llm')) throw new Error('LlmPlugin loaded but ctx.llm is unavailable')
+    await ctx.plugin(ToolRegistryPlugin)
+    if (!ctx.get('tools')) throw new Error('ToolRegistryPlugin loaded but ctx.tools is unavailable')
+    await ctx.plugin(AskUserServerPlugin)
     await ctx.plugin(HubPlugin)
     if (!ctx.get('hub')) throw new Error('HubPlugin loaded but ctx.hub is unavailable')
   }

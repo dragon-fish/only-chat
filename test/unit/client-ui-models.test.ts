@@ -16,7 +16,7 @@ const project = (id: number, updated_at: number): Project => ({
 
 const session = (id: number, project_id: number | null, updated_at: number, title = `Session ${id}`): Session => ({
   id, user_id: 1, project_id, title, head_message_id: null,
-  provider_id: null, model_id: null, system_prompt: null, params: null,
+  provider_id: null, model_id: null, system_prompt: null, params: null, tools: [],
   created_at: updated_at, updated_at, archived_at: null,
 })
 

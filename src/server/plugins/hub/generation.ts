@@ -44,9 +44,10 @@ interface Target {
 /** The session-init draft carried by the first `send` of a new session (spec §5.2). */
 interface SessionDraft extends SessionConfigSource {
   project_id: number | null
+  tools: string[]
 }
 
-const EMPTY_DRAFT: SessionDraft = { project_id: null, system_prompt: null, provider_id: null, model_id: null, params: null }
+const EMPTY_DRAFT: SessionDraft = { project_id: null, system_prompt: null, provider_id: null, model_id: null, params: null, tools: [] }
 
 interface ResolveArgs {
   sessionId: number | null
@@ -102,6 +103,7 @@ async function resolveTarget(hub: Hub, args: ResolveArgs): Promise<Target> {
     project_id: draft.project_id,
     system_prompt: draft.system_prompt,
     params: draft.params,
+    tools: draft.tools,
     provider_id: draft.provider_id,
     model_id: draft.model_id,
   })
@@ -269,7 +271,7 @@ async function generate(hub: Hub, target: Target, shell: Message, leafUserId: nu
 // ---- entry points
 
 /** Fields that initialize a brand-new session and are therefore meaningless on an existing one. */
-const INIT_FIELDS = ['project_id', 'system_prompt', 'params', 'session_provider_id', 'session_model_id'] as const
+const INIT_FIELDS = ['project_id', 'system_prompt', 'params', 'session_provider_id', 'session_model_id', 'tools'] as const
 
 export async function runSend(hub: Hub, cmd: SendCommand): Promise<void> {
   // Dropping them silently would let a client believe it had changed a session's settings (spec §9).
@@ -286,6 +288,7 @@ export async function runSend(hub: Hub, cmd: SendCommand): Promise<void> {
       params: cmd.params ?? null,
       provider_id: cmd.session_provider_id ?? null,
       model_id: cmd.session_model_id ?? null,
+      tools: hub.app.tools.normalize(cmd.tools ?? []),
     },
   })
   const parentId = cmd.session_id === null ? null : (cmd.parent_id ?? target.session.head_message_id)

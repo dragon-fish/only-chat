@@ -27,7 +27,7 @@ async function mountRows(options: { mobile?: boolean } = {}) {
   const pinia = createPinia()
   const sync = useSyncStore(pinia)
   const project: Project = { id: 7, user_id: 1, name: 'Design', icon_attachment_id: null, system_prompt: null, provider_id: null, model_id: null, params: null, created_at: 0, updated_at: 0 }
-  const session: Session = { id: 12, user_id: 1, project_id: 7, title: 'Notes', head_message_id: null, provider_id: null, model_id: null, system_prompt: null, params: null, archived_at: null, created_at: 0, updated_at: 0 }
+  const session: Session = { id: 12, user_id: 1, project_id: 7, title: 'Notes', head_message_id: null, provider_id: null, model_id: null, system_prompt: null, params: null, tools: [], archived_at: null, created_at: 0, updated_at: 0 }
   const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/:pathMatch(.*)*', component: { template: '<div />' } }] })
   await router.push('/project/7')
   const host = document.createElement('div')

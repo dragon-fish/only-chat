@@ -37,7 +37,7 @@ import type { Message, Project, Session } from '@/shared/models'
 import type { Part } from '@/shared/parts'
 import { parseCommand } from '@/shared/ws'
 
-const session: Session = { id: 1, user_id: 1, project_id: null, title: 't', head_message_id: null, provider_id: null, model_id: null, system_prompt: null, params: null, created_at: 1, updated_at: 1, archived_at: null }
+const session: Session = { id: 1, user_id: 1, project_id: null, title: 't', head_message_id: null, provider_id: null, model_id: null, system_prompt: null, params: null, tools: [], created_at: 1, updated_at: 1, archived_at: null }
 const project: Project = { id: 1, user_id: 1, name: 'p', icon_attachment_id: null, system_prompt: null, provider_id: null, model_id: null, params: null, created_at: 1, updated_at: 1 }
 const msg = (id: number, parent_id: number | null, role: 'user' | 'assistant', over: Partial<Message> = {}): Message =>
   ({ id, session_id: 1, parent_id, seq: id, role, parts: [], provider_id: null, model_id: null, usage: null, status: 'done', error: null, created_at: 0, ...over })
@@ -474,7 +474,7 @@ describe('composer model precedence', () => {
 describe('send payload', () => {
   const parts: Part[] = [{ type: 'text', text: 'hi' }]
   const model: ModelRef = { provider_id: 4, model_id: 'gpt' }
-  const draft = { project_id: 7, system_prompt: '  keep  ', model: { provider_id: 5, model_id: 'pinned' }, params: { temperature: 0.3 } }
+  const draft = { project_id: 7, system_prompt: '  keep  ', model: { provider_id: 5, model_id: 'pinned' }, params: { temperature: 0.3 }, tools: ['z', 'ask_user', 'ask_user'] }
 
   it('creates the session atomically from the draft on the first message', () => {
     const cmd = sendCommandFor({ sessionId: null, parentId: null, parts, model, draft })
@@ -483,6 +483,7 @@ describe('send payload', () => {
       provider_id: 4, model_id: 'gpt',
       project_id: 7, system_prompt: '  keep  ', params: { temperature: 0.3 },
       session_provider_id: 5, session_model_id: 'pinned',
+      tools: ['ask_user', 'z'],
     })
     expect(parseCommand(JSON.stringify(cmd))).toEqual(cmd)
   })
@@ -490,9 +491,9 @@ describe('send payload', () => {
   it('sends an empty draft as explicit nulls rather than inherited values', () => {
     const cmd = sendCommandFor({
       sessionId: null, parentId: null, parts, model,
-      draft: { project_id: null, system_prompt: '   ', model: null, params: null },
+      draft: { project_id: null, system_prompt: '   ', model: null, params: null, tools: [] },
     })
-    expect(cmd).toMatchObject({ project_id: null, system_prompt: null, params: null, session_provider_id: null, session_model_id: null })
+    expect(cmd).toMatchObject({ project_id: null, system_prompt: null, params: null, session_provider_id: null, session_model_id: null, tools: [] })
   })
 
   it('omits every session-init field on a follow-up message', () => {

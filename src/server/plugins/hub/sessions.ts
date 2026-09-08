@@ -35,6 +35,7 @@ export async function createSession(db: DB, input: {
   project_id?: number | null
   system_prompt?: string | null
   params?: SessionParams | null
+  tools?: string[]
 }): Promise<SessionRow> {
   const now = Date.now()
   const [row] = await db.insert(sessions).values({
@@ -45,6 +46,7 @@ export async function createSession(db: DB, input: {
     model_id: input.model_id,
     system_prompt: input.system_prompt ?? null,
     params: input.params ?? null,
+    tools: input.tools ?? [],
     head_message_id: null,
     created_at: now,
     updated_at: now,
@@ -56,7 +58,7 @@ export async function createSession(db: DB, input: {
 export async function updateSession(
   db: DB,
   id: number,
-  patch: Partial<Pick<SessionRow, 'title' | 'project_id' | 'provider_id' | 'model_id' | 'system_prompt' | 'params' | 'head_message_id'>>,
+  patch: Partial<Pick<SessionRow, 'title' | 'project_id' | 'provider_id' | 'model_id' | 'system_prompt' | 'params' | 'tools' | 'head_message_id'>>,
 ): Promise<SessionRow> {
   const [row] = await db.update(sessions).set({ ...patch, updated_at: Date.now() }).where(eq(sessions.id, id)).returning()
   if (!row) throw new Error(`session ${id} not found`)
@@ -86,7 +88,7 @@ export async function forkSession(db: DB, sourceSessionId: number, userId: numbe
   const target = await createSession(db, {
     user_id: source.user_id, title: `${source.title} 副本`, project_id: source.project_id,
     provider_id: source.provider_id, model_id: source.model_id,
-    system_prompt: source.system_prompt, params: source.params,
+    system_prompt: source.system_prompt, params: source.params, tools: source.tools,
   })
   try {
     let parentId: number | null = null
