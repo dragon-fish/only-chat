@@ -1,4 +1,4 @@
-import { CodexOAuthPollResponseSchema, CodexOAuthStartResponseSchema, type AttachmentCheckResponse, type AttachmentUploadResponse, type BulkModelStateInput, type BulkModelStateResponse, type CatalogProviderSummary, type CatalogRefreshJobStatus, type CatalogRefreshStartResponse, type CatalogStatus, type FetchModelsResponse, type ModelRef, type ModelWriteInput, type ProviderWriteInput } from '@/shared/api'
+import { CodexOAuthPollResponseSchema, CodexOAuthStartResponseSchema, type AttachmentCheckResponse, type AttachmentUploadResponse, type BulkModelStateInput, type BulkModelStateResponse, type CatalogProviderSummary, type CatalogRefreshJobStatus, type CatalogRefreshStartResponse, type CatalogStatus, type CodexProviderUpdate, type FetchModelsResponse, type ModelRef, type ModelWriteInput, type ProviderWriteInput } from '@/shared/api'
 import type { Message, ModelPage, ModelQuery, ModelWithMetadata, Project, ProviderWithInterfaces, Session, User } from '@/shared/models'
 import type { PresetProvider } from '@/server/plugins/llm/presets'
 
@@ -35,9 +35,12 @@ export const api = {
   providers: () => request<ProviderWithInterfaces[]>('GET', '/api/providers'),
   createProvider: (input: ProviderWriteInput, onWarning?: (warning: string) => void) => request<ProviderWithInterfaces>('POST', '/api/providers', input, {}, onWarning),
   startCodexOAuth: async () => CodexOAuthStartResponseSchema.parse(await request<unknown>('POST', '/api/codex/oauth/start')),
+  reconnectCodexProvider: async (id: number) => CodexOAuthStartResponseSchema.parse(await request<unknown>('POST', `/api/providers/${id}/codex/reconnect`)),
   pollCodexOAuth: async (flowId: string) => CodexOAuthPollResponseSchema.parse(await request<unknown>('POST', `/api/codex/oauth/${flowId}/poll`)),
   cancelCodexOAuth: (flowId: string) => request<void>('DELETE', `/api/codex/oauth/${flowId}`),
   updateProvider: (id: number, input: ProviderWriteInput, onWarning?: (warning: string) => void) => request<ProviderWithInterfaces>('PUT', `/api/providers/${id}`, input, {}, onWarning),
+  updateCodexProvider: (id: number, input: CodexProviderUpdate) => request<ProviderWithInterfaces>('PUT', `/api/providers/${id}`, input),
+  disconnectCodexProvider: (id: number) => request<void>('POST', `/api/providers/${id}/codex/disconnect`),
   deleteProvider: (id: number) => request<void>('DELETE', `/api/providers/${id}`),
   fetchModels: (providerId: number) => request<FetchModelsResponse>('POST', `/api/providers/${providerId}/fetch-models`),
   models: (providerId: number, query: Partial<ModelQuery> = {}, signal?: AbortSignal) => request<ModelPage>('GET', `/api/providers/${providerId}/models${queryString(query)}`, undefined, { signal }),

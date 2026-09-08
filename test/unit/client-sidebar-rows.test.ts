@@ -139,6 +139,6 @@ it('shows a Codex provider account status instead of a custom-key badge', async 
   app.mount(host)
   cleanup = () => app.unmount()
 
-  await vi.waitFor(() => expect(host.textContent).toContain('connected'))
+  await vi.waitFor(() => expect(host.querySelector('[data-codex-status]')?.getAttribute('data-codex-status')).toBe('connected'))
   expect(host.textContent).not.toContain('无密钥')
 })

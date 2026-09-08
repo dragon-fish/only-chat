@@ -17,7 +17,7 @@ type ViewState =
   | { type: 'failed'; message: string }
   | { type: 'expired' }
 
-const props = defineProps<{ open: boolean }>()
+const props = defineProps<{ open: boolean; providerId?: number }>()
 const emit = defineEmits<{ 'update:open': [boolean]; created: [ProviderWithInterfaces] }>()
 const state = ref<ViewState>({ type: 'starting' })
 const now = ref(Date.now())
@@ -105,7 +105,7 @@ async function start() {
   const version = ++run
   state.value = { type: 'starting' }
   try {
-    const grant = await api.startCodexOAuth()
+    const grant = props.providerId === undefined ? await api.startCodexOAuth() : await api.reconnectCodexProvider(props.providerId)
     if (version !== run || !props.open) {
       void api.cancelCodexOAuth(grant.flow_id).catch(() => undefined)
       return

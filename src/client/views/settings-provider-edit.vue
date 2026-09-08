@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, reactive, ref, shallowRef, watch } from 'vue'
-import { DownloadIcon, PlusIcon, Settings2Icon, Trash2Icon } from '@lucide/vue'
+import { DownloadIcon, Link2Icon, PlusIcon, Settings2Icon, Trash2Icon, UnlinkIcon } from '@lucide/vue'
 import { useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
 import ModelEditor from '@/client/components/model-editor.vue'
@@ -13,8 +13,9 @@ import { useFormChanges } from '@/client/composables/use-form-changes'
 import { Alert, AlertDescription, AlertTitle } from '@/client/ui/alert'
 import ProviderNavigation from '@/client/components/provider-navigation.vue'
 import ProviderSettingsForm from '@/client/components/provider-settings-form.vue'
+import CodexOAuthDialog from '@/client/components/codex-oauth-dialog.vue'
 import { api } from '@/client/lib/api'
-import { providerSettingsDraft } from '@/client/lib/provider-settings'
+import { codexOAuthStatusLabel, providerSettingsDraft, type ProviderSettingsDraft } from '@/client/lib/provider-settings'
 import { modelBadges, modelName } from '@/client/lib/ui-models'
 import { createModelWriteQueue } from '@/client/lib/settings'
 import { createModelEditorSession, type ModelEditorSession } from '@/client/lib/model-editor'
@@ -35,14 +36,16 @@ import {
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from '@/client/ui/alert-dialog'
 import { type ModelWithMetadata, type ModelQuery } from '@/shared/models'
-import { ProviderWriteInputSchema, type CatalogProviderSummary, type ModelWriteInput, type ProviderWriteInput } from '@/shared/api'
+import { CodexProviderUpdateSchema, ProviderWriteInputSchema, type CatalogProviderSummary, type ModelWriteInput, type ProviderWriteInput } from '@/shared/api'
 
 const props = defineProps<{ providerId: number | null }>()
 const router = useRouter()
 const config = useConfigStore()
 const providerId = computed(() => props.providerId)
-const form = reactive<ProviderWriteInput>({ name: '', api_key: '', enabled: true, interfaces: [], default_protocol: 'chat-completions', models_dev_provider: { source: 'endpoint' } })
-const validProvider = computed(() => ProviderWriteInputSchema.safeParse(form).success)
+const form = reactive<ProviderSettingsDraft>({ kind: 'custom', input: { name: '', api_key: '', enabled: true, interfaces: [], default_protocol: 'chat-completions', models_dev_provider: { source: 'endpoint' } } })
+const validProvider = computed(() => form.kind === 'custom'
+  ? ProviderWriteInputSchema.safeParse(form.input).success
+  : CodexProviderUpdateSchema.safeParse(form.input).success)
 const savedProvider = computed(() => config.providerRecords.find(provider => provider.id === providerId.value))
 const savedName = computed(() => savedProvider.value?.name || '供应商设置')
 const catalogProviders = ref<CatalogProviderSummary[]>([])
@@ -67,12 +70,16 @@ const modelAction = ref(false)
 const pendingWrites = reactive(new Map<number, number>())
 const deletingProvider = ref(false)
 const providerDeleteOpen = ref(false)
+const codexDisconnectOpen = ref(false)
+const codexReconnectOpen = ref(false)
+const codexAction = ref(false)
 const editingSession = shallowRef<ModelEditorSession | null>(null)
 const modelEditor = ref<InstanceType<typeof ModelEditor> | null>(null)
 const editorOpen = ref(false)
 const modelToDelete = ref<ModelWithMetadata | null>(null)
 const modelDeleteOpen = ref(false)
 const busyModels = computed(() => modelAction.value || (pendingWrites.get(providerId.value ?? -1) ?? 0) > 0)
+const credentialActionsBusy = computed(() => saving.value || busyModels.value || codexAction.value || codexReconnectOpen.value)
 const canFetchModels = computed(() => savedProvider.value?.interfaces.find(endpoint => endpoint.id === savedProvider.value?.default_interface_id)?.protocol !== 'vertex-compatible' && !!savedProvider.value?.default_interface_id)
 const hasKey = computed(() => config.providers.find(provider => provider.id === providerId.value)?.has_key)
 
@@ -167,7 +174,8 @@ async function load() {
       modelFilters.value = {}
       newModelId.value = ''
       editorOpen.value = false
-      saving.value = modelAction.value = deletingProvider.value = false
+      saving.value = modelAction.value = deletingProvider.value = codexAction.value = false
+      codexReconnectOpen.value = codexDisconnectOpen.value = false
       loadedProviderId = id
       associationWarning.value = null
     }
@@ -185,17 +193,21 @@ async function load() {
 watch(providerId, load, { immediate: true })
 onBeforeUnmount(() => { loadToken++; modelLoadToken++; loadController?.abort() })
 
-function updateProviderForm(value: ProviderWriteInput) { Object.assign(form, value) }
+function updateProviderForm(value: ProviderWriteInput) {
+  if (form.kind === 'custom') Object.assign(form.input, value)
+}
 
 async function save() {
   if (saving.value || !validProvider.value) return
   const id = requireId()
   const token = loadToken
-  const submitted: ProviderWriteInput = JSON.parse(JSON.stringify(form))
+  const submitted = JSON.parse(JSON.stringify(form)) as ProviderSettingsDraft
   saving.value = true
   try {
     let responseWarning: string | null = null
-    const result = await api.updateProvider(id, { ...submitted, api_key: submitted.api_key || undefined }, value => { responseWarning = value })
+    const result = submitted.kind === 'custom'
+      ? await api.updateProvider(id, { ...submitted.input, api_key: submitted.input.api_key || undefined }, value => { responseWarning = value })
+      : await api.updateCodexProvider(id, submitted.input)
     if (token === loadToken) associationWarning.value = responseWarning
     config.invalidateProviderModels(id)
     await Promise.all([
@@ -204,20 +216,55 @@ async function save() {
       token === loadToken ? loadModelPage() : Promise.resolve(),
     ])
     if (token === loadToken) {
-      for (const endpoint of submitted.interfaces) {
-        const persisted = result.interfaces.find(entry => entry.protocol === endpoint.protocol)
-        const current = form.interfaces.find(entry => entry.protocol === endpoint.protocol)
-        if (persisted) {
-          endpoint.id = persisted.id
-          if (current) current.id = persisted.id
+      if (submitted.kind === 'custom' && form.kind === 'custom') {
+        for (const endpoint of submitted.input.interfaces) {
+          const persisted = result.interfaces.find(entry => entry.protocol === endpoint.protocol)
+          const current = form.input.interfaces.find(entry => entry.protocol === endpoint.protocol)
+          if (persisted) {
+            endpoint.id = persisted.id
+            if (current) current.id = persisted.id
+          }
         }
+        if (form.input.api_key === submitted.input.api_key) form.input.api_key = ''
+        markSaved(JSON.stringify({ kind: 'custom', input: { ...submitted.input, api_key: '' } }))
+      } else {
+        markSaved()
       }
-      if (form.api_key === submitted.api_key) form.api_key = ''
-      markSaved(JSON.stringify({ ...submitted, api_key: '' }))
       toast.success('已保存供应商')
     }
   } catch (error) { report(error) }
   finally { if (token === loadToken) saving.value = false }
+}
+
+async function reloadCodexProvider(id: number, token: number) {
+  config.invalidateProviderModels(id)
+  await Promise.all([config.load(), loadModelPage()])
+  if (token !== loadToken || providerId.value !== id) return
+}
+
+async function codexReconnected() {
+  const id = providerId.value
+  if (id === null) return
+  const token = loadToken
+  codexReconnectOpen.value = false
+  try {
+    await reloadCodexProvider(id, token)
+    if (token === loadToken) toast.success('已重新连接 Codex')
+  } catch (error) { if (token === loadToken) report(error) }
+}
+
+async function disconnectCodexProvider() {
+  if (credentialActionsBusy.value) return
+  const id = requireId()
+  const token = loadToken
+  codexAction.value = true
+  try {
+    await api.disconnectCodexProvider(id)
+    codexDisconnectOpen.value = false
+    await reloadCodexProvider(id, token)
+    if (token === loadToken) toast.success('已断开 Codex')
+  } catch (error) { if (token === loadToken) report(error) }
+  finally { if (token === loadToken) codexAction.value = false }
 }
 
 async function remove() {
@@ -431,10 +478,11 @@ async function removeModel() {
             h1.truncate.text-2xl.font-semibold(:title="savedName") {{ savedName }}
             UnsavedChangesGuard(:dirty="dirty")
             Spinner(v-if="refreshing && ready" class="shrink-0" aria-label="正在更新模型列表" title="正在更新模型列表")
-          Switch#provider-enabled(v-if="ready" v-model="form.enabled" aria-label="启用供应商" class="after:-inset-y-3")
+          Switch#provider-enabled(v-if="ready" v-model="form.input.enabled" aria-label="启用供应商" class="after:-inset-y-3")
         .flex.flex-wrap.gap-1(v-if="ready")
-          Badge(:variant="form.enabled ? 'secondary' : 'outline'") {{ form.enabled ? '已启用' : '已停用' }}
-          Badge(variant="outline") {{ hasKey ? '已配置密钥' : '无密钥' }}
+          Badge(:variant="form.input.enabled ? 'secondary' : 'outline'") {{ form.input.enabled ? '已启用' : '已停用' }}
+          Badge(v-if="savedProvider?.kind === 'codex-oauth'" variant="outline") {{ codexOAuthStatusLabel(savedProvider.oauth.status) }}
+          Badge(v-else variant="outline") {{ hasKey ? '已配置密钥' : '无密钥' }}
       .flex.flex-col.gap-4(v-if="loading" aria-label="正在加载供应商")
         Skeleton(class="h-8 w-40")
         Skeleton(v-for="index in 5" :key="index" class="h-16 w-full")
@@ -445,12 +493,44 @@ async function removeModel() {
           Button(variant="outline" class="min-h-10" @click="load") 重试
       template(v-else)
         form#provider-settings-form.flex.flex-col.gap-6(@submit.prevent="save")
-          ProviderSettingsForm(
-            :model-value="form"
+          ProviderSettingsForm(v-if="form.kind === 'custom'"
+            :model-value="form.input"
             :catalog-providers="catalogProviders"
             :current-catalog-provider-id="savedProvider?.models_dev_provider_id"
             :has-key="hasKey"
             @update:model-value="updateProviderForm")
+          FieldGroup(v-else class="gap-4" data-codex-settings)
+            Field
+              FieldLabel(for="provider-name") 名称
+              Input#provider-name(v-model="form.input.name" required maxlength="100" class="min-h-10")
+            Field
+              FieldLabel 已连接账户
+              p.text-sm.text-foreground(data-codex-account) {{ savedProvider?.kind === 'codex-oauth' ? savedProvider.oauth.account_email : '' }}
+            Field
+              FieldLabel 连接状态
+              Badge(variant="outline" :data-codex-status="savedProvider?.kind === 'codex-oauth' ? savedProvider.oauth.status : undefined") {{ savedProvider?.kind === 'codex-oauth' ? codexOAuthStatusLabel(savedProvider.oauth.status) : '' }}
+            Field
+              FieldLabel 授权到期时间
+              p#codex-access-expiry.text-sm.text-muted-foreground {{ savedProvider?.kind === 'codex-oauth' && savedProvider.oauth.access_expires_at ? new Date(savedProvider.oauth.access_expires_at).toLocaleString('zh-CN') : '未提供' }}
+            Alert(v-if="savedProvider?.kind === 'codex-oauth' && savedProvider.oauth.last_error" variant="destructive")
+              AlertTitle 上次连接错误
+              AlertDescription {{ savedProvider.oauth.last_error }}
+            .flex.flex-wrap.gap-2(aria-label="Codex 凭据操作")
+              Button(type="button" variant="outline" class="min-h-10" :disabled="credentialActionsBusy" @click="codexReconnectOpen = true")
+                Link2Icon(data-icon="inline-start")
+                | 重新连接
+              AlertDialog(v-model:open="codexDisconnectOpen")
+                AlertDialogTrigger(as-child)
+                  Button(type="button" variant="outline" class="min-h-10" :disabled="credentialActionsBusy")
+                    UnlinkIcon(data-icon="inline-start")
+                    | 断开连接
+                AlertDialogContent
+                  AlertDialogHeader
+                    AlertDialogTitle 断开 Codex 连接？
+                    AlertDialogDescription 这会删除本地授权凭据，并尝试撤销 Codex 账户的授权。已添加的模型将保留，但需要重新连接后才能使用。
+                  AlertDialogFooter
+                    AlertDialogCancel(class="min-h-10") 取消
+                    AlertDialogAction(variant="destructive" class="min-h-10" :disabled="credentialActionsBusy" @click="disconnectCodexProvider") 断开连接
           p.min-h-5.text-sm.text-muted-foreground(role="status") {{ associationWarning ?? '' }}
         Separator
         section.flex.flex-col.gap-4(aria-labelledby="provider-models-title")
@@ -512,7 +592,7 @@ async function removeModel() {
                 Trash2Icon
             AlertDialogContent
               AlertDialogHeader
-                AlertDialogTitle 删除 {{ form.name }}？
+                AlertDialogTitle 删除 {{ form.input.name }}？
                 AlertDialogDescription 此供应商及其模型配置将被删除。
               AlertDialogFooter
                 AlertDialogCancel(class="min-h-10") 取消
@@ -520,6 +600,7 @@ async function removeModel() {
           .flex.items-center.gap-2(aria-label="供应商操作")
             span.text-sm.text-muted-foreground {{ dirty ? '有未保存的更改' : '更改已保存' }}
             Button(type="submit" form="provider-settings-form" class="min-h-10" :disabled="saving || deletingProvider || !validProvider || !dirty") {{ saving ? '保存中…' : '保存' }}
+  CodexOAuthDialog(v-if="codexReconnectOpen && providerId !== null" v-model:open="codexReconnectOpen" :provider-id="providerId" @created="codexReconnected")
   ModelEditor(v-if="editorOpen && editingSession && savedProvider && providerId !== null" ref="modelEditor" v-model:open="editorOpen" :key="editingSession.target.id" :session="editingSession" :interfaces="savedProvider.interfaces" :default-interface-id="savedProvider.default_interface_id" :saving="busyModels" @save="saveModel" @delete="confirmModelDelete")
   AlertDialog(v-model:open="modelDeleteOpen")
     AlertDialogContent

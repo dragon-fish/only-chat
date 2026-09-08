@@ -23,11 +23,13 @@ const saving = ref(false)
 const associationWarning = ref<string | null>(null)
 const leaveGuard = ref<InstanceType<typeof UnsavedChangesGuard> | null>(null)
 const provider = computed(() => config.providerRecords.find(item => item.id === props.providerId))
+const customProvider = computed(() => provider.value?.kind === 'custom' ? provider.value : null)
 const dirty = computed(() => form.value !== null && JSON.stringify(form.value) !== baseline.value)
 const valid = computed(() => form.value !== null && ProviderWriteInputSchema.safeParse(form.value).success)
 
 function reset() {
-  form.value = provider.value ? providerSettingsDraft(provider.value) : null
+  const draft = customProvider.value ? providerSettingsDraft(customProvider.value) : null
+  form.value = draft?.kind === 'custom' ? draft.input : null
   baseline.value = JSON.stringify(form.value)
   associationWarning.value = null
 }
@@ -70,22 +72,22 @@ async function openFullSettings() {
 
 <template lang="pug">
 ResponsiveOverlay(:open="open" title="编辑供应商" mode="dialog" @update:open="setOpen")
-  form#provider-quick-settings-form.flex.flex-col.gap-6(v-if="form && provider" @submit.prevent="save")
+  form#provider-quick-settings-form.flex.flex-col.gap-6(v-if="form && customProvider" @submit.prevent="save")
     UnsavedChangesGuard(ref="leaveGuard" :dirty="dirty")
     Field(orientation="horizontal" class="min-h-10")
       FieldContent
-        FieldLabel(:for="`quick-provider-${provider.id}-enabled`") 启用供应商
+        FieldLabel(:for="`quick-provider-${customProvider.id}-enabled`") 启用供应商
         FieldDescription 控制此供应商及其模型是否可用于聊天。
-      Switch(:id="`quick-provider-${provider.id}-enabled`" v-model="form.enabled" aria-label="启用供应商" class="after:-inset-y-3" :disabled="saving")
+      Switch(:id="`quick-provider-${customProvider.id}-enabled`" v-model="form.enabled" aria-label="启用供应商" class="after:-inset-y-3" :disabled="saving")
     ProviderSettingsForm(
       v-model="form"
-      :id-prefix="`quick-provider-${provider.id}`"
+      :id-prefix="`quick-provider-${customProvider.id}`"
       :catalog-providers="config.catalogProviders"
-      :current-catalog-provider-id="provider.models_dev_provider_id"
-      :has-key="provider.has_key"
+      :current-catalog-provider-id="customProvider.models_dev_provider_id"
+      :has-key="customProvider.has_key"
       :disabled="saving")
     p.min-h-5.text-sm.text-muted-foreground(role="status") {{ associationWarning ?? '' }}
-  p.text-sm.text-muted-foreground(v-else) 找不到这个供应商。
+  p.text-sm.text-muted-foreground(v-else) {{ provider ? '该供应商只能在完整设置中管理。' : '找不到这个供应商。' }}
   template(#footer)
     Button(type="button" variant="outline" class="min-h-10" @click="openFullSettings") 打开完整设置
     Button(type="submit" form="provider-quick-settings-form" class="min-h-10" :disabled="!valid || saving") {{ saving ? '保存中…' : '保存' }}

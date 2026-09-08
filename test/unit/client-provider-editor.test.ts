@@ -8,7 +8,7 @@ import ProviderEditor from '@/client/views/settings-provider-edit.vue'
 import { api } from '@/client/lib/api'
 import { useConfigStore } from '@/client/stores/config'
 import type { ModelPage, ModelWithMetadata, ProviderWithInterfaces } from '@/shared/models'
-import { catalogStatus, modelRecords, provider } from './provider-fixtures'
+import { catalogStatus, codexProvider, modelRecords, provider } from './provider-fixtures'
 
 const desktop = ref(true)
 vi.mock('@vueuse/core', async (importOriginal) => ({
@@ -20,6 +20,7 @@ const models = modelRecords
 let cleanup = () => {}
 afterEach(() => {
   cleanup()
+  vi.useRealTimers()
   vi.restoreAllMocks()
   document.body.innerHTML = ''
 })
@@ -44,6 +45,27 @@ async function mountEditor() {
   cleanup = () => app.unmount()
   await vi.waitFor(() => expect(document.querySelector('[aria-label="编辑 First model"]')).not.toBeNull())
   return { router, config: useConfigStore(pinia) }
+}
+
+async function mountCodexEditor(status: 'connected' | 'reconnect-required' | 'disconnected' = 'connected') {
+  const codex = { ...codexProvider, oauth: { ...codexProvider.oauth, status } }
+  vi.spyOn(api, 'providers').mockResolvedValue([codex])
+  vi.spyOn(api, 'queryModels').mockResolvedValue({ models: [], next_cursor: null })
+  vi.spyOn(api, 'catalogStatus').mockResolvedValue(catalogStatus)
+  vi.spyOn(api, 'catalogProviders').mockResolvedValue([])
+  const pinia = createPinia()
+  await useConfigStore(pinia).load()
+  const router = createRouter({ history: createMemoryHistory(), routes: [
+    { path: '/settings/providers/:id', component: ProviderEditor, props: route => ({ providerId: Number('id' in route.params ? route.params.id : undefined) }) },
+    { path: '/settings/providers', component: { template: '<div>Providers</div>' } },
+  ] })
+  await router.push(`/settings/providers/${codex.id}`)
+  document.body.innerHTML = '<header id="page-header"></header><main id="test-host"></main>'
+  const app = createApp({ render: () => h(RouterView) }).use(pinia).use(router)
+  app.mount('#test-host')
+  cleanup = () => app.unmount()
+  await vi.waitFor(() => expect(document.querySelector('#provider-name')).not.toBeNull())
+  return { router, config: useConfigStore(pinia), provider: codex }
 }
 
 async function type(input: HTMLInputElement | HTMLTextAreaElement, value: string) {
@@ -143,6 +165,88 @@ async function pendingAcknowledgementAcrossAssociation() {
 }
 
 describe('provider model editor', () => {
+  it.each(['connected', 'reconnect-required', 'disconnected'] as const)('renders managed Codex controls for a %s credential state', async status => {
+    await mountCodexEditor(status)
+
+    expect(document.querySelector('#provider-name')).not.toBeNull()
+    expect(document.querySelector('#provider-enabled')).not.toBeNull()
+    expect(document.querySelector('[data-provider-key]')).toBeNull()
+    expect(document.querySelector('[data-provider-default-url]')).toBeNull()
+    expect(document.querySelector('[data-codex-account]')?.textContent).toContain('me@example.com')
+    expect(document.querySelector('[data-codex-status]')?.getAttribute('data-codex-status')).toBe(status)
+  })
+
+  it('saves only a Codex provider name and enabled state', async () => {
+    await mountCodexEditor()
+    const update = vi.spyOn(api, 'updateCodexProvider').mockResolvedValue(codexProvider)
+    await type(document.querySelector<HTMLInputElement>('#provider-name')!, 'Personal Codex')
+    document.querySelector<HTMLButtonElement>('#provider-enabled')!.click()
+    document.querySelector('#provider-name')!.closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+
+    await vi.waitFor(() => expect(update).toHaveBeenCalledWith(codexProvider.id, { name: 'Personal Codex', enabled: false }))
+  })
+
+  it('reconnects the current Codex provider and refreshes its models', async () => {
+    vi.useFakeTimers()
+    await mountCodexEditor('reconnect-required')
+    const reconnected = { ...codexProvider, oauth: { ...codexProvider.oauth, status: 'connected' as const } }
+    vi.mocked(api.providers).mockResolvedValue([reconnected])
+    const reconnect = vi.spyOn(api, 'reconnectCodexProvider').mockResolvedValue({
+      flow_id: '6b23e34a-8f0d-4c7e-a3d1-0e7d9ca1cd8b', verification_url: 'https://auth.openai.com/codex/device', user_code: 'ABCD-EFGH', expires_at: Date.now() + 10_000, poll_interval_ms: 1_000,
+    })
+    vi.spyOn(api, 'pollCodexOAuth').mockResolvedValue({ status: 'complete', provider: reconnected })
+
+    ;[...document.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.trim() === '重新连接')!.click()
+    await Promise.resolve()
+    await vi.advanceTimersByTimeAsync(1_000)
+
+    await vi.waitFor(() => expect(reconnect).toHaveBeenCalledWith(codexProvider.id))
+    await vi.waitFor(() => expect(document.querySelector('[data-codex-status]')?.getAttribute('data-codex-status')).toBe('connected'))
+    expect(api.queryModels).toHaveBeenCalled()
+  })
+
+  it('warns before disconnecting and reloads the managed credential state', async () => {
+    await mountCodexEditor()
+    const disconnected = { ...codexProvider, oauth: { ...codexProvider.oauth, status: 'disconnected' as const, access_expires_at: null } }
+    vi.mocked(api.providers).mockResolvedValue([disconnected])
+    const disconnect = vi.spyOn(api, 'disconnectCodexProvider').mockResolvedValue()
+
+    ;[...document.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.trim() === '断开连接')!.click()
+    await vi.waitFor(() => expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain('撤销'))
+    ;[...document.querySelectorAll<HTMLButtonElement>('[role="alertdialog"] button')].find(button => button.textContent?.trim() === '断开连接')!.click()
+
+    await vi.waitFor(() => expect(disconnect).toHaveBeenCalledWith(codexProvider.id))
+    await vi.waitFor(() => expect(document.querySelector('[data-codex-status]')?.getAttribute('data-codex-status')).toBe('disconnected'))
+  })
+
+  it('does not repaint a newer provider after a delayed Codex disconnect completes', async () => {
+    const { config, router } = await mountCodexEditor()
+    const nextProvider = { ...provider, id: 2, name: 'Other provider' }
+    config.providerRecords.push(nextProvider)
+    vi.mocked(api.queryModels).mockImplementation(async query => ({
+      models: query?.provider_id === nextProvider.id ? [{ ...models[0]!, id: 20, provider_id: nextProvider.id, metadata: { name: 'Other model' } }] : [],
+      next_cursor: null,
+    }))
+    const disconnected = { ...codexProvider, oauth: { ...codexProvider.oauth, status: 'disconnected' as const, access_expires_at: null } }
+    vi.mocked(api.providers).mockResolvedValue([disconnected, nextProvider])
+    let finishDisconnect!: () => void
+    vi.spyOn(api, 'disconnectCodexProvider').mockImplementation(() => new Promise<void>(resolve => { finishDisconnect = resolve }))
+
+    ;[...document.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.trim() === '断开连接')!.click()
+    await vi.waitFor(() => expect(document.querySelector('[role="alertdialog"]')).not.toBeNull())
+    ;[...document.querySelectorAll<HTMLButtonElement>('[role="alertdialog"] button')].find(button => button.textContent?.trim() === '断开连接')!.click()
+    await vi.waitFor(() => expect(finishDisconnect).toBeTypeOf('function'))
+    await router.push(`/settings/providers/${nextProvider.id}`)
+    await vi.waitFor(() => expect(document.querySelector<HTMLInputElement>('#provider-name')?.value).toBe('Other provider'))
+
+    finishDisconnect()
+    await nextTick()
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(document.querySelector<HTMLInputElement>('#provider-name')?.value).toBe('Other provider')
+    expect(document.querySelector('[data-codex-account]')).toBeNull()
+  })
+
   it.each(['filter', 'provider'] as const)('refreshes an exact off-page model after an old association acknowledgement across a %s change', async context => {
     const { config, router, releaseModel, currentModel } = await pendingAcknowledgementAcrossAssociation()
     if (context === 'filter') await type(document.querySelector<HTMLInputElement>('#model-1-2-name')!, 'Newer model draft')
