@@ -57,6 +57,7 @@ describe('provider creation', () => {
     await vi.waitFor(() => expect(oauth.startCodexOAuth).toHaveBeenCalledOnce())
 
     expect(document.querySelector('[data-codex-user-code]')?.textContent).toContain('ABCD-EFGH')
+    expect(document.querySelector('[data-slot="progress"]')?.getAttribute('aria-label')).toBe('设备代码有效期')
     expect(document.querySelector('[data-provider-key]')).toBeNull()
     expect(document.querySelector('[data-interface-url]')).toBeNull()
   })
@@ -118,7 +119,45 @@ describe('provider creation', () => {
     await vi.advanceTimersByTimeAsync(10_000)
 
     expect(document.querySelector('[data-codex-expired]')).not.toBeNull()
+    expect(document.querySelector('[data-codex-expired]')?.getAttribute('role')).toBe('status')
     expect(oauth.pollCodexOAuth).toHaveBeenCalledOnce()
+    expect(oauth.cancelCodexOAuth).toHaveBeenCalledOnce()
+    vi.useRealTimers()
+  })
+
+  it('cancels a waiting Codex flow after a poll transport failure', async () => {
+    vi.useFakeTimers()
+    const oauth = mockOAuthApi()
+    oauth.pollCodexOAuth = vi.fn().mockRejectedValue(new Error('Network unavailable'))
+    await mountDialog()
+
+    document.querySelector<HTMLButtonElement>('[data-add-codex]')!.click()
+    await Promise.resolve()
+    await vi.advanceTimersByTimeAsync(1_000)
+
+    await vi.waitFor(() => expect(document.querySelector('[role="alert"]')?.textContent).toContain('Network unavailable'))
+    expect(oauth.cancelCodexOAuth).toHaveBeenCalledOnce()
+    vi.useRealTimers()
+  })
+
+  it('keeps expiry terminal when an in-flight Codex poll rejects afterwards', async () => {
+    vi.useFakeTimers()
+    const oauth = mockOAuthApi()
+    let rejectPoll: (error: Error) => void = () => undefined
+    oauth.pollCodexOAuth = vi.fn().mockImplementation(() => new Promise<CodexOAuthPollResponse>((_, reject) => { rejectPoll = reject }))
+    await mountDialog()
+
+    document.querySelector<HTMLButtonElement>('[data-add-codex]')!.click()
+    await Promise.resolve()
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(oauth.pollCodexOAuth).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(9_000)
+    rejectPoll(new Error('Network unavailable'))
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(document.querySelector('[data-codex-expired]')).not.toBeNull()
+    expect(document.querySelector('[role="alert"]')).toBeNull()
+    expect(oauth.cancelCodexOAuth).toHaveBeenCalledOnce()
     vi.useRealTimers()
   })
 

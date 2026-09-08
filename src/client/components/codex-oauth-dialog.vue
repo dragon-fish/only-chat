@@ -62,8 +62,9 @@ function stop(cancel = false) {
 
 function expire(version: number) {
   if (version !== run || state.value.type !== 'waiting') return
+  run++
   clearTimers()
-  activeFlowId = undefined
+  cancelActiveFlow()
   state.value = { type: 'expired' }
 }
 
@@ -94,7 +95,7 @@ async function poll(version: number) {
   } catch (cause) {
     if (version !== run) return
     clearTimers()
-    activeFlowId = undefined
+    cancelActiveFlow()
     state.value = { type: 'failed', message: cause instanceof Error ? cause.message : String(cause) }
   }
 }
@@ -156,14 +157,14 @@ Dialog(:open="open" @update:open="handleOpenChange")
             .flex.items-center.justify-between.gap-3
               FieldLabel 授权有效期
               span.text-sm.text-muted-foreground {{ secondsRemaining }} 秒
-            Progress(:model-value="timeProgress")
+            Progress(:model-value="timeProgress" aria-label="设备代码有效期")
         Button(as-child variant="outline")
           a(:href="state.grant.verification_url" target="_blank" rel="noreferrer")
             ExternalLinkIcon(data-icon="inline-start")
             | 打开授权页面
         p.text-sm.text-muted-foreground(role="status") 等待授权完成后将自动继续。
       template(v-else-if="state.type === 'expired'")
-        p.text-sm.text-muted-foreground(data-codex-expired) 这组设备代码已过期。请重新开始以获取新的代码。
+        p.text-sm.text-muted-foreground(data-codex-expired role="status" aria-live="polite") 这组设备代码已过期。请重新开始以获取新的代码。
       template(v-else)
         p.text-sm.text-destructive(role="alert") {{ state.message }}
     DialogFooter(v-if="state.type === 'failed' || state.type === 'expired'")
