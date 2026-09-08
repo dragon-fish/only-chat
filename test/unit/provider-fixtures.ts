@@ -1,7 +1,7 @@
 import type { ModelWithMetadata, ProviderWithInterfaces } from '@/shared/models'
 
 export const provider: ProviderWithInterfaces = {
-  id: 1, user_id: 1, name: 'Example', enabled: true, has_key: false, created_at: 0,
+  id: 1, user_id: 1, name: 'Example', kind: 'custom', enabled: true, has_key: false, created_at: 0,
   credential_version: 1, default_interface_id: 10, models_dev_provider_id: null, models_dev_provider_source: 'endpoint',
   interfaces: [{ id: 10, provider_id: 1, protocol: 'chat-completions', base_url: 'https://example.com/v1', native_files: false, created_at: 0 }],
 }

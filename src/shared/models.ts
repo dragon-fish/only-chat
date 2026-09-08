@@ -6,6 +6,20 @@ import { PartsSchema } from './parts'
 export const InterfaceProtocolSchema = z.enum(['responses', 'chat-completions', 'anthropic', 'vertex-compatible'])
 export type InterfaceProtocol = z.infer<typeof InterfaceProtocolSchema>
 
+export const ProviderKindSchema = z.enum(['custom', 'codex-oauth'])
+export type ProviderKind = z.infer<typeof ProviderKindSchema>
+
+export const OAuthCredentialStatusSchema = z.enum(['connected', 'reconnect-required', 'disconnected'])
+export type OAuthCredentialStatus = z.infer<typeof OAuthCredentialStatusSchema>
+
+export const CodexOAuthSummarySchema = z.strictObject({
+  status: OAuthCredentialStatusSchema,
+  account_email: z.string().email(),
+  access_expires_at: z.number().int().nullable(),
+  last_error: z.string().nullable(),
+})
+export type CodexOAuthSummary = z.infer<typeof CodexOAuthSummarySchema>
+
 /** undefined = provider did not report; 0 = reported zero. Never collapse the two. */
 export const UsageSchema = z.object({
   prompt: z.number().optional(),
@@ -116,12 +130,11 @@ export const ProviderInterfaceSchema = z.discriminatedUnion('protocol', [
 ])
 export type ProviderInterface = z.infer<typeof ProviderInterfaceSchema>
 
-/** Wire DTO: credentials never leave the server; has_key only reports their presence. */
-export const ProviderWithInterfacesSchema = z.strictObject({
+/** Fields common to each public provider DTO. */
+const ProviderWithInterfacesBaseSchema = {
   id: z.number().int(),
   user_id: z.number().int(),
   name: z.string(),
-  has_key: z.boolean(),
   enabled: z.boolean(),
   models_dev_provider_id: z.string().nullable(),
   models_dev_provider_source: z.enum(['manual', 'endpoint']).nullable(),
@@ -129,7 +142,22 @@ export const ProviderWithInterfacesSchema = z.strictObject({
   credential_version: z.number().int(),
   interfaces: z.array(ProviderInterfaceSchema),
   created_at: z.number().int(),
-})
+}
+
+/** Wire DTO: credentials never leave the server; has_key only reports custom-key presence. */
+export const ProviderWithInterfacesSchema = z.discriminatedUnion('kind', [
+  z.strictObject({
+    ...ProviderWithInterfacesBaseSchema,
+    kind: z.literal('custom').default('custom'),
+    has_key: z.boolean(),
+  }),
+  z.strictObject({
+    ...ProviderWithInterfacesBaseSchema,
+    kind: z.literal('codex-oauth'),
+    has_key: z.literal(false),
+    oauth: CodexOAuthSummarySchema,
+  }),
+])
 export type ProviderWithInterfaces = z.infer<typeof ProviderWithInterfacesSchema>
 
 /** Model wire DTO with effective metadata and the separate user override layer. */

@@ -27,6 +27,46 @@ describe('models schemas', () => {
     expect(ProviderWithInterfacesSchema.safeParse({ ...provider, api_key: 'leak' }).success).toBe(false)
   })
 
+  it('defaults existing provider DTOs to custom', () => {
+    const { kind: _kind, ...legacyProvider } = provider
+    expect(ProviderWithInterfacesSchema.parse(legacyProvider)).toMatchObject({ kind: 'custom' })
+  })
+
+  it('requires a public OAuth summary for Codex providers', () => {
+    expect(() => ProviderWithInterfacesSchema.parse({
+      id: 2,
+      user_id: 1,
+      name: 'Codex',
+      kind: 'codex-oauth',
+      has_key: false,
+      enabled: true,
+      default_interface_id: 20,
+      credential_version: 1,
+      models_dev_provider_id: 'openai',
+      models_dev_provider_source: 'manual',
+      interfaces: [{ id: 20, provider_id: 2, protocol: 'responses', base_url: 'https://chatgpt.com/backend-api/codex', native_files: false, created_at: 0 }],
+      created_at: 0,
+    })).toThrow()
+  })
+
+  it('rejects token-shaped fields from public Codex OAuth summaries', () => {
+    expect(() => ProviderWithInterfacesSchema.parse({
+      id: 2,
+      user_id: 1,
+      name: 'Codex',
+      kind: 'codex-oauth',
+      has_key: false,
+      enabled: true,
+      default_interface_id: 20,
+      credential_version: 1,
+      models_dev_provider_id: 'openai',
+      models_dev_provider_source: 'manual',
+      interfaces: [{ id: 20, provider_id: 2, protocol: 'responses', base_url: 'https://chatgpt.com/backend-api/codex', native_files: false, created_at: 0 }],
+      oauth: { status: 'connected', account_email: 'me@example.com', access_expires_at: 1, last_error: null, access_token: 'forbidden' },
+      created_at: 0,
+    })).toThrow()
+  })
+
   it('defaults settings.plugins to an empty map', () => {
     expect(UserSettingsSchema.parse({})).toEqual({ plugins: {} })
   })

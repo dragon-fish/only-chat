@@ -177,6 +177,28 @@ describe('D1 schema', () => {
     expect(await env.DB.prepare('SELECT count(*) AS n FROM provider_interfaces WHERE provider_id = ?').bind(p!.id).first('n')).toBe(0)
   })
 
+  it('persists OAuth credential state and migrates existing providers to custom', async () => {
+    const columns = await env.DB.prepare("PRAGMA table_info('provider_oauth_credentials')").all<{ name: string }>()
+    expect(columns.results.map(column => column.name)).toEqual([
+      'provider_id', 'status', 'encrypted_bundle', 'account_id', 'account_email',
+      'access_expires_at', 'revision', 'last_error', 'updated_at',
+    ])
+
+    const db = createDb(env.DB)
+    await db.insert(users).values({ id: 1, name: 'owner', settings: { plugins: {} }, created_at: 0 }).onConflictDoNothing()
+    const [provider] = await db.insert(providers).values({ user_id: 1, name: 'oauth-state', created_at: 0 }).returning()
+    const migrated = await env.DB.prepare('SELECT kind FROM providers ORDER BY id LIMIT 1').first<{ kind: string }>()
+    expect(migrated?.kind).toBe('custom')
+
+    const insert = (status: string, encryptedBundle: string | null) => env.DB.prepare(
+      'INSERT INTO provider_oauth_credentials (provider_id, status, encrypted_bundle, account_id, account_email, access_expires_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    ).bind(provider!.id, status, encryptedBundle, 'account-id', 'me@example.com', null, 0).run()
+    await expect(insert('unknown', null)).rejects.toThrow()
+    await expect(insert('disconnected', 'encrypted')).rejects.toThrow()
+    await expect(insert('connected', null)).rejects.toThrow()
+    await expect(insert('disconnected', null)).resolves.toBeDefined()
+  })
+
   it('installs indexed filter paths and an FTS5 substring search kept current on writes', async () => {
     const names = await env.DB.prepare("SELECT name FROM sqlite_schema WHERE type = 'index' AND tbl_name = 'models'").all<{ name: string }>()
     expect(names.results.map(row => row.name)).toEqual(expect.arrayContaining([
@@ -223,7 +245,7 @@ describe('D1 schema', () => {
     await applyD1Migrations(legacy, env.TEST_MIGRATIONS)
     const db = createDb(legacy)
     const migrated = await db.select().from(providers).where(eq(providers.id, 1))
-    expect(migrated[0]).toMatchObject({ api_key: 'encrypted-value', credential_version: 1, models_dev_provider_id: 'openai', models_dev_provider_source: 'manual' })
+    expect(migrated[0]).toMatchObject({ api_key: 'encrypted-value', kind: 'custom', credential_version: 1, models_dev_provider_id: 'openai', models_dev_provider_source: 'manual' })
     const vertex = await legacy.prepare('SELECT enabled, default_interface_id, api_key FROM providers WHERE id = 2').first()
     expect(vertex).toEqual({ enabled: 0, default_interface_id: null, api_key: 'vertex-key' })
     expect(await legacy.prepare('SELECT models_dev_provider_id, models_dev_provider_source FROM providers WHERE id = 4').first()).toEqual({ models_dev_provider_id: 'anthropic', models_dev_provider_source: 'endpoint' })

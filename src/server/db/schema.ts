@@ -3,7 +3,7 @@ import { check, index, integer, sqliteTable, text, uniqueIndex, type AnySQLiteCo
 import type { CatalogMatches, ModelMetadata, ModelMetadataOverride } from '@/shared/model-metadata'
 import type { Part } from '@/shared/parts'
 import type {
-  InterfaceProtocol, PersistedStatus, SessionParams, Usage, UserSettings,
+  InterfaceProtocol, OAuthCredentialStatus, PersistedStatus, ProviderKind, SessionParams, Usage, UserSettings,
 } from '@/shared/models'
 
 export const users = sqliteTable('users', {
@@ -27,6 +27,7 @@ export const providers = sqliteTable('providers', {
   id: integer().primaryKey({ autoIncrement: true }),
   user_id: integer().notNull().references(() => users.id, { onDelete: 'cascade' }),
   name: text().notNull(),
+  kind: text().$type<ProviderKind>().notNull().default('custom'),
   /** AES-GCM ciphertext, base64 "iv.ct"; null when no key stored. */
   api_key: text(),
   enabled: integer({ mode: 'boolean' }).notNull().default(true),
@@ -35,7 +36,26 @@ export const providers = sqliteTable('providers', {
   models_dev_provider_id: text(),
   models_dev_provider_source: text().$type<'manual' | 'endpoint'>(),
   created_at: integer().notNull(),
-}, (t) => [index('providers_user_idx').on(t.user_id)])
+}, (t) => [
+  index('providers_user_idx').on(t.user_id),
+  check('providers_kind_check', sql`${t.kind} IN ('custom', 'codex-oauth')`),
+])
+
+export const providerOAuthCredentials = sqliteTable('provider_oauth_credentials', {
+  provider_id: integer().primaryKey().references(() => providers.id, { onDelete: 'cascade' }),
+  status: text().$type<OAuthCredentialStatus>().notNull(),
+  /** AES-GCM ciphertext, base64 "iv.ct"; retained until explicitly disconnected. */
+  encrypted_bundle: text(),
+  account_id: text().notNull(),
+  account_email: text().notNull(),
+  access_expires_at: integer(),
+  revision: integer().notNull().default(1),
+  last_error: text(),
+  updated_at: integer().notNull(),
+}, (t) => [
+  check('provider_oauth_credentials_status_check', sql`${t.status} IN ('connected', 'reconnect-required', 'disconnected')`),
+  check('provider_oauth_credentials_bundle_check', sql`(${t.status} = 'disconnected' AND ${t.encrypted_bundle} IS NULL) OR (${t.status} IN ('connected', 'reconnect-required') AND ${t.encrypted_bundle} IS NOT NULL)`),
+])
 
 export const providerInterfaces = sqliteTable('provider_interfaces', {
   id: integer().primaryKey({ autoIncrement: true }),
@@ -173,6 +193,7 @@ export const attachmentProviderFiles = sqliteTable('attachment_provider_files', 
 
 export type UserRow = typeof users.$inferSelect
 export type ProviderRow = typeof providers.$inferSelect
+export type ProviderOAuthCredentialRow = typeof providerOAuthCredentials.$inferSelect
 export type ProviderInterfaceRow = typeof providerInterfaces.$inferSelect
 export type ModelRow = typeof models.$inferSelect
 export type ProjectRow = typeof projects.$inferSelect

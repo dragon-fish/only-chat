@@ -33,7 +33,7 @@ async function provider(
   key: string | null,
 ): Promise<ProviderRow> {
   return {
-    id: 1, user_id: 1, name: 'p',
+    id: 1, user_id: 1, name: 'p', kind: 'custom',
     api_key: key ? await encryptSecret(env.KEY_ENCRYPTION_SECRET, key) : null, enabled: true, created_at: 0,
     credential_version: 1, default_interface_id: null, models_dev_provider_id: null, models_dev_provider_source: null,
   }
