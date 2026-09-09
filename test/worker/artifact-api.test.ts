@@ -72,4 +72,27 @@ describe('Artifact API', () => {
     expect(response.status).toBe(404)
     expect(create).not.toHaveBeenCalled()
   })
+
+  it('cancels an owned queued run and terminates its Workflow instance', async () => {
+    const client = await registerAndLogin({ name: 'Cancel', email: 'artifact-cancel@example.com', password: 'a-long-test-password' })
+    const userId = Number(((await (await client.request('/api/auth/get-session')).json()) as { user: { id: string } }).user.id)
+    const providerId = await seedImageModel(userId)
+    const terminate = vi.fn(async () => {})
+    const workflow = {
+      create: async ({ id }: { id: string }) => ({ id, dispose() {} }),
+      get: vi.fn(() => ({ terminate, dispose() {} })),
+    }
+    const app = await createApp({ env: { ...env, ARTIFACT_WORKFLOW: workflow } as unknown as Env, side: 'worker' })
+    const createResponse = await app.api.request('/api/artifact-runs/image', {
+      method: 'POST', headers: { 'content-type': 'application/json', cookie: client.cookie }, body: JSON.stringify({
+        client_request_id: crypto.randomUUID(), model: { provider_id: providerId, model_id: 'image-model' },
+        prompt: 'Cancel me', reference_attachment_ids: [], params: { count: 1, size: null },
+      }),
+    })
+    const created = await createResponse.json() as { run_id: number }
+    const response = await app.api.request(`/api/artifact-runs/${created.run_id}/cancel`, { method: 'POST', headers: { cookie: client.cookie } })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ id: created.run_id, status: 'cancelled' })
+    expect(terminate).toHaveBeenCalledOnce()
+  })
 })

@@ -57,5 +57,18 @@ describe('Artifact generation Workflow', () => {
     expect(output).toMatchObject({ user_id: userId, output_index: 0, mime: 'image/png', width: 1024, height: 1024 })
     expect(await db.query.messages.findFirst({ where: (row, { eq }) => eq(row.id, created.message_id) }))
       .toMatchObject({ parts: [{ type: 'image', attachment_id: output!.attachment_id, artifact_id: output!.id }] })
+
+    const runResponse = await startApp.api.request(`/api/artifact-runs/${created.run_id}`, { headers: { cookie: client.cookie } })
+    expect(runResponse.status).toBe(200)
+    expect(await runResponse.json()).toMatchObject({ id: created.run_id, status: 'completed', prompt: 'A sea otter' })
+    const galleryResponse = await startApp.api.request('/api/artifacts?kind=image', { headers: { cookie: client.cookie } })
+    expect(galleryResponse.status).toBe(200)
+    expect(await galleryResponse.json()).toMatchObject({
+      artifacts: [{ id: output!.id, run_id: created.run_id, prompt: 'A sea otter', model_name: 'Image Model' }],
+      next_cursor: null,
+    })
+    const content = await startApp.api.request(`/api/artifacts/${output!.id}/content`, { headers: { cookie: client.cookie } })
+    expect(content.status).toBe(200)
+    expect(new Uint8Array(await content.arrayBuffer())).toEqual(png)
   })
 })
