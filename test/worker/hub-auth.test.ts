@@ -9,7 +9,7 @@ import { persistGeneratedImage } from '@/server/plugins/hub/generated-images'
 import { resolveAttachmentInputs } from '@/server/plugins/hub/attachment-transport'
 import * as hubIdentity from '@/server/plugins/hub/identity'
 import { DefaultGeneratedFile } from 'ai'
-import { registerAndLogin, signupBody, workerFetch } from './auth-helper'
+import { login, registerAndLogin, signupBody, workerFetch } from './auth-helper'
 import { connect } from './ws-helper'
 
 async function identity(client: Awaited<ReturnType<typeof registerAndLogin>>) {
@@ -205,6 +205,23 @@ describe('authenticated UserHub', () => {
     expect((await admin.json('POST', '/api/auth/admin/ban-user', { userId: String(userId) })).status).toBe(200)
     expect((await closing).map(event => event.code)).toEqual([4001, 4001])
     expect((await workerFetch('/internal/auth-revoked', { method: 'POST' })).status).toBe(404)
+  })
+
+  it.each(['deleted', 'expired'] as const)('withholds private broadcasts from a silent %s AuthSession', async reason => {
+    const first = await registerAndLogin()
+    const second = await login()
+    const { authSessionId } = await identity(first)
+    const silent = await connect(first)
+    const active = await connect(second)
+    await Promise.all([silent.next('snapshot'), active.next('snapshot')])
+    if (reason === 'deleted') await env.DB.prepare('DELETE FROM auth_sessions WHERE id = ?').bind(authSessionId).run()
+    else await env.DB.prepare('UPDATE auth_sessions SET expires_at = 0 WHERE id = ?').bind(authSessionId).run()
+    const closing = closed(silent.ws)
+    active.ws.send(JSON.stringify({ type: 'project.create', name: 'Private after revocation' }))
+    const [close, event] = await Promise.all([closing, active.next('project.created')])
+    expect(close.code).toBe(4001)
+    expect(event).toMatchObject({ project: { name: 'Private after revocation' } })
+    expect(silent.events.map(event => event.type)).toEqual(['snapshot'])
   })
 
   it('aborts all in-flight jobs and waits for settlement before closing sockets', async () => {

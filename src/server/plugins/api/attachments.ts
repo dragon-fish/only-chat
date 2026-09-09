@@ -65,7 +65,7 @@ export function attachmentRoutes(ctx: Context) {
       headers: {
         'content-type': row.mime,
         'content-length': String(stored.size),
-        'cache-control': 'private, max-age=31536000, immutable',
+        'cache-control': 'no-store',
         'x-content-type-options': 'nosniff',
       },
     })

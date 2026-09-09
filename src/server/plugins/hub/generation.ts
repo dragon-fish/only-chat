@@ -120,7 +120,7 @@ async function resolveTarget(hub: Hub, args: ResolveArgs): Promise<Target> {
     provider_id: draft.provider_id,
     model_id: draft.model_id,
   })
-  if (!existing) hub.emitConversationCreated(conversation)
+  if (!existing) await hub.emitConversationCreated(conversation)
   return { conversation, provider, providerInterface, model, config, tools }
 }
 
@@ -139,7 +139,7 @@ async function persistUserMessage(
     provider_id: null, model_id: null, usage: null, status: 'done', error: null, created_at: Date.now(),
   })
   const message = toMessage(row)
-  if (announce) hub.broadcast({ type: 'message.created', message })
+  if (announce) await hub.broadcast({ type: 'message.created', message })
   return message
 }
 
@@ -150,9 +150,9 @@ async function reserveUserMessage(hub: Hub, conversation: ConversationRow, paren
     await deleteMessage(hub.db, message.id, hub.userId)
     throw new Error('conversation head changed; resync before sending')
   }
-  hub.broadcast({ type: 'message.created', message })
-  hub.broadcast({ type: 'head.changed', conversation_id: updated.id, message_id: message.id })
-  hub.emitConversationUpdated(updated)
+  await hub.broadcast({ type: 'message.created', message })
+  await hub.broadcast({ type: 'head.changed', conversation_id: updated.id, message_id: message.id })
+  await hub.emitConversationUpdated(updated)
   return message
 }
 
@@ -167,10 +167,10 @@ async function openAssistantShell(hub: Hub, target: Target, parentId: number): P
     status: 'error', error: 'interrupted', created_at: Date.now(),
   })
   const message = toMessage(row, 'streaming')
-  hub.broadcast({ type: 'message.created', message })
+  await hub.broadcast({ type: 'message.created', message })
   const conversation = await updateConversation(hub.db, target.conversation.id, hub.userId, { head_message_id: row.id })
-  hub.broadcast({ type: 'head.changed', conversation_id: conversation.id, message_id: row.id })
-  hub.emitConversationUpdated(conversation)
+  await hub.broadcast({ type: 'head.changed', conversation_id: conversation.id, message_id: row.id })
+  await hub.emitConversationUpdated(conversation)
   return message
 }
 
@@ -194,9 +194,9 @@ async function openReservedAssistantShell(hub: Hub, target: Target, parentId: nu
     }
   }
   const message = toMessage(row, 'streaming')
-  hub.broadcast({ type: 'message.created', message })
-  hub.broadcast({ type: 'head.changed', conversation_id: conversation.id, message_id: row.id })
-  hub.emitConversationUpdated(conversation)
+  await hub.broadcast({ type: 'message.created', message })
+  await hub.broadcast({ type: 'head.changed', conversation_id: conversation.id, message_id: row.id })
+  await hub.emitConversationUpdated(conversation)
   return message
 }
 
@@ -217,9 +217,9 @@ async function openContinuationShell(hub: Hub, target: Target, parentId: number)
     if (!conversation) return undefined
   }
   const message = toMessage(row, 'streaming')
-  hub.broadcast({ type: 'message.created', message })
-  hub.broadcast({ type: 'head.changed', conversation_id: conversation.id, message_id: row.id })
-  hub.emitConversationUpdated(conversation)
+  await hub.broadcast({ type: 'message.created', message })
+  await hub.broadcast({ type: 'head.changed', conversation_id: conversation.id, message_id: row.id })
+  await hub.emitConversationUpdated(conversation)
   return message
 }
 
@@ -301,7 +301,7 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
       if (part.type === 'file') {
         const image = await persistGeneratedImage(hub, part.file)
         const ev = acc.append(image)
-        hub.broadcast({ type: 'message.part', message_id: shell.id, part_index: ev.part_index, part: ev.part })
+        await hub.broadcast({ type: 'message.part', message_id: shell.id, part_index: ev.part_index, part: ev.part })
         await hub.flushInflight(tracked)
         continue
       }
@@ -311,9 +311,9 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
         }
         if (ev.kind === 'delta') {
           if (firstTokenAt === null && ev.delta.length > 0) firstTokenAt = performance.now()
-          hub.broadcast({ type: 'message.delta', message_id: shell.id, part_index: ev.part_index, kind: ev.part_kind, delta: ev.delta })
+          await hub.broadcast({ type: 'message.delta', message_id: shell.id, part_index: ev.part_index, kind: ev.part_kind, delta: ev.delta })
         }
-        else hub.broadcast({ type: 'message.part', message_id: shell.id, part_index: ev.part_index, part: ev.part })
+        else await hub.broadcast({ type: 'message.part', message_id: shell.id, part_index: ev.part_index, part: ev.part })
       }
       if (Date.now() - lastFlush > INFLIGHT_FLUSH_INTERVAL_MS) {
         lastFlush = Date.now()
@@ -346,7 +346,7 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
   }
   try {
     const final: Message = { ...shell, parts: acc.parts, usage, status, error }
-    hub.broadcast({ type: 'message.done', message_id: shell.id, status, usage, error })
+    await hub.broadcast({ type: 'message.done', message_id: shell.id, status, usage, error })
     hub.app.emit('message/done', final)
   } finally {
     await hub.untrackInflight(shell.id)
@@ -387,7 +387,7 @@ async function resolveSendParent(hub: Hub, conversation: ConversationRow, parent
     throw new Error('pending tool state changed; resync before sending')
   }
   for (const [offset, part] of skipped.entries()) {
-    hub.broadcast({
+    await hub.broadcast({
       type: 'message.part', message_id: parent.id, part_index: parent.parts.length + offset, part,
     })
   }
@@ -495,8 +495,8 @@ async function continueFromToolMessage(hub: Hub, messageId: number): Promise<voi
     if (current.head_message_id !== message.id) return
     const updated = await compareAndSwapConversationHead(hub.db, current.id, hub.userId, message.id, child.id)
     if (!updated) return
-    hub.broadcast({ type: 'head.changed', conversation_id: updated.id, message_id: child.id })
-    hub.emitConversationUpdated(updated)
+    await hub.broadcast({ type: 'head.changed', conversation_id: updated.id, message_id: child.id })
+    await hub.emitConversationUpdated(updated)
   }
 
   const existingChildren = await listAssistantChildren(hub.db, message.id, hub.userId)
@@ -558,7 +558,7 @@ export async function runToolRespond(hub: Hub, cmd: Extract<WsCommand, { type: '
 
   const updated = await getMessage(hub.db, message.id, hub.userId)
   if (!updated) throw new Error('tool-call message disappeared')
-  hub.broadcast({
+  await hub.broadcast({
     type: 'message.part', message_id: updated.id, part_index: updated.parts.length - 1,
     part: updated.parts.at(-1)!,
   })

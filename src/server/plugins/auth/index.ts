@@ -23,6 +23,11 @@ export class Authentication extends Service {
       database: drizzleAdapter(ctx.db.orm, { provider: 'sqlite', schema: authSchema }),
       baseURL: ctx.env.BETTER_AUTH_URL,
       secret: ctx.env.BETTER_AUTH_SECRET,
+      // Framework messages and error arguments can contain SQL parameters and credentials.
+      logger: { log: level => {
+        if (level === 'error') console.error('Authentication error')
+        else if (level === 'warn') console.warn('Authentication warning')
+      } },
       advanced: {
         database: { generateId: ({ model }) => model === 'users' || model === 'user' ? false : crypto.randomUUID() },
         ipAddress: { ipAddressHeaders: ['cf-connecting-ip'] },

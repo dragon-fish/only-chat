@@ -12,9 +12,9 @@ export interface SocketAttachment { authSessionId: string }
 
 export async function hasActiveAuthSession(db: DB, userId: number, authSessionId: unknown): Promise<boolean> {
   if (typeof authSessionId !== 'string' || authSessionId.length === 0) return false
-  const [session] = await db.select({ id: authSessions.id }).from(authSessions)
+  const [authSession] = await db.select({ id: authSessions.id }).from(authSessions)
     .innerJoin(users, eq(users.id, authSessions.userId))
     .where(and(eq(authSessions.id, authSessionId), eq(authSessions.userId, userId),
       gt(authSessions.expiresAt, new Date()), eq(users.banned, false))).limit(1)
-  return session !== undefined
+  return authSession !== undefined
 }

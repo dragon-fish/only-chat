@@ -1,6 +1,7 @@
 import { env } from 'cloudflare:workers'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createDb } from '@/server/db/client'
+import { createApp } from '@/server/app'
 import { resolveAllowRegister } from '@/server/plugins/auth/site-settings'
 import { registrationPolicy } from '@/server/plugins/auth/policy'
 import { seedTestUser } from './user-fixture'
@@ -9,6 +10,24 @@ import { json, login, registerAndLogin, setAllowRegister, signupBody } from './a
 describe('registration policy and route protection', () => {
   beforeEach(async () => {
     await env.DB.exec("DELETE FROM users; DELETE FROM sqlite_sequence WHERE name = 'users'; DELETE FROM site_settings")
+  })
+
+  it('does not log query parameters when an AuthSession database read fails', async () => {
+    const client = await registerAndLogin()
+    const ctx = await createApp({ env, side: 'worker' })
+    const syntheticToken = 'synthetic-auth-token-must-never-be-logged'
+    const logs = ['error', 'warn', 'log'] as const
+    const captured: unknown[][] = []
+    const spies = logs.map(level => vi.spyOn(console, level).mockImplementation((...args) => { captured.push(args) }))
+    const failure = vi.spyOn(ctx.db.orm, 'select').mockImplementation(() => { throw new Error(`D1_ERROR: query params: ${syntheticToken}`) })
+    try {
+      const response = await ctx.auth.instance.handler(new Request('https://chat.test/api/auth/get-session', { headers: { cookie: client.cookie } }))
+      expect(response.status).toBe(500)
+      expect(captured.length).toBeGreaterThan(0)
+      const output = captured.flat().map(value => value instanceof Error ? value.stack : String(value)).join('\n')
+      expect(output).not.toContain(syntheticToken)
+      expect(output).not.toContain('query params')
+    } finally { failure.mockRestore(); spies.forEach(spy => spy.mockRestore()) }
   })
 
   it('rejects self-registration when registration is closed', async () => {

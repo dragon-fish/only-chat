@@ -68,13 +68,22 @@ export class Hub extends Service {
   /** A successful async session read must not outlive a concurrent revocation. */
   get accessEpoch(): number { return this._accessEpoch }
 
-  broadcast(event: WsEvent): void {
+  async broadcast(event: WsEvent): Promise<void> {
     const raw = encodeEvent(event)
     for (const ws of this.state.getWebSockets()) {
       try {
+        const epoch = this._accessEpoch
+        const attachment = ws.deserializeAttachment() as Partial<SocketAttachment> | null
+        // Every delivery reads D1. Await callers to apply backpressure instead of caching access.
+        if (this._revoked || !(await hasActiveAuthSession(this.db, this.userId, attachment?.authSessionId)) || epoch !== this._accessEpoch) {
+          ws.close(AUTH_REVOKED_CLOSE_CODE, 'Authentication revoked')
+          continue
+        }
         ws.send(raw)
-      } catch (err) {
-        console.warn('ws send failed', err)
+      } catch {
+        // Database errors may contain credentials; withhold data if validity cannot be established.
+        console.warn('WebSocket delivery failed')
+        try { ws.close(1011, 'Delivery unavailable') } catch { /* Socket already closed. */ }
       }
     }
   }
@@ -96,7 +105,7 @@ export class Hub extends Service {
       cmd = parseCommand(raw)
     } catch (err) {
       const requestId = safeRequestId(raw)
-      this.broadcast({
+      await this.broadcast({
         type: 'error',
         request_id: requestId,
         message: err instanceof ZodError ? 'invalid command' : 'malformed json',
@@ -107,7 +116,7 @@ export class Hub extends Service {
       await this._dispatch(cmd)
     } catch (err) {
       console.error('command failed', cmd.type, err)
-      this.broadcast({ type: 'error', request_id: cmd.request_id, message: err instanceof Error ? err.message : String(err) })
+      await this.broadcast({ type: 'error', request_id: cmd.request_id, message: err instanceof Error ? err.message : String(err) })
     }
   }
 
@@ -180,8 +189,8 @@ export class Hub extends Service {
     const m = await getMessage(this.db, messageId, this.userId)
     if (!m || m.conversation_id !== conversationId) throw new Error('message not in conversation')
     const s = await updateConversation(this.db, conversationId, this.userId, { head_message_id: messageId })
-    this.broadcast({ type: 'head.changed', conversation_id: conversationId, message_id: messageId })
-    this.emitConversationUpdated(s)
+    await this.broadcast({ type: 'head.changed', conversation_id: conversationId, message_id: messageId })
+    await this.emitConversationUpdated(s)
   }
 
   async conversationUpdate(cmd: Extract<WsCommand, { type: 'conversation.update' }>): Promise<void> {
@@ -195,7 +204,7 @@ export class Hub extends Service {
       ...patch,
       ...(tools === undefined ? {} : { tools: this.app.tools.normalize(tools) }),
     })
-    this.emitConversationUpdated(s)
+    await this.emitConversationUpdated(s)
   }
 
   async conversationDelete(conversationId: number): Promise<void> {
@@ -203,15 +212,15 @@ export class Hub extends Service {
     await this.stop(conversationId)
     await deleteConversation(this.db, conversationId, this.userId)
     this.seq.forget(conversationId)
-    this.broadcast({ type: 'conversation.deleted', conversation_id: conversationId })
+    await this.broadcast({ type: 'conversation.deleted', conversation_id: conversationId })
     this.app.emit('conversation/deleted', conversationId)
   }
 
   async conversationFork(cmd: Extract<WsCommand, { type: 'conversation.fork' }>): Promise<void> {
     if (this._inflight.has(cmd.message_id)) throw new Error('cannot fork a streaming message')
     const conversation = await forkConversation(this.db, cmd.conversation_id, this.userId, cmd.message_id)
-    this.emitConversationCreated(conversation)
-    this.broadcast({ type: 'conversation.forked', request_id: cmd.request_id, conversation_id: conversation.id })
+    await this.emitConversationCreated(conversation)
+    await this.broadcast({ type: 'conversation.forked', request_id: cmd.request_id, conversation_id: conversation.id })
   }
 
   async settingsUpdate(patch: { plugins?: Record<string, boolean> }): Promise<void> {
@@ -219,7 +228,7 @@ export class Hub extends Service {
     if (!user) throw new Error('user missing')
     const settings: UserSettings = { plugins: { ...user.settings.plugins, ...(patch.plugins ?? {}) } }
     const updated = await updateUserSettings(this.db, this.userId, settings)
-    this.broadcast({ type: 'settings.updated', settings: updated.settings })
+    await this.broadcast({ type: 'settings.updated', settings: updated.settings })
     // Built-in server registrations stay loaded; request-time resolution applies this enable map.
   }
 
@@ -227,7 +236,7 @@ export class Hub extends Service {
     const { type: _t, request_id: _r, ...input } = cmd
     await validateProjectIcon(this.db, this.userId, input.icon_attachment_id ?? null)
     const p = await createProject(this.db, { user_id: this.userId, ...input })
-    this.emitProjectCreated(p)
+    await this.emitProjectCreated(p)
   }
 
   async projectUpdate(cmd: Extract<WsCommand, { type: 'project.update' }>): Promise<void> {
@@ -236,7 +245,7 @@ export class Hub extends Service {
     if (!current) throw new Error('project not found')
     await validateProjectIcon(this.db, this.userId, patch.icon_attachment_id === undefined ? current.icon_attachment_id : patch.icon_attachment_id)
     const p = await updateProject(this.db, project_id, this.userId, patch)
-    this.emitProjectUpdated(p)
+    await this.emitProjectUpdated(p)
   }
 
   /**
@@ -246,32 +255,32 @@ export class Hub extends Service {
   async projectDelete(projectId: number): Promise<void> {
     const affected = await listProjectConversations(this.db, projectId, this.userId)
     const deleted = await deleteProject(this.db, projectId, this.userId)
-    this.emitProjectDeleted(deleted.id)
-    for (const row of affected) this.emitConversationUpdated({ ...row, project_id: null })
+    await this.emitProjectDeleted(deleted.id)
+    for (const row of affected) await this.emitConversationUpdated({ ...row, project_id: null })
   }
 
-  emitConversationCreated(s: Conversation): void {
-    this.broadcast({ type: 'conversation.created', conversation: s })
+  async emitConversationCreated(s: Conversation): Promise<void> {
+    await this.broadcast({ type: 'conversation.created', conversation: s })
     this.app.emit('conversation/created', s)
   }
 
-  emitConversationUpdated(s: Conversation): void {
-    this.broadcast({ type: 'conversation.updated', conversation: s })
+  async emitConversationUpdated(s: Conversation): Promise<void> {
+    await this.broadcast({ type: 'conversation.updated', conversation: s })
     this.app.emit('conversation/updated', s)
   }
 
-  emitProjectCreated(p: Project): void {
-    this.broadcast({ type: 'project.created', project: p })
+  async emitProjectCreated(p: Project): Promise<void> {
+    await this.broadcast({ type: 'project.created', project: p })
     this.app.emit('project/created', p)
   }
 
-  emitProjectUpdated(p: Project): void {
-    this.broadcast({ type: 'project.updated', project: p })
+  async emitProjectUpdated(p: Project): Promise<void> {
+    await this.broadcast({ type: 'project.updated', project: p })
     this.app.emit('project/updated', p)
   }
 
-  emitProjectDeleted(projectId: number): void {
-    this.broadcast({ type: 'project.deleted', project_id: projectId })
+  async emitProjectDeleted(projectId: number): Promise<void> {
+    await this.broadcast({ type: 'project.deleted', project_id: projectId })
     this.app.emit('project/deleted', projectId)
   }
 

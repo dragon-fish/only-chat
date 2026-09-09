@@ -1,12 +1,14 @@
 import { env } from 'cloudflare:workers'
 import { eq } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { attachments, users } from '@/server/db/schema'
+import { attachmentProviderFiles, attachments, models, providerInterfaces, providers, users } from '@/server/db/schema'
 import { createConversation, getConversation, insertMessage, listMessages } from '@/server/plugins/hub/conversations'
 import { createProject } from '@/server/plugins/hub/projects'
 import type { ModelPage, ProviderWithInterfaces } from '@/shared/models'
 import { registerAndLogin, workerFetch } from './auth-helper'
 import { catalogApp } from './provider-catalog-fixture'
+import * as remoteModels from '@/server/plugins/llm/list-models'
+import * as cleanup from '@/server/plugins/files-cleanup'
 
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
 beforeEach(async () => { await env.DB.exec("DELETE FROM users; DELETE FROM sqlite_sequence WHERE name = 'users'") })
@@ -40,8 +42,20 @@ describe('authenticated REST tenant isolation', () => {
     expect.soft((await (await bobRequest('GET', `/models?provider_id=${aliceProvider.id}`)).json() as ModelPage).models).toEqual([])
     expect.soft((await (await bobRequest('GET', `/models?interface_id=${aliceProvider.default_interface_id}`)).json() as ModelPage).models).toEqual([])
     expect.soft((await (await request('GET', `/providers/${aliceProvider.id}/models`)).json() as ModelPage).models.map(row => row.id)).toEqual([aliceModel.id])
+    const [attachment] = await ctx.db.orm.insert(attachments).values({ user_id: aliceId, sha256: 'remote-fixture', mime: 'image/png', size: 1, r2_key: 'fixture', origin: 'upload', created_at: 0 }).returning()
+    await ctx.db.orm.insert(attachmentProviderFiles).values({ attachment_id: attachment!.id, provider_id: aliceProvider.id, file_family: 'openai', base_url: 'https://gateway.test/v1', provider_reference: { openai: 'private-file' }, expires_at: Date.now() + 100_000, created_at: 0 })
+    const snapshot = () => Promise.all([
+      ctx.db.orm.select().from(providers).orderBy(providers.id),
+      ctx.db.orm.select().from(providerInterfaces).orderBy(providerInterfaces.id),
+      ctx.db.orm.select().from(models).orderBy(models.id),
+      ctx.db.orm.select().from(attachmentProviderFiles).orderBy(attachmentProviderFiles.id),
+    ])
+    const before = await snapshot()
+    const discovery = vi.spyOn(remoteModels, 'listRemoteModels')
+    const remoteCleanup = vi.spyOn(cleanup, 'cleanupProviderFilesBeforeChange')
+    const remoteFetch = vi.fn(() => { throw new Error('Rejected operations must not contact a provider') })
+    vi.stubGlobal('fetch', remoteFetch)
     for (const [method, path, body] of [
-      ['GET', `/providers/${aliceProvider.id}`],
       ['GET', `/providers/${aliceProvider.id}/models`],
       ['GET', `/providers/${aliceProvider.id}/models/by-ref?model_id=alice-model`],
       ['POST', `/providers/${aliceProvider.id}/models`, { model_id: 'intruder' }],
@@ -55,7 +69,11 @@ describe('authenticated REST tenant isolation', () => {
       ['DELETE', `/providers/${aliceProvider.id}`],
     ] as const) {
       expect.soft((await bobRequest(method, path, body)).status, `${method} ${path}`).toBe(404)
+      expect.soft(await snapshot(), `${method} ${path} row preservation`).toEqual(before)
     }
+    expect(discovery).not.toHaveBeenCalled()
+    expect(remoteCleanup).not.toHaveBeenCalled()
+    expect(remoteFetch).not.toHaveBeenCalled()
     expect.soft((await request('GET', `/providers/${aliceProvider.id}/models/by-ref?model_id=alice-model`)).status).toBe(200)
     expect.soft(await ctx.db.orm.query.providers.findFirst({ where: (table, { eq }) => eq(table.id, aliceProvider.id) })).toMatchObject({ user_id: aliceId, credential_version: 1 })
   })
@@ -84,6 +102,17 @@ describe('authenticated REST tenant isolation', () => {
     const sha = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(b => b.toString(16).padStart(2, '0')).join('')
     const upload = (client: typeof bob) => client.request(`/api/attachments/${sha}`, { method: 'PUT', headers: { 'content-type': 'image/png' }, body: bytes })
     const aliceAttachment = await (await upload(alice)).json() as { attachment_id: number }
+    // A private browser HTTP cache belongs to the browser, not to the cookie's current user.
+    const cache = new Map<string, Response>()
+    const browserGet = async (client: typeof bob, path: string) => {
+      if (cache.has(path)) return cache.get(path)!.clone()
+      const response = await client.request(path)
+      if (response.ok && !response.headers.get('cache-control')?.includes('no-store')) cache.set(path, response.clone())
+      return response
+    }
+    const path = `/api/attachments/${aliceAttachment.attachment_id}`
+    expect((await browserGet(alice, path)).status).toBe(200)
+    expect((await browserGet(bob, path)).status).toBe(404)
     expect.soft(await (await bobRequest('POST', '/attachments/check', { sha256: sha })).json()).toEqual({ exists: false })
     expect.soft((await bob.request(`/api/attachments/${aliceAttachment.attachment_id}`)).status).toBe(404)
     const bobAttachment = await (await upload(bob)).json() as { attachment_id: number }
