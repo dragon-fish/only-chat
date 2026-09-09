@@ -4,6 +4,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp } from '@/server/app'
 import { models, providerInterfaces, providers } from '@/server/db/schema'
 import { CatalogLease } from '@/server/plugins/model-catalog/lease'
+import { seedTestUser } from './user-fixture'
+
+beforeEach(() => seedTestUser())
 
 function catalog(name = 'Catalog model') {
   return {

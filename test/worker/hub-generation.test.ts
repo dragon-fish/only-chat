@@ -9,7 +9,7 @@ import { eq } from 'drizzle-orm'
 import { describe, expect, it, vi } from 'vitest'
 import { createApp } from '@/server/app'
 import { createDb, type DB } from '@/server/db/client'
-import { ensureDefaultUser } from '@/server/plugins/database'
+import { seedTestUser } from './user-fixture'
 import type { Assets } from '@/server/plugins/assets'
 import { encryptSecret } from '@/server/plugins/llm/crypto'
 import { buildModelMessages } from '@/server/plugins/llm/messages'
@@ -95,7 +95,7 @@ const MULTI_TOOL_STREAM: StreamPart[] = [
 
 async function seedProvider(name = 'mock', modelId = 'mock-1', nativeFiles = false, metadata: ModelMetadata = { reasoning: true }): Promise<number> {
   const db = createDb(env.DB)
-  await ensureDefaultUser(db)
+  await seedTestUser(db)
   const [p] = await db.insert(providers).values({
     user_id: DEFAULT_USER_ID, name,
     api_key: await encryptSecret(env.KEY_ENCRYPTION_SECRET, 'k'), enabled: true, created_at: 0,
@@ -460,8 +460,8 @@ describe('generation', () => {
 
   it('rejects a tool response for another user conversation without mutating it', async () => {
     const db = createDb(env.DB)
-    await ensureDefaultUser(db)
-    const [other] = await db.insert(users).values({ name: 'tool-owner', settings: { plugins: {} }, created_at: 0 }).returning()
+    await seedTestUser(db)
+    const [other] = await db.insert(users).values({ name: 'tool-owner', settings: { plugins: {} }, createdAt: new Date(0), updatedAt: new Date(0), email: crypto.randomUUID() + '@example.com' }).returning()
     const conversation = await createConversation(db, {
       user_id: other!.id, title: 'private', provider_id: null, model_id: null,
     })
@@ -550,7 +550,7 @@ describe('generation', () => {
 
   it('repairs the Conversation head when a continuation child exists but the head update was interrupted', async () => {
     const db = createDb(env.DB)
-    await ensureDefaultUser(db)
+    await seedTestUser(db)
     const conversation = await createConversation(db, {
       user_id: DEFAULT_USER_ID, title: 'repair head', provider_id: null, model_id: null,
     })
@@ -585,7 +585,7 @@ describe('generation', () => {
 
   it('does not rewind a newer Conversation head on an identical response retry for an old tool call', async () => {
     const db = createDb(env.DB)
-    await ensureDefaultUser(db)
+    await seedTestUser(db)
     const conversation = await createConversation(db, {
       user_id: DEFAULT_USER_ID, title: 'keep newer head', provider_id: null, model_id: null,
     })
@@ -627,7 +627,7 @@ describe('generation', () => {
 
   it('stores a delayed answer on an old branch without creating a continuation or rewinding the head', async () => {
     const db = createDb(env.DB)
-    await ensureDefaultUser(db)
+    await seedTestUser(db)
     const conversation = await createConversation(db, {
       user_id: DEFAULT_USER_ID, title: 'delayed answer', provider_id: null, model_id: null,
     })
@@ -730,7 +730,7 @@ describe('generation', () => {
 
   it('answer-wins CAS leaves the answered result intact and rejects the stale skip snapshot', async () => {
     const db = createDb(env.DB)
-    await ensureDefaultUser(db)
+    await seedTestUser(db)
     const conversation = await createConversation(db, { user_id: DEFAULT_USER_ID, title: 'answer wins', provider_id: null, model_id: null })
     const waiting = await insertMessage(db, {
       conversation_id: conversation.id, parent_id: null, seq: 1, role: 'assistant', status: 'done', error: null,
@@ -752,7 +752,7 @@ describe('generation', () => {
 
   it('skip-wins CAS makes a late tool response lose the existing call-id fence', async () => {
     const db = createDb(env.DB)
-    await ensureDefaultUser(db)
+    await seedTestUser(db)
     const conversation = await createConversation(db, { user_id: DEFAULT_USER_ID, title: 'skip wins', provider_id: null, model_id: null })
     const waiting = await insertMessage(db, {
       conversation_id: conversation.id, parent_id: null, seq: 1, role: 'assistant', status: 'done', error: null,
@@ -930,7 +930,7 @@ describe('generation', () => {
 
   it('conditional shell cleanup preserves a child claimed by recovery before cleanup starts', async () => {
     const db = createDb(env.DB)
-    await ensureDefaultUser(db)
+    await seedTestUser(db)
     const conversation = await createConversation(db, {
       user_id: DEFAULT_USER_ID, title: 'cleanup race', provider_id: null, model_id: null,
     })
@@ -1250,7 +1250,7 @@ describe('project inheritance', () => {
   it('rejects a Project owned by another user', async () => {
     const db = createDb(env.DB)
     const providerId = await seedProvider()
-    const [other] = await db.insert(users).values({ name: 'other', settings: { plugins: {} }, created_at: 0 }).returning()
+    const [other] = await db.insert(users).values({ name: 'other', settings: { plugins: {} }, createdAt: new Date(0), updatedAt: new Date(0), email: crypto.randomUUID() + '@example.com' }).returning()
     const projectId = await seedProject({ user_id: other!.id })
     await installMock(streamingMock)
     const c = await connect()
@@ -1467,7 +1467,7 @@ describe('provider metadata round trip', () => {
 
   it('rebuilds identical model messages from memory and from D1 JSON', async () => {
     const db = createDb(env.DB)
-    await ensureDefaultUser(db)
+    await seedTestUser(db)
     const conversation = await createConversation(db, { user_id: DEFAULT_USER_ID, title: 't', provider_id: null, model_id: null })
     const userParts: Part[] = [{ type: 'text', text: 'q' }]
     const assistantParts: Part[] = [
@@ -1503,7 +1503,7 @@ describe('provider file transport', () => {
   async function seedAttachment(): Promise<number> {
     const digest = String(++attachmentSeq).padStart(64, 'a')
     const db = createDb(env.DB)
-    await ensureDefaultUser(db)
+    await seedTestUser(db)
     const key = `${DEFAULT_USER_ID}/${digest.slice(0, 2)}/${digest}`
     await env.BUCKET.put(key, PNG, { httpMetadata: { contentType: 'image/png' } })
     const [row] = await db.insert(attachments).values({
@@ -2096,7 +2096,7 @@ describe('cross-feature integration', () => {
   /** A user upload as the REST route would leave it: bytes in R2 under the key its own digest dictates. */
   async function seedUpload(bytes: Uint8Array<ArrayBuffer>): Promise<number> {
     const db = createDb(env.DB)
-    await ensureDefaultUser(db)
+    await seedTestUser(db)
     const digest = await sha256(bytes)
     const key = r2Key(DEFAULT_USER_ID, digest)
     await env.BUCKET.put(key, bytes, { httpMetadata: { contentType: 'image/png' } })
@@ -2273,7 +2273,7 @@ describe('cross-feature integration', () => {
 
   it('keeps the three reasoning states apart across a D1 round trip', async () => {
     const db = createDb(env.DB)
-    await ensureDefaultUser(db)
+    await seedTestUser(db)
     const projectId = await seedProject({ params: { reasoning_enabled: true, reasoning_effort: 'medium' } })
     const project = (await getProject(db, projectId, DEFAULT_USER_ID))!
 

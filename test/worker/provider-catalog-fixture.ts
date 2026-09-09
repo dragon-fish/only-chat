@@ -3,6 +3,7 @@ import { vi } from 'vitest'
 import { createApp } from '@/server/app'
 import type { ProviderWithInterfaces } from '@/shared/models'
 import type { ProviderWriteInput } from '@/shared/api'
+import { seedTestUser } from './user-fixture'
 
 export const catalogFixture = {
   providers: {
@@ -20,6 +21,7 @@ export const catalogFixture = {
 }
 
 export async function catalogApp() {
+  await seedTestUser()
   await env.DB.exec('DELETE FROM model_catalog_refresh')
   const ctx = await createApp({ env, side: 'worker' })
   vi.stubGlobal('fetch', async () => Response.json(catalogFixture))

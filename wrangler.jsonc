@@ -4,7 +4,11 @@
   "main": "./src/server/index.ts",
   "compatibility_date": "2026-09-05",
   "compatibility_flags": ["nodejs_compat"],
-  "secrets": { "required": ["KEY_ENCRYPTION_SECRET"] },
+  "secrets": { "required": ["KEY_ENCRYPTION_SECRET", "BETTER_AUTH_SECRET"] },
+  "vars": {
+    "BETTER_AUTH_URL": "https://chat.epb.wiki",
+    "ALLOW_REGISTER": "false"
+  },
   "workers_dev": false,
   "preview_urls": false,
   "observability": {

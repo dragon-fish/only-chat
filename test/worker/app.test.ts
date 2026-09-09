@@ -8,12 +8,13 @@ import { attachmentProviderFiles, attachments, providerInterfaces, providers, us
 import { encryptSecret } from '@/server/plugins/llm/crypto'
 import worker from '@/server/index'
 import { DEFAULT_USER_ID } from '@/shared/constants'
+import { seedTestUser } from './user-fixture'
 
 describe('createApp', () => {
-  it('provides db and assets on the worker side and seeds user 1', async () => {
+  it('provides db and assets on the worker side without seeding a user', async () => {
     const ctx = await createApp({ env, side: 'worker' })
     const rows = await ctx.db.orm.select().from(users)
-    expect(rows.map((u) => u.id)).toContain(1)
+    expect(rows).toEqual([])
 
     await ctx.assets.put('1/ab/abc', new TextEncoder().encode('hello'), 'text/plain')
     expect(await ctx.assets.exists('1/ab/abc')).toBe(true)
@@ -38,6 +39,7 @@ describe('createApp', () => {
 describe('scheduled provider file cleanup', () => {
   it('refreshes the catalog even when pointer cleanup fails', async () => {
     const db = createDb(env.DB)
+    await seedTestUser(db)
     await createApp({ env, side: 'worker' })
     const [provider] = await db.insert(providers).values({ user_id: 1, name: 'cleanup-failure', created_at: 0 }).returning()
     const [attachment] = await db.insert(attachments).values({ user_id: 1, sha256: 'failure-cleanup', mime: 'text/plain', size: 1, r2_key: 'cleanup-failure', origin: 'upload', created_at: 0 }).returning()
@@ -60,7 +62,8 @@ describe('scheduled provider file cleanup', () => {
 
   it('remotely deletes only expired pointers when catalog download fails', async () => {
     const db = createDb(env.DB)
-    await createApp({ env, side: 'worker' }) // seeds user 1
+    await seedTestUser(db)
+    await createApp({ env, side: 'worker' })
     const [p] = await db.insert(providers).values({
       user_id: DEFAULT_USER_ID, name: 'cron',
       api_key: await encryptSecret(env.KEY_ENCRYPTION_SECRET, 'cron-key'), enabled: true, created_at: 0,

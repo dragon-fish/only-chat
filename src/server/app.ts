@@ -1,5 +1,6 @@
 import { Context } from 'cordis'
 import { Database } from './plugins/database'
+import { Authentication } from './plugins/auth'
 import { Assets } from './plugins/assets'
 import { LlmPlugin } from './plugins/llm'
 import { HubPlugin } from './plugins/hub'
@@ -47,6 +48,8 @@ export async function createApp(options: AppOptions): Promise<Context> {
     if (!ctx.get('hub')) throw new Error('HubPlugin loaded but ctx.hub is unavailable')
   }
   if (options.side === 'worker') {
+    await ctx.plugin(Authentication)
+    if (!ctx.get('auth')) throw new Error('Authentication loaded but ctx.auth is unavailable')
     await ctx.plugin(ModelCatalog)
     if (!ctx.get('modelCatalog')) throw new Error('ModelCatalog loaded but ctx.modelCatalog is unavailable')
     await ctx.plugin(ApiPlugin)

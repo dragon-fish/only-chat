@@ -9,8 +9,59 @@ import type {
 export const users = sqliteTable('users', {
   id: integer().primaryKey({ autoIncrement: true }),
   name: text().notNull(),
-  settings: text({ mode: 'json' }).$type<UserSettings>().notNull(),
-  created_at: integer().notNull(),
+  email: text().notNull(),
+  emailVerified: integer('email_verified', { mode: 'boolean' }).notNull().default(false),
+  image: text(),
+  role: text().notNull().default('user'),
+  banned: integer({ mode: 'boolean' }).notNull().default(false),
+  banReason: text('ban_reason'),
+  banExpires: integer('ban_expires', { mode: 'timestamp_ms' }),
+  settings: text({ mode: 'json' }).$type<UserSettings>().notNull().default({ plugins: {} }),
+  createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+}, t => [uniqueIndex('users_email_unique').on(t.email)])
+
+export const authAccounts = sqliteTable('auth_accounts', {
+  id: text().primaryKey(),
+  accountId: text('account_id').notNull(),
+  providerId: text('provider_id').notNull(),
+  userId: integer('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  accessToken: text('access_token'),
+  refreshToken: text('refresh_token'),
+  idToken: text('id_token'),
+  accessTokenExpiresAt: integer('access_token_expires_at', { mode: 'timestamp_ms' }),
+  refreshTokenExpiresAt: integer('refresh_token_expires_at', { mode: 'timestamp_ms' }),
+  scope: text(),
+  password: text(),
+  createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull().default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull().$onUpdate(() => new Date()),
+}, t => [index('auth_accounts_user_id_idx').on(t.userId)])
+
+export const authSessions = sqliteTable('auth_sessions', {
+  id: text().primaryKey(),
+  expiresAt: integer('expires_at', { mode: 'timestamp_ms' }).notNull(),
+  token: text().notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull().default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull().$onUpdate(() => new Date()),
+  ipAddress: text('ip_address'),
+  userAgent: text('user_agent'),
+  userId: integer('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  impersonatedBy: text('impersonated_by'),
+}, t => [uniqueIndex('auth_sessions_token_unique').on(t.token), index('auth_sessions_user_id_idx').on(t.userId)])
+
+export const authVerifications = sqliteTable('auth_verifications', {
+  id: text().primaryKey(),
+  identifier: text().notNull(),
+  value: text().notNull(),
+  expiresAt: integer('expires_at', { mode: 'timestamp_ms' }).notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull().default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull().default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`).$onUpdate(() => new Date()),
+}, t => [index('auth_verifications_identifier_idx').on(t.identifier)])
+
+export const siteSettings = sqliteTable('site_settings', {
+  key: text().primaryKey(),
+  value: text(),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
 })
 
 export const modelCatalogRefresh = sqliteTable('model_catalog_refresh', {

@@ -1,4 +1,5 @@
 import type { Database } from './plugins/database'
+import type { Authentication } from './plugins/auth'
 import type { Assets } from './plugins/assets'
 import type { Llm } from './plugins/llm'
 import type { Hub } from './plugins/hub'
@@ -13,6 +14,7 @@ declare module 'cordis' {
     env: Env
     doState: DurableObjectState
     db: Database
+    auth: Authentication
     assets: Assets
     llm: Llm
     api: ApiApp

@@ -9,7 +9,7 @@ import { findReusableProviderFile, insertProviderFile } from '@/server/plugins/h
 describe('D1 schema', () => {
   it('inserts a conversation and a message tree', async () => {
     const db = createDb(env.DB)
-    await db.insert(users).values({ id: 1, name: 'owner', settings: { plugins: {} }, created_at: 0 }).onConflictDoNothing()
+    await db.insert(users).values({ id: 1, name: 'owner', settings: { plugins: {} }, createdAt: new Date(0), updatedAt: new Date(0), email: crypto.randomUUID() + '@example.com' }).onConflictDoNothing()
     const [s] = await db.insert(conversations).values({
       user_id: 1, title: 't', head_message_id: null, provider_id: null, model_id: null,
       system_prompt: null, params: null, created_at: 1, updated_at: 1, archived_at: null,
@@ -44,7 +44,7 @@ describe('D1 schema', () => {
 
   it('creates a project with only name required, and defaults interface native_files to false', async () => {
     const db = createDb(env.DB)
-    await db.insert(users).values({ id: 1, name: 'owner', settings: { plugins: {} }, created_at: 0 }).onConflictDoNothing()
+    await db.insert(users).values({ id: 1, name: 'owner', settings: { plugins: {} }, createdAt: new Date(0), updatedAt: new Date(0), email: crypto.randomUUID() + '@example.com' }).onConflictDoNothing()
     const [p] = await db.insert(projects).values({
       user_id: 1, name: 'Design', system_prompt: null, provider_id: null, model_id: null,
       params: null, created_at: 1, updated_at: 1,
@@ -60,7 +60,7 @@ describe('D1 schema', () => {
 
   it('sets conversation.project_id to null when its Project is deleted', async () => {
     const db = createDb(env.DB)
-    await db.insert(users).values({ id: 1, name: 'owner', settings: { plugins: {} }, created_at: 0 }).onConflictDoNothing()
+    await db.insert(users).values({ id: 1, name: 'owner', settings: { plugins: {} }, createdAt: new Date(0), updatedAt: new Date(0), email: crypto.randomUUID() + '@example.com' }).onConflictDoNothing()
     const [p] = await db.insert(projects).values({
       user_id: 1, name: 'Design', system_prompt: null, provider_id: null, model_id: null,
       params: null, created_at: 1, updated_at: 1,
@@ -78,7 +78,7 @@ describe('D1 schema', () => {
 
   it('preserves multiple historical attachment provider file pointers', async () => {
     const db = createDb(env.DB)
-    await db.insert(users).values({ id: 1, name: 'owner', settings: { plugins: {} }, created_at: 0 }).onConflictDoNothing()
+    await db.insert(users).values({ id: 1, name: 'owner', settings: { plugins: {} }, createdAt: new Date(0), updatedAt: new Date(0), email: crypto.randomUUID() + '@example.com' }).onConflictDoNothing()
     const [a] = await db.insert(attachments).values({
       user_id: 1, sha256: 'a'.repeat(64), mime: 'image/png', size: 10, width: null, height: null,
       r2_key: 'k1', origin: 'upload', created_at: 0,
@@ -132,7 +132,7 @@ describe('D1 schema', () => {
     { family: 'anthropic' as const, original: 'https://GATEWAY.test:443/api/./messages///', canonical: 'https://gateway.test/api/messages' },
   ])('normalizes uploads and selects the newest valid pointer across URL spellings ($family, $original)', async ({ family, original, canonical }) => {
     const db = createDb(env.DB)
-    await db.insert(users).values({ id: 1, name: 'owner', settings: { plugins: {} }, created_at: 0 }).onConflictDoNothing()
+    await db.insert(users).values({ id: 1, name: 'owner', settings: { plugins: {} }, createdAt: new Date(0), updatedAt: new Date(0), email: crypto.randomUUID() + '@example.com' }).onConflictDoNothing()
     const [attachment] = await db.insert(attachments).values({ user_id: 1, sha256: crypto.randomUUID(), mime: 'text/plain', size: 1, r2_key: crypto.randomUUID(), origin: 'upload', created_at: 0 }).returning()
     const [provider] = await db.insert(providers).values({ user_id: 1, name: 'canonical-files', created_at: 0 }).returning()
     const pointer = { attachment_id: attachment!.id, provider_id: provider!.id, credential_version: 1, file_family: family, base_url: original, expires_at: 1000, cleanup_after: 1000, created_at: 0 }
@@ -160,7 +160,7 @@ describe('D1 schema', () => {
 
   it('stores two interfaces and rejects duplicate protocols and dangling interface references', async () => {
     const db = createDb(env.DB)
-    await db.insert(users).values({ id: 1, name: 'owner', settings: { plugins: {} }, created_at: 0 }).onConflictDoNothing()
+    await db.insert(users).values({ id: 1, name: 'owner', settings: { plugins: {} }, createdAt: new Date(0), updatedAt: new Date(0), email: crypto.randomUUID() + '@example.com' }).onConflictDoNothing()
     const [p] = await db.insert(providers).values({ user_id: 1, name: 'interfaces', created_at: 0 }).returning()
     const insert = (protocol: string) => env.DB.prepare('INSERT INTO provider_interfaces (provider_id, protocol, base_url, created_at) VALUES (?, ?, ?, 0)').bind(p!.id, protocol, 'https://example.com/v1').run()
     const response = await insert('responses')
@@ -192,7 +192,7 @@ describe('D1 schema', () => {
       expect(plan.results.some(row => row.detail.includes('SEARCH models USING') && row.detail.includes(index!))).toBe(true)
     }
     const db = createDb(env.DB)
-    await db.insert(users).values({ id: 1, name: 'owner', settings: { plugins: {} }, created_at: 0 }).onConflictDoNothing()
+    await db.insert(users).values({ id: 1, name: 'owner', settings: { plugins: {} }, createdAt: new Date(0), updatedAt: new Date(0), email: crypto.randomUUID() + '@example.com' }).onConflictDoNothing()
     const [p] = await db.insert(providers).values({ user_id: 1, name: 'fts', created_at: 0 }).returning()
     const inserted = await env.DB.prepare("INSERT INTO models (provider_id, model_id, search_name, metadata_resolved, metadata_override) VALUES (?, 'search-model', 'claude opus', ?, ?)")
       .bind(p!.id, JSON.stringify({ reasoning: false, cost: { input: 0 } }), JSON.stringify({ cost: null })).run()

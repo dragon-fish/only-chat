@@ -8,6 +8,7 @@ import { attachmentProviderFiles, attachments, providerInterfaces, providers } f
 import { encryptSecret } from '@/server/plugins/llm/crypto'
 import { cleanupExpiredProviderFiles } from '@/server/plugins/files-cleanup'
 import { findReusableProviderFile } from '@/server/plugins/hub/conversations'
+import { seedTestUser } from './user-fixture'
 
 const now = 1_800_000_000_000
 const day = 86_400_000
@@ -23,6 +24,7 @@ afterEach(async () => {
 })
 
 async function fixture(family: 'openai' | 'anthropic' = 'openai') {
+  await seedTestUser(db)
   const ctx = await createApp({ env, side: 'worker' })
   const [provider] = await db.insert(providers).values({
     user_id: 1, name: 'cleanup',

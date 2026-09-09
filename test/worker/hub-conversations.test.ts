@@ -1,7 +1,7 @@
 import { env } from 'cloudflare:workers'
 import { describe, expect, it } from 'vitest'
 import { createDb } from '@/server/db/client'
-import { ensureDefaultUser } from '@/server/plugins/database'
+import { seedTestUser } from './user-fixture'
 import { createConversation, finalizeMessage, forkConversation, getConversation, insertMessage, listMessages, maxSeq, toMessage, updateConversation } from '@/server/plugins/hub/conversations'
 import { createProject, deleteProject, getProject, listProjectConversations, listProjects, updateProject } from '@/server/plugins/hub/projects'
 import { users } from '@/server/db/schema'
@@ -11,7 +11,7 @@ import { connect } from './ws-helper'
 describe('conversation ops', () => {
   it('creates, inserts, finalizes, and reads back with wire status', async () => {
     const db = createDb(env.DB)
-    await ensureDefaultUser(db)
+    await seedTestUser(db)
     const s = await createConversation(db, { user_id: 1, title: 't', provider_id: null, model_id: null })
     expect(await maxSeq(db, s.id)).toBe(0)
     const u = await insertMessage(db, { conversation_id: s.id, parent_id: null, seq: 1, role: 'user', parts: [{ type: 'text', text: 'hi' }], provider_id: null, model_id: null, usage: null, status: 'done', error: null, created_at: 1 })
@@ -28,7 +28,7 @@ describe('conversation ops', () => {
 
   it('defaults existing Conversation snapshots to empty and preserves a selected tool snapshot', async () => {
     const db = createDb(env.DB)
-    await ensureDefaultUser(db)
+    await seedTestUser(db)
     const empty = await createConversation(db, { user_id: 1, title: 'empty', provider_id: null, model_id: null })
     const selected = await createConversation(db, { user_id: 1, title: 'selected', provider_id: null, model_id: null, tools: ['ask_user'] })
     expect(empty.tools).toEqual([])
@@ -37,7 +37,7 @@ describe('conversation ops', () => {
 
   it('forks only the root-to-selected-message path with remapped parents and copied settings', async () => {
     const db = createDb(env.DB)
-    await ensureDefaultUser(db)
+    await seedTestUser(db)
     const source = await createConversation(db, {
       user_id: 1, title: 'Source', provider_id: 7, model_id: 'model',
       system_prompt: 'prompt', params: { temperature: 0.3 },
@@ -63,8 +63,8 @@ describe('conversation ops', () => {
 describe('project ops', () => {
   it('scopes every read and write to the owning user', async () => {
     const db = createDb(env.DB)
-    await ensureDefaultUser(db)
-    const [other] = await db.insert(users).values({ name: 'other', settings: { plugins: {} }, created_at: 0 }).returning()
+    await seedTestUser(db)
+    const [other] = await db.insert(users).values({ name: 'other', settings: { plugins: {} }, createdAt: new Date(0), updatedAt: new Date(0), email: crypto.randomUUID() + '@example.com' }).returning()
     const mine = await createProject(db, { user_id: DEFAULT_USER_ID, name: 'mine', system_prompt: 'P', params: { temperature: 0.2 } })
     const theirs = await createProject(db, { user_id: other!.id, name: 'theirs' })
 
@@ -83,7 +83,7 @@ describe('project ops', () => {
 
   it('lists a project’s conversations and releases them to Chats when it is deleted', async () => {
     const db = createDb(env.DB)
-    await ensureDefaultUser(db)
+    await seedTestUser(db)
     const p = await createProject(db, { user_id: DEFAULT_USER_ID, name: 'p' })
     const s = await createConversation(db, {
       user_id: DEFAULT_USER_ID, title: 't', project_id: p.id, provider_id: null, model_id: null,
@@ -100,7 +100,7 @@ describe('project ops', () => {
 describe('project realtime commands', () => {
   it('creates, updates, and deletes a project over the socket, broadcasting to two clients and moving conversations back to Chats', async () => {
     const db = createDb(env.DB)
-    await ensureDefaultUser(db)
+    await seedTestUser(db)
     const a = await connect()
     const b = await connect()
 
@@ -129,8 +129,8 @@ describe('project realtime commands', () => {
 
   it('rejects moving a conversation to another user’s project, leaving it untouched', async () => {
     const db = createDb(env.DB)
-    await ensureDefaultUser(db)
-    const [other] = await db.insert(users).values({ name: 'other', settings: { plugins: {} }, created_at: 0 }).returning()
+    await seedTestUser(db)
+    const [other] = await db.insert(users).values({ name: 'other', settings: { plugins: {} }, createdAt: new Date(0), updatedAt: new Date(0), email: crypto.randomUUID() + '@example.com' }).returning()
     const theirs = await createProject(db, { user_id: other!.id, name: 'theirs' })
     const s = await createConversation(db, { user_id: DEFAULT_USER_ID, title: 't', provider_id: null, model_id: null })
 
@@ -142,8 +142,8 @@ describe('project realtime commands', () => {
 
   it('answers a project.update for a project it does not own with an error carrying request_id', async () => {
     const db = createDb(env.DB)
-    await ensureDefaultUser(db)
-    const [other] = await db.insert(users).values({ name: 'other2', settings: { plugins: {} }, created_at: 0 }).returning()
+    await seedTestUser(db)
+    const [other] = await db.insert(users).values({ name: 'other2', settings: { plugins: {} }, createdAt: new Date(0), updatedAt: new Date(0), email: crypto.randomUUID() + '@example.com' }).returning()
     const theirs = await createProject(db, { user_id: other!.id, name: 'theirs' })
 
     const { ws, next } = await connect()
@@ -154,7 +154,7 @@ describe('project realtime commands', () => {
 
   it('correlates a conversation fork while broadcasting the created conversation', async () => {
     const db = createDb(env.DB)
-    await ensureDefaultUser(db)
+    await seedTestUser(db)
     const source = await createConversation(db, { user_id: 1, title: 'Source', provider_id: null, model_id: null })
     const root = await insertMessage(db, { conversation_id: source.id, parent_id: null, seq: 1, role: 'user', parts: [{ type: 'text', text: 'root' }], provider_id: null, model_id: null, usage: null, status: 'done', error: null, created_at: 1 })
     await updateConversation(db, source.id, { head_message_id: root.id })

@@ -1,14 +1,17 @@
 import { env, exports } from 'cloudflare:workers'
 import { eq } from 'drizzle-orm'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createDb } from '@/server/db/client'
 import { attachmentProviderFiles, attachments, providers } from '@/server/db/schema'
 import { createProject } from '@/server/plugins/hub/projects'
 import { DEFAULT_USER_ID } from '@/shared/constants'
-import { ProviderWithInterfacesSchema } from '@/shared/models'
+import { ProviderWithInterfacesSchema, UserSchema } from '@/shared/models'
 import { catalogApp } from './provider-catalog-fixture'
 import { decryptSecret } from '@/server/plugins/llm/crypto'
 import { createApp } from '@/server/app'
+import { seedTestUser } from './user-fixture'
+
+beforeEach(() => seedTestUser())
 
 const json = (method: string, path: string, body?: unknown) =>
   exports.default.fetch(new Request(`https://x${path}`, { method, headers: { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) }))
@@ -256,10 +259,10 @@ describe('atomic provider interface API', () => {
 })
 
 describe('REST api', () => {
-  it('returns the default user', async () => {
+  it('returns the application user DTO with a millisecond creation timestamp', async () => {
     const res = await json('GET', '/api/me')
     expect(res.status).toBe(200)
-    expect(await res.json()).toMatchObject({ id: 1, settings: { plugins: {} } })
+    expect(UserSchema.parse(await res.json())).toEqual({ id: 1, name: 'owner', settings: { plugins: {} }, created_at: 0 })
   })
 
   it('creates a provider without leaking the key, lists models, deletes', async () => {

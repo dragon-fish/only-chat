@@ -3,7 +3,7 @@ import { env, exports } from 'cloudflare:workers'
 import { describe, expect, it } from 'vitest'
 import { createDb } from '@/server/db/client'
 import type { UserHub } from '@/server/index'
-import { ensureDefaultUser } from '@/server/plugins/database'
+import { seedTestUser } from './user-fixture'
 import { createConversation } from '@/server/plugins/hub/conversations'
 import type { Message } from '@/shared/models'
 import { connect } from './ws-helper'
@@ -30,7 +30,7 @@ describe('UserHub DO', () => {
 
   it('updates and deletes a conversation, broadcasting to two sockets', async () => {
     const db = createDb(env.DB)
-    await ensureDefaultUser(db)
+    await seedTestUser(db)
     const s = await createConversation(db, { user_id: 1, title: 'old', provider_id: null, model_id: null })
     const a = await connect()
     const b = await connect()

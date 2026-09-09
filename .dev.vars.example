@@ -1,1 +1,4 @@
 KEY_ENCRYPTION_SECRET="change-me-32-bytes-of-randomness"
+BETTER_AUTH_SECRET="replace-with-at-least-32-random-characters"
+BETTER_AUTH_URL="http://localhost:5173"
+ALLOW_REGISTER="false"
