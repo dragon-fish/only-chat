@@ -49,20 +49,24 @@
 - Modify: `src/server/plugins/hub/{index,generation,effective-config,projects,seq,attachment-transport}.ts`
 - Modify: `src/server/plugins/llm/{messages,observability}.ts`
 - Modify: `src/shared/{models,api,ws}.ts`
+- Modify: `src/shared/plugins.ts`
 - Modify: `src/client/{app.vue,typed-router.d.ts}`
 - Modify: `src/client/components/{branch-switcher,message-item,model-editor,reasoning-control}.vue`
+- Modify: `src/client/components/{tool-part-renderer,tool-selector}.ts`
 - Modify: `src/client/components/layout/{app-sidebar,chat-sidebar-content}.vue`
 - Modify: `src/client/lib/{api,model-editor,ui-models}.ts`
 - Modify: `src/client/pages/{new.vue,index.vue}` and `src/client/pages/project/[projectId]/{index.vue,new.vue,settings.vue}`
 - Modify: `src/client/stores/sync.ts`
 - Modify: `src/client/views/{chat,chat-index,project-settings,projects-index}.vue`
 - Modify: all tests containing chat-domain `Session`, `session_id`, `/api/sessions`, or `session.*`
+- Modify: `test/unit/{client-ask-user,client-tool-selector}.test.ts`
 - Test: `test/worker/conversation-migration.test.ts`
 
 **Interfaces:**
 
 - Produces: `Conversation`, `ConversationSchema`, `ConversationParams`, `ConversationRow`, `conversation_id`, `/api/conversations`, and `conversation.*` WebSocket/Cordis events.
 - Produces: `conversationPath(conversation: Conversation): string`, `useConversationFork()`, and `conversationExport()` under the renamed modules.
+- Produces: `conversationToolBlockReason()` for tool selection against a Conversation draft/head.
 - Removes: chat-domain `Session`, `SessionSchema`, `SessionParams`, `SessionRow`, `session_id`, `/api/sessions`, and `session.*` symbols.
 
 - [ ] **Step 1: Add failing contract and migration tests**
@@ -110,7 +114,7 @@ CREATE INDEX `conversations_project_updated_idx` ON `conversations` (`project_id
 CREATE UNIQUE INDEX `messages_conversation_seq_uq` ON `messages` (`conversation_id`,`seq`);
 ```
 
-After the pre-task rebase, if `0007` already exists, renumber this and every later migration together without changing their order.
+`main` now ends at `0006_session-tools.sql`, so this migration is `0007_conversations.sql` and must preserve the existing `tools` column and values.
 
 - [ ] **Step 4: Rename server and shared contracts mechanically**
 
@@ -139,7 +143,7 @@ export const MessageSchema = z.object({
 })
 ```
 
-WebSocket names become `conversation.update`, `conversation.delete`, `conversation.fork`, `conversation.created`, `conversation.updated`, `conversation.deleted`, and `conversation.forked`. Generic generation commands retain `send`, `edit`, `regenerate`, `stop`, and `switch_head`, but their identifier field becomes `conversation_id`.
+WebSocket names become `conversation.update`, `conversation.delete`, `conversation.fork`, `conversation.created`, `conversation.updated`, `conversation.deleted`, and `conversation.forked`. Generic generation commands retain `send`, `edit`, `regenerate`, `stop`, `switch_head`, and `tool.respond`, but their Conversation identifier field becomes `conversation_id`. Preserve the immutable `tools` snapshot and Ask User continuation semantics while renaming their types, comments, errors, and helpers.
 
 - [ ] **Step 5: Rename the client contract and route parameter**
 
@@ -158,7 +162,7 @@ export const api = {
 Run:
 
 ```bash
-rg -n "Session|session_id|/api/sessions|session\." src test \
+rg -ni "\\bsession|session_id|/api/sessions|session\." src test \
   -g '!src/client/ui/**' \
   -g '!docs/**'
 ```
@@ -610,6 +614,7 @@ git commit -m "fix(auth): isolate REST data by user"
 - Modify: `src/server/plugins/hub/{index,generation,generated-images,conversations,projects}.ts`
 - Modify: `test/worker/ws-helper.ts`
 - Modify: `test/worker/{hub-do,hub-generation,hub-conversations}.test.ts`
+- Modify: `test/unit/{client-ask-user,client-tool-selector,shared-ws}.test.ts`
 
 **Interfaces:**
 
@@ -630,6 +635,12 @@ const alice = await connect({ cookie: aliceClient.cookie })
 const bob = await connect({ cookie: bobClient.cookie })
 alice.ws.send(JSON.stringify({ type: 'conversation.delete', conversation_id: bobConversation.id }))
 expect(await alice.next('error')).toMatchObject({ message: 'conversation not found' })
+
+alice.ws.send(JSON.stringify({
+  type: 'tool.respond', message_id: bobToolMessage.id,
+  call_id: bobToolCall.id, result: bobAnswer,
+}))
+expect(await alice.nextAfter('error', 2)).toMatchObject({ message: 'tool-call message not found' })
 
 await revokeAuthSession(alice.authSessionId)
 alice.ws.send(JSON.stringify({ type: 'conversation.update', conversation_id: aliceConversation.id, title: 'blocked' }))
@@ -675,7 +686,7 @@ const conversation = await getConversation(hub.db, conversationId, hub.userId)
 if (!conversation) throw new Error('conversation not found')
 ```
 
-Repository functions that read or mutate user-owned records must take `userId`; no Hub call may update a record after an unowned ID-only lookup.
+Repository functions that read or mutate user-owned records must take `userId`; no Hub call may update a record after an unowned ID-only lookup. Apply this to `tool.respond`, pending-question cancellation, Ask User continuation recovery, Conversation forking, and Project mutations. Preserve the atomic compare-and-swap head reservations introduced on `main`; authentication checks must wrap those invariants, not replace them with read-then-write logic.
 
 - [ ] **Step 6: Reject revoked AuthSessions and close banned users immediately**
 
@@ -726,6 +737,7 @@ git commit -m "fix(auth): bind user hubs to authenticated users"
 - Modify: `src/client/lib/api.ts`
 - Modify: `src/client/typed-router.d.ts`
 - Modify: `test/unit/client-routes.test.ts`
+- Modify: `test/unit/client-load-state.test.ts`
 
 **Interfaces:**
 
@@ -1057,7 +1069,7 @@ Mark the MVP design's “No authentication” and hard-coded `user_id` sections 
 Run:
 
 ```bash
-rg -n "DEFAULT_USER_ID|No authentication|No authentication yet|hard-coded|硬编码|/api/sessions|session_id|session\." \
+rg -ni "DEFAULT_USER_ID|No authentication|No authentication yet|hard-coded|硬编码|/api/sessions|session_id|\\bsession" \
   README.md src test docs/superpowers/specs \
   -g '!src/client/ui/**' \
   -g '!docs/superpowers/plans/**'
@@ -1078,7 +1090,7 @@ git diff --check main...HEAD
 git status -sb
 ```
 
-Expected: migrations apply cleanly; typecheck, 62+ test files, and production build pass; no whitespace errors or uncommitted generated files remain.
+Expected: migrations apply cleanly; typecheck, 68+ test files, and production build pass; no whitespace errors or uncommitted generated files remain.
 
 - [ ] **Step 4: Commit documentation and final cleanup**
 
