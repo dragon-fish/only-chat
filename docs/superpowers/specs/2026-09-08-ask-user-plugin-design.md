@@ -2,7 +2,7 @@
 
 ## Purpose
 
-`ask_user` is the first built-in feature plugin. It validates the shared plugin registry, stable per-Session tool configuration, cross-protocol tool calls, durable human input, client Part rendering, and generation continuation.
+`ask_user` is the first built-in feature plugin. It validates the shared plugin registry, stable per-Conversation tool configuration, cross-protocol tool calls, durable human input, client Part rendering, and generation continuation.
 
 ## Plugin registry
 
@@ -13,7 +13,7 @@ Feature plugins live under `src/plugins/<plugin-id>/` with optional `client/` an
 - `client/index.ts` exports `setup(ctx)` and registers Vue renderers or controls;
 - `server/index.ts` exports a Cordis plugin and registers AI SDK tools or command handlers.
 
-The client eagerly discovers only manifests with `import.meta.glob`; it keeps client entrypoints as lazy loaders. A client plugin chunk loads when the plugin is enabled, a Session selects one of its tools, or historical Parts require its renderer. The server deploys all built-in server entrypoints in the Worker bundle and uses Cordis lifecycle registration.
+The client eagerly discovers only manifests with `import.meta.glob`; it keeps client entrypoints as lazy loaders. A client plugin chunk loads when the plugin is enabled, a Conversation selects one of its tools, or historical Parts require its renderer. The server deploys all built-in server entrypoints in the Worker bundle and uses Cordis lifecycle registration.
 
 Client rendering is declarative: a tool registry maps tool IDs to Vue components and schemas. Global hooks are available for side effects but never act as the source of truth for a card that must survive reloads.
 
@@ -23,15 +23,15 @@ Settings render from the discovered manifests; database settings only store whet
 
 Unknown plugin and tool IDs fail closed. Registries return tools in stable ID order so request prefixes do not change between turns.
 
-## Global and Session state
+## Global and Conversation state
 
-Sessions add a non-null JSON `tools` array with an empty-array default. Existing Sessions therefore keep their current tool-free request prefix.
+Conversations add a non-null JSON `tools` array with an empty-array default. Existing Conversations therefore keep their current tool-free request prefix.
 
-Enabling a plugin changes only the defaults for newly drafted Sessions. A new draft starts with every tool from globally enabled plugins selected. The first `send` persists that selected list atomically with Session creation.
+Enabling a plugin changes only the defaults for newly drafted Conversations. A new draft starts with every tool from globally enabled plugins selected. The first `send` persists that selected list atomically with Conversation creation.
 
-Existing Sessions read their own stored list. Users may change it from the Composer tool selector; that explicit change is allowed to invalidate the Session's model prefix cache. Enabling another plugin globally never edits existing Session rows.
+Existing Conversations read their own stored list. Users may change it from the Composer tool selector; that explicit change is allowed to invalidate the Conversation's model prefix cache. Enabling another plugin globally never edits existing Conversation rows.
 
-Globally disabling a plugin removes its tools from subsequent model requests while retaining the stored Session selection. Re-enabling the plugin restores the selection. Pending calls created before disablement remain answerable or cancellable.
+Globally disabling a plugin removes its tools from subsequent model requests while retaining the stored Conversation selection. Re-enabling the plugin restores the selection. Pending calls created before disablement remain answerable or cancellable.
 
 The Composer's left controls contain a tool button with the selected count. It opens a Popover on desktop and a Drawer on mobile. Each available plugin tool has a Switch, title, and description. A selected tool that the current model cannot call blocks sending with a clear model-capability message.
 
@@ -57,7 +57,7 @@ remain available when batching multiple questions so the user can submit every a
 
 ## Generation behavior
 
-Before `streamText`, the server resolves the Session tool snapshot against the globally enabled plugin registry and the selected model's declared tool capability. It passes the resulting tools in stable ID order.
+Before `streamText`, the server resolves the Conversation tool snapshot against the globally enabled plugin registry and the selected model's declared tool capability. It passes the resulting tools in stable ID order.
 
 Because `ask_user` has no `execute`, a model call that emits it finishes the current generation normally. The assistant Message persists its `tool_call` Part and remains `done`. An unmatched `tool_call` is the complete durable waiting state; no Worker invocation, Durable Object task, Queue message, or Workflow remains active while waiting for a person.
 
@@ -131,13 +131,13 @@ The server broadcasts the appended result through `message.part`, so every conne
 
 After an answered result is stored, the server checks all tool calls in that assistant Message:
 
-- unresolved calls keep the Session waiting;
+- unresolved calls keep the Conversation waiting;
 - any cancelled result stops continuation;
 - all answered results start one continuation.
 
-Continuation uses the existing Session/project/model resolution. It creates a new assistant shell whose parent is the tool-call Message and generates with the path including the appended tool results. `assembleContext` accepts any leaf Message ID rather than assuming the leaf is a user Message.
+Continuation uses the existing Conversation/project/model resolution. It creates a new assistant shell whose parent is the tool-call Message and generates with the path including the appended tool results. `assembleContext` accepts any leaf Message ID rather than assuming the leaf is a user Message.
 
-Continuation is retry-safe. If the response was already stored, the handler checks for an existing child assistant shell before creating one. A crash after shell creation uses the existing interrupted-shell behavior and can be regenerated. An answered card that is still the Session head and has no child assistant exposes a “继续” recovery action; it sends `tool.continue`, which performs the same idempotent child check and continuation without rewriting the tool result.
+Continuation is retry-safe. If the response was already stored, the handler checks for an existing child assistant shell before creating one. A crash after shell creation uses the existing interrupted-shell behavior and can be regenerated. An answered card that is still the Conversation head and has no child assistant exposes a “继续” recovery action; it sends `tool.continue`, which performs the same idempotent child check and continuation without rewriting the tool result.
 
 Cancellation stores the tool result but does not create a child assistant. The next ordinary user Message may use the cancelled tool result as historical context. Verified protocol serialization is:
 
@@ -146,7 +146,7 @@ Cancellation stores the tool result but does not create a child assistant. The n
 - Anthropic: `user → assistant(tool_use) → user[tool_result, text]`.
 
 The current client blocks ordinary sends while a valid `ask_user` call is pending. A stale or
-multi-device client may still bypass that guard. When its parent is still the Session head, the
+multi-device client may still bypass that guard. When its parent is still the Conversation head, the
 server atomically appends cancelled results for every pending `ask_user` call with the message
 “用户跳过了问题并继续回复”, broadcasts those Parts, and then accepts the user Message. A concurrent
 explicit answer and this implicit skip use the same exactly-once fence: whichever persists first
@@ -158,7 +158,7 @@ wins, and the losing command must resync instead of creating a second continuati
 - Unknown, disabled, or unselected tools are never sent to the model.
 - Invalid answers leave the Questionnaire editable and return a correlated error.
 - Disconnects do not clear persisted pending calls or local completed results.
-- A response to a foreign Session, unknown call, already-conflicting result, or streaming Message fails without mutation.
+- A response to a foreign Conversation, unknown call, already-conflicting result, or streaming Message fails without mutation.
 - Unknown, invalid, or incomplete tool calls are never implicitly cancelled by an ordinary send.
 - Pending calls remain resolvable after the plugin is globally disabled.
 
@@ -167,7 +167,7 @@ wins, and the losing command must resync instead of creating a second continuati
 Tests cover product-owned behavior:
 
 - plugin catalog/default selection and stable tool ordering;
-- Session tool snapshot creation and updates without rewriting existing Sessions;
+- Conversation tool snapshot creation and updates without rewriting existing Conversations;
 - strict `ask_user` arguments and answer validation;
 - tool-call stream persistence without server execution;
 - atomic exactly-once result append and duplicate/conflict behavior;

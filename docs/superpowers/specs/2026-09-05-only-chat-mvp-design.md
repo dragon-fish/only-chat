@@ -1,5 +1,10 @@
 # only-chat MVP 设计
 
+> 本文记录最初的 MVP 基线。用户认证、租户隔离与聊天领域命名已经由
+> `2026-09-08-user-auth-and-conversation-naming-design.md` 取代；本文中的无认证、固定
+> `user_id = 1`、`Session` / `sessions` / `session_id`、旧 REST 与 WebSocket 名称仅作为
+> 历史设计保留，不是当前部署或实现说明。
+
 ## 1. 背景与目标
 
 现有桌面/自托管 AI 聊天客户端（Cherry Studio、LobeHub、OpenWebUI）在多设备同步、部署复杂度、工具调用设计上各有硬伤。only-chat 是一个部署在 Cloudflare 上的个人 Web 聊天平台，目标是：
@@ -12,7 +17,8 @@
 
 ### MVP 包含
 
-- 多租户数据模型（所有表带 `user_id`），但 MVP 阶段 `user_id` 硬编码为 `1`，无登录。
+- 多租户数据模型（所有表带 `user_id`）；MVP 最初将 `user_id` 硬编码为 `1` 且无登录，
+  此行为现已被用户认证与租户隔离设计取代。
 - 供应商与模型管理：四种协议、预制供应商模板、手填模型、从 `/models` 拉取模型。
 - 会话与消息：树状分支（编辑/重生成产生兄弟节点）、分支切换器、停止生成。
 - 消息内容：文本（markdown 渲染）、图片（粘贴/拖入，存 R2）、reasoning 折叠展示。
@@ -21,7 +27,7 @@
 
 ### MVP 不包含（后续子项目）
 
-- 用户系统 / passkey 登录（上线前必做；临时上线用 Cloudflare Zero Trust 挡门）。
+- 用户系统 / passkey 登录（历史 MVP 范围；邮箱密码认证现已实现，额外登录方式仍未实现）。
 - presets、agents、tools / MCP、知识库（AutoRAG）。
 - 成本估算、models.dev 价格同步（但 `models.pricing` 列现在就留）。
 - 附件删除与"我的文件"页面（但 `attachments` 表和路由结构现在就按此设计）。

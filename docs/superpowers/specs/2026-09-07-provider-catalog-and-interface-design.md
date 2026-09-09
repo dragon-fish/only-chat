@@ -411,10 +411,10 @@ Provider 列表和详情继续使用 AbortSignal/请求序列避免快速切换�
 - Header 始终显示 `Only Chat`。
 - Branding 右侧显示 WebSocket 状态点：open 绿色、connecting 黄色、closed 红色；hover/focus 显示文字。
 - icon collapse 时状态点叠放在品牌图标右下角。
-- Footer 始终显示设置入口和静态用户行 `Only Chat User / 本地账户`。
+- Footer 始终显示设置入口和当前已登录用户菜单；管理员额外显示管理入口。
 - 聊天、Project 和设置组件只渲染中间上下文内容。
 
-Session 与 Project 行尾操作使用官方 `SidebarMenuAction`，桌面点击区域 32×32，移动端至少 40×40；图标维持 16px，并为标题预留尾部空间。
+Conversation 与 Project 行尾操作使用官方 `SidebarMenuAction`，桌面点击区域 32×32，移动端至少 40×40；图标维持 16px，并为标题预留尾部空间。
 
 ### 12.2 新建供应商
 

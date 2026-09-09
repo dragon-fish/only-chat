@@ -2,7 +2,7 @@
 
 ## Scope
 
-This change expands Project, Session, and assistant-message actions; adds current-branch Session forking and export; and adds reusable image cropping plus Project icons.
+This change expands Project, Conversation, and assistant-message actions; adds current-branch Conversation forking and export; and adds reusable image cropping plus Project icons.
 
 ## Navigation menus
 
@@ -13,7 +13,7 @@ Project row menus use the existing shadcn-vue dropdown primitives in this order:
 3. Separator
 4. Delete Project
 
-Session row menus use nested `DropdownMenuSub` groups:
+Conversation row menus use nested `DropdownMenuSub` groups:
 
 1. Rename
 2. Fork from here
@@ -21,30 +21,30 @@ Session row menus use nested `DropdownMenuSub` groups:
    - Markdown
    - JSON
 4. Move to
-   - Chats when the Session is currently in a Project
+   - Chats when the Conversation is currently in a Project
    - Every other Project
 5. Separator
 6. Delete conversation
 
 The existing enlarged ellipsis hit target remains. Destructive confirmation and focus restoration remain unchanged.
 
-Session and assistant-message fork actions use the Git fork icon and the label “从此处分叉”, leaving the copy icon available for copying message content. Assistant message footers add an always-visible ellipsis action containing this command. It is disabled while that assistant message is streaming.
+Conversation and assistant-message fork actions use the Git fork icon and the label “从此处分叉”, leaving the copy icon available for copying message content. Assistant message footers add an always-visible ellipsis action containing this command. It is disabled while that assistant message is streaming.
 
 ## First-send focus preservation
 
-The `/new` and `/c/:sessionId` URLs resolve through one aliased route record and one page component. Project-scoped `/project/:projectId/new` and `/project/:projectId/c/:sessionId` do the same. When the first Session is created, Vue Router updates the optional Session parameter while reusing the mounted ChatView and Composer DOM. The textarea never blurs, so touch keyboards are not dismissed and reopened.
+The `/new` and `/c/:conversationId` URLs resolve through one aliased route record and one page component. Project-scoped `/project/:projectId/new` and `/project/:projectId/c/:conversationId` do the same. When the first Conversation is created, Vue Router updates the optional Conversation parameter while reusing the mounted ChatView and Composer DOM. The textarea never blurs, so touch keyboards are not dismissed and reopened.
 
-## Session forking
+## Conversation forking
 
-Add a `session.fork` WebSocket command with:
+Add a `conversation.fork` WebSocket command with:
 
 - `request_id` required for this command;
-- `session_id` identifying the source Session;
+- `conversation_id` identifying the source Conversation;
 - `message_id` identifying the inclusive end of the copied path.
 
-The server verifies that the Session belongs to the current user, the message belongs to the Session, and the selected message is not an in-flight shell. It walks parent links from `message_id` to the root and copies only that path in root-first order.
+The server verifies that the Conversation belongs to the current user, the message belongs to the Conversation, and the selected message is not an in-flight shell. It walks parent links from `message_id` to the root and copies only that path in root-first order.
 
-The new Session copies:
+The new Conversation copies:
 
 - `project_id`;
 - `provider_id` and `model_id` overrides;
@@ -52,17 +52,17 @@ The new Session copies:
 - `params`;
 - the source title with ` 副本` appended.
 
-Each copied Message retains its role, parts, generation provider/model, usage, terminal status, error, and original creation timestamp. New message IDs and parent IDs are allocated, and the new Session head points at the copied terminal message. Unselected branches are not copied.
+Each copied Message retains its role, parts, generation provider/model, usage, terminal status, error, and original creation timestamp. New message IDs and parent IDs are allocated, and the new Conversation head points at the copied terminal message. Unselected branches are not copied.
 
-If any message copy fails, the partially created Session is deleted before returning the error.
+If any message copy fails, the partially created Conversation is deleted before returning the error.
 
-The server broadcasts the ordinary `session.created` event so every client sees the new Session, followed by `session.forked` containing the originating `request_id` and new Session ID. The client keeps a pending-request map and resolves only the matching request. A matching `error` event rejects it. On success, the initiating client navigates with `sessionPath(newSession)`.
+The server broadcasts the ordinary `conversation.created` event so every client sees the new Conversation, followed by `conversation.forked` containing the originating `request_id` and new Conversation ID. The client keeps a pending-request map and resolves only the matching request. A matching `error` event rejects it. On success, the initiating client navigates with `conversationPath(newConversation)`.
 
-The Session menu forks at `session.head_message_id`. An assistant message action forks at that message's ID.
+The Conversation menu forks at `conversation.head_message_id`. An assistant message action forks at that message's ID.
 
 ## Current-branch export
 
-Exports are client-side and operate on the active root-to-head path only. A Session opened from the sidebar loads its messages through the existing Session messages API before serialization.
+Exports are client-side and operate on the active root-to-head path only. A Conversation opened from the sidebar loads its messages through the existing Conversation messages API before serialization.
 
 Create a small exporter registry. Each exporter declares:
 
@@ -70,13 +70,13 @@ Create a small exporter registry. Each exporter declares:
 - display name;
 - file extension;
 - MIME type;
-- a serializer receiving Session metadata, optional Project metadata, current-path messages, and an attachment URL resolver.
+- a serializer receiving Conversation metadata, optional Project metadata, current-path messages, and an attachment URL resolver.
 
 Built-in exporters:
 
 ### Markdown
 
-- Starts with the Session title and optional Project name.
+- Starts with the Conversation title and optional Project name.
 - Renders user and assistant turns in order.
 - Renders reasoning inside `<details>` blocks.
 - Renders tool calls and results as fenced JSON.
@@ -86,7 +86,7 @@ Built-in exporters:
 ### JSON
 
 - Includes an export format version.
-- Includes the Session and optional Project snapshot.
+- Includes the Conversation and optional Project snapshot.
 - Includes complete current-path Message objects, Parts, provider metadata, and usage.
 - Does not include unselected branches or credentials.
 
@@ -159,7 +159,7 @@ The stored name remains unchanged. Outside editing forms, a leading Emoji and it
 
 ## Error handling
 
-- Fork commands fail without creating or leaving a partial Session.
+- Fork commands fail without creating or leaving a partial Conversation.
 - Rename, move, fork, and Project icon saves use existing connection/error feedback.
 - Export load/serialization failures show a toast and do not create an empty download.
 - Invalid images, failed decoding, missing canvas contexts, and failed encoding surface an actionable cropper error.

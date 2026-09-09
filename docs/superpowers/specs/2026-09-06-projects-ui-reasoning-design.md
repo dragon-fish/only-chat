@@ -1,5 +1,9 @@
 # Projects、聊天 UI、reasoning 与图片链路设计
 
+> 本文中的 Project、reasoning 与图片链路结论仍然有效；当时的无账号、固定
+> `user_id = 1` 和 Cloudflare Access 前置条件已经由
+> `2026-09-08-user-auth-and-conversation-naming-design.md` 取代，仅作为历史背景保留。
+
 ## 1. 背景与目标
 
 only-chat 的实时多设备聊天 MVP 已可用。本轮在不引入账号系统的前提下完成一次完整功能改造：
@@ -21,7 +25,7 @@ only-chat 的实时多设备聊天 MVP 已可用。本轮在不引入账号系�
 - Project 创建、重命名、编辑和删除。
 - 会话归入 Project、在 Projects 间移动、移回无项目 Chats。
 - Project 的可选提示词、默认模型和参数。
-- Project 动态继承与 session 逐字段覆盖。
+- Project 动态继承与 conversation 逐字段覆盖。
 - `Project → chats` 可折叠侧栏树。
 - Composer 内的会话设置弹层和 reasoning 离散滑块。
 - 首 token 前的“正在思考”状态与 reasoning summary 展示。
@@ -36,7 +40,7 @@ only-chat 的实时多设备聊天 MVP 已可用。本轮在不引入账号系�
 
 - 账号、登录与权限模型。
 - Project 共享文件、工具 / MCP、知识库和跨会话记忆；只保留自然扩展位置。
-- 从消息 fork 为新 session；它是后续独立功能，届时复用现有消息树。
+- 从消息 fork 为新 conversation；它是后续独立功能，届时复用现有消息树。
 - Project 分享、协作成员、置顶、搜索和归档。
 - 自动从模型名称推断完整能力，或接入 models.dev。
 - 为 Cloudflare Access 新增公开例外路径；临时签名 URL 只保留为可选后备设计。
@@ -51,16 +55,16 @@ Project 删除时不删除会话；数据库通过 `ON DELETE SET NULL` 将所�
 
 ### 3.2 动态继承
 
-Project 配置不复制到 session。每次开始生成时，服务端从最新持久状态计算有效配置：
+Project 配置不复制到 conversation。每次开始生成时，服务端从最新持久状态计算有效配置：
 
-- system prompt：Project prompt 后追加 session prompt；两者之间固定使用两个换行，任何一方都不 trim 或改写。
-- 模型：session override → Project default → 当前发送命令携带的客户端选择。
-- 普通参数：session 中存在的字段 → Project 中存在的字段 → provider / model 默认。
+- system prompt：Project prompt 后追加 conversation prompt；两者之间固定使用两个换行，任何一方都不 trim 或改写。
+- 模型：conversation override → Project default → 当前发送命令携带的客户端选择。
+- 普通参数：conversation 中存在的字段 → Project 中存在的字段 → provider / model 默认。
 - reasoning 开关与强度分别继承和覆盖。
 
 修改 Project 后，项目内已有会话从下一次生成开始使用新配置。已经开始的流式生成使用启动时的配置快照，不在中途改变。
 
-移出 Project 只移除 Project 层，不把继承值复制进 session。所有配置合并均为纯函数，并维持相同输入产生逐字节相同模型消息的前缀一致性。
+移出 Project 只移除 Project 层，不把继承值复制进 conversation。所有配置合并均为纯函数，并维持相同输入产生逐字节相同模型消息的前缀一致性。
 
 ### 3.3 reasoning 开关与强度
 
@@ -97,17 +101,17 @@ Project 配置不复制到 session。每次开始生成时，服务端从最新�
 
 索引：`(user_id, updated_at)`。
 
-### 4.2 sessions
+### 4.2 conversations
 
 新增 `project_id`，可空，引用 `projects.id`，删除策略为 `SET NULL`。增加 `(project_id, updated_at)` 索引。
 
 现有字段改为以下语义，不改变列名：
 
-- `system_prompt`：session 对 Project prompt 的补充。
-- `provider_id` / `model_id`：session 模型覆盖；为空时继承 Project。
-- `params`：session 参数覆盖，只存用户明确覆盖的字段。
+- `system_prompt`：conversation 对 Project prompt 的补充。
+- `provider_id` / `model_id`：conversation 模型覆盖；为空时继承 Project。
+- `params`：conversation 参数覆盖，只存用户明确覆盖的字段。
 
-### 4.3 SessionParams
+### 4.3 ConversationParams
 
 保留 `temperature`、`top_p`、`max_tokens`，并调整 reasoning 字段：
 
@@ -141,7 +145,7 @@ Project 配置不复制到 session。每次开始生成时，服务端从最新�
 - `expires_at`
 - `created_at`
 
-唯一索引为 `(attachment_id, provider_id)`，不包含 `session_id` 或 `model_id`。指针是当前用户范围内的附件—供应商缓存：同一份 R2 图片上传到不同 provider 后分别保存，在一个对话中反复切换 provider 时保留各自指针；切回曾使用过的 provider 会直接复用其未过期指针，不重新上传。任何请求只可使用当前 provider 对应且未过期的指针。修改 provider 的协议、Base URL 或凭据时，立即删除该 provider 的本地指针；远端临时文件等待供应商按上传时设置的期限自动删除。
+唯一索引为 `(attachment_id, provider_id)`，不包含 `conversation_id` 或 `model_id`。指针是当前用户范围内的附件—供应商缓存：同一份 R2 图片上传到不同 provider 后分别保存，在一个对话中反复切换 provider 时保留各自指针；切回曾使用过的 provider 会直接复用其未过期指针，不重新上传。任何请求只可使用当前 provider 对应且未过期的指针。修改 provider 的协议、Base URL 或凭据时，立即删除该 provider 的本地指针；远端临时文件等待供应商按上传时设置的期限自动删除。
 
 表内只保存供应商文件 ID 和时间戳，不保存文件内容。过期行不得参与上下文组装；需要该图片时重新上传并替换指针。
 
@@ -177,7 +181,7 @@ Provider 配置增加 `native_files?: boolean`，表示其 Base URL 实现可供
 - `project.create`
 - `project.update`
 - `project.delete`
-- 扩展 `session.update` 支持 `project_id`
+- 扩展 `conversation.update` 支持 `project_id`
 
 新增服务端事件：
 
@@ -185,33 +189,33 @@ Provider 配置增加 `native_files?: boolean`，表示其 Base URL 实现可供
 - `project.updated`
 - `project.deleted`
 
-Project 与 session 的所有写操作继续经过 UserHub。D1 是唯一持久真相源；写成功后再广播。REST 提供初次加载所需的 Projects 只读列表。
+Project 与 conversation 的所有写操作继续经过 UserHub。D1 是唯一持久真相源；写成功后再广播。REST 提供初次加载所需的 Projects 只读列表。
 
-删除 Project 时，先取得受影响 session ID，再删除 Project；外键在同一数据库语句内将它们的 `project_id` 置空。之后广播 `project.deleted` 和对应的 `session.updated`。
+删除 Project 时，先取得受影响 conversation ID，再删除 Project；外键在同一数据库语句内将它们的 `project_id` 置空。之后广播 `project.deleted` 和对应的 `conversation.updated`。
 
 ### 5.2 第一条消息原子创建
 
-新会话页面使用客户端 draft，不在用户打开页面或设置弹层时创建空 session。
+新会话页面使用客户端 draft，不在用户打开页面或设置弹层时创建空 conversation。
 
-`send` 命令在 `session_id = null` 时额外携带 session 初始化数据：
+`send` 命令在 `conversation_id = null` 时额外携带 conversation 初始化数据：
 
 - `project_id`
-- session prompt
-- session params overrides
+- conversation prompt
+- conversation params overrides
 - 可选模型 override
 
-命令仍携带本次生成实际使用的 `provider_id / model_id`。UserHub 在持久化第一条 user message 前创建 session 并写入 draft；创建失败时不产生消息。对于已有 session，设置变更继续通过 `session.update` 实时同步。
+命令仍携带本次生成实际使用的 `provider_id / model_id`。UserHub 在持久化第一条 user message 前创建 conversation 并写入 draft；创建失败时不产生消息。对于已有 conversation，设置变更继续通过 `conversation.update` 实时同步。
 
 ### 5.3 有效配置解析
 
-生成流程在“组装上下文”之前加载 session 及其 Project，调用纯函数计算：
+生成流程在“组装上下文”之前加载 conversation 及其 Project，调用纯函数计算：
 
 - 合成 system prompt
 - 有效模型与来源
 - 合并后的普通参数
 - reasoning 开关、Auto 或显式 effort
 
-如果显式 session override 或 Project default 指向已删除 / 停用模型，发送按钮禁用并显示“模型不可用”，不静默换用其他模型。只有两层都未指定模型时才使用客户端当前选择。
+如果显式 conversation override 或 Project default 指向已删除 / 停用模型，发送按钮禁用并显示“模型不可用”，不静默换用其他模型。只有两层都未指定模型时才使用客户端当前选择。
 
 ### 5.4 reasoning provider options
 
@@ -245,7 +249,7 @@ reasoning 开启与 effort 分别映射：
 
 Files API 是 provider 能力，不是 model 能力。OpenAI Responses preset 默认启用；自定义兼容 provider 在设置中显式开启，不能仅凭协议名称假定网关实现完整。上传失败不得把认证错误等问题伪装成能力缺失；只有用户关闭 Files API 或已知“不支持端点”的响应才走后备传输。
 
-provider file ID 只属于上传它的 provider。切换 session 模型时，如果 provider 变化，必须查找或创建新 provider 的独立指针，绝不复用前一个 provider 的 file ID；如果随后切回原 provider，则继续使用其尚未过期的原指针。
+provider file ID 只属于上传它的 provider。切换 conversation 模型时，如果 provider 变化，必须查找或创建新 provider 的独立指针，绝不复用前一个 provider 的 file ID；如果随后切回原 provider，则继续使用其尚未过期的原指针。
 
 ### 5.7 供应商文件过期与本地清理
 
@@ -347,8 +351,8 @@ assistant shell 到达后立即产生可见状态：
 
 ## 9. 错误处理
 
-- Project / session 命令校验失败：广播带 `request_id` 的 error，客户端保留 draft 并显示错误。
-- 第一条消息创建失败：不清空 Composer，不创建半成品 session。
+- Project / conversation 命令校验失败：广播带 `request_id` 的 error，客户端保留 draft 并显示错误。
+- 第一条消息创建失败：不清空 Composer，不创建半成品 conversation。
 - Project 删除失败：不在客户端提前移除 Project 或会话。
 - 继承模型不可用：显示来源和不可用状态，禁止发送，直到清除 override / default 或选择有效模型。
 - reasoning provider option 被供应商拒绝：保持现有生成 error 流程，不静默重试其他强度。
@@ -361,15 +365,15 @@ assistant shell 到达后立即产生可见状态：
 
 ### 数据与协议
 
-- migration：现有数据迁移后全部 session 保持 `project_id = null`。
-- Project CRUD、删除后 session 自动脱离、多用户 ownership 校验。
-- Project / session 动态继承纯函数：prompt 拼接、模型 fallback、普通参数逐字段覆盖。
+- migration：现有数据迁移后全部 conversation 保持 `project_id = null`。
+- Project CRUD、删除后 conversation 自动脱离、多用户 ownership 校验。
+- Project / conversation 动态继承纯函数：prompt 拼接、模型 fallback、普通参数逐字段覆盖。
 - reasoning 三态：继承、显式 Auto、显式档位；reasoning 开关独立继承。
-- 第一条 `send` 原子创建 Project session；失败时无孤立消息。
-- Project 与 session 事件在两个 WebSocket 客户端一致。
+- 第一条 `send` 原子创建 Project conversation；失败时无孤立消息。
+- Project 与 conversation 事件在两个 WebSocket 客户端一致。
 - provider 的 `native_files` 创建、更新和 preset 默认值正确；关键连接配置变化后旧文件指针不可复用。
 - 同一 attachment 在同一 provider 内复用 file ID，在不同 provider 间分别上传；过期后重新上传。
-- 单个 session 在 A → B → A 间切换 provider 时，第二次使用 A 命中第一次创建且仍有效的指针。
+- 单个 conversation 在 A → B → A 间切换 provider 时，第二次使用 A 命中第一次创建且仍有效的指针。
 - 上传请求包含 7 天过期策略；供应商返回实际 `expires_at` 时持久化返回值，否则记录请求期限。
 - 每日任务只清理过期的 D1 指针，不调用供应商 DELETE；清理失败可安全重试。
 - Files API 关闭时不请求 `/files`；开启后的认证 / 限流错误不静默降级。
@@ -393,11 +397,11 @@ assistant shell 到达后立即产生可见状态：
 
 ### 客户端
 
-- sync store 正确应用 Project created / updated / deleted 和 session 移动事件。
-- draft 首次发送成功后跳转到新 session；失败时内容和配置保留。
+- sync store 正确应用 Project created / updated / deleted 和 conversation 移动事件。
+- draft 首次发送成功后跳转到新 conversation；失败时内容和配置保留。
 - 手动验收空 reasoning、有流式 summary、直接正文三种状态。
 - 桌面和手机验收侧栏树、设置弹层、触摸操作与按钮不重合。
-- 用超长 provider/model/Project/session 列表验收纵向滚动；窄屏模型表验收横向滚动。
+- 用超长 provider/model/Project/conversation 列表验收纵向滚动；窄屏模型表验收横向滚动。
 
 ## 11. 参考设计原则
 

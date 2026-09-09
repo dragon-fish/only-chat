@@ -2,7 +2,7 @@
 
 ## 1. 目标
 
-Only Chat 使用 Better Auth 建立简单的多用户系统，替代当前由 Cloudflare Access 保护、业务代码固定使用 `user_id = 1` 的 MVP 状态。
+Only Chat 使用 Better Auth 建立简单的多用户系统，取代此前由 Cloudflare Access 保护、业务代码固定使用 `user_id = 1` 的 MVP 状态。本设计已经实现；Cloudflare Access 是否移除仍由部署者在发布时决定。
 
 本次同时消除登录会话与聊天会话都叫 `session` 的歧义：登录会话统一称为 `AuthSession`，聊天会话统一改称 `Conversation`，包括 D1 物理表、HTTP API、WebSocket 协议、共享类型和客户端 Store。
 

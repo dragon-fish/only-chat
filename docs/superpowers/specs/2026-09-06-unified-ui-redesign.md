@@ -82,7 +82,7 @@
 
 `/` 在桌面（至少 768px）重定向到 `/new`，在手机上重定向到 `/chats`，由路由记录的函数式 redirect 在页面渲染前完成。桌面品牌/首页入口使用 `/new`。`/chats` 只负责聊天与 Project 列表；`/new` 始终是带 Composer 的无 Project 草稿，手机中央 `＋` 也进入该路由。
 
-路由结构为 `/chats`、`/new`、`/c/:sessionId`、`/projects`，以及 `/project/:projectId` 下的首页、`settings`、`new`、`c/:sessionId`。Project 父布局通过嵌套 `RouterView` 向子页面传递 Project 上下文。移除 `/projects/:id`、`/settings/projects/:id` 和查询参数草稿，不保留兼容路由，也不根据会话所属 Project 重定向 `/c/:sessionId`。
+路由结构为 `/chats`、`/new`、`/c/:conversationId`、`/projects`，以及 `/project/:projectId` 下的首页、`settings`、`new`、`c/:conversationId`。Project 父布局通过嵌套 `RouterView` 向子页面传递 Project 上下文。移除 `/projects/:id`、`/settings/projects/:id` 和查询参数草稿，不保留兼容路由，也不根据会话所属 Project 重定向 `/c/:conversationId`。
 
 聊天首页依次显示 Projects 和随心聊。Project 会话列表为独立页面。设置区把桌面三栏摊平成“设置项 → 供应商列表 → 供应商详情”三级页面。
 
