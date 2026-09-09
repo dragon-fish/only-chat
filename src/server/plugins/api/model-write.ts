@@ -6,6 +6,7 @@ import { ModelWithMetadataSchema, type ModelWithMetadata } from '@/shared/models
 import type { ModelCatalog } from '../model-catalog/types'
 import { materializeModelMetadata, resolveModelMetadata } from '../model-catalog/resolve'
 import { changedModelFields, modelSourceFence, modelSourceMatches, type ModelSourceRow, type ProviderSource } from '../model-catalog/source-snapshot'
+import { providerModelMetadata } from '../llm/list-models'
 export { changedModelFields, isModelSourceConflict, ModelSourceConflict, modelSourceColumns, modelSourceFence, modelSourceMatches, providerSourceFence, retryModelSource } from '../model-catalog/source-snapshot'
 
 export type CatalogSnapshot = ModelCatalog & { version: string | null }
@@ -27,7 +28,9 @@ export function resolveModelFields(catalog: ModelCatalog, providerId: string | n
 
 export function materializationUpdates(db: DB, rows: ModelSourceRow[], catalog: CatalogSnapshot, provider: ProviderSource) {
   return rows.flatMap(row => {
-    const changed = changedModelFields(row, resolveModelFields(catalog, provider.models_dev_provider_id, row.model_id, row.metadata_override))
+    const changed = changedModelFields(row, resolveModelFields(
+      catalog, provider.models_dev_provider_id, row.model_id, row.metadata_override, providerModelMetadata(row.provider_metadata),
+    ))
     return [modelSourceFence(db, row, provider, catalog.version),
       ...(Object.keys(changed).length ? [db.update(models).set(changed).where(modelSourceMatches(row, provider, catalog.version))] : [])]
   })

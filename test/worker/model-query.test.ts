@@ -292,6 +292,23 @@ describe('catalog-backed model membership and queries', () => {
     expect(audit.results).toEqual([])
   })
 
+  it('preserves provider-reported image modalities when the imported model is edited', async () => {
+    const { request, createProvider } = await catalogApp()
+    const provider = await createProvider()
+    vi.stubGlobal('fetch', async () => Response.json({ data: [{
+      id: 'provider-image', display_name: 'Provider Image',
+      input_modalities: ['text', 'image'], output_modalities: ['image'],
+    }] }))
+    await request('POST', `/providers/${provider.id}/fetch-models`)
+    const before = ModelPageSchema.parse(await (await request('GET', `/providers/${provider.id}/models`)).json()).models[0]!
+    expect(before.metadata.modalities).toEqual({ input: ['text', 'image'], output: ['image'] })
+
+    await request('PUT', `/providers/${provider.id}/models/${before.id}`, { enabled: true })
+
+    const after = ModelPageSchema.parse(await (await request('GET', `/providers/${provider.id}/models`)).json()).models[0]!
+    expect(after.metadata.modalities).toEqual({ input: ['text', 'image'], output: ['image'] })
+  })
+
   it('reconciles removed provider models only after a successful list response', async () => {
     const { request, createProvider } = await catalogApp()
     const provider = await createProvider()

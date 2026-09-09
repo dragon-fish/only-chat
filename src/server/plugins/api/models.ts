@@ -8,6 +8,7 @@ import { ModelQuerySchema } from '@/shared/models'
 import { models, providerInterfaces, providers } from '../../db/schema'
 import { parseId } from './params'
 import { ModelQueryError, queryModels } from './model-query'
+import { providerModelMetadata } from '../llm/list-models'
 import { catalogForModels, changedModelFields, ModelSourceConflict, modelSourceColumns, modelSourceFence, modelSourceMatches, providerSourceFence, resolveModelFields, retryModelSource, toModelDto } from './model-write'
 
 export function modelRoutes(ctx: Context) {
@@ -151,7 +152,10 @@ export function modelRoutes(ctx: Context) {
         if (conflict && conflict.id !== mid) return c.json({ error: 'model already exists' }, 409)
         const catalog = await catalogForModels(ctx, currentProvider.models_dev_provider_id, [modelId])
         const changed = changedModelFields(before, {
-          ...input, ...resolveModelFields(catalog, currentProvider.models_dev_provider_id, modelId, input.metadata_override ?? before.metadata_override),
+          ...input, ...resolveModelFields(
+            catalog, currentProvider.models_dev_provider_id, modelId,
+            input.metadata_override ?? before.metadata_override, providerModelMetadata(before.provider_metadata),
+          ),
         })
         const condition = modelSourceMatches(before, currentProvider, catalog.version)
         const [, , rows] = await db.batch([

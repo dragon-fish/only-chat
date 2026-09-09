@@ -35,6 +35,10 @@ function normalize(raw: Record<string, unknown>): RemoteModel | null {
   return { id: raw.id, metadata, providerMetadata: encoded.length <= 65_536 ? raw : { id: raw.id } }
 }
 
+export function providerModelMetadata(raw: Record<string, unknown>): ModelMetadata {
+  return normalize(raw)?.metadata ?? {}
+}
+
 /** GET {base_url}/models. The AI SDK has no listing API, so we call the endpoint directly. */
 export async function listRemoteModels(
   provider: Pick<ProviderInterface, 'protocol' | 'base_url'>,
