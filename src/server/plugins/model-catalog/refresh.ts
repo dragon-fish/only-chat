@@ -2,6 +2,7 @@ import { eq } from 'drizzle-orm'
 import type { BatchItem } from 'drizzle-orm/batch'
 import type { DB } from '@/server/db/client'
 import { models, providerInterfaces, providers } from '@/server/db/schema'
+import { providerModelMetadata } from '../llm/list-models'
 import { matchProviderByEndpoints } from './match'
 import { materializeModelMetadata, resolveModelMetadata } from './resolve'
 import { CatalogStorage, projectProviderIndex, type CatalogCounts } from './storage'
@@ -42,6 +43,8 @@ async function materialize(db: DB, catalog: ModelCatalog, version: string | null
       providerId: source.models_dev_provider_id,
       modelId: model.model_id,
       metadataOverride: model.metadata_override,
+      // Rematerialization must not drop upstream listing metadata; the catalog rarely knows brand new models.
+      providerMetadata: providerModelMetadata(model.provider_metadata),
       catalog,
     })
     const changed = changedModelFields(model, {

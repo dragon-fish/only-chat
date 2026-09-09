@@ -309,6 +309,20 @@ describe('model catalog', () => {
     expect((await ctx.db.orm.select().from(providers).where(eq(providers.id, provider!.id)))[0]).toMatchObject({ models_dev_provider_id: 'acme', models_dev_provider_source: 'endpoint' })
   })
 
+  it('retains upstream provider metadata when rematerializing a model the catalog does not know', async () => {
+    const ctx = await createApp({ env, side: 'worker' })
+    const [provider] = await ctx.db.orm.insert(providers).values({ user_id: 1, name: 'provider-metadata', created_at: 0 }).returning()
+    await ctx.db.orm.insert(models).values({
+      provider_id: provider!.id, model_id: 'vendor/image-only', enabled: true,
+      provider_metadata: { id: 'vendor/image-only', input_modalities: ['text', 'image'], output_modalities: ['image'] },
+    })
+    serve()
+    await ctx.modelCatalog.refresh('manual')
+    const [row] = await ctx.db.orm.select().from(models).where(eq(models.provider_id, provider!.id))
+    expect(row).toMatchObject({ supports_image_input: true, supports_image_output: true })
+    expect(row?.metadata_resolved.modalities).toEqual({ input: ['text', 'image'], output: ['image'] })
+  })
+
   it.each([['HTTP', {}, 503], ['schema', { providers: {} }, 200], ['model validation', { providers: {}, models: { broken: { id: 'broken', reasoning: 'yes' } } }, 200]])('preserves active and reports a %s failure', async (_label, body, status) => {
     const ctx = await createApp({ env, side: 'worker' })
     serve()
