@@ -132,6 +132,22 @@ describe('registration policy and route protection', () => {
     expect((await owner.request('/api/me')).status).toBe(401)
   })
 
+  it('rejects a retained session after admin update-user stores banned: 1', async () => {
+    const owner = await registerAndLogin()
+    const user = await registerAndLogin({ ...signupBody, email: 'user@example.com' })
+    expect((await owner.json('POST', '/api/auth/admin/update-user', { userId: '2', data: { banned: 1 } })).status).toBe(200)
+    expect(await env.DB.prepare('SELECT banned FROM users WHERE id = 2').first()).toEqual({ banned: 1 })
+    expect(await env.DB.prepare('SELECT COUNT(*) AS count FROM auth_sessions WHERE user_id = 2').first()).toEqual({ count: 1 })
+
+    const api = await user.request('/api/conversations')
+    const socket = await user.request('/ws', { headers: { Upgrade: 'websocket' } })
+    if (socket.webSocket) {
+      socket.webSocket.accept()
+      socket.webSocket.close()
+    }
+    expect([api.status, socket.status]).toEqual([401, 401])
+  })
+
   it('uses current stored permissions and allows normal owner profile updates', async () => {
     const owner = await registerAndLogin()
     expect((await owner.json('POST', '/api/auth/admin/update-user', { userId: '1', data: { name: 'Owner renamed' } })).status).toBe(200)

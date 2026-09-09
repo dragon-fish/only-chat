@@ -8,7 +8,7 @@ export type ApiEnv = { Bindings: Env; Variables: { authSession: AuthSession } }
 
 export const requireAuth = (ctx: Context) => createMiddleware<ApiEnv>(async (c, next) => {
   const authSession = await ctx.auth.instance.api.getSession({ headers: c.req.raw.headers })
-  if (!authSession) return c.json({ error: 'Unauthorized' }, 401)
+  if (!authSession || authSession.user.banned) return c.json({ error: 'Unauthorized' }, 401)
   c.set('authSession', authSession)
   await next()
 })
