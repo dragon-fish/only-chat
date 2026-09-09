@@ -3,6 +3,7 @@ import type { Message, ModelPage, ModelQuery, ModelWithMetadata, Project, Provid
 import type { PresetProvider } from '@/server/plugins/llm/presets'
 import type { AdminSiteSettings, AdminSiteSettingsUpdate, PublicSiteSettings } from '@/shared/auth'
 import { useAuthStore } from '@/client/stores/auth'
+import type { ArtifactDto, ArtifactPage, ArtifactRunDto, CreateImageRunInput, CreateImageRunResponse } from '@/shared/artifacts'
 
 export class ApiError extends Error {
   constructor(readonly status: number, readonly detail: string, method: string, path: string) {
@@ -58,6 +59,7 @@ export const api = {
   me: () => request<User>('GET', '/api/me'),
   presets: () => request<PresetProvider[]>('GET', '/api/presets'),
   conversations: () => request<Conversation[]>('GET', '/api/conversations'),
+  imageConversations: () => request<Conversation[]>('GET', '/api/conversations?kind=image'),
   projects: () => request<Project[]>('GET', '/api/projects'),
   messages: (conversationId: number) => request<Message[]>('GET', `/api/conversations/${conversationId}/messages`),
   providers: () => request<ProviderWithInterfaces[]>('GET', '/api/providers'),
@@ -80,4 +82,12 @@ export const api = {
   uploadAttachment: (sha256: string, blob: Blob, w: number, h: number) =>
     request<AttachmentUploadResponse>('PUT', `/api/attachments/${sha256}?w=${w}&h=${h}`, blob, { headers: { 'content-type': blob.type } }),
   attachmentUrl: (id: number) => `/api/attachments/${id}`,
+  createImageRun: (input: CreateImageRunInput) => request<CreateImageRunResponse>('POST', '/api/artifact-runs/image', input),
+  artifactRun: (id: number) => request<ArtifactRunDto>('GET', `/api/artifact-runs/${id}`),
+  artifactRuns: (conversationId: number) => request<ArtifactRunDto[]>('GET', `/api/artifact-runs${queryString({ conversation_id: conversationId })}`),
+  cancelArtifactRun: (id: number) => request<ArtifactRunDto>('POST', `/api/artifact-runs/${id}/cancel`),
+  artifacts: (query: { cursor?: string; limit?: number; conversation_id?: number } = {}) => request<ArtifactPage>('GET', `/api/artifacts${queryString({ kind: 'image', ...query })}`),
+  artifact: (id: number) => request<ArtifactDto>('GET', `/api/artifacts/${id}`),
+  deleteArtifact: (id: number) => request<void>('DELETE', `/api/artifacts/${id}`),
+  artifactContentUrl: (id: number, variant?: 'gallery' | 'preview') => `/api/artifacts/${id}/content${queryString({ variant })}`,
 }

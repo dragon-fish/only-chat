@@ -39,7 +39,7 @@ describe('Artifact generation Workflow', () => {
       }),
     })
     expect(response.status, await response.clone().text()).toBe(202)
-    const created = await response.json() as { run_id: number; message_id: number }
+    const created = await response.json() as { run_id: number; conversation_id: number; message_id: number }
     let providerCalls = 0
     vi.stubGlobal('fetch', async () => {
       providerCalls++
@@ -61,12 +61,18 @@ describe('Artifact generation Workflow', () => {
     const runResponse = await startApp.api.request(`/api/artifact-runs/${created.run_id}`, { headers: { cookie: client.cookie } })
     expect(runResponse.status).toBe(200)
     expect(await runResponse.json()).toMatchObject({ id: created.run_id, status: 'completed', prompt: 'A sea otter' })
+    const conversationsResponse = await startApp.api.request('/api/conversations?kind=image', { headers: { cookie: client.cookie } })
+    expect(await conversationsResponse.json()).toMatchObject([{ id: expect.any(Number), kind: 'image', title: 'A sea otter' }])
+    const runsResponse = await startApp.api.request(`/api/artifact-runs?conversation_id=${created.conversation_id}`, { headers: { cookie: client.cookie } })
+    expect(await runsResponse.json()).toMatchObject([{ id: created.run_id, status: 'completed' }])
     const galleryResponse = await startApp.api.request('/api/artifacts?kind=image', { headers: { cookie: client.cookie } })
     expect(galleryResponse.status).toBe(200)
     expect(await galleryResponse.json()).toMatchObject({
       artifacts: [{ id: output!.id, run_id: created.run_id, prompt: 'A sea otter', model_name: 'Image Model' }],
       next_cursor: null,
     })
+    const conversationGallery = await startApp.api.request(`/api/artifacts?kind=image&conversation_id=${created.conversation_id}`, { headers: { cookie: client.cookie } })
+    expect(await conversationGallery.json()).toMatchObject({ artifacts: [{ id: output!.id }] })
     const content = await startApp.api.request(`/api/artifacts/${output!.id}/content`, { headers: { cookie: client.cookie } })
     expect(content.status).toBe(200)
     expect(new Uint8Array(await content.arrayBuffer())).toEqual(png)

@@ -20,6 +20,7 @@ function artifactDto(row: { artifact: typeof artifacts.$inferSelect; run: typeof
     operation: row.run.operation,
     status: row.run.status,
     provider_name: row.run.provider_name,
+    provider_id: row.run.provider_id,
     interface_protocol: row.run.interface_protocol,
     model_id: row.run.model_id,
     model_name: row.run.model_name,
@@ -45,6 +46,13 @@ export function artifactRoutes(ctx: Context) {
     const run = await ctx.db.orm.query.artifactRuns.findFirst({ where: and(eq(artifactRuns.id, id), eq(artifactRuns.user_id, authUserId(c))) })
     return run ? c.json(run) : c.json({ error: 'not found' }, 404)
   })
+  router.get('/artifact-runs', async (c) => {
+    const conversationId = Number(c.req.query('conversation_id'))
+    if (!Number.isInteger(conversationId) || conversationId <= 0) return c.json({ error: 'invalid conversation' }, 400)
+    return c.json(await ctx.db.orm.select().from(artifactRuns).where(and(
+      eq(artifactRuns.user_id, authUserId(c)), eq(artifactRuns.conversation_id, conversationId),
+    )).orderBy(desc(artifactRuns.created_at), desc(artifactRuns.id)))
+  })
   router.post('/artifact-runs/:id/cancel', async (c) => {
     const id = parseId(c.req.param('id'))
     if (id === null) return c.json({ error: 'not found' }, 404)
@@ -65,6 +73,8 @@ export function artifactRoutes(ctx: Context) {
   router.get('/artifacts', async (c) => {
     const userId = authUserId(c)
     const limit = Math.min(100, Math.max(1, Number(c.req.query('limit')) || 30))
+    const conversationId = c.req.query('conversation_id') === undefined ? undefined : Number(c.req.query('conversation_id'))
+    if (conversationId !== undefined && (!Number.isInteger(conversationId) || conversationId <= 0)) return c.json({ error: 'invalid conversation' }, 400)
     let cursor: z.infer<typeof CursorSchema> | undefined
     const encoded = c.req.query('cursor')
     if (encoded) {
@@ -75,6 +85,7 @@ export function artifactRoutes(ctx: Context) {
       .innerJoin(artifactRuns, eq(artifactRuns.id, artifacts.run_id))
       .where(and(
         eq(artifacts.user_id, userId), eq(artifacts.kind, 'image'), isNull(artifacts.deleted_at),
+        conversationId === undefined ? undefined : eq(artifactRuns.conversation_id, conversationId),
         cursor ? or(lt(artifacts.created_at, cursor.created_at), and(eq(artifacts.created_at, cursor.created_at), lt(artifacts.id, cursor.id))) : undefined,
       )).orderBy(desc(artifacts.created_at), desc(artifacts.id)).limit(limit + 1)
     const page = rows.slice(0, limit)
@@ -91,11 +102,25 @@ export function artifactRoutes(ctx: Context) {
       .innerJoin(attachments, eq(attachments.id, artifacts.attachment_id))
       .where(and(eq(artifacts.id, id), eq(artifacts.user_id, authUserId(c)), isNull(artifacts.deleted_at))).limit(1)
     if (!row) return c.json({ error: 'not found' }, 404)
+    const variant = c.req.query('variant')
+    const headers = { 'cache-control': 'private, max-age=31536000, immutable', 'x-content-type-options': 'nosniff' }
+    if (variant === 'gallery' || variant === 'preview') {
+      const stored = await ctx.assets.getBytes(row.attachment.r2_key)
+      if (!stored) return c.json({ error: 'not found' }, 404)
+      try {
+        const transformed = await ctx.env.IMAGES.input(new Blob([stored.bytes as BlobPart], { type: stored.mime }).stream())
+          .transform({ width: variant === 'gallery' ? 512 : 1536, fit: 'scale-down' })
+          .output({ format: 'image/webp' })
+        return transformed.response({ headers })
+      } catch {
+        return new Response(stored.bytes as BodyInit, { headers: { ...headers, 'content-type': stored.mime } })
+      }
+    }
     const stored = await ctx.assets.getStream(row.attachment.r2_key)
     if (!stored) return c.json({ error: 'not found' }, 404)
     return new Response(stored.body, { headers: {
       'content-type': row.attachment.mime, 'content-length': String(stored.size),
-      'cache-control': 'private, max-age=31536000, immutable', 'x-content-type-options': 'nosniff',
+      ...headers,
     } })
   })
   router.get('/artifacts/:id', async (c) => {

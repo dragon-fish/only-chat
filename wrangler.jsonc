@@ -49,6 +49,7 @@
     }
   ],
   "r2_buckets": [{ "binding": "BUCKET", "bucket_name": "only-chat-attachments" }],
+  "images": { "binding": "IMAGES" },
   "kv_namespaces": [{ "binding": "KV", "id": "cdbd1aa741cb4b77b12564f1e1274bb9" }],
   // Daily catalog refresh and independent expired provider file pointer sweep.
   "triggers": { "crons": ["0 3 * * *"] }

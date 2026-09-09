@@ -6,7 +6,9 @@ import { parseId } from './params'
 
 export function conversationRoutes(ctx: Context) {
   const r = new Hono<ApiEnv>()
-  r.get('/conversations', async (c) => c.json(await listConversations(ctx.db.orm, authUserId(c))))
+  r.get('/conversations', async (c) => c.json(await listConversations(
+    ctx.db.orm, authUserId(c), c.req.query('kind') === 'image' ? 'image' : 'chat',
+  )))
   r.get('/conversations/:id/messages', async (c) => {
     const userId = authUserId(c)
     const id = parseId(c.req.param('id'))

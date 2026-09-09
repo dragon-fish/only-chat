@@ -30,6 +30,7 @@ import { Skeleton } from '@/client/ui/skeleton'
 import { Spinner } from '@/client/ui/spinner'
 import { Switch } from '@/client/ui/switch'
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from '@/client/ui/empty'
+import { NativeSelect, NativeSelectOption } from '@/client/ui/native-select'
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
@@ -54,6 +55,11 @@ const modelQuery = computed(() => modelFilters.value.search ?? '')
 const hasModelFilters = computed(() => Object.values(modelFilters.value).some(value => value !== undefined && value !== ''))
 const visibleModels = computed(() => models.value)
 const modelEntries = computed(() => savedProvider.value ? models.value.map(model => ({ provider: savedProvider.value!, model })) : [])
+const imageModels = computed(() => models.value.filter(model => model.enabled && model.metadata.modalities?.output.includes('image')))
+const providerImageModel = computed({
+  get: () => form.default_image_model_id ?? '',
+  set: (value: string) => { form.default_image_model_id = value || null },
+})
 const nextCursor = ref<string | null>(null)
 const modelLoadError = ref<string | null>(null)
 const newModelId = ref('')
@@ -451,6 +457,11 @@ async function removeModel() {
             :current-catalog-provider-id="savedProvider?.models_dev_provider_id"
             :has-key="hasKey"
             @update:model-value="updateProviderForm")
+          Field
+            FieldLabel(for="provider-default-image-model") 默认生图模型
+            NativeSelect#provider-default-image-model(v-model="providerImageModel" class="w-full")
+              NativeSelectOption(value="") 跟随全局默认
+              NativeSelectOption(v-for="model in imageModels" :key="model.id" :value="model.model_id") {{ modelName(model) }}
           p.min-h-5.text-sm.text-muted-foreground(role="status") {{ associationWarning ?? '' }}
         Separator
         section.flex.flex-col.gap-4(aria-labelledby="provider-models-title")

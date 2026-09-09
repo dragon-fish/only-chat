@@ -6,7 +6,7 @@ import type { Message, Project, Conversation, UserSettings } from '@/shared/mode
 import type { Part } from '@/shared/parts'
 import { encodeEvent, parseCommand, type WsCommand, type WsEvent } from '@/shared/ws'
 import {
-  deleteConversation, finalizeMessage, forkConversation, getMessage, getConversation, getUser, toMessage, updateConversation, updateUserSettings,
+  deleteConversation, finalizeMessage, forkConversation, getMessage, getConversation, getModel, getUser, toMessage, updateConversation, updateUserSettings,
 } from './conversations'
 import { createProject, deleteProject, getProject, listProjectConversations, updateProject, validateProjectIcon } from './projects'
 import { SeqAllocator } from './seq'
@@ -232,10 +232,17 @@ export class Hub extends Service {
     await this.broadcast({ type: 'conversation.forked', request_id: cmd.request_id, conversation_id: conversation.id })
   }
 
-  async settingsUpdate(patch: { plugins?: Record<string, boolean> }): Promise<void> {
+  async settingsUpdate(patch: { plugins?: Record<string, boolean>; image_model?: { provider_id: number; model_id: string } | null }): Promise<void> {
     const user = await getUser(this.db, this.userId)
     if (!user) throw new Error('user missing')
-    const settings: UserSettings = { plugins: { ...user.settings.plugins, ...(patch.plugins ?? {}) } }
+    if (patch.image_model && !(await getModel(this.db, patch.image_model.provider_id, patch.image_model.model_id, this.userId))?.supports_image_output) {
+      throw new Error('image model not found')
+    }
+    const settings: UserSettings = {
+      ...user.settings,
+      plugins: { ...user.settings.plugins, ...(patch.plugins ?? {}) },
+      ...(patch.image_model === undefined ? {} : { image_model: patch.image_model }),
+    }
     const updated = await updateUserSettings(this.db, this.userId, settings)
     await this.broadcast({ type: 'settings.updated', settings: updated.settings })
     // Built-in server registrations stay loaded; request-time resolution applies this enable map.

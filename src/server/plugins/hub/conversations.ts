@@ -14,9 +14,9 @@ export function toMessage(row: MessageRow, status: MessageStatus = row.status): 
   return { ...row, status }
 }
 
-export async function listConversations(db: DB, userId: number): Promise<ConversationRow[]> {
+export async function listConversations(db: DB, userId: number, kind: 'chat' | 'image' = 'chat'): Promise<ConversationRow[]> {
   return db.select().from(conversations).where(and(
-    eq(conversations.user_id, userId), eq(conversations.kind, 'chat'), isNull(conversations.archived_at),
+    eq(conversations.user_id, userId), eq(conversations.kind, kind), isNull(conversations.archived_at),
   )).orderBy(desc(conversations.updated_at))
 }
 

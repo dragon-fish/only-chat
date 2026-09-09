@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { MessageCircleIcon, PlusIcon, SettingsIcon } from '@lucide/vue'
+import { ImagesIcon, MessageCircleIcon, PlusIcon, SettingsIcon } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 import { Button } from '@/client/ui/button'
 </script>
@@ -13,6 +13,12 @@ import { Button } from '@/client/ui/button'
       <RouterLink to="/chats" active-class="bg-accent text-accent-foreground">
         <MessageCircleIcon />
         <span class="text-xs">聊天</span>
+      </RouterLink>
+    </Button>
+    <Button as-child variant="ghost" class="h-auto min-h-10 min-w-16 flex-col gap-1 py-1">
+      <RouterLink to="/images" active-class="bg-accent text-accent-foreground">
+        <ImagesIcon />
+        <span class="text-xs">图片</span>
       </RouterLink>
     </Button>
     <Button as-child size="icon-lg" class="size-10 rounded-full">

@@ -66,6 +66,34 @@ declare module 'vue-router/auto-routes' {
       Record<never, never>,
       | never
     >,
+    '/images/': RouteRecordInfo<
+      '/images/',
+      '/images',
+      Record<never, never>,
+      Record<never, never>,
+      | never
+    >,
+    '/images/a/[artifactId]': RouteRecordInfo<
+      '/images/a/[artifactId]',
+      '/images/a/:artifactId',
+      { artifactId: ParamValue<true> },
+      { artifactId: ParamValue<false> },
+      | never
+    >,
+    '/images/new': RouteRecordInfo<
+      '/images/new',
+      '/images/new',
+      Record<never, never>,
+      Record<never, never>,
+      | never
+    >,
+    '/images/s/[conversationId]': RouteRecordInfo<
+      '/images/s/[conversationId]',
+      '/images/s/:conversationId',
+      { conversationId: ParamValue<true> },
+      { conversationId: ParamValue<false> },
+      | never
+    >,
     '/login': RouteRecordInfo<
       '/login',
       '/login',
@@ -145,6 +173,13 @@ declare module 'vue-router/auto-routes' {
       Record<never, never>,
       | never
     >,
+    '/settings/images': RouteRecordInfo<
+      '/settings/images',
+      '/settings/images',
+      Record<never, never>,
+      Record<never, never>,
+      | never
+    >,
     '/settings/plugins': RouteRecordInfo<
       '/settings/plugins',
       '/settings/plugins',
@@ -218,6 +253,38 @@ declare module 'vue-router/auto-routes' {
         | never
       pathParamNames:
         | never
+    }
+    'src/client/pages/images/index.vue': {
+      routes:
+        | '/images/'
+      views:
+        | never
+      pathParamNames:
+        | never
+    }
+    'src/client/pages/images/a/[artifactId].vue': {
+      routes:
+        | '/images/a/[artifactId]'
+      views:
+        | never
+      pathParamNames:
+        | 'artifactId'
+    }
+    'src/client/pages/images/new.vue': {
+      routes:
+        | '/images/new'
+      views:
+        | never
+      pathParamNames:
+        | never
+    }
+    'src/client/pages/images/s/[conversationId].vue': {
+      routes:
+        | '/images/s/[conversationId]'
+      views:
+        | never
+      pathParamNames:
+        | 'conversationId'
     }
     'src/client/pages/login.vue': {
       routes:
@@ -305,6 +372,14 @@ declare module 'vue-router/auto-routes' {
     'src/client/pages/settings/appearance.vue': {
       routes:
         | '/settings/appearance'
+      views:
+        | never
+      pathParamNames:
+        | never
+    }
+    'src/client/pages/settings/images.vue': {
+      routes:
+        | '/settings/images'
       views:
         | never
       pathParamNames:

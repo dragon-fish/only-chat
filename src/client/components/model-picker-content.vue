@@ -13,6 +13,7 @@ import { useConfigStore } from '@/client/stores/config'
 import { Command, CommandInput, CommandItem, CommandList } from '@/client/ui/command'
 import type { ModelRef } from '@/shared/api'
 import type { ModelQuery } from '@/shared/models'
+import { isChatSelectableModel } from '@/client/lib/image-studio'
 
 const props = defineProps<{ modelValue: ModelRef | null }>()
 const emit = defineEmits<{ select: [ModelRef]; editProvider: [providerId: number] }>()
@@ -39,7 +40,7 @@ const currentKey = computed(() => props.modelValue ? `${props.modelValue.provide
 const filtered = computed(() => Object.values(filters.value).some(value => value !== undefined && value !== ''))
 const entries = computed(() => validationError.value
   ? []
-  : config.enabledModels(!filtered.value && props.modelValue ? [props.modelValue] : []))
+  : config.enabledModels(!filtered.value && props.modelValue ? [props.modelValue] : []).filter(entry => isChatSelectableModel(entry.model)))
 const keyFor = (entry: EnabledModelEntry) => `${entry.provider.id}:${entry.model.model_id}`
 async function revealCurrent() {
   if (!currentKey.value || filtered.value) return
