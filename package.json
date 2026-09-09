@@ -4,12 +4,13 @@
   "type": "module",
   "packageManager": "pnpm@11.25.0",
   "scripts": {
+    "auth:reset-user": "node scripts/reset-user-credentials.ts",
     "dev": "vite dev",
     "build": "vite build",
     "preview": "vite preview",
     "deploy": "pnpm build && wrangler deploy --experimental-provision=false --experimental-auto-create=false",
     "types": "wrangler types",
-    "typecheck": "vue-tsc -p tsconfig.app.json --noEmit && tsc -p tsconfig.worker.json --noEmit && tsc -p test/tsconfig.json --noEmit",
+    "typecheck": "vue-tsc -p tsconfig.app.json --noEmit && tsc -p tsconfig.worker.json --noEmit && tsc -p test/tsconfig.json --noEmit && tsc -p tsconfig.scripts.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "db:generate": "drizzle-kit generate",
@@ -52,6 +53,7 @@
   "devDependencies": {
     "@cloudflare/vite-plugin": "^1.54.4",
     "@cloudflare/vitest-plugin": "^1.1.4",
+    "@inquirer/prompts": "^8.7.2",
     "@tailwindcss/vite": "^4.3.3",
     "@types/node": "^24.13.3",
     "@vitejs/plugin-vue": "^6.0.8",
