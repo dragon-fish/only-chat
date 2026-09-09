@@ -571,15 +571,15 @@ Update Provider, model, Project, Conversation, attachment, and settings reposito
 
 Use `authSession.user` for name/email/role and query `users.settings` by the same validated integer ID. Return a purpose-built DTO; do not expose `banned`, password data, AuthSession tokens, or Better Auth internal fields.
 
-- [ ] **Step 5: Verify no production hard-coded identity remains**
+- [ ] **Step 5: Verify no REST hard-coded identity remains**
 
 Run:
 
 ```bash
-rg -n "DEFAULT_USER_ID|user_id:\s*1|eq\([^,]+user_id,\s*1\)" src
+rg -n "DEFAULT_USER_ID|user_id:\s*1|eq\([^,]+user_id,\s*1\)" src/server/plugins/api
 ```
 
-Expected: no matches.
+Expected: no matches in REST code. UserHub still passes the temporary default identity until Task 5 binds it to the authenticated user.
 
 - [ ] **Step 6: Run focused and full tests**
 
@@ -610,6 +610,7 @@ git commit -m "fix(auth): isolate REST data by user"
 - Create: `test/worker/hub-auth.test.ts`
 - Modify: `src/server/app.ts`
 - Modify: `src/server/index.ts`
+- Modify: `src/server/plugins/auth/index.ts`
 - Modify: `src/server/plugins/api/index.ts`
 - Modify: `src/server/plugins/hub/{index,generation,generated-images,conversations,projects}.ts`
 - Modify: `test/worker/ws-helper.ts`
@@ -687,6 +688,14 @@ if (!conversation) throw new Error('conversation not found')
 ```
 
 Repository functions that read or mutate user-owned records must take `userId`; no Hub call may update a record after an unowned ID-only lookup. Apply this to `tool.respond`, pending-question cancellation, Ask User continuation recovery, Conversation forking, and Project mutations. Preserve the atomic compare-and-swap head reservations introduced on `main`; authentication checks must wrap those invariants, not replace them with read-then-write logic.
+
+Verify the completed Hub conversion with:
+
+```bash
+rg -n "DEFAULT_USER_ID|user_id:\s*1|eq\([^,]+user_id,\s*1\)" src
+```
+
+Expected: no production matches.
 
 - [ ] **Step 6: Reject revoked AuthSessions and close banned users immediately**
 
@@ -855,6 +864,7 @@ git commit -m "feat(auth): add login and registration flows"
 - Modify: `src/client/lib/auth-client.ts`
 - Modify: `src/client/lib/api.ts`
 - Modify: `src/client/typed-router.d.ts`
+- Modify: `src/server/plugins/auth/{access,index}.ts`
 - Modify: `src/server/plugins/api/site-settings.ts`
 - Modify: `src/shared/auth.ts`
 
