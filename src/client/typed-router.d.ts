@@ -45,6 +45,13 @@ declare module 'vue-router/auto-routes' {
       Record<never, never>,
       | never
     >,
+    '/login': RouteRecordInfo<
+      '/login',
+      '/login',
+      Record<never, never>,
+      Record<never, never>,
+      | never
+    >,
     '/new': RouteRecordInfo<
       '/new',
       '/new/:conversationId?',
@@ -85,6 +92,13 @@ declare module 'vue-router/auto-routes' {
     '/projects/': RouteRecordInfo<
       '/projects/',
       '/projects',
+      Record<never, never>,
+      Record<never, never>,
+      | never
+    >,
+    '/register': RouteRecordInfo<
+      '/register',
+      '/register',
       Record<never, never>,
       Record<never, never>,
       | never
@@ -153,6 +167,14 @@ declare module 'vue-router/auto-routes' {
       pathParamNames:
         | never
     }
+    'src/client/pages/login.vue': {
+      routes:
+        | '/login'
+      views:
+        | never
+      pathParamNames:
+        | never
+    }
     'src/client/pages/new.vue': {
       routes:
         | '/new'
@@ -199,6 +221,14 @@ declare module 'vue-router/auto-routes' {
     'src/client/pages/projects/index.vue': {
       routes:
         | '/projects/'
+      views:
+        | never
+      pathParamNames:
+        | never
+    }
+    'src/client/pages/register.vue': {
+      routes:
+        | '/register'
       views:
         | never
       pathParamNames:

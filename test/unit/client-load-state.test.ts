@@ -1,11 +1,58 @@
+// @vitest-environment happy-dom
+import { createApp } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
+import { createMemoryHistory, createRouter } from 'vue-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import App from '@/client/app.vue'
+import { authClient } from '@/client/lib/auth-client'
 import { useSyncStore } from '@/client/stores/sync'
 import { useConfigStore } from '@/client/stores/config'
 
+vi.mock('@/client/lib/auth-client', () => ({
+  authClient: {
+    getSession: vi.fn(),
+    signOut: vi.fn(),
+    signIn: { email: vi.fn() },
+    signUp: { email: vi.fn() },
+  },
+}))
+
 describe('collection load state', () => {
   beforeEach(() => setActivePinia(createPinia()))
-  afterEach(() => vi.unstubAllGlobals())
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    document.body.innerHTML = ''
+  })
+
+  // Starting private requests before auth resolves would leak work into the guest entry flow.
+  it('does not connect or load private collections for a guest', async () => {
+    vi.mocked(authClient.getSession).mockResolvedValue({ data: null, error: null } as never)
+    const fetch = vi.fn(() => { throw new Error('private request started') })
+    vi.stubGlobal('fetch', fetch)
+    const pinia = createPinia()
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/login', component: { template: '<main>login</main>' }, meta: { guestOnly: true } }],
+    })
+    await router.push('/login')
+    const host = document.createElement('div')
+    document.body.append(host)
+    const app = createApp(App).use(pinia).use(router)
+
+    app.mount(host)
+    await vi.waitFor(() => expect(vi.mocked(authClient.getSession)).toHaveBeenCalledOnce())
+    await Promise.resolve()
+
+    const sync = useSyncStore(pinia)
+    const config = useConfigStore(pinia)
+    expect(fetch).not.toHaveBeenCalled()
+    expect(sync.status).toBe('closed')
+    expect(sync.conversationsLoaded).toBe(false)
+    expect(sync.projectsLoaded).toBe(false)
+    expect(sync.settingsLoaded).toBe(false)
+    expect(config.loaded).toBe(false)
+    app.unmount()
+  })
 
   // Marking an unknown/failed collection as loaded would expose a false empty state.
   it.each([

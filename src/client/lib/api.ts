@@ -1,6 +1,21 @@
 import type { AttachmentCheckResponse, AttachmentUploadResponse, BulkModelStateInput, BulkModelStateResponse, CatalogProviderSummary, CatalogRefreshJobStatus, CatalogRefreshStartResponse, CatalogStatus, FetchModelsResponse, ModelRef, ModelWriteInput, ProviderWriteInput } from '@/shared/api'
 import type { Message, ModelPage, ModelQuery, ModelWithMetadata, Project, ProviderWithInterfaces, Conversation, User } from '@/shared/models'
 import type { PresetProvider } from '@/server/plugins/llm/presets'
+import type { PublicSiteSettings } from '@/shared/auth'
+import { useAuthStore } from '@/client/stores/auth'
+
+export class ApiError extends Error {
+  constructor(readonly status: number, readonly detail: string, method: string, path: string) {
+    super(`${method} ${path} failed: ${status}${detail ? ` ${detail}` : ''}`)
+    this.name = 'ApiError'
+  }
+}
+
+let unauthorizedHandler: (() => void | Promise<void>) | undefined
+
+export function setUnauthorizedHandler(handler: (() => void | Promise<void>) | undefined): void {
+  unauthorizedHandler = handler
+}
 
 async function request<T>(method: string, path: string, body?: unknown, init: RequestInit = {}, onWarning?: (warning: string) => void): Promise<T> {
   const res = await fetch(path, {
@@ -12,8 +27,16 @@ async function request<T>(method: string, path: string, body?: unknown, init: Re
   })
   if (!res.ok) {
     let detail = ''
-    try { detail = ((await res.json()) as { error?: string }).error ?? '' } catch { /* ignore */ }
-    throw new Error(`${method} ${path} failed: ${res.status} ${detail}`.trim())
+    try {
+      const body: unknown = await res.json()
+      if (body && typeof body === 'object' && 'error' in body && typeof body.error === 'string') detail = body.error
+    } catch { /* A non-JSON body is intentionally not exposed to the UI. */ }
+    const error = new ApiError(res.status, detail, method, path)
+    if (res.status === 401) {
+      useAuthStore().clear()
+      try { await unauthorizedHandler?.() } catch { /* Navigation failure must not replace the API error. */ }
+    }
+    throw error
   }
   const warning = res.headers.get('X-Provider-Association-Warning')
   if (warning) onWarning?.(warning)
@@ -27,6 +50,7 @@ function queryString(input: Record<string, unknown>): string {
 }
 
 export const api = {
+  siteSettings: () => request<PublicSiteSettings>('GET', '/api/site-settings'),
   me: () => request<User>('GET', '/api/me'),
   presets: () => request<PresetProvider[]>('GET', '/api/presets'),
   conversations: () => request<Conversation[]>('GET', '/api/conversations'),
