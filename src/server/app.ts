@@ -13,7 +13,7 @@ export type Side = 'worker' | 'hub'
 
 export type AppOptions = {
   env: Env
-} & ({ side: 'worker' } | { side: 'hub'; doState: DurableObjectState; userId: number })
+} & ({ side: 'worker' } | { side: 'workflow' } | { side: 'hub'; doState: DurableObjectState; userId: number })
 
 /**
  * Builds a cordis root. The Worker isolate and each UserHub DO instance each own one.
@@ -34,16 +34,18 @@ export async function createApp(options: AppOptions): Promise<Context> {
 
   await ctx.plugin(Database)
   await ctx.plugin(Assets)
-  if (options.side === 'hub') {
+  if (options.side === 'hub' || options.side === 'workflow') {
     await ctx.plugin(LlmPlugin)
     // `await ctx.plugin()` resolves even when the plugin stays PENDING on a missing injection,
     // so assert the service is actually reachable rather than failing later at first use.
     if (!ctx.get('llm')) throw new Error('LlmPlugin loaded but ctx.llm is unavailable')
-    await ctx.plugin(ToolRegistryPlugin)
-    if (!ctx.get('tools')) throw new Error('ToolRegistryPlugin loaded but ctx.tools is unavailable')
-    await ctx.plugin(AskUserServerPlugin)
-    await ctx.plugin(HubPlugin, { userId: options.userId })
-    if (!ctx.get('hub')) throw new Error('HubPlugin loaded but ctx.hub is unavailable')
+    if (options.side === 'hub') {
+      await ctx.plugin(ToolRegistryPlugin)
+      if (!ctx.get('tools')) throw new Error('ToolRegistryPlugin loaded but ctx.tools is unavailable')
+      await ctx.plugin(AskUserServerPlugin)
+      await ctx.plugin(HubPlugin, { userId: options.userId })
+      if (!ctx.get('hub')) throw new Error('HubPlugin loaded but ctx.hub is unavailable')
+    }
   }
   if (options.side === 'worker') {
     await ctx.plugin(Authentication)

@@ -32,6 +32,7 @@ import ProjectIconEditor from '@/client/components/project-icon-editor.vue'
 import { DISCONNECTED_MESSAGE, fieldLooksBlank, optionalNumber, projectFormFrom, projectUpdateCommand, reasoningStopsFor, REASONING_ORDER, useSyncStore, type ProjectFormState } from '@/client/stores/sync'
 import { useConfigStore } from '@/client/stores/config'
 import { projectPresentation } from '@/client/lib/ui-models'
+import { useRouteOverlay } from '@/client/composables/use-route-overlay'
 
 const props = defineProps<{ projectId: number | null }>()
 const router = useRouter()
@@ -45,7 +46,11 @@ const sections = [
 type SectionKey = (typeof sections)[number]['key']
 
 const section = ref<SectionKey>('basic')
-const overlayOpen = ref(true)
+const routeOverlay = useRouteOverlay(() => (
+  props.projectId === null ? '/projects' : `/project/${props.projectId}`
+))
+const overlayOpen = routeOverlay.open
+const leaveGuard = ref<InstanceType<typeof UnsavedChangesGuard> | null>(null)
 const form = reactive<ProjectFormState>(projectFormFrom(undefined))
 const loaded = ref(false)
 const missing = ref(false)
@@ -142,7 +147,7 @@ watchEffect(() => {
     saving.value = false
     markSaved(savedSnapshot)
     toast.success('已保存项目')
-    void router.push(`/project/${p.id}`)
+    routeOverlay.setOpen(false)
   }
 })
 
@@ -161,6 +166,14 @@ function selectSection(value: unknown) {
   if (value === 'basic' || value === 'model') section.value = value
 }
 
+async function setOverlayOpen(next: boolean) {
+  if (next) { routeOverlay.setOpen(true); return }
+  if (dirty.value && !(await leaveGuard.value?.confirmLeave())) return
+  // A confirmed discard must not trigger the route guard a second time after the leave animation.
+  if (dirty.value) markSaved()
+  routeOverlay.setOpen(false)
+}
+
 function save() {
   const p = project.value
   if (!p || !form.name.trim() || saving.value || deleting.value) return
@@ -175,10 +188,6 @@ function save() {
     saving.value = false
     sync.lastError = DISCONNECTED_MESSAGE
   }
-}
-
-function setOverlayOpen(next: boolean) {
-  if (!next) void router.push(props.projectId === null ? '/projects' : `/project/${props.projectId}`)
 }
 
 function onDelete() {
@@ -247,7 +256,7 @@ function formatTime(ms: number): string {
 ResponsiveOverlay(
   mode="dialog" :open="overlayOpen" :title="projectTitle" @update:open="setOverlayOpen")
   template(#status)
-    UnsavedChangesGuard(:dirty="dirty")
+    UnsavedChangesGuard(ref="leaveGuard" :dirty="dirty")
   Alert(v-if="loadError" variant="destructive")
     AlertTitle 无法加载项目设置
     AlertDescription

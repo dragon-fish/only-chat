@@ -1,8 +1,8 @@
-import { and, desc, eq, gt, inArray, isNotNull, isNull, sql } from 'drizzle-orm'
+import { and, desc, eq, gt, inArray, isNotNull, isNull, not, notExists, sql } from 'drizzle-orm'
 import type { ScopedFilesClient } from '../llm/files/types'
 import { normalizeFilesBaseURL } from '../llm/files/shared'
 import type { DB } from '../../db/client'
-import { attachmentProviderFiles, attachments, messages, models, providerInterfaces, providers, conversations, users } from '../../db/schema'
+import { artifactLinks, artifacts, attachmentProviderFiles, attachments, messages, models, providerInterfaces, providers, conversations, users } from '../../db/schema'
 import type {
   AttachmentProviderFileRow, AttachmentRow, MessageRow, ModelRow, ProviderInterfaceRow, ProviderRow, ConversationRow, UserRow,
 } from '../../db/schema'
@@ -14,8 +14,10 @@ export function toMessage(row: MessageRow, status: MessageStatus = row.status): 
   return { ...row, status }
 }
 
-export async function listConversations(db: DB, userId: number): Promise<ConversationRow[]> {
-  return db.select().from(conversations).where(and(eq(conversations.user_id, userId), isNull(conversations.archived_at))).orderBy(desc(conversations.updated_at))
+export async function listConversations(db: DB, userId: number, kind: 'chat' | 'image' = 'chat'): Promise<ConversationRow[]> {
+  return db.select().from(conversations).where(and(
+    eq(conversations.user_id, userId), eq(conversations.kind, kind), isNull(conversations.archived_at),
+  )).orderBy(desc(conversations.updated_at))
 }
 
 export async function getConversation(db: DB, id: number, userId: number): Promise<ConversationRow | undefined> {
@@ -36,14 +38,20 @@ export async function createConversation(db: DB, input: {
   system_prompt?: string | null
   params?: ConversationParams | null
   tools?: string[]
+  kind?: 'chat' | 'image'
+  image_provider_id?: number | null
+  image_model_id?: string | null
 }): Promise<ConversationRow> {
   const now = Date.now()
   const [row] = await db.insert(conversations).values({
     user_id: input.user_id,
     title: input.title,
+    kind: input.kind ?? 'chat',
     project_id: input.project_id ?? null,
     provider_id: input.provider_id,
     model_id: input.model_id,
+    image_provider_id: input.image_provider_id ?? null,
+    image_model_id: input.image_model_id ?? null,
     system_prompt: input.system_prompt ?? null,
     params: input.params ?? null,
     tools: input.tools ?? [],
@@ -82,7 +90,16 @@ export async function compareAndSwapConversationHead(
   return row
 }
 
-export async function deleteConversation(db: DB, id: number, userId: number): Promise<void> {
+export async function deleteConversation(db: DB, id: number, userId: number, options: { deleteArtifacts?: boolean } = {}): Promise<void> {
+  if (options.deleteArtifacts) {
+    await db.update(artifacts).set({ deleted_at: Date.now() }).where(and(
+      eq(artifacts.user_id, userId),
+      inArray(artifacts.id, db.select({ id: artifactLinks.artifact_id }).from(artifactLinks).where(eq(artifactLinks.conversation_id, id))),
+      notExists(db.select({ artifact_id: artifactLinks.artifact_id }).from(artifactLinks).where(and(
+        eq(artifactLinks.artifact_id, artifacts.id), not(eq(artifactLinks.conversation_id, id)),
+      ))),
+    ))
+  }
   const [row] = await db.delete(conversations).where(and(eq(conversations.id, id), eq(conversations.user_id, userId))).returning({ id: conversations.id })
   if (!row) throw new Error('conversation not found')
 }

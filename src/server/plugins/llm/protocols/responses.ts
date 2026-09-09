@@ -3,6 +3,7 @@ import { createOpenAIFiles } from '../files/openai'
 import { createFileAwareResponsesModel } from '../files/references'
 import { RESPONSES_PROVIDER_NAME } from '../responses-reasoning'
 import { observedProviderFetch } from '../observability'
+import { createOpenAIImagesClient } from '../images/openai'
 
 export const responsesProtocol = {
   name: 'llm-responses',
@@ -16,6 +17,11 @@ export const responsesProtocol = {
       },
       createFiles(provider, providerInterface, apiKey) {
         return createOpenAIFiles({ baseURL: providerInterface.base_url, apiKey, credentialVersion: provider.credential_version })
+      },
+      createImages(provider, providerInterface, apiKey) {
+        return createOpenAIImagesClient(providerInterface.base_url, apiKey, {
+          referenceMode: provider.models_dev_provider_id === 'volcengine' ? 'generation-json' : 'multipart-edits',
+        })
       },
     })
   },

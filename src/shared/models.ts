@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { CatalogMatchesSchema, ModelMetadataSchema, ModelMetadataOverrideSchema } from './model-metadata'
 import { PartsSchema } from './parts'
+import { ModelRefSchema } from './model-ref'
 
 /** Supported provider interfaces. */
 export const InterfaceProtocolSchema = z.enum(['responses', 'chat-completions', 'anthropic', 'vertex-compatible'])
@@ -40,6 +41,7 @@ export type ConversationParams = z.infer<typeof ConversationParamsSchema>
 
 export const UserSettingsSchema = z.object({
   plugins: z.record(z.string(), z.boolean()).default({}),
+  image_model: ModelRefSchema.nullable().optional(),
 })
 export type UserSettings = z.infer<typeof UserSettingsSchema>
 
@@ -56,9 +58,12 @@ export const ConversationSchema = z.object({
   user_id: z.number().int(),
   project_id: z.number().int().nullable(),
   title: z.string(),
+  kind: z.enum(['chat', 'image']).optional(),
   head_message_id: z.number().int().nullable(),
   provider_id: z.number().int().nullable(),
   model_id: z.string().nullable(),
+  image_provider_id: z.number().int().nullable().optional(),
+  image_model_id: z.string().nullable().optional(),
   system_prompt: z.string().nullable(),
   params: ConversationParamsSchema.nullable(),
   /** Stable selected tool IDs, captured when the Conversation is first created. */
@@ -125,6 +130,7 @@ export const ProviderWithInterfacesSchema = z.strictObject({
   enabled: z.boolean(),
   models_dev_provider_id: z.string().nullable(),
   models_dev_provider_source: z.enum(['manual', 'endpoint']).nullable(),
+  default_image_model_id: z.string().nullable().optional(),
   default_interface_id: z.number().int().nullable(),
   credential_version: z.number().int(),
   interfaces: z.array(ProviderInterfaceSchema),

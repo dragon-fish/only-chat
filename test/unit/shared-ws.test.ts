@@ -36,6 +36,19 @@ describe('ws protocol', () => {
     expect(cmd.type).toBe('settings.update')
   })
 
+  it('settings.update accepts a nullable default image model', () => {
+    expect(parseCommand(JSON.stringify({
+      type: 'settings.update', settings: { image_model: { provider_id: 3, model_id: 'image' } },
+    }))).toMatchObject({ settings: { image_model: { provider_id: 3, model_id: 'image' } } })
+    expect(parseCommand(JSON.stringify({ type: 'settings.update', settings: { image_model: null } })))
+      .toMatchObject({ settings: { image_model: null } })
+  })
+
+  it('conversation.delete accepts generated Artifact cleanup intent', () => {
+    expect(parseCommand(JSON.stringify({ type: 'conversation.delete', conversation_id: 7, delete_artifacts: true })))
+      .toMatchObject({ conversation_id: 7, delete_artifacts: true })
+  })
+
   it('send carries nullable project_id, system_prompt, params and a conversation model override for first-message conversation init', () => {
     const cmd = parseCommand(JSON.stringify({
       type: 'send', conversation_id: null, parent_id: null, parts: [{ type: 'text', text: 'hi' }],

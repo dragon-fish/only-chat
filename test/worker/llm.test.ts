@@ -26,6 +26,7 @@ function built(m: LanguageModel): LanguageModelV4 {
 const model: ModelRow = {
   id: 1, provider_id: 1, model_id: 'test-model', enabled: true, sort: 0,
   interface_id: null, metadata_override: {}, metadata_resolved: {}, catalog_matches: { operator: null, lab: null, global: null },
+  provider_metadata: {},
   search_name: '', lab_id: null, supports_image_input: false, supports_image_output: false,
   supports_reasoning: false, supports_tools: false, context_limit: null, output_limit: null,
   manual_pinned: true, upstream_available: null,
@@ -38,6 +39,7 @@ async function provider(
     id: 1, user_id: 1, name: 'p',
     api_key: key ? await encryptSecret(env.KEY_ENCRYPTION_SECRET, key) : null, enabled: true, created_at: 0,
     credential_version: 1, default_interface_id: null, models_dev_provider_id: null, models_dev_provider_source: null,
+    default_image_model_id: null,
   }
 }
 
@@ -77,6 +79,29 @@ async function captureStreamRequest(p: ProviderRow, selected: ProviderInterfaceR
 }
 
 describe('Llm service', () => {
+  it.each(['responses', 'chat-completions'] as const)('exposes one Images client through the %s interface', async protocol => {
+    await inHub(async ctx => {
+      let request: Request | undefined
+      vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+        request = new Request(input, init)
+        return Response.json({ data: [{ b64_json: btoa('\u0089PNG') }] })
+      })
+      try {
+        const selected = providerInterface(protocol, 'https://gateway.example/v1/')
+        expect(ctx.llm.hasImages(selected)).toBe(true)
+        const images = await ctx.llm.createImages(await provider('image-key'), selected)
+        await images.generate({
+          modelId: 'image-model', prompt: 'otter', references: [], params: { count: 1, size: null }, idempotencyKey: 'run',
+        })
+        expect(request?.url).toBe('https://gateway.example/v1/images/generations')
+        expect(request?.headers.get('authorization')).toBe('Bearer image-key')
+      } finally { vi.unstubAllGlobals() }
+    })
+  })
+
+  it.each(['anthropic', 'vertex-compatible'] as const)('does not advertise Images for the %s interface', async protocol => {
+    await inHub(async ctx => expect(ctx.llm.hasImages(providerInterface(protocol))).toBe(false))
+  })
   it('shares OpenAI Files scope between both OpenAI interfaces and isolates Anthropic', async () => {
     await inHub(async ctx => {
       const p = { ...await provider('files-key'), credential_version: 9 }

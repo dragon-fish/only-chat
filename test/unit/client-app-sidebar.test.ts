@@ -57,6 +57,7 @@ async function mountSidebar(path: string, status: 'connecting' | 'open' | 'close
   }).use(pinia).use(router)
   app.mount(host)
   cleanup = () => app.unmount()
+  return { router, sync }
 }
 
 function expectGlobalFrame(status: string) {
@@ -84,6 +85,32 @@ it('keeps the global frame around Project contextual navigation', async () => {
   expect(document.body.textContent).toContain('Design')
   expect(document.body.textContent).toContain('Project 新对话')
   expectGlobalFrame('open')
+})
+
+it('uses the global sidebar for image navigation instead of duplicating chat navigation', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json([])))
+  await mountSidebar('/images/new')
+  await vi.waitFor(() => expect(document.querySelector('[data-image-context]')).not.toBeNull())
+  expect(document.body.textContent).toContain('图片 Gallery')
+  expect(document.body.textContent).not.toContain('Projects')
+  expectGlobalFrame('open')
+})
+
+it('updates image history from realtime conversation events', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json([])))
+  const { sync } = await mountSidebar('/images/new')
+  await vi.waitFor(() => expect(document.body.textContent).toContain('还没有创作历史'))
+
+  sync.applyEvent({ type: 'conversation.created', conversation: {
+    id: 21, user_id: 2, project_id: null, title: '白毛红瞳兽耳娘', kind: 'image', head_message_id: 1,
+    provider_id: null, model_id: null, image_provider_id: 4, image_model_id: 'seedream',
+    system_prompt: null, params: null, tools: [], created_at: 1, updated_at: 1, archived_at: null,
+  } })
+
+  await vi.waitFor(() => expect(document.body.textContent).toContain('白毛红瞳兽耳娘'))
+
+  sync.applyEvent({ type: 'conversation.deleted', conversation_id: 21 })
+  await vi.waitFor(() => expect(document.body.textContent).toContain('还没有创作历史'))
 })
 
 it('keeps Project controls in contextual content below the global brand', async () => {

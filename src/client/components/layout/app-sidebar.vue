@@ -5,6 +5,7 @@ import SidebarBrand from '@/client/components/layout/sidebar-brand.vue'
 import ChatSidebarContent from '@/client/components/layout/chat-sidebar-content.vue'
 import SidebarGlobalFooter from '@/client/components/layout/sidebar-global-footer.vue'
 import SettingsSidebarContent from '@/client/components/layout/settings-sidebar-content.vue'
+import ImageSidebarContent from '@/client/components/layout/image-sidebar-content.vue'
 import { routeParamToId } from '@/client/lib/route-params'
 import { useSyncStore } from '@/client/stores/sync'
 import { Sidebar, SidebarRail } from '@/client/ui/sidebar'
@@ -13,6 +14,7 @@ const route = useRoute()
 const router = useRouter()
 const sync = useSyncStore()
 const isSettings = computed(() => route.path.startsWith('/settings') || route.path.startsWith('/admin'))
+const isImages = computed(() => route.path.startsWith('/images'))
 
 const activeConversationId = computed(() => routeParamToId(
   'conversationId' in route.params && typeof route.params.conversationId === 'string' ? route.params.conversationId : undefined,
@@ -41,11 +43,12 @@ const projectId = computed<number | undefined>(() => {
   <Sidebar
     collapsible="icon"
     class="h-full"
-    :data-sidebar-context="isSettings ? 'settings' : projectId === undefined ? 'chat' : 'project'"
+    :data-sidebar-context="isSettings ? 'settings' : isImages ? 'images' : projectId === undefined ? 'chat' : 'project'"
     :data-connection="sync.status"
   >
     <SidebarBrand :status="sync.status" />
     <SettingsSidebarContent v-if="isSettings" />
+    <ImageSidebarContent v-else-if="isImages" />
     <ChatSidebarContent v-else :project-id="projectId" />
     <SidebarGlobalFooter />
     <SidebarRail />

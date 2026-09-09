@@ -18,6 +18,7 @@ export function toProviderDto(row: ProviderRow, interfaces: ProviderInterfaceRow
     id: row.id, user_id: row.user_id, name: row.name, enabled: row.enabled, has_key: row.api_key !== null,
     default_interface_id: row.default_interface_id, credential_version: row.credential_version,
     models_dev_provider_id: row.models_dev_provider_id, models_dev_provider_source: row.models_dev_provider_source,
+    default_image_model_id: row.default_image_model_id,
     interfaces, created_at: row.created_at,
   })
 }
@@ -47,6 +48,12 @@ async function writeProviderAttempt(ctx: Context, userId: number, input: Provide
     throw new ProviderWriteError('Credentials changed concurrently; reload and retry', 409)
   }
   const existing = id === undefined ? [] : await db.select().from(providerInterfaces).where(eq(providerInterfaces.provider_id, id))
+  if (input.default_image_model_id && before) {
+    const imageModel = await db.query.models.findFirst({ where: and(
+      eq(models.provider_id, before.id), eq(models.model_id, input.default_image_model_id), eq(models.enabled, true), eq(models.supports_image_output, true),
+    ) })
+    if (!imageModel) throw new ProviderWriteError('Default image model must be an enabled image-output model')
+  }
   for (const endpoint of input.interfaces) {
     if (endpoint.id !== undefined && !existing.some(row => row.id === endpoint.id && row.protocol === endpoint.protocol)) {
       throw new ProviderWriteError('Interface ID must belong to this provider and protocol')
@@ -78,6 +85,7 @@ async function writeProviderAttempt(ctx: Context, userId: number, input: Provide
   const fields = {
     name: input.name, ...(input.enabled === undefined ? {} : { enabled: input.enabled }),
     models_dev_provider_id: match.id, models_dev_provider_source: match.source,
+    ...(input.default_image_model_id === undefined ? {} : { default_image_model_id: input.default_image_model_id }),
   }
   const operations: BatchItem<'sqlite'>[] = []
   const rows = before && before.models_dev_provider_id !== match.id

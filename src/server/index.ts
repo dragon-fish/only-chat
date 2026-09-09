@@ -8,6 +8,8 @@ import { CatalogStorage } from './plugins/model-catalog/storage'
 import { disposeRpcStub } from './rpc'
 import { parseAuthUserId } from './plugins/auth/user-id'
 import { AUTH_REVOKED_PATH, hasActiveAuthSession, INTERNAL_AUTH_SESSION_ID_HEADER, INTERNAL_USER_ID_HEADER, USER_ID_STORAGE_KEY, type SocketAttachment } from './plugins/hub/identity'
+import { executeImageRun } from './plugins/artifacts/workflow'
+import type { Conversation } from '@/shared/models'
 
 let workerApp: Promise<Context> | undefined
 
@@ -45,6 +47,15 @@ export class ModelCatalogRefreshWorkflow extends WorkflowEntrypoint<Env, { sourc
   }
 }
 
+export class ArtifactGenerationWorkflow extends WorkflowEntrypoint<Env, { userId: number; runId: number }> {
+  async run(event: Readonly<WorkflowEvent<{ userId: number; runId: number }>>, step: WorkflowStep) {
+    return step.do('generate image artifact', {
+      retries: { limit: 0, delay: '1 second' },
+      timeout: '30 minutes',
+    }, async () => executeImageRun(await createApp({ env: this.env, side: 'workflow' }), event.payload.userId, event.payload.runId))
+  }
+}
+
 export class UserHub extends DurableObject<Env> {
   private _app?: Context
   private _userId?: number
@@ -68,6 +79,25 @@ export class UserHub extends DurableObject<Env> {
     return this._app
   }
 
+  private async ensureOwner(userId: number): Promise<boolean> {
+    const parsed = parseAuthUserId(userId)
+    return this.ctx.blockConcurrencyWhile(async () => {
+      if (this._userId !== undefined) return this._userId === parsed
+      await this.ctx.storage.put(USER_ID_STORAGE_KEY, parsed)
+      this._userId = parsed
+      this._app = await createApp({ env: this.env, side: 'hub', doState: this.ctx, userId: parsed })
+      return true
+    })
+  }
+
+  /** Lets authenticated HTTP/Workflow producers reuse the same realtime stream as chat commands. */
+  async publishConversation(userId: number, conversation: Conversation, created: boolean): Promise<void> {
+    const parsed = parseAuthUserId(userId)
+    if (conversation.user_id !== parsed || !(await this.ensureOwner(parsed))) throw new Error('Hub identity mismatch')
+    if (created) await this.app.hub.emitConversationCreated(conversation)
+    else await this.app.hub.emitConversationUpdated(conversation)
+  }
+
   async fetch(request: Request): Promise<Response> {
     let userId: number
     try { userId = parseAuthUserId(request.headers.get(INTERNAL_USER_ID_HEADER) ?? '') }
@@ -76,13 +106,7 @@ export class UserHub extends DurableObject<Env> {
     const authSessionId = request.headers.get(INTERNAL_AUTH_SESSION_ID_HEADER)
     if (!revoke && !authSessionId) return new Response('Missing AuthSession', { status: 403 })
     // Two first fetches must never initialize different identities across an await.
-    const owned = await this.ctx.blockConcurrencyWhile(async () => {
-      if (this._userId !== undefined) return this._userId === userId
-      await this.ctx.storage.put(USER_ID_STORAGE_KEY, userId)
-      this._userId = userId
-      this._app = await createApp({ env: this.env, side: 'hub', doState: this.ctx, userId })
-      return true
-    })
+    const owned = await this.ensureOwner(userId)
     if (!owned) return new Response('Hub identity mismatch', { status: 403 })
     if (revoke) {
       await this.app.hub.revokeAccess()

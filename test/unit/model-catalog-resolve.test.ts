@@ -66,6 +66,17 @@ const catalog = parseModelCatalog({
 })
 
 describe('resolveModelMetadata', () => {
+  it('keeps provider-reported image modalities across catalog materialization while user overrides remain final', () => {
+    const resolved = resolveModelMetadata({
+      providerId: 'deepseek', modelId: 'deepseek-v4-flash', catalog,
+      providerMetadata: { name: 'Provider response', modalities: { input: ['text', 'image'], output: ['image'] } },
+      metadataOverride: { name: 'My name' },
+    })
+    expect(resolved.metadata).toMatchObject({
+      name: 'My name', modalities: { input: ['text', 'image'], output: ['image'] },
+    })
+  })
+
   it('uses complete operator metadata, including operator cost and limits', () => {
     const resolved = resolveModelMetadata({
       providerId: 'openrouter',

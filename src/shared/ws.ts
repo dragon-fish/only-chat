@@ -4,6 +4,7 @@ import {
   MessageSchema, MessageStatusSchema, PersistedStatusSchema, ProjectSchema, ConversationParamsSchema,
   ConversationSchema, UsageSchema, UserSettingsSchema,
 } from './models'
+import { ModelRefSchema } from './model-ref'
 import { AskUserResultSchema } from '@/plugins/ask-user/shared'
 
 const base = { request_id: z.string().optional() }
@@ -69,6 +70,7 @@ export const ConversationDeleteCommandSchema = z.object({
   type: z.literal('conversation.delete'),
   ...base,
   conversation_id: z.number().int(),
+  delete_artifacts: z.boolean().optional(),
 })
 export const ConversationForkCommandSchema = z.object({
   type: z.literal('conversation.fork'),
@@ -79,7 +81,10 @@ export const ConversationForkCommandSchema = z.object({
 export const SettingsUpdateCommandSchema = z.object({
   type: z.literal('settings.update'),
   ...base,
-  settings: z.object({ plugins: z.record(z.string(), z.boolean()).optional() }),
+  settings: z.object({
+    plugins: z.record(z.string(), z.boolean()).optional(),
+    image_model: ModelRefSchema.nullable().optional(),
+  }),
 })
 export const ProjectCreateCommandSchema = z.object({
   type: z.literal('project.create'),

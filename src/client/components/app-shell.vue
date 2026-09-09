@@ -10,7 +10,7 @@ import { SidebarInset, SidebarProvider, SidebarTrigger } from '@/client/ui/sideb
 
 const route = useRoute()
 provideSettingsReturn()
-const hasComposer = computed(() => /^\/(?:project\/[^/]+\/)?(?:new|c\/[^/]+)$/.test(route.path))
+const hasComposer = computed(() => /^\/(?:project\/[^/]+\/)?(?:new|c\/[^/]+)$/.test(route.path) || route.path.startsWith('/images/s/') || route.path === '/images/new')
 const showMobileNav = computed(() => !hasComposer.value)
 const routeRegionClass = computed(() => cn(
   'min-h-0 flex-1 overflow-hidden',

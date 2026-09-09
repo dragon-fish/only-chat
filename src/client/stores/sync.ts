@@ -651,7 +651,9 @@ export const useSyncStore = defineStore('sync', () => {
     )))
   }
 
-  const conversationList = computed(() => [...conversations.values()].sort((a, b) => b.updated_at - a.updated_at))
+  const orderedConversations = computed(() => [...conversations.values()].sort((a, b) => b.updated_at - a.updated_at))
+  const conversationList = computed(() => orderedConversations.value.filter(conversation => (conversation.kind ?? 'chat') === 'chat'))
+  const imageConversationList = computed(() => orderedConversations.value.filter(conversation => conversation.kind === 'image'))
   const projectList = computed(() => [...projects.values()].sort((a, b) => b.updated_at - a.updated_at))
 
   /** Sidebar grouping: pass `null` for the unprojected Chats section. Inherits `conversationList`'s
@@ -686,6 +688,10 @@ export const useSyncStore = defineStore('sync', () => {
 
   function ingestMessages(conversationId: number, rows: Message[]): void {
     for (const r of rows) upsertMessage({ ...r, conversation_id: conversationId })
+  }
+
+  function ingestConversations(rows: Conversation[]): void {
+    for (const conversation of rows) conversations.set(conversation.id, conversation)
   }
 
   function applyEvent(e: WsEvent): void {
@@ -794,7 +800,7 @@ export const useSyncStore = defineStore('sync', () => {
     try {
       const rows = await api.conversations()
       if (epoch !== loadEpoch) return
-      for (const s of rows) conversations.set(s.id, s)
+      ingestConversations(rows)
       conversationsLoaded.value = true
     } catch (error) {
       if (epoch === loadEpoch) conversationsError.value = error instanceof Error ? error.message : String(error)
@@ -863,8 +869,8 @@ export const useSyncStore = defineStore('sync', () => {
   return {
     status, snapshotSeq, conversations, projects, messages, streamingIds, forkResult, settings, lastError, projectsLoaded, conversationsLoaded, settingsLoaded,
     optimisticMutations,
-    conversationsError, projectsError, settingsError, loadedMessageConversations, conversationList, projectList,
-    applyEvent, ingestMessages, conversationsInProject, pathFor, siblingsOf, isStreaming, loadConversations, loadProjects, loadSettings, loadMessages, connect, reset, send,
+    conversationsError, projectsError, settingsError, loadedMessageConversations, conversationList, imageConversationList, projectList,
+    applyEvent, ingestConversations, ingestMessages, conversationsInProject, pathFor, siblingsOf, isStreaming, loadConversations, loadProjects, loadSettings, loadMessages, connect, reset, send,
     beginOptimistic, confirmOptimistic, rejectOptimistic, abandonOptimistic, optimisticToolResult, optimisticToolCallIds,
   }
 })

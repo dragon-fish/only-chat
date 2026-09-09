@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowLeftIcon, CircleUserRoundIcon, PaletteIcon, PlugIcon, ServerIcon, SettingsIcon, UsersIcon } from '@lucide/vue'
+import { ArrowLeftIcon, CircleUserRoundIcon, ImagesIcon, PaletteIcon, PlugIcon, ServerIcon, SettingsIcon, UsersIcon } from '@lucide/vue'
 import { useAuthStore } from '@/client/stores/auth'
 import { isAuthAdmin } from '@/shared/auth'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
@@ -16,6 +16,7 @@ const auth = useAuthStore()
 const categories = [
   { label: '账户', to: '/settings/account', icon: CircleUserRoundIcon },
   { label: '模型服务', to: '/settings/providers', icon: ServerIcon },
+  { label: '图片生成', to: '/settings/images', icon: ImagesIcon },
   { label: '插件', to: '/settings/plugins', icon: PlugIcon },
   { label: '外观', to: '/settings/appearance', icon: PaletteIcon },
 ]

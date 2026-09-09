@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import {
-  ArrowLeftIcon, ChevronsUpDownIcon, PlusIcon, SearchIcon, SlidersHorizontalIcon,
+  ArrowLeftIcon, ChevronsUpDownIcon, ImagesIcon, PlusIcon, SearchIcon, SlidersHorizontalIcon,
 } from '@lucide/vue'
 import { RouterLink, useRoute } from 'vue-router'
 import ProjectAvatar from '@/client/components/project-avatar.vue'
@@ -66,6 +66,14 @@ function clearSearch() {
             <RouterLink to="/new" @click="clearSearch">
               <ArrowLeftIcon />
               <span>返回聊天</span>
+            </RouterLink>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+        <SidebarMenuItem>
+          <SidebarMenuButton as-child class="min-h-10 md:min-h-0" tooltip="图片 Studio">
+            <RouterLink to="/images">
+              <ImagesIcon />
+              <span>图片</span>
             </RouterLink>
           </SidebarMenuButton>
         </SidebarMenuItem>
@@ -152,6 +160,14 @@ function clearSearch() {
             <RouterLink to="/new">
               <PlusIcon />
               <span>新建随心聊</span>
+            </RouterLink>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+        <SidebarMenuItem>
+          <SidebarMenuButton as-child class="min-h-10 md:min-h-0" tooltip="图片 Studio">
+            <RouterLink to="/images">
+              <ImagesIcon />
+              <span>图片</span>
             </RouterLink>
           </SidebarMenuButton>
         </SidebarMenuItem>

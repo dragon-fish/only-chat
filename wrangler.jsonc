@@ -32,6 +32,11 @@
       "name": "only-chat-model-catalog-refresh",
       "binding": "MODEL_CATALOG_REFRESH",
       "class_name": "ModelCatalogRefreshWorkflow"
+    },
+    {
+      "name": "only-chat-artifact-generation",
+      "binding": "ARTIFACT_WORKFLOW",
+      "class_name": "ArtifactGenerationWorkflow"
     }
   ],
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["UserHub"] }],
@@ -44,6 +49,7 @@
     }
   ],
   "r2_buckets": [{ "binding": "BUCKET", "bucket_name": "only-chat-attachments" }],
+  "images": { "binding": "IMAGES" },
   "kv_namespaces": [{ "binding": "KV", "id": "cdbd1aa741cb4b77b12564f1e1274bb9" }],
   // Daily catalog refresh and independent expired provider file pointer sweep.
   "triggers": { "crons": ["0 3 * * *"] }

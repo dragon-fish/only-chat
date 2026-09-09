@@ -13,5 +13,6 @@ export function providerSettingsDraft(provider: ProviderWithInterfaces): Provide
     models_dev_provider: provider.models_dev_provider_source === 'manual' && provider.models_dev_provider_id
       ? { source: 'manual', provider_id: provider.models_dev_provider_id }
       : { source: 'endpoint' },
+    default_image_model_id: provider.default_image_model_id ?? null,
   }
 }

@@ -3,11 +3,12 @@ import type { DB } from '@/server/db/client'
 import { models, providerInterfaces, providers, type ModelRow, type ProviderInterfaceRow, type ProviderRow } from '@/server/db/schema'
 
 export type ProviderSource = Pick<ProviderRow, 'id' | 'models_dev_provider_id' | 'models_dev_provider_source'> & Partial<Pick<ProviderRow, 'default_interface_id'>>
-export type ModelSourceRow = ModelRow & { metadata_override_snapshot: string }
+export type ModelSourceRow = ModelRow & { metadata_override_snapshot: string; provider_metadata_snapshot: string }
 export const modelSourceColumns = {
   ...getTableColumns(models),
   // Compare the stored bytes, not re-encoded JSON: legacy formatting such as 3.0 is valid.
   metadata_override_snapshot: sql<string>`${models.metadata_override}`.as('metadata_override_snapshot'),
+  provider_metadata_snapshot: sql<string>`${models.provider_metadata}`.as('provider_metadata_snapshot'),
 }
 
 export function changedModelFields(row: ModelRow, next: Partial<ModelRow>): Partial<ModelRow> {
@@ -63,6 +64,7 @@ export function modelSourceMatches(row: ModelSourceRow, provider: ProviderSource
   return and(eq(models.id, row.id), eq(models.provider_id, row.provider_id), eq(models.model_id, row.model_id),
     sql`${models.interface_id} IS ${row.interface_id}`, eq(models.enabled, row.enabled), eq(models.manual_pinned, row.manual_pinned),
     sql`${models.upstream_available} IS ${row.upstream_available}`, eq(models.sort, row.sort),
+    sql`${models.provider_metadata} = ${row.provider_metadata_snapshot}`,
     sql`${models.metadata_override} = ${row.metadata_override_snapshot}`, providerSourceMatches(provider, version))!
 }
 
