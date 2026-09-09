@@ -1,6 +1,7 @@
 import { Context, Service } from 'cordis'
 import type { LanguageModel } from 'ai'
 import type { ScopedFilesClient } from './files/types'
+import type { ScopedImagesClient } from './images/types'
 import type { LlmRequestTrace } from './observability'
 import type { ModelRow, ProviderInterfaceRow, ProviderRow } from '../../db/schema'
 import { decryptSecret } from './crypto'
@@ -16,6 +17,7 @@ import { vertexCompatibleProtocol } from './protocols/vertex-compatible'
 export interface LlmProtocolAdapter {
   createModel(provider: ProviderRow, providerInterface: ProviderInterfaceRow, model: ModelRow, apiKey: string, trace?: LlmRequestTrace): LanguageModel
   createFiles?: (provider: ProviderRow, providerInterface: ProviderInterfaceRow, apiKey: string) => ScopedFilesClient
+  createImages?: (provider: ProviderRow, providerInterface: ProviderInterfaceRow, apiKey: string) => ScopedImagesClient
 }
 
 export class Llm extends Service {
@@ -51,6 +53,10 @@ export class Llm extends Service {
     return providerInterface.native_files && this._adapters.get(providerInterface.protocol)?.createFiles !== undefined
   }
 
+  hasImages(providerInterface: ProviderInterfaceRow): boolean {
+    return this._adapters.get(providerInterface.protocol)?.createImages !== undefined
+  }
+
   async decryptKey(provider: ProviderRow): Promise<string | null> {
     return provider.api_key ? decryptSecret(this._secret, provider.api_key) : null
   }
@@ -73,6 +79,15 @@ export class Llm extends Service {
     const key = await this.decryptKey(provider)
     if (key === null) throw new Error(`provider ${provider.id} has no API key`)
     return adapter.createFiles(provider, providerInterface, key)
+  }
+
+  async createImages(provider: ProviderRow, providerInterface: ProviderInterfaceRow): Promise<ScopedImagesClient> {
+    if (providerInterface.provider_id !== provider.id) throw new Error('interface must belong to the provider')
+    const adapter = this._adapters.get(providerInterface.protocol)
+    if (!adapter?.createImages) throw new Error(`protocol ${providerInterface.protocol} has no Images API`)
+    const key = await this.decryptKey(provider)
+    if (key === null) throw new Error(`provider ${provider.id} has no API key`)
+    return adapter.createImages(provider, providerInterface, key)
   }
 }
 

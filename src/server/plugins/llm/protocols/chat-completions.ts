@@ -3,6 +3,7 @@ import { COMPAT_PROVIDER_NAME } from '../messages'
 import { createOpenAIFiles } from '../files/openai'
 import { createFileAwareChatModel } from '../files/references'
 import { observedProviderFetch } from '../observability'
+import { createOpenAIImagesClient } from '../images/openai'
 
 export const chatCompletionsProtocol = {
   name: 'llm-chat-completions',
@@ -21,6 +22,9 @@ export const chatCompletionsProtocol = {
       },
       createFiles(provider, providerInterface, apiKey) {
         return createOpenAIFiles({ baseURL: providerInterface.base_url, apiKey, credentialVersion: provider.credential_version })
+      },
+      createImages(_provider, providerInterface, apiKey) {
+        return createOpenAIImagesClient(providerInterface.base_url, apiKey)
       },
     })
   },

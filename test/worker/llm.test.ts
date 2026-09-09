@@ -79,6 +79,29 @@ async function captureStreamRequest(p: ProviderRow, selected: ProviderInterfaceR
 }
 
 describe('Llm service', () => {
+  it.each(['responses', 'chat-completions'] as const)('exposes one Images client through the %s interface', async protocol => {
+    await inHub(async ctx => {
+      let request: Request | undefined
+      vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+        request = new Request(input, init)
+        return Response.json({ data: [{ b64_json: btoa('\u0089PNG') }] })
+      })
+      try {
+        const selected = providerInterface(protocol, 'https://gateway.example/v1/')
+        expect(ctx.llm.hasImages(selected)).toBe(true)
+        const images = await ctx.llm.createImages(await provider('image-key'), selected)
+        await images.generate({
+          modelId: 'image-model', prompt: 'otter', references: [], params: { count: 1, size: null }, idempotencyKey: 'run',
+        })
+        expect(request?.url).toBe('https://gateway.example/v1/images/generations')
+        expect(request?.headers.get('authorization')).toBe('Bearer image-key')
+      } finally { vi.unstubAllGlobals() }
+    })
+  })
+
+  it.each(['anthropic', 'vertex-compatible'] as const)('does not advertise Images for the %s interface', async protocol => {
+    await inHub(async ctx => expect(ctx.llm.hasImages(providerInterface(protocol))).toBe(false))
+  })
   it('shares OpenAI Files scope between both OpenAI interfaces and isolates Anthropic', async () => {
     await inHub(async ctx => {
       const p = { ...await provider('files-key'), credential_version: 9 }
