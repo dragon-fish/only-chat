@@ -4,7 +4,7 @@ import type { AnthropicProviderOptions } from '@ai-sdk/anthropic'
 import type { GoogleVertexImageModelOptions } from '@ai-sdk/google-vertex'
 import type { OpenResponsesLanguageModelOptions } from '@ai-sdk/open-responses'
 import type { OpenAICompatibleProviderOptions } from '@ai-sdk/openai-compatible'
-import type { Message, InterfaceProtocol, ReasoningEffort, SessionParams } from '@/shared/models'
+import type { Message, InterfaceProtocol, ReasoningEffort, ConversationParams } from '@/shared/models'
 import type { ModelMetadata } from '@/shared/model-metadata'
 import type { Part, ProviderOptions } from '@/shared/parts'
 import { RESPONSES_PROVIDER_NAME, responsesReasoningReplayOptions } from './responses-reasoning'
@@ -222,7 +222,7 @@ function accept<T extends ReasoningEffort>(levels: readonly T[], effort: Reasoni
  */
 export function buildProviderOptions(
   protocol: InterfaceProtocol,
-  params: SessionParams | null,
+  params: ConversationParams | null,
   metadata: ModelMetadata,
 ): SdkProviderOptions {
   const enabled = metadata.reasoning === true && params?.reasoning_enabled !== false

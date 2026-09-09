@@ -7,7 +7,7 @@ import MessageItem from '@/client/components/message-item.vue'
 import type { Message, Project } from '@/shared/models'
 
 const message: Message = {
-  id: 1, session_id: 1, parent_id: null, seq: 0, role: 'assistant',
+  id: 1, conversation_id: 1, parent_id: null, seq: 0, role: 'assistant',
   parts: [{ type: 'text', text: 'Hello' }], provider_id: 1, model_id: 'deepseek-chat',
   usage: null, status: 'done', error: null, created_at: 0,
 }

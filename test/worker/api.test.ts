@@ -327,11 +327,11 @@ describe('REST api', () => {
     expect(res.status).toBe(400)
   })
 
-  it('lists sessions and messages', async () => {
-    const res = await json('GET', '/api/sessions')
+  it('lists conversations and messages', async () => {
+    const res = await json('GET', '/api/conversations')
     expect(res.status).toBe(200)
     expect(Array.isArray(await res.json())).toBe(true)
-    expect((await json('GET', '/api/sessions/999999/messages')).status).toBe(404)
+    expect((await json('GET', '/api/conversations/999999/messages')).status).toBe(404)
   })
 
   it('lists projects for the current user, read-only', async () => {

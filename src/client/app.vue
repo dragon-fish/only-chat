@@ -15,7 +15,7 @@ const { resolved: resolvedTheme } = useTheme()
 onMounted(async () => {
   sync.connect()
   // Each collection owns its blocking error and retry action in the relevant content region.
-  await Promise.allSettled([sync.loadSettings(), sync.loadSessions(), sync.loadProjects(), config.load()])
+  await Promise.allSettled([sync.loadSettings(), sync.loadConversations(), sync.loadProjects(), config.load()])
 })
 
 watch(() => sync.lastError, error => { if (error) toast.error(error) }, { flush: 'sync' })

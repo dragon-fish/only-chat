@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import ProjectSessions from '@/client/views/project-sessions.vue'
+import ProjectConversations from '@/client/views/project-conversations.vue'
 defineProps<{ projectId: number | null }>()
 </script>
 
 <template lang="pug">
-ProjectSessions(:project-id="projectId")
+ProjectConversations(:project-id="projectId")
 </template>

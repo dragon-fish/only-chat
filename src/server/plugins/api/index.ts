@@ -2,7 +2,7 @@ import { Context } from 'cordis'
 import { Hono } from 'hono'
 import { DEFAULT_USER_ID } from '@/shared/constants'
 import { meRoutes } from './me'
-import { sessionRoutes } from './sessions'
+import { conversationRoutes } from './conversations'
 import { providerRoutes } from './providers'
 import { modelRoutes } from './models'
 import { attachmentRoutes } from './attachments'
@@ -37,7 +37,7 @@ export const ApiPlugin = {
       return c.env.USER_HUB.getByName(String(DEFAULT_USER_ID)).fetch(c.req.raw)
     })
     app.route('/api', meRoutes(ctx))
-    app.route('/api', sessionRoutes(ctx))
+    app.route('/api', conversationRoutes(ctx))
     app.route('/api', providerRoutes(ctx))
     app.route('/api', modelRoutes(ctx))
     app.route('/api', attachmentRoutes(ctx))

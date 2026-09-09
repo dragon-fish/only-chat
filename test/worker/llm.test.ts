@@ -272,7 +272,7 @@ describe('responses protocol', () => {
         expect(persisted).toMatchObject({ type: 'reasoning', text: 'complete reasoning', providerOptions: { responses: {
           reasoningContent: deepseekReasoningItem.content, reasoningSummary: deepseekReasoningItem.summary, itemId: 'rs_fixture', reasoningEncryptedContent: 'fixture-encrypted-state',
         } } })
-        const message: Message = { id: 1, session_id: 1, parent_id: null, seq: 1, role: 'assistant', parts: [persisted], provider_id: 1, model_id: model.model_id, usage: null, status: 'done', error: null, created_at: 0 }
+        const message: Message = { id: 1, conversation_id: 1, parent_id: null, seq: 1, role: 'assistant', parts: [persisted], provider_id: 1, model_id: model.model_id, usage: null, status: 'done', error: null, created_at: 0 }
         const beforeReplay = JSON.stringify(message)
         const messages = buildModelMessages({ protocol: 'responses', systemPrompt: null, path: [message], attachments: new Map() })
         for await (const part of streamText({ model: lm, messages }).stream) if (part.type === 'error') throw part.error
@@ -302,7 +302,7 @@ describe('responses protocol', () => {
         const part: Part = { type: 'reasoning', text, providerOptions: { responses: {
           itemId: 'rs_fixture', reasoningSummary: summary, ...(hasContentSentinel ? { reasoningContent: null } : {}), reasoningEncryptedContent: 'fixture-encrypted-state',
         } } }
-        const message: Message = { id: 1, session_id: 1, parent_id: null, seq: 1, role: 'assistant', parts: [part], provider_id: 1, model_id: model.model_id, usage: null, status: 'done', error: null, created_at: 0 }
+        const message: Message = { id: 1, conversation_id: 1, parent_id: null, seq: 1, role: 'assistant', parts: [part], provider_id: 1, model_id: model.model_id, usage: null, status: 'done', error: null, created_at: 0 }
         const messages = buildModelMessages({ protocol: 'responses', systemPrompt: null, path: [message], attachments: new Map() })
         for await (const chunk of streamText({ model: lm, messages }).stream) if (chunk.type === 'error') throw chunk.error
         expect(requestBody).toMatchObject({ input: [{ type: 'reasoning', id: 'rs_fixture', summary, encrypted_content: 'fixture-encrypted-state' }] })
@@ -376,7 +376,7 @@ describe('chat-completions reasoning', () => {
           acc.apply(part)
         }
         const persisted = JSON.parse(JSON.stringify(acc.parts[0])) as Part
-        const message: Message = { id: 1, session_id: 1, parent_id: null, seq: 1, role: 'assistant', parts: [persisted], provider_id: 1, model_id: model.model_id, usage: null, status: 'done', error: null, created_at: 0 }
+        const message: Message = { id: 1, conversation_id: 1, parent_id: null, seq: 1, role: 'assistant', parts: [persisted], provider_id: 1, model_id: model.model_id, usage: null, status: 'done', error: null, created_at: 0 }
         const messages = buildModelMessages({ protocol: 'chat-completions', systemPrompt: null, path: [message], attachments: new Map() })
         for await (const part of streamText({ model: chat, messages }).stream) if (part.type === 'error') throw part.error
         expect(chatRequest).toMatchObject({ messages: [{ role: 'assistant', reasoning_content: 'complete reasoning' }] })
@@ -404,7 +404,7 @@ describe('chat-completions reasoning', () => {
         }
         const persisted: Part[] = JSON.parse(JSON.stringify(acc.parts))
         expect(persisted).toEqual([{ type: 'reasoning', text: 'complete reasoning' }, { type: 'text', text: 'fixture answer' }])
-        const message: Message = { id: 1, session_id: 1, parent_id: null, seq: 1, role: 'assistant', parts: persisted, provider_id: 1, model_id: model.model_id, usage: null, status: 'done', error: null, created_at: 0 }
+        const message: Message = { id: 1, conversation_id: 1, parent_id: null, seq: 1, role: 'assistant', parts: persisted, provider_id: 1, model_id: model.model_id, usage: null, status: 'done', error: null, created_at: 0 }
         const messages = buildModelMessages({ protocol: 'chat-completions', systemPrompt: null, path: [message], attachments: new Map() })
         const providerOptions = buildProviderOptions('chat-completions', { reasoning_enabled: false }, { reasoning: true, reasoning_options: [{ type: 'effort', values: ['none', 'high'] }] })
         for await (const part of streamText({ model: lm, messages, providerOptions }).stream) if (part.type === 'error') throw part.error

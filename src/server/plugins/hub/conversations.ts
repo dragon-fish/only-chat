@@ -2,11 +2,11 @@ import { and, desc, eq, gt, isNotNull, isNull, sql } from 'drizzle-orm'
 import type { ScopedFilesClient } from '../llm/files/types'
 import { normalizeFilesBaseURL } from '../llm/files/shared'
 import type { DB } from '../../db/client'
-import { attachmentProviderFiles, attachments, messages, models, providerInterfaces, providers, sessions, users } from '../../db/schema'
+import { attachmentProviderFiles, attachments, messages, models, providerInterfaces, providers, conversations, users } from '../../db/schema'
 import type {
-  AttachmentProviderFileRow, AttachmentRow, MessageRow, ModelRow, ProviderInterfaceRow, ProviderRow, SessionRow, UserRow,
+  AttachmentProviderFileRow, AttachmentRow, MessageRow, ModelRow, ProviderInterfaceRow, ProviderRow, ConversationRow, UserRow,
 } from '../../db/schema'
-import type { Message, MessageStatus, PersistedStatus, SessionParams, Usage, UserSettings } from '@/shared/models'
+import type { Message, MessageStatus, PersistedStatus, ConversationParams, Usage, UserSettings } from '@/shared/models'
 import type { Part, ToolResultPart } from '@/shared/parts'
 
 /** Row → wire DTO. Persisted rows only carry the persisted statuses; live ones pass `status` in. */
@@ -14,31 +14,31 @@ export function toMessage(row: MessageRow, status: MessageStatus = row.status): 
   return { ...row, status }
 }
 
-export async function listSessions(db: DB, userId: number): Promise<SessionRow[]> {
-  return db.select().from(sessions).where(and(eq(sessions.user_id, userId), isNull(sessions.archived_at))).orderBy(desc(sessions.updated_at))
+export async function listConversations(db: DB, userId: number): Promise<ConversationRow[]> {
+  return db.select().from(conversations).where(and(eq(conversations.user_id, userId), isNull(conversations.archived_at))).orderBy(desc(conversations.updated_at))
 }
 
-export async function getSession(db: DB, id: number): Promise<SessionRow | undefined> {
-  return db.query.sessions.findFirst({ where: eq(sessions.id, id) })
+export async function getConversation(db: DB, id: number): Promise<ConversationRow | undefined> {
+  return db.query.conversations.findFirst({ where: eq(conversations.id, id) })
 }
 
 /**
- * Creates a session from the draft the first `send` carried (spec §5.2). `provider_id`/`model_id`
- * are the session's *override* — never the model used for that first generation, or the session
+ * Creates a conversation from the draft the first `send` carried (spec §5.2). `provider_id`/`model_id`
+ * are the conversation's *override* — never the model used for that first generation, or the conversation
  * would stop inheriting from its Project on every later turn.
  */
-export async function createSession(db: DB, input: {
+export async function createConversation(db: DB, input: {
   user_id: number
   title: string
   provider_id: number | null
   model_id: string | null
   project_id?: number | null
   system_prompt?: string | null
-  params?: SessionParams | null
+  params?: ConversationParams | null
   tools?: string[]
-}): Promise<SessionRow> {
+}): Promise<ConversationRow> {
   const now = Date.now()
-  const [row] = await db.insert(sessions).values({
+  const [row] = await db.insert(conversations).values({
     user_id: input.user_id,
     title: input.title,
     project_id: input.project_id ?? null,
@@ -55,38 +55,38 @@ export async function createSession(db: DB, input: {
   return row!
 }
 
-export async function updateSession(
+export async function updateConversation(
   db: DB,
   id: number,
-  patch: Partial<Pick<SessionRow, 'title' | 'project_id' | 'provider_id' | 'model_id' | 'system_prompt' | 'params' | 'tools' | 'head_message_id'>>,
-): Promise<SessionRow> {
-  const [row] = await db.update(sessions).set({ ...patch, updated_at: Date.now() }).where(eq(sessions.id, id)).returning()
-  if (!row) throw new Error(`session ${id} not found`)
+  patch: Partial<Pick<ConversationRow, 'title' | 'project_id' | 'provider_id' | 'model_id' | 'system_prompt' | 'params' | 'tools' | 'head_message_id'>>,
+): Promise<ConversationRow> {
+  const [row] = await db.update(conversations).set({ ...patch, updated_at: Date.now() }).where(eq(conversations.id, id)).returning()
+  if (!row) throw new Error(`conversation ${id} not found`)
   return row
 }
 
-/** Moves a Session head only if it still equals the caller's observed parent. */
-export async function compareAndSwapSessionHead(
+/** Moves a Conversation head only if it still equals the caller's observed parent. */
+export async function compareAndSwapConversationHead(
   db: DB,
   id: number,
   expectedHead: number | null,
   nextHead: number,
-): Promise<SessionRow | undefined> {
-  const expected = expectedHead === null ? isNull(sessions.head_message_id) : eq(sessions.head_message_id, expectedHead)
-  const [row] = await db.update(sessions)
+): Promise<ConversationRow | undefined> {
+  const expected = expectedHead === null ? isNull(conversations.head_message_id) : eq(conversations.head_message_id, expectedHead)
+  const [row] = await db.update(conversations)
     .set({ head_message_id: nextHead, updated_at: Date.now() })
-    .where(and(eq(sessions.id, id), expected))
+    .where(and(eq(conversations.id, id), expected))
     .returning()
   return row
 }
 
-export async function deleteSession(db: DB, id: number): Promise<void> {
-  await db.delete(sessions).where(eq(sessions.id, id)) // messages cascade
+export async function deleteConversation(db: DB, id: number): Promise<void> {
+  await db.delete(conversations).where(eq(conversations.id, id)) // messages cascade
 }
 
-export async function forkSession(db: DB, sourceSessionId: number, userId: number, headMessageId: number): Promise<SessionRow> {
-  const source = await db.query.sessions.findFirst({ where: and(eq(sessions.id, sourceSessionId), eq(sessions.user_id, userId)) })
-  if (!source) throw new Error('session not found')
+export async function forkConversation(db: DB, sourceConversationId: number, userId: number, headMessageId: number): Promise<ConversationRow> {
+  const source = await db.query.conversations.findFirst({ where: and(eq(conversations.id, sourceConversationId), eq(conversations.user_id, userId)) })
+  if (!source) throw new Error('conversation not found')
   const rows = await listMessages(db, source.id)
   const byId = new Map(rows.map(message => [message.id, message]))
   const path: MessageRow[] = []
@@ -97,10 +97,10 @@ export async function forkSession(db: DB, sourceSessionId: number, userId: numbe
     path.push(current)
     current = current.parent_id === null ? undefined : byId.get(current.parent_id)
   }
-  if (path.length === 0 || path.at(-1)?.parent_id !== null) throw new Error('message not in session path')
+  if (path.length === 0 || path.at(-1)?.parent_id !== null) throw new Error('message not in conversation path')
   path.reverse()
 
-  const target = await createSession(db, {
+  const target = await createConversation(db, {
     user_id: source.user_id, title: `${source.title} 副本`, project_id: source.project_id,
     provider_id: source.provider_id, model_id: source.model_id,
     system_prompt: source.system_prompt, params: source.params, tools: source.tools,
@@ -108,19 +108,19 @@ export async function forkSession(db: DB, sourceSessionId: number, userId: numbe
   try {
     let parentId: number | null = null
     for (const [index, message] of path.entries()) {
-      const { id: _id, session_id: _sessionId, parent_id: _parentId, seq: _seq, ...copy } = message
-      const inserted = await insertMessage(db, { ...copy, session_id: target.id, parent_id: parentId, seq: index + 1 })
+      const { id: _id, conversation_id: _conversationId, parent_id: _parentId, seq: _seq, ...copy } = message
+      const inserted = await insertMessage(db, { ...copy, conversation_id: target.id, parent_id: parentId, seq: index + 1 })
       parentId = inserted.id
     }
-    return await updateSession(db, target.id, { head_message_id: parentId })
+    return await updateConversation(db, target.id, { head_message_id: parentId })
   } catch (error) {
-    await deleteSession(db, target.id)
+    await deleteConversation(db, target.id)
     throw error
   }
 }
 
-export async function listMessages(db: DB, sessionId: number): Promise<MessageRow[]> {
-  return db.select().from(messages).where(eq(messages.session_id, sessionId)).orderBy(messages.seq)
+export async function listMessages(db: DB, conversationId: number): Promise<MessageRow[]> {
+  return db.select().from(messages).where(eq(messages.conversation_id, conversationId)).orderBy(messages.seq)
 }
 
 export async function getMessage(db: DB, id: number): Promise<MessageRow | undefined> {
@@ -138,14 +138,14 @@ export async function listAssistantChildren(db: DB, parentId: number): Promise<M
 export async function appendToolResult(
   db: DB,
   messageId: number,
-  sessionId: number,
+  conversationId: number,
   part: ToolResultPart,
 ): Promise<boolean> {
   const result = await db.$client.prepare(`
     UPDATE messages
        SET parts = json_insert(parts, '$[#]', json(?))
      WHERE id = ?
-       AND session_id = ?
+       AND conversation_id = ?
        AND role = 'assistant'
        AND status = 'done'
        AND NOT EXISTS (
@@ -153,12 +153,12 @@ export async function appendToolResult(
           WHERE json_extract(value, '$.type') = 'tool_result'
             AND json_extract(value, '$.call_id') = ?
        )
-  `).bind(JSON.stringify(part), messageId, sessionId, part.call_id).run()
+  `).bind(JSON.stringify(part), messageId, conversationId, part.call_id).run()
   return result.meta.changes === 1
 }
 
 /**
- * Replaces one current head's complete Parts snapshot. Both the old JSON and Session head are part
+ * Replaces one current head's complete Parts snapshot. Both the old JSON and Conversation head are part
  * of the same SQLite compare-and-swap, so a concurrent answer and a stale send cannot both win.
  */
 export async function replaceMessagePartsIfCurrentHead(
@@ -170,17 +170,17 @@ export async function replaceMessagePartsIfCurrentHead(
     UPDATE messages
        SET parts = json(?)
      WHERE id = ?
-       AND session_id = ?
+       AND conversation_id = ?
        AND role = 'assistant'
        AND status = 'done'
        AND json(parts) = json(?)
        AND EXISTS (
-         SELECT 1 FROM sessions WHERE id = ? AND head_message_id = ?
+         SELECT 1 FROM conversations WHERE id = ? AND head_message_id = ?
        )
     RETURNING id
   `).bind(
-    JSON.stringify(nextParts), expected.id, expected.session_id, JSON.stringify(expected.parts),
-    expected.session_id, expected.id,
+    JSON.stringify(nextParts), expected.id, expected.conversation_id, JSON.stringify(expected.parts),
+    expected.conversation_id, expected.id,
   ).first<{ id: number }>()
   return updated?.id === expected.id
 }
@@ -194,12 +194,12 @@ export async function deleteMessage(db: DB, id: number): Promise<void> {
   await db.delete(messages).where(eq(messages.id, id))
 }
 
-/** Deletes an unannounced shell only while no Session head references it. */
+/** Deletes an unannounced shell only while no Conversation head references it. */
 export async function deleteMessageIfUnreferenced(db: DB, id: number): Promise<boolean> {
   const deleted = await db.$client.prepare(`
     DELETE FROM messages
      WHERE id = ?
-       AND NOT EXISTS (SELECT 1 FROM sessions WHERE head_message_id = ?)
+       AND NOT EXISTS (SELECT 1 FROM conversations WHERE head_message_id = ?)
     RETURNING id
   `).bind(id, id).first<{ id: number }>()
   return deleted?.id === id
@@ -212,20 +212,20 @@ export async function insertAssistantChildIfAbsent(
 ): Promise<MessageRow | undefined> {
   const inserted = await db.$client.prepare(`
     INSERT INTO messages (
-      session_id, parent_id, seq, role, parts, provider_id, model_id, usage, status, error, created_at
+      conversation_id, parent_id, seq, role, parts, provider_id, model_id, usage, status, error, created_at
     )
     SELECT ?, ?, ?, 'assistant', json(?), ?, ?, ?, ?, ?, ?
      WHERE NOT EXISTS (
        SELECT 1 FROM messages WHERE parent_id = ? AND role = 'assistant'
      )
        AND EXISTS (
-         SELECT 1 FROM sessions WHERE id = ? AND head_message_id = ?
+         SELECT 1 FROM conversations WHERE id = ? AND head_message_id = ?
        )
     RETURNING id
   `).bind(
-    row.session_id, row.parent_id, row.seq, JSON.stringify(row.parts), row.provider_id, row.model_id,
+    row.conversation_id, row.parent_id, row.seq, JSON.stringify(row.parts), row.provider_id, row.model_id,
     row.usage === null ? null : JSON.stringify(row.usage), row.status, row.error, row.created_at, row.parent_id,
-    row.session_id, row.parent_id,
+    row.conversation_id, row.parent_id,
   ).first<{ id: number }>()
   return inserted ? getMessage(db, inserted.id) : undefined
 }
@@ -239,22 +239,22 @@ export async function finalizeMessage(
 }
 
 /**
- * The model the session last generated with. `edit` carries no model of its own, and
- * `sessions.provider_id` is now the user's explicit override rather than a sticky record of the
+ * The model the conversation last generated with. `edit` carries no model of its own, and
+ * `conversations.provider_id` is now the user's explicit override rather than a sticky record of the
  * last generation, so the answer has to come from the messages themselves.
  */
-export async function lastGenerationModel(db: DB, sessionId: number): Promise<{ provider_id: number; model_id: string } | undefined> {
+export async function lastGenerationModel(db: DB, conversationId: number): Promise<{ provider_id: number; model_id: string } | undefined> {
   const [row] = await db.select({ provider_id: messages.provider_id, model_id: messages.model_id })
     .from(messages)
-    .where(and(eq(messages.session_id, sessionId), isNotNull(messages.provider_id), isNotNull(messages.model_id)))
+    .where(and(eq(messages.conversation_id, conversationId), isNotNull(messages.provider_id), isNotNull(messages.model_id)))
     .orderBy(desc(messages.seq))
     .limit(1)
   if (!row || row.provider_id === null || row.model_id === null) return undefined
   return { provider_id: row.provider_id, model_id: row.model_id }
 }
 
-export async function maxSeq(db: DB, sessionId: number): Promise<number> {
-  const [row] = await db.select({ max: sql<number>`coalesce(max(${messages.seq}), 0)` }).from(messages).where(eq(messages.session_id, sessionId))
+export async function maxSeq(db: DB, conversationId: number): Promise<number> {
+  const [row] = await db.select({ max: sql<number>`coalesce(max(${messages.seq}), 0)` }).from(messages).where(eq(messages.conversation_id, conversationId))
   return row?.max ?? 0
 }
 

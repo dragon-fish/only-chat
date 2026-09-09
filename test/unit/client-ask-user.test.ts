@@ -22,7 +22,7 @@ const input: AskUserInput = {
 function message(parts: Message['parts'], id = 20, parentId: number | null = 10): Message {
   return {
     id,
-    session_id: 3,
+    conversation_id: 3,
     parent_id: parentId,
     seq: id,
     role: 'assistant',
@@ -220,7 +220,7 @@ describe('ask_user answer serialization', () => {
     expect(hasPendingToolCalls([message([{ ...valid, args: { questions: [] } }])])).toBe(false)
   })
 
-  it('selects only unresolved ask_user calls from the current Session head for the composer', () => {
+  it('selects only unresolved ask_user calls from the current Conversation head for the composer', () => {
     const first = { type: 'tool_call' as const, id: 'first', name: 'ask_user', args: input }
     const second = { type: 'tool_call' as const, id: 'second', name: 'ask_user', args: input }
     const old = message([{ ...first, id: 'old' }], 19)

@@ -7,7 +7,7 @@ import { createDb } from '@/server/db/client'
 import { attachmentProviderFiles, attachments, providerInterfaces, providers } from '@/server/db/schema'
 import { encryptSecret } from '@/server/plugins/llm/crypto'
 import { cleanupExpiredProviderFiles } from '@/server/plugins/files-cleanup'
-import { findReusableProviderFile } from '@/server/plugins/hub/sessions'
+import { findReusableProviderFile } from '@/server/plugins/hub/conversations'
 
 const now = 1_800_000_000_000
 const day = 86_400_000

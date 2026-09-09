@@ -18,13 +18,13 @@ export interface PendingAskUserCall {
   call: ToolCallPart
 }
 
-/** The Composer only owns interactive calls on the current durable Session head. */
+/** The Composer only owns interactive calls on the current durable Conversation head. */
 export function pendingAskUserCalls(
   messages: readonly Message[],
-  sessionHeadId: number | null | undefined,
+  conversationHeadId: number | null | undefined,
   optimisticResultCallIds: ReadonlySet<string> = new Set(),
 ): PendingAskUserCall[] {
-  const message = messages.find(candidate => candidate.id === sessionHeadId)
+  const message = messages.find(candidate => candidate.id === conversationHeadId)
   if (!message || message.role !== 'assistant' || message.status !== 'done') return []
   const { calls, results } = toolState(message)
   return calls
@@ -60,9 +60,9 @@ function resultStatus(result: ToolResultPart | undefined): unknown {
 export function canContinueToolMessage(
   message: Message,
   allMessages: readonly Message[],
-  sessionHeadId: number | null | undefined,
+  conversationHeadId: number | null | undefined,
 ): boolean {
-  if (sessionHeadId !== message.id) return false
+  if (conversationHeadId !== message.id) return false
   const { calls, results } = toolState(message)
   if (!calls.length || calls.some(call => resultStatus(results.get(call.id)) !== 'answered')) return false
   return !allMessages.some(candidate => candidate.role === 'assistant' && candidate.parent_id === message.id)

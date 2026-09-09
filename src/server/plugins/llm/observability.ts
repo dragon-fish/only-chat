@@ -2,7 +2,7 @@ import type { FetchFunction } from '@ai-sdk/provider-utils'
 import type { InterfaceProtocol } from '@/shared/models'
 
 export interface LlmRequestTrace {
-  sessionId: number
+  conversationId: number
   messageId: number
   providerId: number
   interfaceId: number

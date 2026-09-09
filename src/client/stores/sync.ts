@@ -3,7 +3,7 @@ import { defineStore } from 'pinia'
 import { api } from '@/client/lib/api'
 import { WsClient, type WsStatus } from '@/client/lib/ws-client'
 import type { ModelRef } from '@/shared/api'
-import type { Message, Project, Session, SessionParams, UserSettings } from '@/shared/models'
+import type { Message, Project, Conversation, ConversationParams, UserSettings } from '@/shared/models'
 import type { ModelMetadata } from '@/shared/model-metadata'
 import type { Part, ToolResultPart } from '@/shared/parts'
 import type { SendCommand, WsCommand, WsEvent } from '@/shared/ws'
@@ -128,7 +128,7 @@ export function reasoningChoiceFor(model: ReasoningControlModel, action: Reasoni
 }
 
 /** The merged control writes the two independently stored keys (spec §3.3). */
-export function choiceToParams(choice: ReasoningChoice): SessionParams {
+export function choiceToParams(choice: ReasoningChoice): ConversationParams {
   if (choice === 'inherit') return {}
   if (choice === 'off') return { reasoning_enabled: false }
   return { reasoning_enabled: true, reasoning_effort: choice === 'auto' ? null : choice }
@@ -143,7 +143,7 @@ export function choiceToParams(choice: ReasoningChoice): SessionParams {
  * that effort and is written back as a full pair. Nothing in this UI can produce a half-set pair —
  * `choiceToParams` always writes both keys — so the round trip is stable for anything it stores.
  */
-export function choiceFromParams(params: SessionParams | null | undefined): ReasoningChoice {
+export function choiceFromParams(params: ConversationParams | null | undefined): ReasoningChoice {
   if (!params) return 'inherit'
   if (params.reasoning_enabled === false) return 'off'
   if (params.reasoning_enabled === undefined && params.reasoning_effort === undefined) return 'inherit'
@@ -151,7 +151,7 @@ export function choiceFromParams(params: SessionParams | null | undefined): Reas
 }
 
 /**
- * The generation parameters a Project and a session edit the same way. Typed `string | number`,
+ * The generation parameters a Project and a conversation edit the same way. Typed `string | number`,
  * not `string`: the three numeric fields are edited by `NumberField`, which is `number | undefined`
  * valued, so a filled box writes a real `number` here while blank stays `''` — the sentinel that
  * makes `paramsFromFields` drop the key instead of writing a value the layer never chose. Two
@@ -212,11 +212,11 @@ export function fieldLooksBlank(raw: string | null, stored: string | number): bo
 }
 
 /** `null` when the user filled nothing in, so the `params` column stays NULL. */
-export function paramsFromFields(fields: ParamFields): SessionParams | null {
+export function paramsFromFields(fields: ParamFields): ConversationParams | null {
   const temperature = optionalNumber(fields.temperature)
   const top_p = optionalNumber(fields.top_p)
   const max_tokens = optionalNumber(fields.max_tokens)
-  const params: SessionParams = {
+  const params: ConversationParams = {
     ...(temperature === undefined ? {} : { temperature }),
     ...(top_p === undefined ? {} : { top_p }),
     ...(max_tokens === undefined ? {} : { max_tokens }),
@@ -226,7 +226,7 @@ export function paramsFromFields(fields: ParamFields): SessionParams | null {
 }
 
 /** Absent values render as blank fields, never as the inherited value they would resolve to. */
-export function fieldsFromParams(params: SessionParams | null | undefined): ParamFields {
+export function fieldsFromParams(params: ConversationParams | null | undefined): ParamFields {
   return {
     temperature: numberToField(params?.temperature),
     top_p: numberToField(params?.top_p),
@@ -244,7 +244,7 @@ export interface ProjectFormState extends ParamFields {
   model: ModelRef | null
 }
 
-export function projectParamsFromForm(form: ProjectFormState): SessionParams | null {
+export function projectParamsFromForm(form: ProjectFormState): ConversationParams | null {
   return paramsFromFields(form)
 }
 
@@ -285,28 +285,28 @@ function blankToNull(value: string): string | null {
   return value.trim() === '' ? null : value
 }
 
-/** What the Composer's settings popover holds for the open session, or for an unsent draft. */
-export interface SessionSettingsForm extends ParamFields {
+/** What the Composer's settings popover holds for the open conversation, or for an unsent draft. */
+export interface ConversationSettingsForm extends ParamFields {
   title: string
   system_prompt: string
 }
 
-/** Only the session's own overrides: an inherited value shown here would be copied down on save. */
-export function sessionFormFrom(session: Session | undefined): SessionSettingsForm {
+/** Only the conversation's own overrides: an inherited value shown here would be copied down on save. */
+export function conversationFormFrom(conversation: Conversation | undefined): ConversationSettingsForm {
   return {
-    title: session?.title ?? '',
-    system_prompt: session?.system_prompt ?? '',
-    ...fieldsFromParams(session?.params),
+    title: conversation?.title ?? '',
+    system_prompt: conversation?.system_prompt ?? '',
+    ...fieldsFromParams(conversation?.params),
   }
 }
 
-/** The session-level fields inheritance reads; an unsent draft satisfies it as well as a `Session`. */
-export type SessionConfigSource = Pick<Session, 'system_prompt' | 'provider_id' | 'model_id' | 'params'>
+/** The conversation-level fields inheritance reads; an unsent draft satisfies it as well as a `Conversation`. */
+export type ConversationConfigSource = Pick<Conversation, 'system_prompt' | 'provider_id' | 'model_id' | 'params'>
 
 /** Which layer a field's current value comes from, for its 继承自 Project / 会话覆盖 badge (spec §7.3). */
-export type SettingSource = 'session' | 'project' | 'default'
+export type SettingSource = 'conversation' | 'project' | 'default'
 
-export interface SessionSettingSources {
+export interface ConversationSettingSources {
   system_prompt: SettingSource
   model: SettingSource
   temperature: SettingSource
@@ -315,26 +315,26 @@ export interface SessionSettingSources {
   reasoning: SettingSource
 }
 
-function sourceOf(inSession: boolean, inProject: boolean): SettingSource {
-  return inSession ? 'session' : inProject ? 'project' : 'default'
+function sourceOf(inConversation: boolean, inProject: boolean): SettingSource {
+  return inConversation ? 'conversation' : inProject ? 'project' : 'default'
 }
 
 /**
  * Presence decides every field: `temperature: 0` and an explicit-Auto `reasoning_effort: null` are
- * real session overrides. Reasoning reports one source for the merged control even though the two
+ * real conversation overrides. Reasoning reports one source for the merged control even though the two
  * keys inherit independently — either key present in a layer makes that layer the source.
  */
-export function sessionSettingSources(session: SessionConfigSource, project: Project | undefined): SessionSettingSources {
-  const own = session.params
+export function conversationSettingSources(conversation: ConversationConfigSource, project: Project | undefined): ConversationSettingSources {
+  const own = conversation.params
   const inherited = project?.params
   const param = (key: 'temperature' | 'top_p' | 'max_tokens'): SettingSource =>
     sourceOf(own?.[key] !== undefined, inherited?.[key] !== undefined)
-  const hasReasoning = (p: SessionParams | null | undefined) =>
+  const hasReasoning = (p: ConversationParams | null | undefined) =>
     p?.reasoning_enabled !== undefined || p?.reasoning_effort !== undefined
   return {
-    system_prompt: sourceOf(session.system_prompt !== null, (project?.system_prompt ?? null) !== null),
+    system_prompt: sourceOf(conversation.system_prompt !== null, (project?.system_prompt ?? null) !== null),
     model: sourceOf(
-      session.provider_id !== null && session.model_id !== null,
+      conversation.provider_id !== null && conversation.model_id !== null,
       project?.provider_id != null && project.model_id != null,
     ),
     temperature: param('temperature'),
@@ -345,7 +345,7 @@ export function sessionSettingSources(session: SessionConfigSource, project: Pro
 }
 
 /** Which layer supplies the model the next generation will use (spec §5.3). */
-export type ModelSource = 'session' | 'project' | 'command'
+export type ModelSource = 'conversation' | 'project' | 'command'
 
 export interface EffectiveModel {
   model: ModelRef | null
@@ -354,7 +354,7 @@ export interface EffectiveModel {
 }
 
 export interface ExistingChatModelContext {
-  /** `undefined` means this page has not made a deliberate model choice for the session. */
+  /** `undefined` means this page has not made a deliberate model choice for the conversation. */
   localPick: ModelRef | null | undefined
   messagesLoaded: boolean
   /** The selected message branch, oldest first. */
@@ -372,7 +372,7 @@ function lastGenerationModel(messages: readonly Message[]): ModelRef | null {
 }
 
 /**
- * The client's mirror of the server's precedence: session override → Project default → the model
+ * The client's mirror of the server's precedence: conversation override → Project default → the model
  * this command carries. The Composer shows the result, so it never claims a model the generation
  * would not actually use.
  */
@@ -382,7 +382,7 @@ export function effectiveModelFor(
   picked: ModelRef | null,
   chat?: ExistingChatModelContext,
 ): EffectiveModel {
-  if (override) return { model: override, source: 'session' }
+  if (override) return { model: override, source: 'conversation' }
   if (project?.provider_id != null && project.model_id != null) {
     return { model: { provider_id: project.provider_id, model_id: project.model_id }, source: 'project' }
   }
@@ -395,9 +395,9 @@ export function effectiveModelFor(
 }
 
 /**
- * What a Composer model pick has to do to the session's persisted override.
+ * What a Composer model pick has to do to the conversation's persisted override.
  *
- * `undefined` means "leave the session alone": with no Project default and no existing override,
+ * `undefined` means "leave the conversation alone": with no Project default and no existing override,
  * the model `send` carries is the one that runs, so pinning it would copy a value down that nobody
  * asked to fix. Otherwise the override has to move, because a stale override or a Project default
  * outranks the command's model and would silently ignore the pick (spec §5.3).
@@ -416,48 +416,48 @@ export function modelOverrideAfterPick(
   return undefined
 }
 
-/** The unsent configuration of a session that does not exist yet (spec §5.2). */
-export interface SessionDraft {
+/** The unsent configuration of a conversation that does not exist yet (spec §5.2). */
+export interface ConversationDraft {
   project_id: number | null
   system_prompt: string
-  /** The session's persisted model override, not the model this turn will use. */
+  /** The conversation's persisted model override, not the model this turn will use. */
   model: ModelRef | null
-  params: SessionParams | null
-  /** The new Session's immutable tool snapshot. */
+  params: ConversationParams | null
+  /** The new Conversation's immutable tool snapshot. */
   tools?: string[]
 }
 
 export interface SendInput {
-  sessionId: number | null
+  conversationId: number | null
   parentId: number | null
   parts: Part[]
   /** The model this generation will use, whichever layer it came from. */
   model: ModelRef
-  draft: SessionDraft
+  draft: ConversationDraft
 }
 
 /**
- * The first message creates the session and writes the draft in one command (spec §5.2). Every
- * init field is omitted once the session exists: the hub rejects the whole command when any of
+ * The first message creates the conversation and writes the draft in one command (spec §5.2). Every
+ * init field is omitted once the conversation exists: the hub rejects the whole command when any of
  * them is merely `!== undefined`, so nulling them out would break every follow-up send.
  */
-export function sendCommandFor({ sessionId, parentId, parts, model, draft }: SendInput): SendCommand {
+export function sendCommandFor({ conversationId, parentId, parts, model, draft }: SendInput): SendCommand {
   const command: SendCommand = {
     type: 'send',
-    session_id: sessionId,
+    conversation_id: conversationId,
     parent_id: parentId,
     parts,
     provider_id: model.provider_id,
     model_id: model.model_id,
   }
-  if (sessionId !== null) return command
+  if (conversationId !== null) return command
   return {
     ...command,
     project_id: draft.project_id,
     system_prompt: blankToNull(draft.system_prompt),
     params: draft.params,
-    session_provider_id: draft.model?.provider_id ?? null,
-    session_model_id: draft.model?.model_id ?? null,
+    conversation_provider_id: draft.model?.provider_id ?? null,
+    conversation_model_id: draft.model?.model_id ?? null,
     tools: [...new Set(draft.tools ?? [])].sort(),
   }
 }
@@ -485,14 +485,14 @@ export interface SendStep {
 
 export function optimisticUserMessage(input: {
   id: number
-  sessionId: number
+  conversationId: number
   parentId: number | null
   parts: Part[]
   createdAt: number
 }): Message {
   return {
     id: input.id,
-    session_id: input.sessionId,
+    conversation_id: input.conversationId,
     parent_id: input.parentId,
     seq: Number.MAX_SAFE_INTEGER,
     role: 'user',
@@ -558,8 +558,8 @@ export function assistantWaitState(message: Pick<Message, 'role' | 'status' | 'p
 }
 
 /** Moving a chat out of a Project sends an explicit `null`; an omitted field would be a no-op. */
-export function moveSessionCommand(sessionId: number, projectId: number | null): WsCommand {
-  return { type: 'session.update', session_id: sessionId, project_id: projectId }
+export function moveConversationCommand(conversationId: number, projectId: number | null): WsCommand {
+  return { type: 'conversation.update', conversation_id: conversationId, project_id: projectId }
 }
 
 function pathToRoot(byId: Map<number, Message>, headId: number | null): Message[] {
@@ -576,20 +576,20 @@ export const useSyncStore = defineStore('sync', () => {
   // snapshot event arrives, so a reload keyed on `status` can race ahead of it; watchers should
   // key on this instead to reload only once the snapshot has actually landed.
   const snapshotSeq = ref(0)
-  const sessions = reactive(new Map<number, Session>())
+  const conversations = reactive(new Map<number, Conversation>())
   const projects = reactive(new Map<number, Project>())
   const messages = reactive(new Map<number, Map<number, Message>>())
-  const loadedMessageSessions = reactive(new Set<number>())
+  const loadedMessageConversations = reactive(new Set<number>())
   const streamingIds = reactive(new Set<number>())
-  const forkResult = ref<{ request_id: string, session_id: number } | null>(null)
+  const forkResult = ref<{ request_id: string, conversation_id: number } | null>(null)
   const settings = ref<UserSettings>({ plugins: {} })
   const lastError = ref<string | null>(null)
   // Whether the Projects list has been fetched. Before it has, a Project id from a route cannot be
   // judged missing — only absent — and must not be silently dropped.
   const projectsLoaded = ref(false)
-  const sessionsLoaded = ref(false)
+  const conversationsLoaded = ref(false)
   const settingsLoaded = ref(false)
-  const sessionsError = ref<string | null>(null)
+  const conversationsError = ref<string | null>(null)
   const projectsError = ref<string | null>(null)
   const settingsError = ref<string | null>(null)
   const client = shallowRef<WsClient | null>(null)
@@ -626,18 +626,18 @@ export const useSyncStore = defineStore('sync', () => {
     )))
   }
 
-  const sessionList = computed(() => [...sessions.values()].sort((a, b) => b.updated_at - a.updated_at))
+  const conversationList = computed(() => [...conversations.values()].sort((a, b) => b.updated_at - a.updated_at))
   const projectList = computed(() => [...projects.values()].sort((a, b) => b.updated_at - a.updated_at))
 
-  /** Sidebar grouping: pass `null` for the unprojected Chats section. Inherits `sessionList`'s
+  /** Sidebar grouping: pass `null` for the unprojected Chats section. Inherits `conversationList`'s
    *  newest-first order, so a Project row's first entry is its latest chat. */
-  function sessionsInProject(projectId: number | null): Session[] {
-    return sessionList.value.filter((s) => s.project_id === projectId)
+  function conversationsInProject(projectId: number | null): Conversation[] {
+    return conversationList.value.filter((s) => s.project_id === projectId)
   }
 
-  function bucket(sessionId: number): Map<number, Message> {
-    let b = messages.get(sessionId)
-    if (!b) { b = reactive(new Map<number, Message>()); messages.set(sessionId, b) }
+  function bucket(conversationId: number): Map<number, Message> {
+    let b = messages.get(conversationId)
+    if (!b) { b = reactive(new Map<number, Message>()); messages.set(conversationId, b) }
     return b
   }
 
@@ -647,7 +647,7 @@ export const useSyncStore = defineStore('sync', () => {
   }
 
   function upsertMessage(m: Message): void {
-    const b = bucket(m.session_id)
+    const b = bucket(m.conversation_id)
     const existing = b.get(m.id)
     if (existing && streamingIds.has(m.id)) {
       // While the id is in the streaming set nothing may replace the live row: neither a stale
@@ -659,8 +659,8 @@ export const useSyncStore = defineStore('sync', () => {
     if (m.status === 'streaming') streamingIds.add(m.id)
   }
 
-  function ingestMessages(sessionId: number, rows: Message[]): void {
-    for (const r of rows) upsertMessage({ ...r, session_id: sessionId })
+  function ingestMessages(conversationId: number, rows: Message[]): void {
+    for (const r of rows) upsertMessage({ ...r, conversation_id: conversationId })
   }
 
   function applyEvent(e: WsEvent): void {
@@ -669,22 +669,22 @@ export const useSyncStore = defineStore('sync', () => {
         // Authoritative: streams that finished while we were offline must leave the set, so a
         // REST reload can overwrite them.
         streamingIds.clear()
-        for (const m of e.inflight) { streamingIds.add(m.id); bucket(m.session_id).set(m.id, m) }
+        for (const m of e.inflight) { streamingIds.add(m.id); bucket(m.conversation_id).set(m.id, m) }
         snapshotSeq.value++
         break
-      case 'session.created':
-      case 'session.updated':
-        sessions.set(e.session.id, e.session)
+      case 'conversation.created':
+      case 'conversation.updated':
+        conversations.set(e.conversation.id, e.conversation)
         break
-      case 'session.deleted': {
-        sessions.delete(e.session_id)
-        for (const id of messages.get(e.session_id)?.keys() ?? []) streamingIds.delete(id)
-        messages.delete(e.session_id)
-        loadedMessageSessions.delete(e.session_id)
+      case 'conversation.deleted': {
+        conversations.delete(e.conversation_id)
+        for (const id of messages.get(e.conversation_id)?.keys() ?? []) streamingIds.delete(id)
+        messages.delete(e.conversation_id)
+        loadedMessageConversations.delete(e.conversation_id)
         break
       }
-      case 'session.forked':
-        forkResult.value = { request_id: e.request_id, session_id: e.session_id }
+      case 'conversation.forked':
+        forkResult.value = { request_id: e.request_id, conversation_id: e.conversation_id }
         break
       case 'message.created':
         upsertMessage(e.message)
@@ -719,7 +719,7 @@ export const useSyncStore = defineStore('sync', () => {
         break
       }
       case 'head.changed': {
-        const s = sessions.get(e.session_id)
+        const s = conversations.get(e.conversation_id)
         if (s) s.head_message_id = e.message_id
         break
       }
@@ -732,10 +732,10 @@ export const useSyncStore = defineStore('sync', () => {
         break
       case 'project.deleted': {
         // No optimistic deletion (spec §9): this only runs once the server confirms. The
-        // `session.updated` broadcast that follows carries the authoritative post-delete row;
-        // nulling it here too keeps a session reachable through this event alone (e.g. offline).
+        // `conversation.updated` broadcast that follows carries the authoritative post-delete row;
+        // nulling it here too keeps a conversation reachable through this event alone (e.g. offline).
         projects.delete(e.project_id)
-        for (const s of sessions.values()) if (s.project_id === e.project_id) s.project_id = null
+        for (const s of conversations.values()) if (s.project_id === e.project_id) s.project_id = null
         break
       }
       case 'error':
@@ -745,31 +745,31 @@ export const useSyncStore = defineStore('sync', () => {
     }
   }
 
-  function pathFor(sessionId: number): Message[] {
-    const s = sessions.get(sessionId)
-    const b = messages.get(sessionId)
+  function pathFor(conversationId: number): Message[] {
+    const s = conversations.get(conversationId)
+    const b = messages.get(conversationId)
     if (!s || !b) return []
     return pathToRoot(b as Map<number, Message>, s.head_message_id)
   }
 
-  function siblingsOf(sessionId: number, messageId: number): Message[] {
-    const b = messages.get(sessionId)
+  function siblingsOf(conversationId: number, messageId: number): Message[] {
+    const b = messages.get(conversationId)
     const m = b?.get(messageId)
     if (!b || !m) return []
     return [...b.values()].filter((x) => x.parent_id === m.parent_id).sort((a, c) => a.seq - c.seq)
   }
 
-  function isStreaming(sessionId: number): boolean {
-    return pathFor(sessionId).some((m) => streamingIds.has(m.id))
+  function isStreaming(conversationId: number): boolean {
+    return pathFor(conversationId).some((m) => streamingIds.has(m.id))
   }
 
-  async function loadSessions(): Promise<void> {
-    sessionsError.value = null
+  async function loadConversations(): Promise<void> {
+    conversationsError.value = null
     try {
-      for (const s of await api.sessions()) sessions.set(s.id, s)
-      sessionsLoaded.value = true
+      for (const s of await api.conversations()) conversations.set(s.id, s)
+      conversationsLoaded.value = true
     } catch (error) {
-      sessionsError.value = error instanceof Error ? error.message : String(error)
+      conversationsError.value = error instanceof Error ? error.message : String(error)
       throw error
     }
   }
@@ -796,9 +796,9 @@ export const useSyncStore = defineStore('sync', () => {
     }
   }
 
-  async function loadMessages(sessionId: number): Promise<void> {
-    ingestMessages(sessionId, await api.messages(sessionId))
-    loadedMessageSessions.add(sessionId)
+  async function loadMessages(conversationId: number): Promise<void> {
+    ingestMessages(conversationId, await api.messages(conversationId))
+    loadedMessageConversations.add(conversationId)
   }
 
   function connect(): void {
@@ -822,10 +822,10 @@ export const useSyncStore = defineStore('sync', () => {
   }
 
   return {
-    status, snapshotSeq, sessions, projects, messages, streamingIds, forkResult, settings, lastError, projectsLoaded, sessionsLoaded, settingsLoaded,
+    status, snapshotSeq, conversations, projects, messages, streamingIds, forkResult, settings, lastError, projectsLoaded, conversationsLoaded, settingsLoaded,
     optimisticMutations,
-    sessionsError, projectsError, settingsError, loadedMessageSessions, sessionList, projectList,
-    applyEvent, ingestMessages, sessionsInProject, pathFor, siblingsOf, isStreaming, loadSessions, loadProjects, loadSettings, loadMessages, connect, send,
+    conversationsError, projectsError, settingsError, loadedMessageConversations, conversationList, projectList,
+    applyEvent, ingestMessages, conversationsInProject, pathFor, siblingsOf, isStreaming, loadConversations, loadProjects, loadSettings, loadMessages, connect, send,
     beginOptimistic, confirmOptimistic, rejectOptimistic, abandonOptimistic, optimisticToolResult, optimisticToolCallIds,
   }
 })

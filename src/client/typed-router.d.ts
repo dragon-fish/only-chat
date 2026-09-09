@@ -47,9 +47,9 @@ declare module 'vue-router/auto-routes' {
     >,
     '/new': RouteRecordInfo<
       '/new',
-      '/new/:sessionId?',
-      { sessionId?: ParamValueZeroOrOne<true> },
-      { sessionId?: ParamValueZeroOrOne<false> },
+      '/new/:conversationId?',
+      { conversationId?: ParamValueZeroOrOne<true> },
+      { conversationId?: ParamValueZeroOrOne<false> },
       | never
     >,
     '/project/[projectId]': RouteRecordInfo<
@@ -70,9 +70,9 @@ declare module 'vue-router/auto-routes' {
     >,
     '/project/[projectId]/new': RouteRecordInfo<
       '/project/[projectId]/new',
-      '/project/:projectId/new/:sessionId?',
-      { projectId: ParamValue<true>, sessionId?: ParamValueZeroOrOne<true> },
-      { projectId: ParamValue<false>, sessionId?: ParamValueZeroOrOne<false> },
+      '/project/:projectId/new/:conversationId?',
+      { conversationId?: ParamValueZeroOrOne<true>, projectId: ParamValue<true> },
+      { conversationId?: ParamValueZeroOrOne<false>, projectId: ParamValue<false> },
       | never
     >,
     '/project/[projectId]/settings': RouteRecordInfo<

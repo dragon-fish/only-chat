@@ -9,7 +9,7 @@ const inlinePng: AttachmentInput = { mime: 'image/png', data: { type: 'data', da
 
 function msg(over: Partial<Message> & Pick<Message, 'id' | 'role' | 'parts'>): Message {
   return {
-    session_id: 1, parent_id: null, seq: over.id, provider_id: null, model_id: null,
+    conversation_id: 1, parent_id: null, seq: over.id, provider_id: null, model_id: null,
     usage: null, status: 'done', error: null, created_at: 0, ...over,
   }
 }

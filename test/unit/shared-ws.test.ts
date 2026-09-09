@@ -2,17 +2,26 @@ import { describe, expect, it } from 'vitest'
 import { encodeEvent, parseCommand, WsEventSchema } from '@/shared/ws'
 
 describe('ws protocol', () => {
-  it('parses a send command with a new session', () => {
+  it('round-trips a conversation update with its tool snapshot', () => {
+    const conversation = {
+      id: 7, user_id: 1, project_id: null, title: 'legacy', head_message_id: 12,
+      provider_id: null, model_id: null, system_prompt: null, params: null,
+      tools: ['ask_user'], created_at: 0, updated_at: 1, archived_at: null,
+    }
+    expect(WsEventSchema.parse({ type: 'conversation.updated', conversation }))
+      .toEqual({ type: 'conversation.updated', conversation })
+  })
+  it('parses a send command with a new conversation', () => {
     const cmd = parseCommand(JSON.stringify({
-      type: 'send', request_id: 'r1', session_id: null, parent_id: null,
+      type: 'send', request_id: 'r1', conversation_id: null, parent_id: null,
       parts: [{ type: 'text', text: 'hi' }], provider_id: 1, model_id: 'gpt-5.1',
     }))
     expect(cmd.type).toBe('send')
-    if (cmd.type === 'send') expect(cmd.session_id).toBeNull()
+    if (cmd.type === 'send') expect(cmd.conversation_id).toBeNull()
   })
 
   it('rejects a command without type', () => {
-    expect(() => parseCommand('{"session_id":1}')).toThrow()
+    expect(() => parseCommand('{"conversation_id":1}')).toThrow()
   })
 
   it('round-trips a delta event', () => {
@@ -27,26 +36,26 @@ describe('ws protocol', () => {
     expect(cmd.type).toBe('settings.update')
   })
 
-  it('send carries nullable project_id, system_prompt, params and a session model override for first-message session init', () => {
+  it('send carries nullable project_id, system_prompt, params and a conversation model override for first-message conversation init', () => {
     const cmd = parseCommand(JSON.stringify({
-      type: 'send', session_id: null, parent_id: null, parts: [{ type: 'text', text: 'hi' }],
+      type: 'send', conversation_id: null, parent_id: null, parts: [{ type: 'text', text: 'hi' }],
       provider_id: 1, model_id: 'gpt-5.1', project_id: 3, system_prompt: 'be terse',
       params: { reasoning_enabled: true, reasoning_effort: null },
-      session_provider_id: 2, session_model_id: 'gpt-5.1-mini',
+      conversation_provider_id: 2, conversation_model_id: 'gpt-5.1-mini',
     }))
     expect(cmd.type).toBe('send')
     if (cmd.type === 'send') {
       expect(cmd.project_id).toBe(3)
       expect(cmd.system_prompt).toBe('be terse')
       expect(cmd.params).toEqual({ reasoning_enabled: true, reasoning_effort: null })
-      expect(cmd.session_provider_id).toBe(2)
-      expect(cmd.session_model_id).toBe('gpt-5.1-mini')
+      expect(cmd.conversation_provider_id).toBe(2)
+      expect(cmd.conversation_model_id).toBe('gpt-5.1-mini')
     }
   })
 
-  it('send omits all session-init fields, including the session model override, when not provided', () => {
+  it('send omits all conversation-init fields, including the conversation model override, when not provided', () => {
     const cmd = parseCommand(JSON.stringify({
-      type: 'send', session_id: null, parent_id: null, parts: [{ type: 'text', text: 'hi' }],
+      type: 'send', conversation_id: null, parent_id: null, parts: [{ type: 'text', text: 'hi' }],
       provider_id: 1, model_id: 'gpt-5.1',
     }))
     expect(cmd.type).toBe('send')
@@ -54,8 +63,8 @@ describe('ws protocol', () => {
       expect(cmd.project_id).toBeUndefined()
       expect(cmd.system_prompt).toBeUndefined()
       expect(cmd.params).toBeUndefined()
-      expect(cmd.session_provider_id).toBeUndefined()
-      expect(cmd.session_model_id).toBeUndefined()
+      expect(cmd.conversation_provider_id).toBeUndefined()
+      expect(cmd.conversation_model_id).toBeUndefined()
     }
   })
 
@@ -71,20 +80,20 @@ describe('ws protocol', () => {
     expect(del.type).toBe('project.delete')
   })
 
-  it('session.update accepts a nullable project_id', () => {
-    const cmd = parseCommand(JSON.stringify({ type: 'session.update', session_id: 1, project_id: null }))
-    expect(cmd.type).toBe('session.update')
-    if (cmd.type === 'session.update') expect(cmd.project_id).toBeNull()
+  it('conversation.update accepts a nullable project_id', () => {
+    const cmd = parseCommand(JSON.stringify({ type: 'conversation.update', conversation_id: 1, project_id: null }))
+    expect(cmd.type).toBe('conversation.update')
+    if (cmd.type === 'conversation.update') expect(cmd.project_id).toBeNull()
   })
 
-  it('carries a first-send tool snapshot and a later session update', () => {
+  it('carries a first-send tool snapshot and a later conversation update', () => {
     const first = parseCommand(JSON.stringify({
-      type: 'send', session_id: null, parent_id: null, parts: [{ type: 'text', text: 'hi' }],
+      type: 'send', conversation_id: null, parent_id: null, parts: [{ type: 'text', text: 'hi' }],
       provider_id: 1, model_id: 'gpt', tools: ['ask_user'],
     }))
     expect(first.type === 'send' && first.tools).toEqual(['ask_user'])
-    const update = parseCommand(JSON.stringify({ type: 'session.update', session_id: 1, tools: ['ask_user'] }))
-    expect(update.type === 'session.update' && update.tools).toEqual(['ask_user'])
+    const update = parseCommand(JSON.stringify({ type: 'conversation.update', conversation_id: 1, tools: ['ask_user'] }))
+    expect(update.type === 'conversation.update' && update.tools).toEqual(['ask_user'])
   })
 
   it('parses correlated tool response and continuation commands', () => {

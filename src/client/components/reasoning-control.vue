@@ -32,7 +32,7 @@ const props = withDefaults(defineProps<{
   stops?: ReasoningStop[] | null
   /** The effective choice, already resolved through Project inheritance by the parent. */
   active: ReasoningChoice
-  /** True when the session overrides its Project, which is what surfaces the 默认 button. */
+  /** True when the conversation overrides its Project, which is what surfaces the 默认 button. */
   overridden: boolean
   /** No model resolved yet — a different disabled reason from "this model cannot reason". */
   noModel: boolean
@@ -44,7 +44,7 @@ const model = computed(() => reasoningControlModel(stops.value, props.active))
 
 /**
  * Spec §5.1: a control that cannot act says why; it never silently disappears. Only the first case
- * is the chip's own — a session with no resolved model has no capabilities to derive stops from,
+ * is the chip's own — a conversation with no resolved model has no capabilities to derive stops from,
  * which is a different statement from "this model cannot reason". The second comes from the shared
  * `reasoningDisabledReason`, which the body also renders, so the two hosts cannot drift apart.
  */

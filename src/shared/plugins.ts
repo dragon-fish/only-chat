@@ -1,4 +1,4 @@
-/** Stable built-in IDs; persisted Session snapshots must never depend on display names. */
+/** Stable built-in IDs; persisted Conversation snapshots must never depend on display names. */
 export const ASK_USER_PLUGIN_ID = 'ask_user' as const
 export const ASK_USER_TOOL_ID = 'ask_user' as const
 

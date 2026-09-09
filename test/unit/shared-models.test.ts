@@ -2,12 +2,19 @@ import { describe, expect, it } from 'vitest'
 import {
   InterfaceProtocolSchema, MessageSchema, ModelPageSchema, ModelQuerySchema,
   ProjectSchema, ProviderInterfaceSchema, ProviderWithInterfacesSchema,
-  SessionParamsSchema, UsageSchema, UserSettingsSchema,
+  ConversationParamsSchema, ConversationSchema, UsageSchema, UserSettingsSchema,
 } from '@/shared/models'
 import { ModelWriteInputSchema, ProviderInterfaceInputSchema, ProviderWriteInputSchema } from '@/shared/api'
 import { provider } from './provider-fixtures'
 
 describe('models schemas', () => {
+  it('parses a conversation with its immutable tool selection', () => {
+    expect(ConversationSchema.parse({
+      id: 7, user_id: 1, project_id: null, title: 'legacy', head_message_id: 12,
+      provider_id: null, model_id: null, system_prompt: null, params: null,
+      tools: ['ask_user'], created_at: 0, updated_at: 1, archived_at: null,
+    })).toMatchObject({ id: 7, title: 'legacy', tools: ['ask_user'] })
+  })
   it('distinguishes undefined and 0 in usage', () => {
     const u = UsageSchema.parse({ prompt: 10, completion: 0 })
     expect(u.completion).toBe(0)
@@ -16,10 +23,11 @@ describe('models schemas', () => {
 
   it('parses a streaming message with null parent', () => {
     const m = MessageSchema.parse({
-      id: 1, session_id: 1, parent_id: null, seq: 1, role: 'assistant', parts: [],
+      id: 1, conversation_id: 1, parent_id: null, seq: 1, role: 'assistant', parts: [],
       provider_id: 2, model_id: 'gpt-5.1', usage: null, status: 'streaming', error: null, created_at: 0,
     })
     expect(m.parent_id).toBeNull()
+    expect(m.conversation_id).toBe(1)
   })
 
   it('never carries an api key on Provider DTOs', () => {
@@ -31,8 +39,8 @@ describe('models schemas', () => {
     expect(UserSettingsSchema.parse({})).toEqual({ plugins: {} })
   })
 
-  it('accepts partial session params', () => {
-    expect(SessionParamsSchema.parse({ temperature: 0.7 })).toEqual({ temperature: 0.7 })
+  it('accepts partial conversation params', () => {
+    expect(ConversationParamsSchema.parse({ temperature: 0.7 })).toEqual({ temperature: 0.7 })
   })
 
   it('defines only the four supported provider interface protocols', () => {
@@ -121,16 +129,16 @@ describe('models schemas', () => {
   })
 
   it('treats explicit null reasoning_effort as Auto, independent of reasoning_enabled', () => {
-    expect(SessionParamsSchema.parse({ reasoning_enabled: true, reasoning_effort: null }))
+    expect(ConversationParamsSchema.parse({ reasoning_enabled: true, reasoning_effort: null }))
       .toEqual({ reasoning_enabled: true, reasoning_effort: null })
   })
 
   it('accepts an explicit string reasoning_effort', () => {
-    expect(SessionParamsSchema.parse({ reasoning_effort: 'xhigh' })).toEqual({ reasoning_effort: 'xhigh' })
+    expect(ConversationParamsSchema.parse({ reasoning_effort: 'xhigh' })).toEqual({ reasoning_effort: 'xhigh' })
   })
 
   it('rejects an out-of-enum reasoning_effort', () => {
-    expect(SessionParamsSchema.safeParse({ reasoning_effort: 'turbo' }).success).toBe(false)
+    expect(ConversationParamsSchema.safeParse({ reasoning_effort: 'turbo' }).success).toBe(false)
   })
 
   it('parses a Project with only name required', () => {

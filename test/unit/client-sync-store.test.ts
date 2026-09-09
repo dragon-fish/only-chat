@@ -10,7 +10,7 @@ import {
   fieldLooksBlank,
   mergeRestoredText,
   modelOverrideAfterPick,
-  moveSessionCommand,
+  moveConversationCommand,
   nextSendState,
   optimisticUserMessage,
   paramsFromFields,
@@ -23,27 +23,27 @@ import {
   reasoningDisabledReason,
   reasoningStopsFor,
   sendCommandFor,
-  sessionFormFrom,
-  sessionSettingSources,
+  conversationFormFrom,
+  conversationSettingSources,
   type OutstandingSend,
   type ParamFields,
   type ProjectFormState,
   type ReasoningStop,
   type SendEvent,
-  type SessionConfigSource,
+  type ConversationConfigSource,
   useSyncStore,
   withOptimisticUserMessage,
 } from '@/client/stores/sync'
 import type { ModelRef } from '@/shared/api'
-import type { Message, Project, Session } from '@/shared/models'
+import type { Message, Project, Conversation } from '@/shared/models'
 import type { Part } from '@/shared/parts'
 import { parseCommand } from '@/shared/ws'
 
-const session: Session = { id: 1, user_id: 1, project_id: null, title: 't', head_message_id: null, provider_id: null, model_id: null, system_prompt: null, params: null, tools: [], created_at: 1, updated_at: 1, archived_at: null }
+const conversation: Conversation = { id: 1, user_id: 1, project_id: null, title: 't', head_message_id: null, provider_id: null, model_id: null, system_prompt: null, params: null, tools: [], created_at: 1, updated_at: 1, archived_at: null }
 const project: Project = { id: 1, user_id: 1, name: 'p', icon_attachment_id: null, system_prompt: null, provider_id: null, model_id: null, params: null, created_at: 1, updated_at: 1 }
 const msg = (id: number, parent_id: number | null, role: 'user' | 'assistant', over: Partial<Message> = {}): Message =>
-  ({ id, session_id: 1, parent_id, seq: id, role, parts: [], provider_id: null, model_id: null, usage: null, status: 'done', error: null, created_at: 0, ...over })
-const mkSession = (id: number, over: Partial<Session> = {}): Session => ({ ...session, id, title: `s${id}`, updated_at: id, ...over })
+  ({ id, conversation_id: 1, parent_id, seq: id, role, parts: [], provider_id: null, model_id: null, usage: null, status: 'done', error: null, created_at: 0, ...over })
+const mkConversation = (id: number, over: Partial<Conversation> = {}): Conversation => ({ ...conversation, id, title: `s${id}`, updated_at: id, ...over })
 const mkProject = (id: number, over: Partial<Project> = {}): Project => ({ ...project, id, name: `p${id}`, updated_at: id, ...over })
 /** Every optional field blank: this is what the settings form holds for a name-only Project. */
 const blankForm: ProjectFormState = { name: '  研究  ', icon_attachment_id: null, system_prompt: '', model: null, temperature: '', top_p: '', max_tokens: '', reasoning: 'inherit' }
@@ -51,14 +51,14 @@ const blankForm: ProjectFormState = { name: '  研究  ', icon_attachment_id: nu
 describe('sync store', () => {
   beforeEach(() => setActivePinia(createPinia()))
 
-  it('applies session and message events idempotently', () => {
+  it('applies conversation and message events idempotently', () => {
     const s = useSyncStore()
-    s.applyEvent({ type: 'session.created', session })
-    s.applyEvent({ type: 'session.created', session })
-    expect(s.sessionList).toHaveLength(1)
+    s.applyEvent({ type: 'conversation.created', conversation })
+    s.applyEvent({ type: 'conversation.created', conversation })
+    expect(s.conversationList).toHaveLength(1)
     s.applyEvent({ type: 'message.created', message: msg(1, null, 'user') })
     s.applyEvent({ type: 'message.created', message: msg(2, 1, 'assistant', { status: 'streaming' }) })
-    s.applyEvent({ type: 'head.changed', session_id: 1, message_id: 2 })
+    s.applyEvent({ type: 'head.changed', conversation_id: 1, message_id: 2 })
     expect(s.streamingIds.has(2)).toBe(true)
     s.applyEvent({ type: 'message.delta', message_id: 2, part_index: 0, kind: 'reasoning', delta: 'hm' })
     s.applyEvent({ type: 'message.delta', message_id: 2, part_index: 1, kind: 'text', delta: 'Hi' })
@@ -74,12 +74,12 @@ describe('sync store', () => {
     const s = useSyncStore()
     // `connect()` has not run, so nothing takes the command and no `error` event will ever arrive to
     // explain it. A caller that latches UI state on the round trip has to learn that here.
-    expect(s.send({ type: 'stop', session_id: 1 })).toBe(false)
+    expect(s.send({ type: 'stop', conversation_id: 1 })).toBe(false)
   })
 
   it('keeps streaming state when REST data arrives with a stale status', () => {
     const s = useSyncStore()
-    s.applyEvent({ type: 'session.created', session })
+    s.applyEvent({ type: 'conversation.created', conversation })
     s.applyEvent({ type: 'snapshot', inflight: [msg(5, 4, 'assistant', { status: 'streaming', parts: [{ type: 'text', text: 'partial' }] })] })
     s.ingestMessages(1, [msg(4, null, 'user'), msg(5, 4, 'assistant', { status: 'error', error: 'interrupted' })])
     expect(s.messages.get(1)!.get(5)).toMatchObject({ status: 'streaming', parts: [{ type: 'text', text: 'partial' }] })
@@ -87,10 +87,10 @@ describe('sync store', () => {
 
   it('reconciles the streaming set from a snapshot so a finished stream can be overwritten', () => {
     const s = useSyncStore()
-    s.applyEvent({ type: 'session.created', session })
+    s.applyEvent({ type: 'conversation.created', conversation })
     s.applyEvent({ type: 'message.created', message: msg(4, null, 'user') })
     s.applyEvent({ type: 'message.created', message: msg(5, 4, 'assistant', { status: 'streaming' }) })
-    s.applyEvent({ type: 'head.changed', session_id: 1, message_id: 5 })
+    s.applyEvent({ type: 'head.changed', conversation_id: 1, message_id: 5 })
     expect(s.streamingIds.has(5)).toBe(true)
     // Reconnect: the stream finished while we were offline, so the snapshot no longer lists it.
     expect(s.snapshotSeq).toBe(0)
@@ -106,7 +106,7 @@ describe('sync store', () => {
 
   it('ignores a duplicate streaming shell so accumulated parts survive', () => {
     const s = useSyncStore()
-    s.applyEvent({ type: 'session.created', session })
+    s.applyEvent({ type: 'conversation.created', conversation })
     s.applyEvent({ type: 'message.created', message: msg(2, null, 'assistant', { status: 'streaming' }) })
     s.applyEvent({ type: 'message.delta', message_id: 2, part_index: 0, kind: 'text', delta: 'Hi' })
     s.applyEvent({ type: 'message.created', message: msg(2, null, 'assistant', { status: 'streaming' }) })
@@ -114,33 +114,33 @@ describe('sync store', () => {
     expect(s.streamingIds.has(2)).toBe(true)
   })
 
-  it('drops the streaming ids of a deleted session', () => {
+  it('drops the streaming ids of a deleted conversation', () => {
     const s = useSyncStore()
-    s.applyEvent({ type: 'session.created', session })
+    s.applyEvent({ type: 'conversation.created', conversation })
     s.applyEvent({ type: 'message.created', message: msg(7, null, 'assistant', { status: 'streaming' }) })
     expect(s.streamingIds.has(7)).toBe(true)
-    s.applyEvent({ type: 'session.deleted', session_id: 1 })
+    s.applyEvent({ type: 'conversation.deleted', conversation_id: 1 })
     expect(s.streamingIds.has(7)).toBe(false)
     expect(s.streamingIds.size).toBe(0)
   })
 
   it('computes siblings for the branch switcher', () => {
     const s = useSyncStore()
-    s.applyEvent({ type: 'session.created', session })
+    s.applyEvent({ type: 'conversation.created', conversation })
     s.ingestMessages(1, [msg(1, null, 'user'), msg(2, 1, 'assistant'), msg(3, 1, 'assistant')])
     expect(s.siblingsOf(1, 3).map((m) => m.id)).toEqual([2, 3])
   })
 
-  it('removes a deleted session and its messages', () => {
+  it('removes a deleted conversation and its messages', () => {
     const s = useSyncStore()
-    s.applyEvent({ type: 'session.created', session })
+    s.applyEvent({ type: 'conversation.created', conversation })
     s.ingestMessages(1, [msg(1, null, 'user')])
-    s.applyEvent({ type: 'session.deleted', session_id: 1 })
-    expect(s.sessions.size).toBe(0)
+    s.applyEvent({ type: 'conversation.deleted', conversation_id: 1 })
+    expect(s.conversations.size).toBe(0)
     expect(s.messages.has(1)).toBe(false)
   })
 
-  it('applies project events idempotently and, without optimistic deletion, moves the project’s sessions back to Chats when it is deleted', () => {
+  it('applies project events idempotently and, without optimistic deletion, moves the project’s conversations back to Chats when it is deleted', () => {
     const s = useSyncStore()
     s.applyEvent({ type: 'project.created', project })
     s.applyEvent({ type: 'project.created', project })
@@ -151,10 +151,10 @@ describe('sync store', () => {
     s.applyEvent({ type: 'project.updated', project: renamed })
     expect(s.projects.get(project.id)).toEqual(renamed)
 
-    s.applyEvent({ type: 'session.created', session: { ...session, project_id: project.id } })
+    s.applyEvent({ type: 'conversation.created', conversation: { ...conversation, project_id: project.id } })
     s.applyEvent({ type: 'project.deleted', project_id: project.id })
     expect(s.projects.has(project.id)).toBe(false)
-    expect(s.sessions.get(session.id)?.project_id).toBeNull()
+    expect(s.conversations.get(conversation.id)?.project_id).toBeNull()
   })
 })
 
@@ -169,57 +169,57 @@ describe('project navigation view-model', () => {
     expect(s.projectList.map((p) => p.id)).toEqual([2, 3, 1])
   })
 
-  it('groups sessions under their project and keeps unprojected ones in Chats', () => {
+  it('groups conversations under their project and keeps unprojected ones in Chats', () => {
     const s = useSyncStore()
     s.applyEvent({ type: 'project.created', project: mkProject(1) })
     s.applyEvent({ type: 'project.created', project: mkProject(2) })
     for (const row of [
-      mkSession(10, { project_id: 1, updated_at: 10 }),
-      mkSession(11, { project_id: 1, updated_at: 30 }),
-      mkSession(12, { project_id: 2, updated_at: 20 }),
-      mkSession(13, { project_id: null, updated_at: 40 }),
-      mkSession(14, { project_id: null, updated_at: 5 }),
-    ]) s.applyEvent({ type: 'session.created', session: row })
+      mkConversation(10, { project_id: 1, updated_at: 10 }),
+      mkConversation(11, { project_id: 1, updated_at: 30 }),
+      mkConversation(12, { project_id: 2, updated_at: 20 }),
+      mkConversation(13, { project_id: null, updated_at: 40 }),
+      mkConversation(14, { project_id: null, updated_at: 5 }),
+    ]) s.applyEvent({ type: 'conversation.created', conversation: row })
 
-    expect(s.sessionsInProject(1).map((x) => x.id)).toEqual([11, 10])
-    expect(s.sessionsInProject(2).map((x) => x.id)).toEqual([12])
-    expect(s.sessionsInProject(null).map((x) => x.id)).toEqual([13, 14])
+    expect(s.conversationsInProject(1).map((x) => x.id)).toEqual([11, 10])
+    expect(s.conversationsInProject(2).map((x) => x.id)).toEqual([12])
+    expect(s.conversationsInProject(null).map((x) => x.id)).toEqual([13, 14])
     // A Project with no chats renders the placeholder row, so the empty list must be reachable.
-    expect(s.sessionsInProject(3)).toEqual([])
+    expect(s.conversationsInProject(3)).toEqual([])
   })
 
-  it('moves a session into a project and back out to Chats', () => {
+  it('moves a conversation into a project and back out to Chats', () => {
     const s = useSyncStore()
     s.applyEvent({ type: 'project.created', project: mkProject(1) })
-    s.applyEvent({ type: 'session.created', session: mkSession(10) })
-    expect(s.sessionsInProject(null).map((x) => x.id)).toEqual([10])
+    s.applyEvent({ type: 'conversation.created', conversation: mkConversation(10) })
+    expect(s.conversationsInProject(null).map((x) => x.id)).toEqual([10])
 
     // Moving out must send an explicit `null`, never an omitted field: omitting it would leave
-    // the session in its Project (spec §7.1).
-    expect(moveSessionCommand(10, 1)).toEqual({ type: 'session.update', session_id: 10, project_id: 1 })
-    expect(moveSessionCommand(10, null)).toEqual({ type: 'session.update', session_id: 10, project_id: null })
-    expect(parseCommand(JSON.stringify(moveSessionCommand(10, null)))).toEqual({ type: 'session.update', session_id: 10, project_id: null })
+    // the conversation in its Project (spec §7.1).
+    expect(moveConversationCommand(10, 1)).toEqual({ type: 'conversation.update', conversation_id: 10, project_id: 1 })
+    expect(moveConversationCommand(10, null)).toEqual({ type: 'conversation.update', conversation_id: 10, project_id: null })
+    expect(parseCommand(JSON.stringify(moveConversationCommand(10, null)))).toEqual({ type: 'conversation.update', conversation_id: 10, project_id: null })
 
-    s.applyEvent({ type: 'session.updated', session: mkSession(10, { project_id: 1 }) })
-    expect(s.sessionsInProject(1).map((x) => x.id)).toEqual([10])
-    expect(s.sessionsInProject(null)).toEqual([])
+    s.applyEvent({ type: 'conversation.updated', conversation: mkConversation(10, { project_id: 1 }) })
+    expect(s.conversationsInProject(1).map((x) => x.id)).toEqual([10])
+    expect(s.conversationsInProject(null)).toEqual([])
 
-    s.applyEvent({ type: 'session.updated', session: mkSession(10, { project_id: null }) })
-    expect(s.sessionsInProject(1)).toEqual([])
-    expect(s.sessionsInProject(null).map((x) => x.id)).toEqual([10])
+    s.applyEvent({ type: 'conversation.updated', conversation: mkConversation(10, { project_id: null }) })
+    expect(s.conversationsInProject(1)).toEqual([])
+    expect(s.conversationsInProject(null).map((x) => x.id)).toEqual([10])
   })
 
   it('returns a deleted project’s chats to the Chats section', () => {
     const s = useSyncStore()
     s.applyEvent({ type: 'project.created', project: mkProject(1) })
-    s.applyEvent({ type: 'session.created', session: mkSession(10, { project_id: 1 }) })
-    s.applyEvent({ type: 'session.created', session: mkSession(11, { project_id: 1 }) })
-    expect(s.sessionsInProject(null)).toEqual([])
+    s.applyEvent({ type: 'conversation.created', conversation: mkConversation(10, { project_id: 1 }) })
+    s.applyEvent({ type: 'conversation.created', conversation: mkConversation(11, { project_id: 1 }) })
+    expect(s.conversationsInProject(null)).toEqual([])
 
     s.applyEvent({ type: 'project.deleted', project_id: 1 })
     expect(s.projectList).toEqual([])
-    expect(s.sessionsInProject(null).map((x) => x.id)).toEqual([11, 10])
-    expect(s.sessions.size).toBe(2)
+    expect(s.conversationsInProject(null).map((x) => x.id)).toEqual([11, 10])
+    expect(s.conversations.size).toBe(2)
   })
 
   it('sends null for every optional Project setting left empty', () => {
@@ -353,19 +353,19 @@ describe('reasoning control', () => {
   })
 })
 
-describe('session settings form', () => {
+describe('conversation settings form', () => {
   const fields: ParamFields = { temperature: '', top_p: '', max_tokens: '', reasoning: 'inherit' }
 
-  it('holds only what the session itself overrides, never an inherited value', () => {
-    expect(sessionFormFrom(undefined)).toEqual({ title: '', system_prompt: '', ...fields })
-    expect(sessionFormFrom({ ...session, title: 'T', system_prompt: 'S', params: { temperature: 0.5 } }))
+  it('holds only what the conversation itself overrides, never an inherited value', () => {
+    expect(conversationFormFrom(undefined)).toEqual({ title: '', system_prompt: '', ...fields })
+    expect(conversationFormFrom({ ...conversation, title: 'T', system_prompt: 'S', params: { temperature: 0.5 } }))
       .toEqual({ title: 'T', system_prompt: 'S', ...fields, temperature: '0.5' })
   })
 
   it('keeps an explicit Auto through an unrelated edit', () => {
     // Regression: reading the pair back with `??` collapsed explicit Auto into inherit, so editing
     // the temperature silently deleted the user's Auto choice (spec §3.3).
-    const form = sessionFormFrom({ ...session, params: { reasoning_enabled: true, reasoning_effort: null } })
+    const form = conversationFormFrom({ ...conversation, params: { reasoning_enabled: true, reasoning_effort: null } })
     expect(form.reasoning).toBe('auto')
     expect(paramsFromFields({ ...form, temperature: '0.5' }))
       .toEqual({ temperature: 0.5, reasoning_enabled: true, reasoning_effort: null })
@@ -396,23 +396,23 @@ describe('session settings form', () => {
       ...mkProject(3), system_prompt: 'P', provider_id: 1, model_id: 'm',
       params: { temperature: 0.2, top_p: 0.9, reasoning_enabled: true },
     }
-    const bare: SessionConfigSource = { system_prompt: null, provider_id: null, model_id: null, params: null }
-    expect(sessionSettingSources(bare, project)).toEqual({
+    const bare: ConversationConfigSource = { system_prompt: null, provider_id: null, model_id: null, params: null }
+    expect(conversationSettingSources(bare, project)).toEqual({
       system_prompt: 'project', model: 'project', temperature: 'project', top_p: 'project',
       max_tokens: 'default', reasoning: 'project',
     })
-    expect(sessionSettingSources(bare, undefined)).toEqual({
+    expect(conversationSettingSources(bare, undefined)).toEqual({
       system_prompt: 'default', model: 'default', temperature: 'default', top_p: 'default',
       max_tokens: 'default', reasoning: 'default',
     })
-    const overridden: SessionConfigSource = {
+    const overridden: ConversationConfigSource = {
       system_prompt: 'S', provider_id: 2, model_id: 'n',
       params: { temperature: 0, max_tokens: 8, reasoning_effort: null },
     }
-    expect(sessionSettingSources(overridden, project)).toEqual({
+    expect(conversationSettingSources(overridden, project)).toEqual({
       // `temperature: 0` and an explicit-Auto `reasoning_effort: null` are real overrides.
-      system_prompt: 'session', model: 'session', temperature: 'session', top_p: 'project',
-      max_tokens: 'session', reasoning: 'session',
+      system_prompt: 'conversation', model: 'conversation', temperature: 'conversation', top_p: 'project',
+      max_tokens: 'conversation', reasoning: 'conversation',
     })
   })
 })
@@ -423,9 +423,9 @@ describe('composer model precedence', () => {
   const local: ModelRef = { provider_id: 7, model_id: 'local' }
   const projectModel = mkProject(1, { provider_id: 1, model_id: 'project-model' })
   const messages: Message[] = [
-    { id: 1, session_id: 1, parent_id: null, seq: 1, role: 'assistant', parts: [], provider_id: 6, model_id: 'older', usage: null, status: 'done', error: null, created_at: 1 },
-    { id: 2, session_id: 1, parent_id: 1, seq: 2, role: 'user', parts: [], provider_id: null, model_id: null, usage: null, status: 'done', error: null, created_at: 2 },
-    { id: 3, session_id: 1, parent_id: 2, seq: 3, role: 'assistant', parts: [], provider_id: historical.provider_id, model_id: historical.model_id, usage: null, status: 'done', error: null, created_at: 3 },
+    { id: 1, conversation_id: 1, parent_id: null, seq: 1, role: 'assistant', parts: [], provider_id: 6, model_id: 'older', usage: null, status: 'done', error: null, created_at: 1 },
+    { id: 2, conversation_id: 1, parent_id: 1, seq: 2, role: 'user', parts: [], provider_id: null, model_id: null, usage: null, status: 'done', error: null, created_at: 2 },
+    { id: 3, conversation_id: 1, parent_id: 2, seq: 3, role: 'assistant', parts: [], provider_id: historical.provider_id, model_id: historical.model_id, usage: null, status: 'done', error: null, created_at: 3 },
   ]
 
   it('shows the model the generation will actually use', () => {
@@ -434,7 +434,7 @@ describe('composer model precedence', () => {
     expect(effectiveModelFor(null, projectModel, picked))
       .toEqual({ model: { provider_id: 1, model_id: 'project-model' }, source: 'project' })
     expect(effectiveModelFor({ provider_id: 2, model_id: 'own' }, projectModel, picked))
-      .toEqual({ model: { provider_id: 2, model_id: 'own' }, source: 'session' })
+      .toEqual({ model: { provider_id: 2, model_id: 'own' }, source: 'conversation' })
     // A Project with no default model contributes nothing.
     expect(effectiveModelFor(null, mkProject(2), picked)).toEqual({ model: picked, source: 'command' })
   })
@@ -458,9 +458,9 @@ describe('composer model precedence', () => {
     })).toEqual({ model: picked, source: 'command' })
   })
 
-  it('persists a pick as a session override only when `send` would otherwise ignore it', () => {
+  it('persists a pick as a conversation override only when `send` would otherwise ignore it', () => {
     // No Project default and no existing override: `send`'s own model is honoured (spec §5.3), so
-    // nothing has to be written to the session.
+    // nothing has to be written to the conversation.
     expect(modelOverrideAfterPick(picked, undefined, null)).toBeUndefined()
     // A Project default outranks the command model, so the pick has to become an override...
     expect(modelOverrideAfterPick(picked, projectModel, null)).toEqual(picked)
@@ -478,13 +478,13 @@ describe('send payload', () => {
   const model: ModelRef = { provider_id: 4, model_id: 'gpt' }
   const draft = { project_id: 7, system_prompt: '  keep  ', model: { provider_id: 5, model_id: 'pinned' }, params: { temperature: 0.3 }, tools: ['z', 'ask_user', 'ask_user'] }
 
-  it('creates the session atomically from the draft on the first message', () => {
-    const cmd = sendCommandFor({ sessionId: null, parentId: null, parts, model, draft })
+  it('creates the conversation atomically from the draft on the first message', () => {
+    const cmd = sendCommandFor({ conversationId: null, parentId: null, parts, model, draft })
     expect(cmd).toEqual({
-      type: 'send', session_id: null, parent_id: null, parts,
+      type: 'send', conversation_id: null, parent_id: null, parts,
       provider_id: 4, model_id: 'gpt',
       project_id: 7, system_prompt: '  keep  ', params: { temperature: 0.3 },
-      session_provider_id: 5, session_model_id: 'pinned',
+      conversation_provider_id: 5, conversation_model_id: 'pinned',
       tools: ['ask_user', 'z'],
     })
     expect(parseCommand(JSON.stringify(cmd))).toEqual(cmd)
@@ -492,18 +492,18 @@ describe('send payload', () => {
 
   it('sends an empty draft as explicit nulls rather than inherited values', () => {
     const cmd = sendCommandFor({
-      sessionId: null, parentId: null, parts, model,
+      conversationId: null, parentId: null, parts, model,
       draft: { project_id: null, system_prompt: '   ', model: null, params: null, tools: [] },
     })
-    expect(cmd).toMatchObject({ project_id: null, system_prompt: null, params: null, session_provider_id: null, session_model_id: null, tools: [] })
+    expect(cmd).toMatchObject({ project_id: null, system_prompt: null, params: null, conversation_provider_id: null, conversation_model_id: null, tools: [] })
   })
 
-  it('omits every session-init field on a follow-up message', () => {
-    // The hub rejects the whole command when any init field is present and `session_id` is not
+  it('omits every conversation-init field on a follow-up message', () => {
+    // The hub rejects the whole command when any init field is present and `conversation_id` is not
     // null, so nulling them out would break every follow-up send.
-    const cmd = sendCommandFor({ sessionId: 12, parentId: 34, parts, model, draft })
-    expect(Object.keys(cmd).sort()).toEqual(['model_id', 'parent_id', 'parts', 'provider_id', 'session_id', 'type'])
-    expect(cmd).toEqual({ type: 'send', session_id: 12, parent_id: 34, parts, provider_id: 4, model_id: 'gpt' })
+    const cmd = sendCommandFor({ conversationId: 12, parentId: 34, parts, model, draft })
+    expect(Object.keys(cmd).sort()).toEqual(['conversation_id', 'model_id', 'parent_id', 'parts', 'provider_id', 'type'])
+    expect(cmd).toEqual({ type: 'send', conversation_id: 12, parent_id: 34, parts, provider_id: 4, model_id: 'gpt' })
     expect(parseCommand(JSON.stringify(cmd))).toEqual(cmd)
   })
 })
@@ -553,7 +553,7 @@ describe('outstanding send lifecycle', () => {
 
   it('never touches the Composer when nothing is outstanding', () => {
     // Messages arrive and commands fail for reasons that have nothing to do with a send of ours:
-    // opening a chat, another device's reply, a rejected session.update.
+    // opening a chat, another device's reply, a rejected conversation.update.
     for (const event of ['landed', 'error', 'timeout', 'abandoned'] as const) {
       expect(step('idle', event)).toEqual({ state: 'idle', effect: 'none' })
     }
@@ -574,13 +574,13 @@ describe('optimistic user messages', () => {
     const confirmed = [msg(1, null, 'user')]
     const optimistic = optimisticUserMessage({
       id: -7,
-      sessionId: 3,
+      conversationId: 3,
       parentId: 1,
       parts: [{ type: 'text', text: 'instant' }],
       createdAt: 123,
     })
     expect(optimistic).toMatchObject({
-      id: -7, session_id: 3, parent_id: 1, role: 'user', status: 'done', created_at: 123,
+      id: -7, conversation_id: 3, parent_id: 1, role: 'user', status: 'done', created_at: 123,
       parts: [{ type: 'text', text: 'instant' }],
     })
     expect(withOptimisticUserMessage(confirmed, optimistic).map(message => message.id)).toEqual([1, -7])
@@ -591,7 +591,7 @@ describe('optimistic user messages', () => {
   it('uses one lifecycle for optimistic messages and tool results', () => {
     const s = useSyncStore()
     const message = optimisticUserMessage({
-      id: -1, sessionId: 3, parentId: null, parts: [{ type: 'text', text: 'pending' }], createdAt: 1,
+      id: -1, conversationId: 3, parentId: null, parts: [{ type: 'text', text: 'pending' }], createdAt: 1,
     })
     s.beginOptimistic('message-request', { kind: 'message', message })
     expect(s.optimisticMutations.get('message-request')).toMatchObject({ kind: 'message', message: { id: -1 } })
@@ -599,7 +599,7 @@ describe('optimistic user messages', () => {
     expect(s.optimisticMutations.has('message-request')).toBe(false)
 
     const call = { type: 'tool_call' as const, id: 'call-1', name: 'ask_user', args: {} }
-    s.ingestMessages(3, [msg(10, null, 'assistant', { session_id: 3, parts: [call] })])
+    s.ingestMessages(3, [msg(10, null, 'assistant', { conversation_id: 3, parts: [call] })])
     const part = {
       type: 'tool_result' as const,
       call_id: 'call-1',
@@ -685,9 +685,9 @@ describe('reasoningControlModel', () => {
     expect(m.unsupported).toBe(false)
   })
 
-  // The stranding path from the review, end to end: a Project stores 思考关, a session inherits it,
-  // and the session's model declares `reasoning` but not `reasoning_can_disable`.
-  it('leaves the slider reachable for a session that inherited off from a Project', () => {
+  // The stranding path from the review, end to end: a Project stores 思考关, a conversation inherits it,
+  // and the conversation's model declares `reasoning` but not `reasoning_can_disable`.
+  it('leaves the slider reachable for a conversation that inherited off from a Project', () => {
     const stops = reasoningStopsFor({ reasoning: true, reasoning_options: [{ type: 'effort', values: ['low', 'medium', 'high'] }] })
     const m = reasoningControlModel(stops, choiceFromParams({ reasoning_enabled: false }))
     expect(m.canDisable).toBe(false)

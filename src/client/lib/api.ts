@@ -1,5 +1,5 @@
 import type { AttachmentCheckResponse, AttachmentUploadResponse, BulkModelStateInput, BulkModelStateResponse, CatalogProviderSummary, CatalogRefreshJobStatus, CatalogRefreshStartResponse, CatalogStatus, FetchModelsResponse, ModelRef, ModelWriteInput, ProviderWriteInput } from '@/shared/api'
-import type { Message, ModelPage, ModelQuery, ModelWithMetadata, Project, ProviderWithInterfaces, Session, User } from '@/shared/models'
+import type { Message, ModelPage, ModelQuery, ModelWithMetadata, Project, ProviderWithInterfaces, Conversation, User } from '@/shared/models'
 import type { PresetProvider } from '@/server/plugins/llm/presets'
 
 async function request<T>(method: string, path: string, body?: unknown, init: RequestInit = {}, onWarning?: (warning: string) => void): Promise<T> {
@@ -29,9 +29,9 @@ function queryString(input: Record<string, unknown>): string {
 export const api = {
   me: () => request<User>('GET', '/api/me'),
   presets: () => request<PresetProvider[]>('GET', '/api/presets'),
-  sessions: () => request<Session[]>('GET', '/api/sessions'),
+  conversations: () => request<Conversation[]>('GET', '/api/conversations'),
   projects: () => request<Project[]>('GET', '/api/projects'),
-  messages: (sessionId: number) => request<Message[]>('GET', `/api/sessions/${sessionId}/messages`),
+  messages: (conversationId: number) => request<Message[]>('GET', `/api/conversations/${conversationId}/messages`),
   providers: () => request<ProviderWithInterfaces[]>('GET', '/api/providers'),
   createProvider: (input: ProviderWriteInput, onWarning?: (warning: string) => void) => request<ProviderWithInterfaces>('POST', '/api/providers', input, {}, onWarning),
   updateProvider: (id: number, input: ProviderWriteInput, onWarning?: (warning: string) => void) => request<ProviderWithInterfaces>('PUT', `/api/providers/${id}`, input, {}, onWarning),

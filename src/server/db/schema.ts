@@ -3,7 +3,7 @@ import { check, index, integer, sqliteTable, text, uniqueIndex, type AnySQLiteCo
 import type { CatalogMatches, ModelMetadata, ModelMetadataOverride } from '@/shared/model-metadata'
 import type { Part } from '@/shared/parts'
 import type {
-  InterfaceProtocol, PersistedStatus, SessionParams, Usage, UserSettings,
+  InterfaceProtocol, PersistedStatus, ConversationParams, Usage, UserSettings,
 } from '@/shared/models'
 
 export const users = sqliteTable('users', {
@@ -92,12 +92,12 @@ export const projects = sqliteTable('projects', {
   system_prompt: text(),
   provider_id: integer(),
   model_id: text(),
-  params: text({ mode: 'json' }).$type<SessionParams>(),
+  params: text({ mode: 'json' }).$type<ConversationParams>(),
   created_at: integer().notNull(),
   updated_at: integer().notNull(),
 }, (t) => [index('projects_user_updated_idx').on(t.user_id, t.updated_at)])
 
-export const sessions = sqliteTable('sessions', {
+export const conversations = sqliteTable('conversations', {
   id: integer().primaryKey({ autoIncrement: true }),
   user_id: integer().notNull().references(() => users.id, { onDelete: 'cascade' }),
   project_id: integer().references(() => projects.id, { onDelete: 'set null' }),
@@ -106,19 +106,19 @@ export const sessions = sqliteTable('sessions', {
   provider_id: integer(),
   model_id: text(),
   system_prompt: text(),
-  params: text({ mode: 'json' }).$type<SessionParams>(),
+  params: text({ mode: 'json' }).$type<ConversationParams>(),
   tools: text({ mode: 'json' }).$type<string[]>().notNull().default([]),
   created_at: integer().notNull(),
   updated_at: integer().notNull(),
   archived_at: integer(),
 }, (t) => [
-  index('sessions_user_updated_idx').on(t.user_id, t.updated_at),
-  index('sessions_project_updated_idx').on(t.project_id, t.updated_at),
+  index('conversations_user_updated_idx').on(t.user_id, t.updated_at),
+  index('conversations_project_updated_idx').on(t.project_id, t.updated_at),
 ])
 
 export const messages = sqliteTable('messages', {
   id: integer().primaryKey({ autoIncrement: true }),
-  session_id: integer().notNull().references(() => sessions.id, { onDelete: 'cascade' }),
+  conversation_id: integer().notNull().references(() => conversations.id, { onDelete: 'cascade' }),
   parent_id: integer().references((): AnySQLiteColumn => messages.id, { onDelete: 'cascade' }),
   seq: integer().notNull(),
   role: text().$type<'user' | 'assistant'>().notNull(),
@@ -130,7 +130,7 @@ export const messages = sqliteTable('messages', {
   error: text(),
   created_at: integer().notNull(),
 }, (t) => [
-  uniqueIndex('messages_session_seq_uq').on(t.session_id, t.seq),
+  uniqueIndex('messages_conversation_seq_uq').on(t.conversation_id, t.seq),
   index('messages_parent_idx').on(t.parent_id),
 ])
 
@@ -176,7 +176,7 @@ export type ProviderRow = typeof providers.$inferSelect
 export type ProviderInterfaceRow = typeof providerInterfaces.$inferSelect
 export type ModelRow = typeof models.$inferSelect
 export type ProjectRow = typeof projects.$inferSelect
-export type SessionRow = typeof sessions.$inferSelect
+export type ConversationRow = typeof conversations.$inferSelect
 export type MessageRow = typeof messages.$inferSelect
 export type AttachmentRow = typeof attachments.$inferSelect
 export type AttachmentProviderFileRow = typeof attachmentProviderFiles.$inferSelect

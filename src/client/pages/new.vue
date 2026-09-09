@@ -4,11 +4,11 @@ import { useRoute } from 'vue-router'
 import ChatView from '@/client/views/chat.vue'
 import { routeParamToId } from '@/client/lib/route-params'
 
-definePage({ path: '/new/:sessionId?', alias: ['/c/:sessionId?'] })
+definePage({ path: '/new/:conversationId?', alias: ['/c/:conversationId?'] })
 const route = useRoute('/new')
-const sessionId = computed(() => routeParamToId(typeof route.params.sessionId === 'string' ? route.params.sessionId : undefined))
+const conversationId = computed(() => routeParamToId(typeof route.params.conversationId === 'string' ? route.params.conversationId : undefined))
 </script>
 
 <template lang="pug">
-ChatView(:session-id="sessionId")
+ChatView(:conversation-id="conversationId")
 </template>

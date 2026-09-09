@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { createDb } from '@/server/db/client'
 import type { UserHub } from '@/server/index'
 import { ensureDefaultUser } from '@/server/plugins/database'
-import { createSession } from '@/server/plugins/hub/sessions'
+import { createConversation } from '@/server/plugins/hub/conversations'
 import type { Message } from '@/shared/models'
 import { connect } from './ws-helper'
 
@@ -28,24 +28,24 @@ describe('UserHub DO', () => {
     expect(res.status).toBe(101)
   })
 
-  it('updates and deletes a session, broadcasting to two sockets', async () => {
+  it('updates and deletes a conversation, broadcasting to two sockets', async () => {
     const db = createDb(env.DB)
     await ensureDefaultUser(db)
-    const s = await createSession(db, { user_id: 1, title: 'old', provider_id: null, model_id: null })
+    const s = await createConversation(db, { user_id: 1, title: 'old', provider_id: null, model_id: null })
     const a = await connect()
     const b = await connect()
-    a.ws.send(JSON.stringify({ type: 'session.update', session_id: s.id, title: 'new', system_prompt: 'sys' }))
-    const ea = await a.next('session.updated')
-    const eb = await b.next('session.updated')
-    expect(ea).toMatchObject({ type: 'session.updated', session: { id: s.id, title: 'new', system_prompt: 'sys' } })
+    a.ws.send(JSON.stringify({ type: 'conversation.update', conversation_id: s.id, title: 'new', system_prompt: 'sys' }))
+    const ea = await a.next('conversation.updated')
+    const eb = await b.next('conversation.updated')
+    expect(ea).toMatchObject({ type: 'conversation.updated', conversation: { id: s.id, title: 'new', system_prompt: 'sys' } })
     expect(eb).toEqual(ea)
-    b.ws.send(JSON.stringify({ type: 'session.delete', session_id: s.id }))
-    expect(await a.next('session.deleted')).toEqual({ type: 'session.deleted', session_id: s.id })
+    b.ws.send(JSON.stringify({ type: 'conversation.delete', conversation_id: s.id }))
+    expect(await a.next('conversation.deleted')).toEqual({ type: 'conversation.deleted', conversation_id: s.id })
   })
 
   it('answers invalid commands with an error event carrying request_id', async () => {
     const { ws, next, nextAfter } = await connect()
-    ws.send(JSON.stringify({ type: 'session.update', request_id: 'r9' }))
+    ws.send(JSON.stringify({ type: 'conversation.update', request_id: 'r9' }))
     const err = await next('error')
     expect(err).toMatchObject({ type: 'error', request_id: 'r9', message: 'invalid command' })
     ws.send('not json')
@@ -65,10 +65,10 @@ describe('UserHub DO', () => {
     await runInDurableObject(env.USER_HUB.getByName('stop-test'), async (instance: UserHub) => {
       const hub = instance.app.hub
       const message: Message = {
-        id: 4242, session_id: 99, parent_id: null, seq: 1, role: 'assistant', parts: [],
+        id: 4242, conversation_id: 99, parent_id: null, seq: 1, role: 'assistant', parts: [],
         provider_id: null, model_id: null, usage: null, status: 'streaming', error: null, created_at: 0,
       }
-      const job = { message, sessionId: 99, controller: new AbortController(), startedAt: Date.now(), parts: [] }
+      const job = { message, conversationId: 99, controller: new AbortController(), startedAt: Date.now(), parts: [] }
       await hub.trackInflight(job)
 
       let settled = false

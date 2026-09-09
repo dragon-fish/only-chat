@@ -22,28 +22,28 @@ async function mountChat(historyLoaded: boolean, rememberedModel = false, lastMo
   const config = useConfigStore(pinia)
   config.loaded = true
   if (rememberedModel || lastModel) config.providerRecords = [provider]
-  if (lastModel) config.retainModels([{ ...modelRecords[0]!, provider_id: lastModel.provider_id, model_id: lastModel.model_id, metadata: { name: 'Session model' } }])
-  sync.sessionsLoaded = true
+  if (lastModel) config.retainModels([{ ...modelRecords[0]!, provider_id: lastModel.provider_id, model_id: lastModel.model_id, metadata: { name: 'Conversation model' } }])
+  sync.conversationsLoaded = true
   const histories = new Map<number, Message[]>()
   for (const id of [1, 2]) {
     const messages: Message[] = Array.from({ length: 10 }, (_, index) => ({
-      id: id * 100 + index, session_id: id, parent_id: index ? id * 100 + index - 1 : null,
+      id: id * 100 + index, conversation_id: id, parent_id: index ? id * 100 + index - 1 : null,
       seq: index, role: lastModel && id === 1 && index === 9 ? 'assistant' : 'user', parts: [{ type: 'text', text: `Chat ${id} message ${index}` }],
       provider_id: lastModel && id === 1 && index === 9 ? lastModel.provider_id : null,
       model_id: lastModel && id === 1 && index === 9 ? lastModel.model_id : null,
       usage: null, status: 'done', error: null, created_at: index,
     }))
     histories.set(id, messages)
-    sync.sessions.set(id, { id, user_id: 1, project_id: null, title: `Chat ${id}`, head_message_id: id * 100 + 9, provider_id: null, model_id: null, system_prompt: null, params: null, tools: [], archived_at: null, created_at: 0, updated_at: id })
+    sync.conversations.set(id, { id, user_id: 1, project_id: null, title: `Chat ${id}`, head_message_id: id * 100 + 9, provider_id: null, model_id: null, system_prompt: null, params: null, tools: [], archived_at: null, created_at: 0, updated_at: id })
     sync.ingestMessages(id, messages)
-    if (historyLoaded) sync.loadedMessageSessions.add(id)
+    if (historyLoaded) sync.loadedMessageConversations.add(id)
   }
   vi.spyOn(api, 'messages').mockImplementation(id => historyLoaded ? Promise.resolve(histories.get(id)!) : new Promise(() => {}))
   const sid = ref(1)
   const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/:pathMatch(.*)*', component: { template: '<div />' } }] })
   await router.push('/c/1')
   document.body.innerHTML = '<header id="page-header"></header><main id="test-host"></main>'
-  const app = createApp({ render: () => h(TooltipProvider, null, () => h(ChatView, { sessionId: sid.value })) }).use(pinia).use(router)
+  const app = createApp({ render: () => h(TooltipProvider, null, () => h(ChatView, { conversationId: sid.value })) }).use(pinia).use(router)
   app.mount('#test-host')
   cleanup = () => app.unmount()
   await nextTick()
@@ -64,12 +64,12 @@ it('retains a remembered model while its off-page lookup is pending', async () =
 it('restores an existing chat from the model used by its latest generation', async () => {
   vi.stubGlobal('localStorage', new Storage())
   localStorage.setItem('oc.model', JSON.stringify({ provider_id: 1, model_id: 'global-model' }))
-  await mountChat(true, true, { provider_id: 1, model_id: 'session-model' })
-  await vi.waitFor(() => expect(document.querySelector('[aria-label="选择模型，当前为 Session model"]')).not.toBeNull())
+  await mountChat(true, true, { provider_id: 1, model_id: 'conversation-model' })
+  await vi.waitFor(() => expect(document.querySelector('[aria-label="选择模型，当前为 Conversation model"]')).not.toBeNull())
 })
 
 it('keeps arrived first-message content visible while its history request is pending', async () => {
-  // The new-session route can mount after a WS message arrives but before its REST read completes.
+  // The new-conversation route can mount after a WS message arrives but before its REST read completes.
   await mountChat(false)
   expect(document.querySelector('[role="log"]')?.textContent ?? '').toContain('Chat 1 message 0')
   expect(document.querySelector('[aria-label="正在加载"]')).toBeNull()

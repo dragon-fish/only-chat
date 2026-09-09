@@ -8,21 +8,21 @@ import Composer from '@/client/components/composer.vue'
 import ModelPicker from '@/client/components/model-picker.vue'
 import ProjectAvatar from '@/client/components/project-avatar.vue'
 import ReasoningControl from '@/client/components/reasoning-control.vue'
-import SessionSettings from '@/client/components/session-settings.vue'
+import ConversationSettings from '@/client/components/conversation-settings.vue'
 import CollectionState from '@/client/components/collection-state.vue'
 import ContextUsageIndicator from '@/client/components/context-usage-indicator.vue'
 import ToolSelector from '@/client/components/tool-selector.vue'
 import ToolPartRenderer from '@/client/components/tool-part-renderer.vue'
-import { defaultToolsForSettings, sessionToolBlockReason, toolSelectionSupported } from '@/client/components/tool-selector'
+import { defaultToolsForSettings, conversationToolBlockReason, toolSelectionSupported } from '@/client/components/tool-selector'
 import { pendingAskUserCalls } from '@/client/components/tool-part-renderer'
 import { pluginManifests } from '@/client/plugins/loaders'
-import { projectPresentation, sessionPath } from '@/client/lib/ui-models'
+import { projectPresentation, conversationPath } from '@/client/lib/ui-models'
 import {
   choiceFromParams, DISCONNECTED_MESSAGE, effectiveModelFor, modelOverrideAfterPick, nextSendState,
-  optimisticUserMessage, paramsFromFields, sendCommandFor, sessionFormFrom, sessionSettingSources, useSyncStore,
+  optimisticUserMessage, paramsFromFields, sendCommandFor, conversationFormFrom, conversationSettingSources, useSyncStore,
   withOptimisticUserMessage,
-  type OutstandingSend, type ReasoningChoice, type SendEvent, type SessionConfigSource,
-  type SessionSettingsForm,
+  type OutstandingSend, type ReasoningChoice, type SendEvent, type ConversationConfigSource,
+  type ConversationSettingsForm,
 } from '@/client/stores/sync'
 import { useConfigStore } from '@/client/stores/config'
 import { Button } from '@/client/ui/button'
@@ -31,14 +31,14 @@ import type { ModelRef } from '@/shared/api'
 import type { Message } from '@/shared/models'
 import type { Part } from '@/shared/parts'
 
-const props = withDefaults(defineProps<{ sessionId: number | null; projectId?: number | null }>(), { projectId: null })
+const props = withDefaults(defineProps<{ conversationId: number | null; projectId?: number | null }>(), { projectId: null })
 const router = useRouter()
 const sync = useSyncStore()
 const config = useConfigStore()
 const isDesktop = useMediaQuery('(min-width: 768px)')
 
-const sid = computed(() => props.sessionId)
-const session = computed(() => (sid.value === null ? undefined : sync.sessions.get(sid.value)))
+const sid = computed(() => props.conversationId)
+const conversation = computed(() => (sid.value === null ? undefined : sync.conversations.get(sid.value)))
 const path = computed(() => (sid.value === null ? [] : sync.pathFor(sid.value)))
 const streaming = computed(() => sid.value !== null && sync.isStreaming(sid.value))
 const composer = ref<InstanceType<typeof Composer> | null>(null)
@@ -55,10 +55,10 @@ const optimisticMessage = computed<Message | null>(() => {
 })
 const visiblePath = computed(() => withOptimisticUserMessage(path.value, optimisticMessage.value))
 
-// ---- draft and session settings
+// ---- draft and conversation settings
 
 /**
- * The nested Project workspace supplies the draft context; no session is created yet
+ * The nested Project workspace supplies the draft context; no conversation is created yet
  * (spec §5.2). A Project deleted between opening the page and sending is dropped rather than sent:
  * the foreign key would reject the whole message over a container that no longer exists. Before the
  * Projects list has loaded nothing is known to be missing, so the id is kept.
@@ -68,13 +68,13 @@ const draftProjectId = computed(() => {
   if (id === null) return null
   return !sync.projectsLoaded || sync.projects.has(id) ? id : null
 })
-/** The draft's session-level model override, mirroring `sessions.provider_id` before it exists. */
+/** The draft's conversation-level model override, mirroring `conversations.provider_id` before it exists. */
 const draftModel = ref<ModelRef | null>(null)
-const form = reactive<SessionSettingsForm>(sessionFormFrom(undefined))
+const form = reactive<ConversationSettingsForm>(conversationFormFrom(undefined))
 const formLoaded = ref(false)
 
 const project = computed(() => {
-  const id = sid.value === null ? draftProjectId.value : session.value?.project_id ?? null
+  const id = sid.value === null ? draftProjectId.value : conversation.value?.project_id ?? null
   return id === null ? undefined : sync.projects.get(id)
 })
 const projectTitle = computed(() => project.value ? projectPresentation(project.value.name).title : '')
@@ -82,48 +82,48 @@ const backTarget = computed(() => {
   const projectId = project.value?.id ?? draftProjectId.value
   return projectId === null ? '/chats' : `/project/${projectId}`
 })
-/** The session's own model override; for a draft it is the one held locally. */
+/** The conversation's own model override; for a draft it is the one held locally. */
 const override = computed<ModelRef | null>(() => {
   if (sid.value === null) return draftModel.value
-  const s = session.value
+  const s = conversation.value
   return s && s.provider_id !== null && s.model_id !== null ? { provider_id: s.provider_id, model_id: s.model_id } : null
 })
 
-// The form holds only what this session overrides, so it is filled once per session: a concurrent
+// The form holds only what this conversation overrides, so it is filled once per conversation: a concurrent
 // update from another device must not overwrite what is being typed. A draft starts blank.
 watch(sid, (id) => {
   formLoaded.value = id === null
   if (id === null) {
-    Object.assign(form, sessionFormFrom(undefined))
+    Object.assign(form, conversationFormFrom(undefined))
     draftTools.value = null
   }
 }, { immediate: true })
 watchEffect(() => {
-  const s = session.value
-  if (s && !formLoaded.value) { Object.assign(form, sessionFormFrom(s)); formLoaded.value = true }
+  const s = conversation.value
+  if (s && !formLoaded.value) { Object.assign(form, conversationFormFrom(s)); formLoaded.value = true }
 })
 
-/** What the badges read: the live form plus the model override, for a draft and a session alike. */
-const configSource = computed<SessionConfigSource>(() => ({
+/** What the badges read: the live form plus the model override, for a draft and a conversation alike. */
+const configSource = computed<ConversationConfigSource>(() => ({
   system_prompt: form.system_prompt.trim() === '' ? null : form.system_prompt,
   provider_id: override.value?.provider_id ?? null,
   model_id: override.value?.model_id ?? null,
   params: paramsFromFields(form),
 }))
-const sources = computed(() => sessionSettingSources(configSource.value, project.value))
+const sources = computed(() => conversationSettingSources(configSource.value, project.value))
 
 // ---- model and reasoning
 
 /** Only a deliberate pick is remembered globally; it is the lowest layer of the precedence. */
 const picked = ref<ModelRef | null>(readModel())
 /** A deliberate choice on an existing chat outranks its history until that choice produces a message. */
-const sessionPick = ref<ModelRef | null | undefined>(undefined)
-watch(sid, () => { sessionPick.value = undefined }, { flush: 'sync' })
+const conversationPick = ref<ModelRef | null | undefined>(undefined)
+watch(sid, () => { conversationPick.value = undefined }, { flush: 'sync' })
 const effective = computed(() => effectiveModelFor(override.value, project.value, picked.value, sid.value === null
   ? undefined
   : {
-      localPick: sessionPick.value,
-      messagesLoaded: sync.loadedMessageSessions.has(sid.value),
+      localPick: conversationPick.value,
+      messagesLoaded: sync.loadedMessageConversations.has(sid.value),
       messages: path.value,
     }))
 const entry = computed(() => config.modelFor(effective.value.model))
@@ -137,14 +137,14 @@ const contextUsage = computed(() => {
 })
 // While the config is still loading nothing is known to be unavailable, so sending stays possible.
 const modelAvailable = computed(() => !config.loaded || config.isAvailable(effective.value.model))
-const selectedTools = computed(() => sid.value === null ? (draftTools.value ?? []) : (session.value?.tools ?? []))
+const selectedTools = computed(() => sid.value === null ? (draftTools.value ?? []) : (conversation.value?.tools ?? []))
 const optimisticToolCallIds = computed(() => {
-  const headId = session.value?.head_message_id
+  const headId = conversation.value?.head_message_id
   return headId === null || headId === undefined ? new Set<string>() : sync.optimisticToolCallIds(headId)
 })
 const pendingToolCall = computed(() => pendingAskUserCalls(
   path.value,
-  session.value?.head_message_id,
+  conversation.value?.head_message_id,
   optimisticToolCallIds.value,
 )[0] ?? null)
 const globallyAvailableTools = computed(() => new Set(defaultToolsForSettings(pluginManifests, sync.settings.plugins)))
@@ -153,13 +153,13 @@ const toolsSupported = computed(() => toolSelectionSupported(
   globallyAvailableTools.value,
   entry.value?.model.metadata.tool_call === true,
 ))
-const toolBlockReason = computed(() => sessionToolBlockReason({
+const toolBlockReason = computed(() => conversationToolBlockReason({
   draft: sid.value === null,
   settingsLoaded: sync.settingsLoaded,
   pending: pendingToolCall.value !== null,
   toolsSupported: toolsSupported.value,
 }))
-const messageHistoryReady = computed(() => sid.value === null || sync.loadedMessageSessions.has(sid.value))
+const messageHistoryReady = computed(() => sid.value === null || sync.loadedMessageConversations.has(sid.value))
 const canSend = computed(() => (
   effective.value.model !== null
   && modelAvailable.value
@@ -174,7 +174,7 @@ const sendHint = computed(() => {
   if (effective.value.model === null) return '未选择模型'
   if (modelAvailable.value) return null
   const source = effective.value.source
-  return `模型不可用（来源：${source === 'session' ? '会话' : source === 'project' ? 'Project' : '当前选择'}）`
+  return `模型不可用（来源：${source === 'conversation' ? '会话' : source === 'project' ? 'Project' : '当前选择'}）`
 })
 
 /**
@@ -187,7 +187,7 @@ watchEffect(() => {
     draftTools.value = defaultToolsForSettings(pluginManifests, sync.settings.plugins)
   }
 })
-/** What the session inherits when it sets nothing itself. */
+/** What the conversation inherits when it sets nothing itself. */
 const inheritedReasoning = computed<ReasoningChoice>(() => choiceFromParams(project.value?.params))
 /** The three widgets always show the effective value, never the raw override (spec §5.6). */
 const activeReasoning = computed<ReasoningChoice>(() => (
@@ -227,7 +227,7 @@ watch(() => sync.snapshotSeq, (seq) => { if (seq > 0 && sid.value !== null) void
 function focusComposer() { composer.value?.$el.querySelector('textarea')?.focus() }
 
 async function retryChat() {
-  await Promise.allSettled([sync.loadSessions(), loadMessages()])
+  await Promise.allSettled([sync.loadConversations(), loadMessages()])
 }
 
 // ---- outstanding send
@@ -264,19 +264,19 @@ function dispatch(event: SendEvent) {
 watch(sid, (id, previous) => {
   const requestId = optimisticRequestId.value
   const optimistic = requestId ? sync.optimisticMutations.get(requestId) : undefined
-  if (requestId && previous === null && id !== null && optimistic?.kind === 'message' && optimistic.message.session_id === -1) {
-    sync.beginOptimistic(requestId, { kind: 'message', message: { ...optimistic.message, session_id: id } })
+  if (requestId && previous === null && id !== null && optimistic?.kind === 'message' && optimistic.message.conversation_id === -1) {
+    sync.beginOptimistic(requestId, { kind: 'message', message: { ...optimistic.message, conversation_id: id } })
     return
   }
   dispatch('abandoned')
 })
 
-// A `send` on a fresh page creates the session server-side; jump to it when it appears. `/new` and
+// A `send` on a fresh page creates the conversation server-side; jump to it when it appears. `/new` and
 // `/c/:id` share one aliased route record, so only this prop changes and the focused Composer stays.
-watch(() => sync.sessionList[0]?.id, (newest) => {
+watch(() => sync.conversationList[0]?.id, (newest) => {
   if (outstanding.value === 'outstanding' && newest !== undefined && sid.value === null) {
-    const created = sync.sessions.get(newest)
-    if (created) void router.push(sessionPath(created))
+    const created = sync.conversations.get(newest)
+    if (created) void router.push(conversationPath(created))
   }
 })
 watch(() => path.value.map(message => message.id), () => {
@@ -326,15 +326,15 @@ function onSend(parts: Part[]) {
   optimisticRequestId.value = requestId
   sync.beginOptimistic(requestId, { kind: 'message', message: optimisticUserMessage({
     id: nextOptimisticId--,
-    sessionId: sid.value ?? -1,
-    parentId: session.value?.head_message_id ?? null,
+    conversationId: sid.value ?? -1,
+    parentId: conversation.value?.head_message_id ?? null,
     parts,
     createdAt: Date.now(),
   }) })
   dispatch('send')
   send({ ...sendCommandFor({
-    sessionId: sid.value,
-    parentId: session.value?.head_message_id ?? null,
+    conversationId: sid.value,
+    parentId: conversation.value?.head_message_id ?? null,
     parts,
     model,
     draft: {
@@ -354,16 +354,16 @@ function onSend(parts: Part[]) {
  * command that would have worked into a dead click.
  */
 function onStop() {
-  if (sid.value !== null) sync.send({ type: 'stop', session_id: sid.value })
+  if (sid.value !== null) sync.send({ type: 'stop', conversation_id: sid.value })
 }
 
-/** The whole form is the session's own overrides, so a restored field simply stops being sent. */
+/** The whole form is the conversation's own overrides, so a restored field simply stops being sent. */
 function commitSettings() {
   if (sid.value === null) return
   const title = form.title.trim()
   send({
-    type: 'session.update',
-    session_id: sid.value,
+    type: 'conversation.update',
+    conversation_id: sid.value,
     ...(title ? { title } : {}),
     system_prompt: form.system_prompt.trim() === '' ? null : form.system_prompt,
     params: paramsFromFields(form),
@@ -373,21 +373,21 @@ function commitSettings() {
 function setOverride(value: ModelRef | null) {
   if (sid.value === null) { draftModel.value = value; return }
   send({
-    type: 'session.update',
-    session_id: sid.value,
+    type: 'conversation.update',
+    conversation_id: sid.value,
     provider_id: value?.provider_id ?? null,
     model_id: value?.model_id ?? null,
   })
 }
 
 /**
- * A pick has to reach the session itself whenever a Project default or an existing override would
+ * A pick has to reach the conversation itself whenever a Project default or an existing override would
  * outrank the model `send` carries (spec §5.3); otherwise the pick is only the remembered choice.
  */
 function onModelChange(value: ModelRef | null) {
   picked.value = value
   localStorage.setItem('oc.model', JSON.stringify(value))
-  if (sid.value !== null) sessionPick.value = value
+  if (sid.value !== null) conversationPick.value = value
   const next = modelOverrideAfterPick(value, project.value, override.value)
   if (next !== undefined) setOverride(next)
 }
@@ -402,7 +402,7 @@ function onToolsChange(tools: string[]) {
     draftTools.value = tools
     return
   }
-  send({ type: 'session.update', session_id: sid.value, tools })
+  send({ type: 'conversation.update', conversation_id: sid.value, tools })
 }
 </script>
 
@@ -420,16 +420,16 @@ function onToolsChange(tools: string[]) {
         span.min-w-0.flex-1.truncate.text-sm.font-medium(v-else) 随心聊
       ModelPicker(:compact="!isDesktop" :model-value="effective.model" @update:model-value="onModelChange")
       Button(
-        v-if="sources.model === 'session'" variant="ghost" size="icon-xs"
+        v-if="sources.model === 'conversation'" variant="ghost" size="icon-xs"
         class="min-h-10 min-w-10 md:min-h-6 md:min-w-6"
         title="恢复继承模型" aria-label="恢复继承模型" @click="setOverride(null)")
         RotateCcwIcon
       .ml-auto.shrink-0
-        SessionSettings(
-          :form="form" :sources="sources" :project="project" :has-session="sid !== null"
+        ConversationSettings(
+          :form="form" :sources="sources" :project="project" :has-conversation="sid !== null"
           @commit="commitSettings")
   .min-h-0.flex-1
-    CollectionState(:loaded="visiblePath.length > 0 || sid === null || (sync.sessionsLoaded && sync.loadedMessageSessions.has(sid))" :error="messageLoadError || (sid !== null ? sync.sessionsError : null)" :retry="retryChat")
+    CollectionState(:loaded="visiblePath.length > 0 || sid === null || (sync.conversationsLoaded && sync.loadedMessageConversations.has(sid))" :error="messageLoadError || (sid !== null ? sync.conversationsError : null)" :retry="retryChat")
       MessageList(
         v-if="visiblePath.length" :key="sid ?? 'draft'" :messages="visiblePath" :project="project"
         :optimistic-id="optimisticMessage?.id")

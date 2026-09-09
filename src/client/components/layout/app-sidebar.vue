@@ -14,13 +14,13 @@ const router = useRouter()
 const sync = useSyncStore()
 const isSettings = computed(() => route.path.startsWith('/settings'))
 
-const activeSessionId = computed(() => routeParamToId(
-  'sessionId' in route.params && typeof route.params.sessionId === 'string' ? route.params.sessionId : undefined,
+const activeConversationId = computed(() => routeParamToId(
+  'conversationId' in route.params && typeof route.params.conversationId === 'string' ? route.params.conversationId : undefined,
 ))
-const activeSession = computed(() => activeSessionId.value === null ? undefined : sync.sessions.get(activeSessionId.value))
+const activeConversation = computed(() => activeConversationId.value === null ? undefined : sync.conversations.get(activeConversationId.value))
 
-watch([activeSessionId, activeSession], ([sessionId, session], [previousId, previousSession]) => {
-  if (sessionId !== null && sessionId === previousId && previousSession !== undefined && session === undefined) {
+watch([activeConversationId, activeConversation], ([conversationId, conversation], [previousId, previousConversation]) => {
+  if (conversationId !== null && conversationId === previousId && previousConversation !== undefined && conversation === undefined) {
     void router.replace('/chats')
   }
 })

@@ -1,8 +1,8 @@
-import type { Message, Project, Session } from '@/shared/models'
+import type { Message, Project, Conversation } from '@/shared/models'
 
 export type ExportFormat = 'markdown' | 'json'
-export interface ExportContext { session: Session; project?: Project; messages: Message[]; attachmentUrl: (id: number) => string }
-interface SessionExporter { extension: string; mime: string; serialize: (context: ExportContext) => string }
+export interface ExportContext { conversation: Conversation; project?: Project; messages: Message[]; attachmentUrl: (id: number) => string }
+interface ConversationExporter { extension: string; mime: string; serialize: (context: ExportContext) => string }
 
 function partMarkdown(message: Message, attachmentUrl: (id: number) => string): string {
   return message.parts.map(part => {
@@ -14,29 +14,29 @@ function partMarkdown(message: Message, attachmentUrl: (id: number) => string): 
   }).join('\n\n')
 }
 
-export const sessionExporters: Record<ExportFormat, SessionExporter> = {
+export const conversationExporters: Record<ExportFormat, ConversationExporter> = {
   markdown: {
     extension: 'md', mime: 'text/markdown;charset=utf-8',
     serialize: context => [
-      `# ${context.session.title}`,
+      `# ${context.conversation.title}`,
       context.project ? `Project: ${context.project.name}` : '',
       ...context.messages.map(message => `## ${message.role === 'user' ? '用户' : '助手'}\n\n${partMarkdown(message, context.attachmentUrl)}`),
     ].filter(Boolean).join('\n\n'),
   },
   json: {
     extension: 'json', mime: 'application/json;charset=utf-8',
-    serialize: context => JSON.stringify({ version: 1, session: context.session, project: context.project ?? null, messages: context.messages }, null, 2),
+    serialize: context => JSON.stringify({ version: 1, conversation: context.conversation, project: context.project ?? null, messages: context.messages }, null, 2),
   },
 }
 
 function safeFilename(title: string) { return title.replace(/[\\/:*?"<>|\u0000-\u001F]/g, '_').trim() || 'conversation' }
 
-export function downloadSessionExport(format: ExportFormat, context: ExportContext) {
-  const exporter = sessionExporters[format]
+export function conversationExport(format: ExportFormat, context: ExportContext) {
+  const exporter = conversationExporters[format]
   const url = URL.createObjectURL(new Blob([exporter.serialize(context)], { type: exporter.mime }))
   const link = document.createElement('a')
   link.href = url
-  link.download = `${safeFilename(context.session.title)}.${exporter.extension}`
+  link.download = `${safeFilename(context.conversation.title)}.${exporter.extension}`
   link.click()
   URL.revokeObjectURL(url)
 }

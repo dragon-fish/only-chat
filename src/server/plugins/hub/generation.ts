@@ -1,40 +1,40 @@
 import { streamText, type LanguageModel, type ToolSet } from 'ai'
 import { DEFAULT_USER_ID, INFLIGHT_FLUSH_INTERVAL_MS } from '@/shared/constants'
-import type { Message, PersistedStatus, SessionParams, Usage } from '@/shared/models'
+import type { Message, PersistedStatus, ConversationParams, Usage } from '@/shared/models'
 import type { Part, ToolCallPart, ToolResultPart } from '@/shared/parts'
 import type { SendCommand, WsCommand } from '@/shared/ws'
 import { ASK_USER_TOOL_ID } from '@/shared/plugins'
 import { AskUserInputSchema, AskUserResultSchema, validateAskUserResult } from '@/plugins/ask-user/shared'
 import { createAskUserToolCallRepair } from '@/plugins/ask-user/server/repair'
-import type { ModelRow, ProviderInterfaceRow, ProviderRow, SessionRow } from '../../db/schema'
+import type { ModelRow, ProviderInterfaceRow, ProviderRow, ConversationRow } from '../../db/schema'
 import { PartAccumulator } from '../llm/accumulator'
 import { buildModelMessages, buildProviderOptions, requiredAttachmentIds, type AttachmentInput } from '../llm/messages'
 import { toUsage } from '../llm/usage'
 import type { Hub, InflightJob } from './index'
 import {
   resolveEffectiveConfig,
-  type EffectiveConfig, type EffectiveModel, type ModelSource, type SessionConfigSource,
+  type EffectiveConfig, type EffectiveModel, type ModelSource, type ConversationConfigSource,
 } from './effective-config'
 import { persistGeneratedImage } from './generated-images'
 import { getProject } from './projects'
 import {
-  appendToolResult, compareAndSwapSessionHead, createSession, deleteMessage, deleteMessageIfUnreferenced, finalizeMessage,
-  getMessage, getModel, getProvider, getProviderInterface, getSession, getUser, insertAssistantChildIfAbsent, insertMessage,
-  lastGenerationModel, listAssistantChildren, listMessages, maxSeq, replaceMessagePartsIfCurrentHead, toMessage, updateSession,
-} from './sessions'
+  appendToolResult, compareAndSwapConversationHead, createConversation, deleteMessage, deleteMessageIfUnreferenced, finalizeMessage,
+  getMessage, getModel, getProvider, getProviderInterface, getConversation, getUser, insertAssistantChildIfAbsent, insertMessage,
+  lastGenerationModel, listAssistantChildren, listMessages, maxSeq, replaceMessagePartsIfCurrentHead, toMessage, updateConversation,
+} from './conversations'
 import { resolveAttachmentInputs } from './attachment-transport'
 import { pathToRoot, titleFromParts } from './tree'
 
 /** Payload of the `message/before-send` event: feature plugins may inspect or amend the prompt. */
 export interface BeforeSendPayload {
-  sessionId: number
+  conversationId: number
   systemPrompt: string | null
   /** Root → leaf; plugins may mutate (convention: only the last element). */
   path: Message[]
 }
 
 interface Target {
-  session: SessionRow
+  conversation: ConversationRow
   provider: ProviderRow
   providerInterface: ProviderInterfaceRow
   model: ModelRow
@@ -46,48 +46,48 @@ interface Target {
   tools: ToolSet
 }
 
-/** The session-init draft carried by the first `send` of a new session (spec §5.2). */
-interface SessionDraft extends SessionConfigSource {
+/** The conversation-init draft carried by the first `send` of a new conversation (spec §5.2). */
+interface ConversationDraft extends ConversationConfigSource {
   project_id: number | null
   tools: string[]
 }
 
-const EMPTY_DRAFT: SessionDraft = { project_id: null, system_prompt: null, provider_id: null, model_id: null, params: null, tools: [] }
+const EMPTY_DRAFT: ConversationDraft = { project_id: null, system_prompt: null, provider_id: null, model_id: null, params: null, tools: [] }
 
 interface ResolveArgs {
-  sessionId: number | null
+  conversationId: number | null
   /** The client's current selection — the last layer of the precedence chain. */
   fallbackModel?: { provider_id: number; model_id: string }
   /**
    * A deliberate one-shot choice for this generation alone (`regenerate` with a model). It beats
-   * both inheritance layers, and is never persisted onto the session.
+   * both inheritance layers, and is never persisted onto the conversation.
    */
   explicitModel?: { provider_id: number; model_id: string }
-  /** Parts of the first user message, used to title a session created here. */
+  /** Parts of the first user message, used to title a conversation created here. */
   firstParts: Part[]
-  /** Only meaningful when `sessionId` is null. */
-  draft?: SessionDraft
+  /** Only meaningful when `conversationId` is null. */
+  draft?: ConversationDraft
 }
 
 function modelUnavailable(source: ModelSource): Error {
   if (source === 'project') return new Error('模型不可用（来源：Project）')
-  if (source === 'session') return new Error('模型不可用（来源：会话）')
+  if (source === 'conversation') return new Error('模型不可用（来源：会话）')
   return new Error('模型不可用')
 }
 
-// ---- stage 1: resolve session + effective config + model
+// ---- stage 1: resolve conversation + effective config + model
 
 async function resolveTarget(hub: Hub, args: ResolveArgs): Promise<Target> {
-  const existing = args.sessionId === null ? undefined : await getSession(hub.db, args.sessionId)
-  if (args.sessionId !== null && !existing) throw new Error('session not found')
+  const existing = args.conversationId === null ? undefined : await getConversation(hub.db, args.conversationId)
+  if (args.conversationId !== null && !existing) throw new Error('conversation not found')
 
-  // For a new session the draft stands in for the row that does not exist yet, so an unavailable
+  // For a new conversation the draft stands in for the row that does not exist yet, so an unavailable
   // inherited model is rejected before anything is persisted.
-  const draft: SessionDraft = existing ?? args.draft ?? EMPTY_DRAFT
+  const draft: ConversationDraft = existing ?? args.draft ?? EMPTY_DRAFT
   const project = draft.project_id === null ? undefined : await getProject(hub.db, draft.project_id, DEFAULT_USER_ID)
   if (draft.project_id !== null && !project) throw new Error('project not found')
 
-  const resolved = resolveEffectiveConfig({ session: draft, project, fallbackModel: args.fallbackModel })
+  const resolved = resolveEffectiveConfig({ conversation: draft, project, fallbackModel: args.fallbackModel })
   // Only the model layer is overridden; the prompt and params keep inheriting as usual.
   const effectiveModel = args.explicitModel ? { ...args.explicitModel, source: 'command' as const } : resolved.model
   if (!effectiveModel) throw new Error('no model selected')
@@ -109,8 +109,8 @@ async function resolveTarget(hub: Hub, args: ResolveArgs): Promise<Target> {
   const tools = Object.fromEntries(resolvedTools)
 
   // The persisted override is the draft's, never this generation's model: copying the latter down
-  // would silently end the session's Project inheritance.
-  const session = existing ?? await createSession(hub.db, {
+  // would silently end the conversation's Project inheritance.
+  const conversation = existing ?? await createConversation(hub.db, {
     user_id: DEFAULT_USER_ID,
     title: titleFromParts(args.firstParts),
     project_id: draft.project_id,
@@ -120,22 +120,22 @@ async function resolveTarget(hub: Hub, args: ResolveArgs): Promise<Target> {
     provider_id: draft.provider_id,
     model_id: draft.model_id,
   })
-  if (!existing) hub.emitSessionCreated(session)
-  return { session, provider, providerInterface, model, config, tools }
+  if (!existing) hub.emitConversationCreated(conversation)
+  return { conversation, provider, providerInterface, model, config, tools }
 }
 
 // ---- stage 2: persist a user message
 
 async function persistUserMessage(
   hub: Hub,
-  session: SessionRow,
+  conversation: ConversationRow,
   parentId: number | null,
   parts: Part[],
   announce = true,
 ): Promise<Message> {
-  const seq = await hub.seq.allocate(session.id, () => maxSeq(hub.db, session.id))
+  const seq = await hub.seq.allocate(conversation.id, () => maxSeq(hub.db, conversation.id))
   const row = await insertMessage(hub.db, {
-    session_id: session.id, parent_id: parentId, seq, role: 'user', parts,
+    conversation_id: conversation.id, parent_id: parentId, seq, role: 'user', parts,
     provider_id: null, model_id: null, usage: null, status: 'done', error: null, created_at: Date.now(),
   })
   const message = toMessage(row)
@@ -143,90 +143,90 @@ async function persistUserMessage(
   return message
 }
 
-async function reserveUserMessage(hub: Hub, session: SessionRow, parentId: number | null, parts: Part[]): Promise<Message> {
-  const message = await persistUserMessage(hub, session, parentId, parts, false)
-  const updated = await compareAndSwapSessionHead(hub.db, session.id, parentId, message.id)
+async function reserveUserMessage(hub: Hub, conversation: ConversationRow, parentId: number | null, parts: Part[]): Promise<Message> {
+  const message = await persistUserMessage(hub, conversation, parentId, parts, false)
+  const updated = await compareAndSwapConversationHead(hub.db, conversation.id, parentId, message.id)
   if (!updated) {
     await deleteMessage(hub.db, message.id)
-    throw new Error('session head changed; resync before sending')
+    throw new Error('conversation head changed; resync before sending')
   }
   hub.broadcast({ type: 'message.created', message })
-  hub.broadcast({ type: 'head.changed', session_id: updated.id, message_id: message.id })
-  hub.emitSessionUpdated(updated)
+  hub.broadcast({ type: 'head.changed', conversation_id: updated.id, message_id: message.id })
+  hub.emitConversationUpdated(updated)
   return message
 }
 
 // ---- stage 3: assistant shell (persisted as error until finalized) + head move
 
 async function openAssistantShell(hub: Hub, target: Target, parentId: number): Promise<Message> {
-  const seq = await hub.seq.allocate(target.session.id, () => maxSeq(hub.db, target.session.id))
+  const seq = await hub.seq.allocate(target.conversation.id, () => maxSeq(hub.db, target.conversation.id))
   const row = await insertMessage(hub.db, {
-    session_id: target.session.id, parent_id: parentId, seq, role: 'assistant', parts: [],
+    conversation_id: target.conversation.id, parent_id: parentId, seq, role: 'assistant', parts: [],
     provider_id: target.provider.id, model_id: target.model.model_id, usage: null,
     // "The DO died before finalizing" is the truthful reading of a row left in this state.
     status: 'error', error: 'interrupted', created_at: Date.now(),
   })
   const message = toMessage(row, 'streaming')
   hub.broadcast({ type: 'message.created', message })
-  const session = await updateSession(hub.db, target.session.id, { head_message_id: row.id })
-  hub.broadcast({ type: 'head.changed', session_id: session.id, message_id: row.id })
-  hub.emitSessionUpdated(session)
+  const conversation = await updateConversation(hub.db, target.conversation.id, { head_message_id: row.id })
+  hub.broadcast({ type: 'head.changed', conversation_id: conversation.id, message_id: row.id })
+  hub.emitConversationUpdated(conversation)
   return message
 }
 
 async function openReservedAssistantShell(hub: Hub, target: Target, parentId: number): Promise<Message> {
-  const seq = await hub.seq.allocate(target.session.id, () => maxSeq(hub.db, target.session.id))
+  const seq = await hub.seq.allocate(target.conversation.id, () => maxSeq(hub.db, target.conversation.id))
   const row = await insertMessage(hub.db, {
-    session_id: target.session.id, parent_id: parentId, seq, role: 'assistant', parts: [],
+    conversation_id: target.conversation.id, parent_id: parentId, seq, role: 'assistant', parts: [],
     provider_id: target.provider.id, model_id: target.model.model_id, usage: null,
     status: 'error', error: 'interrupted', created_at: Date.now(),
   })
-  let session = await compareAndSwapSessionHead(hub.db, target.session.id, parentId, row.id)
-  if (!session) {
+  let conversation = await compareAndSwapConversationHead(hub.db, target.conversation.id, parentId, row.id)
+  if (!conversation) {
     if (await deleteMessageIfUnreferenced(hub.db, row.id)) {
-      throw new Error('session head changed; resync before generation')
+      throw new Error('conversation head changed; resync before generation')
     }
     // Reconfirm ownership atomically immediately before announcing: a separate read would leave
     // another interleaving window where this shell could stop being the durable head.
-    session = await compareAndSwapSessionHead(hub.db, target.session.id, row.id, row.id)
-    if (!session) {
-      throw new Error('session head changed; resync before generation')
+    conversation = await compareAndSwapConversationHead(hub.db, target.conversation.id, row.id, row.id)
+    if (!conversation) {
+      throw new Error('conversation head changed; resync before generation')
     }
   }
   const message = toMessage(row, 'streaming')
   hub.broadcast({ type: 'message.created', message })
-  hub.broadcast({ type: 'head.changed', session_id: session.id, message_id: row.id })
-  hub.emitSessionUpdated(session)
+  hub.broadcast({ type: 'head.changed', conversation_id: conversation.id, message_id: row.id })
+  hub.emitConversationUpdated(conversation)
   return message
 }
 
 async function openContinuationShell(hub: Hub, target: Target, parentId: number): Promise<Message | undefined> {
-  const seq = await hub.seq.allocate(target.session.id, () => maxSeq(hub.db, target.session.id))
+  const seq = await hub.seq.allocate(target.conversation.id, () => maxSeq(hub.db, target.conversation.id))
   const row = await insertAssistantChildIfAbsent(hub.db, {
-    session_id: target.session.id, parent_id: parentId, seq, role: 'assistant', parts: [],
+    conversation_id: target.conversation.id, parent_id: parentId, seq, role: 'assistant', parts: [],
     provider_id: target.provider.id, model_id: target.model.model_id, usage: null,
     status: 'error', error: 'interrupted', created_at: Date.now(),
   })
   if (!row) return undefined
-  let session = await compareAndSwapSessionHead(hub.db, target.session.id, parentId, row.id)
-  if (!session) {
+  let conversation = await compareAndSwapConversationHead(hub.db, target.conversation.id, parentId, row.id)
+  if (!conversation) {
     if (await deleteMessageIfUnreferenced(hub.db, row.id)) return undefined
     // A concurrent recovery may have observed this inserted shell and completed the exact same
     // parent → child transition. The creator still owns announcing and generating that shell.
-    session = await compareAndSwapSessionHead(hub.db, target.session.id, row.id, row.id)
-    if (!session) return undefined
+    conversation = await compareAndSwapConversationHead(hub.db, target.conversation.id, row.id, row.id)
+    if (!conversation) return undefined
   }
   const message = toMessage(row, 'streaming')
   hub.broadcast({ type: 'message.created', message })
-  hub.broadcast({ type: 'head.changed', session_id: session.id, message_id: row.id })
-  hub.emitSessionUpdated(session)
+  hub.broadcast({ type: 'head.changed', conversation_id: conversation.id, message_id: row.id })
+  hub.emitConversationUpdated(conversation)
   return message
 }
 
 // ---- stage 4: context assembly
 
 async function assembleContext(hub: Hub, target: Target, leafMessageId: number): Promise<{ path: Message[]; attachments: Map<number, AttachmentInput> }> {
-  const rows = await listMessages(hub.db, target.session.id)
+  const rows = await listMessages(hub.db, target.conversation.id)
   const byId = new Map(rows.map((r) => [r.id, toMessage(r)]))
   const path = pathToRoot(byId, leafMessageId)
   // Which ids the request needs is the message builder's own answer, not a second one kept in step
@@ -242,7 +242,7 @@ async function assembleContext(hub: Hub, target: Target, leafMessageId: number):
 async function generate(hub: Hub, target: Target, shell: Message, leafMessageId: number): Promise<void> {
   const controller = new AbortController()
   const acc = new PartAccumulator()
-  const job = { message: shell, sessionId: target.session.id, controller, startedAt: Date.now(), parts: acc.parts }
+  const job = { message: shell, conversationId: target.conversation.id, controller, startedAt: Date.now(), parts: acc.parts }
   // `trackInflight` assigns `settled` onto this very object, so the reference stays usable.
   await hub.trackInflight(job)
   const tracked = job as InflightJob
@@ -253,13 +253,13 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
 
   try {
     const { path, attachments } = await assembleContext(hub, target, leafMessageId)
-    const payload: BeforeSendPayload = { sessionId: target.session.id, systemPrompt: target.config.systemPrompt, path }
+    const payload: BeforeSendPayload = { conversationId: target.conversation.id, systemPrompt: target.config.systemPrompt, path }
     hub.app.emit('message/before-send', payload)
 
     const messages = buildModelMessages({ protocol: target.providerInterface.protocol, systemPrompt: payload.systemPrompt, path: payload.path, attachments })
-    const params: SessionParams = target.config.params
+    const params: ConversationParams = target.config.params
     const trace = {
-      sessionId: target.session.id,
+      conversationId: target.conversation.id,
       messageId: shell.id,
       providerId: target.provider.id,
       interfaceId: target.providerInterface.id,
@@ -335,7 +335,7 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
   // untrack. A failing finalize must not swallow `message.done`, or the client bubble would stay
   // `streaming` forever with nothing left in `inflight` for a snapshot to recover; its error is
   // therefore captured and rethrown only at the very end. `untrackInflight` resolves the promise
-  // `hub.stop()` awaits, so it comes last: by the time `stop()` (and thus `sessionDelete`) returns,
+  // `hub.stop()` awaits, so it comes last: by the time `stop()` (and thus `conversationDelete`) returns,
   // every socket already has the terminal event.
   let finalizeFailure: { err: unknown } | null = null
   try {
@@ -356,15 +356,15 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
 
 // ---- entry points
 
-/** Fields that initialize a brand-new session and are therefore meaningless on an existing one. */
-const INIT_FIELDS = ['project_id', 'system_prompt', 'params', 'session_provider_id', 'session_model_id', 'tools'] as const
+/** Fields that initialize a brand-new conversation and are therefore meaningless on an existing one. */
+const INIT_FIELDS = ['project_id', 'system_prompt', 'params', 'conversation_provider_id', 'conversation_model_id', 'tools'] as const
 const SKIPPED_ASK_USER_MESSAGE = '用户跳过了问题并继续回复'
 
-async function resolveSendParent(hub: Hub, session: SessionRow, parentId: number) {
+async function resolveSendParent(hub: Hub, conversation: ConversationRow, parentId: number) {
   const parent = await getMessage(hub.db, parentId)
-  if (!parent || parent.session_id !== session.id) throw new Error('parent message not in session')
-  const current = await getSession(hub.db, session.id)
-  if (!current || current.head_message_id !== parent.id) throw new Error('session head changed; resync before sending')
+  if (!parent || parent.conversation_id !== conversation.id) throw new Error('parent message not in conversation')
+  const current = await getConversation(hub.db, conversation.id)
+  if (!current || current.head_message_id !== parent.id) throw new Error('conversation head changed; resync before sending')
   const results = new Set(parent.parts.filter(part => part.type === 'tool_result').map(part => part.call_id))
   const pending = parent.parts.filter((part): part is ToolCallPart => part.type === 'tool_call' && !results.has(part.id))
   if (pending.length === 0) return parent
@@ -395,26 +395,26 @@ async function resolveSendParent(hub: Hub, session: SessionRow, parentId: number
 }
 
 export async function runSend(hub: Hub, cmd: SendCommand): Promise<void> {
-  // Dropping them silently would let a client believe it had changed a session's settings (spec §9).
-  if (cmd.session_id !== null && INIT_FIELDS.some((k) => cmd[k] !== undefined)) {
-    throw new Error('session init fields are only allowed when session_id is null')
+  // Dropping them silently would let a client believe it had changed a conversation's settings (spec §9).
+  if (cmd.conversation_id !== null && INIT_FIELDS.some((k) => cmd[k] !== undefined)) {
+    throw new Error('conversation init fields are only allowed when conversation_id is null')
   }
   const target = await resolveTarget(hub, {
-    sessionId: cmd.session_id,
+    conversationId: cmd.conversation_id,
     fallbackModel: { provider_id: cmd.provider_id, model_id: cmd.model_id },
     firstParts: cmd.parts,
     draft: {
       project_id: cmd.project_id ?? null,
       system_prompt: cmd.system_prompt ?? null,
       params: cmd.params ?? null,
-      provider_id: cmd.session_provider_id ?? null,
-      model_id: cmd.session_model_id ?? null,
+      provider_id: cmd.conversation_provider_id ?? null,
+      model_id: cmd.conversation_model_id ?? null,
       tools: hub.app.tools.normalize(cmd.tools ?? []),
     },
   })
-  const parentId = cmd.session_id === null ? null : (cmd.parent_id ?? target.session.head_message_id)
-  if (parentId !== null) await resolveSendParent(hub, target.session, parentId)
-  const user = await reserveUserMessage(hub, target.session, parentId, cmd.parts)
+  const parentId = cmd.conversation_id === null ? null : (cmd.parent_id ?? target.conversation.head_message_id)
+  if (parentId !== null) await resolveSendParent(hub, target.conversation, parentId)
+  const user = await reserveUserMessage(hub, target.conversation, parentId, cmd.parts)
   const shell = await openReservedAssistantShell(hub, target, user.id)
   await generate(hub, target, shell, user.id)
 }
@@ -430,7 +430,7 @@ export async function runRegenerate(hub: Hub, cmd: Extract<WsCommand, { type: 'r
   const fallbackModel = old.provider_id !== null && old.model_id !== null
     ? { provider_id: old.provider_id, model_id: old.model_id }
     : undefined
-  const target = await resolveTarget(hub, { sessionId: old.session_id, explicitModel, fallbackModel, firstParts: [] })
+  const target = await resolveTarget(hub, { conversationId: old.conversation_id, explicitModel, fallbackModel, firstParts: [] })
   const shell = await openAssistantShell(hub, target, old.parent_id)
   await generate(hub, target, shell, old.parent_id)
 }
@@ -438,10 +438,10 @@ export async function runRegenerate(hub: Hub, cmd: Extract<WsCommand, { type: 'r
 export async function runEdit(hub: Hub, cmd: Extract<WsCommand, { type: 'edit' }>): Promise<void> {
   const old = await getMessage(hub.db, cmd.message_id)
   if (!old || old.role !== 'user') throw new Error('not a user message')
-  // `edit` carries no model, so the session's last generation stands in as the command layer.
-  const fallbackModel = await lastGenerationModel(hub.db, old.session_id)
-  const target = await resolveTarget(hub, { sessionId: old.session_id, fallbackModel, firstParts: cmd.parts })
-  const user = await persistUserMessage(hub, target.session, old.parent_id, cmd.parts)
+  // `edit` carries no model, so the conversation's last generation stands in as the command layer.
+  const fallbackModel = await lastGenerationModel(hub.db, old.conversation_id)
+  const target = await resolveTarget(hub, { conversationId: old.conversation_id, fallbackModel, firstParts: cmd.parts })
+  const user = await persistUserMessage(hub, target.conversation, old.parent_id, cmd.parts)
   const shell = await openAssistantShell(hub, target, user.id)
   await generate(hub, target, shell, user.id)
 }
@@ -461,12 +461,12 @@ function sameJson(a: unknown, b: unknown): boolean {
 async function ownedTerminalToolMessage(hub: Hub, messageId: number) {
   const message = await getMessage(hub.db, messageId)
   if (!message || message.role !== 'assistant') throw new Error('tool-call message not found')
-  const session = await getSession(hub.db, message.session_id)
-  if (!session || session.user_id !== DEFAULT_USER_ID) throw new Error('tool-call message not found')
+  const conversation = await getConversation(hub.db, message.conversation_id)
+  if (!conversation || conversation.user_id !== DEFAULT_USER_ID) throw new Error('tool-call message not found')
   if (hub.inflight().some(job => job.message.id === messageId) || message.status !== 'done') {
     throw new Error('cannot respond to a streaming or incomplete message')
   }
-  return { message, session }
+  return { message, conversation }
 }
 
 function completedToolState(parts: Part[]): 'waiting' | 'cancelled' | 'answered' {
@@ -483,20 +483,20 @@ function completedToolState(parts: Part[]): 'waiting' | 'cancelled' | 'answered'
 }
 
 async function continueFromToolMessage(hub: Hub, messageId: number): Promise<void> {
-  const { message, session } = await ownedTerminalToolMessage(hub, messageId)
+  const { message, conversation } = await ownedTerminalToolMessage(hub, messageId)
   const state = completedToolState(message.parts)
   if (state === 'waiting') throw new Error('tool calls are still waiting for responses')
   if (state === 'cancelled') throw new Error('cancelled tool calls cannot continue automatically')
 
   const reconcileChildHead = async (child: Message): Promise<void> => {
-    const current = await getSession(hub.db, session.id)
-    if (!current) throw new Error('session not found')
+    const current = await getConversation(hub.db, conversation.id)
+    if (!current) throw new Error('conversation not found')
     if (current.head_message_id === child.id) return
     if (current.head_message_id !== message.id) return
-    const updated = await compareAndSwapSessionHead(hub.db, current.id, message.id, child.id)
+    const updated = await compareAndSwapConversationHead(hub.db, current.id, message.id, child.id)
     if (!updated) return
-    hub.broadcast({ type: 'head.changed', session_id: updated.id, message_id: child.id })
-    hub.emitSessionUpdated(updated)
+    hub.broadcast({ type: 'head.changed', conversation_id: updated.id, message_id: child.id })
+    hub.emitConversationUpdated(updated)
   }
 
   const existingChildren = await listAssistantChildren(hub.db, message.id)
@@ -508,8 +508,8 @@ async function continueFromToolMessage(hub: Hub, messageId: number): Promise<voi
   }
 
   const headStillParent = async (): Promise<boolean> => {
-    const current = await getSession(hub.db, session.id)
-    if (!current) throw new Error('session not found')
+    const current = await getConversation(hub.db, conversation.id)
+    if (!current) throw new Error('conversation not found')
     if (current.head_message_id === message.id) return true
     return false
   }
@@ -517,8 +517,8 @@ async function continueFromToolMessage(hub: Hub, messageId: number): Promise<voi
 
   const fallbackModel = message.provider_id !== null && message.model_id !== null
     ? { provider_id: message.provider_id, model_id: message.model_id }
-    : await lastGenerationModel(hub.db, message.session_id)
-  const target = await resolveTarget(hub, { sessionId: message.session_id, fallbackModel, firstParts: [] })
+    : await lastGenerationModel(hub.db, message.conversation_id)
+  const target = await resolveTarget(hub, { conversationId: message.conversation_id, fallbackModel, firstParts: [] })
   if (!(await headStillParent())) return
   const shell = await openContinuationShell(hub, target, message.id)
   if (!shell) {
@@ -543,7 +543,7 @@ export async function runToolRespond(hub: Hub, cmd: Extract<WsCommand, { type: '
   const input = AskUserInputSchema.parse(call.args)
   const result = validateAskUserResult(input, AskUserResultSchema.parse(cmd.result))
   const part = { type: 'tool_result' as const, call_id: call.id, name: call.name, content: result }
-  const appended = await appendToolResult(hub.db, message.id, message.session_id, part)
+  const appended = await appendToolResult(hub.db, message.id, message.conversation_id, part)
   if (!appended) {
     const current = await getMessage(hub.db, message.id)
     const existing = current && toolResultFor(current.parts, call.id)

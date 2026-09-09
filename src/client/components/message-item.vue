@@ -20,7 +20,7 @@ import { Message as MessageRoot, MessageAvatar, MessageContent, MessageFooter, M
 import { Textarea } from '@/client/ui/textarea'
 import type { Message, Project } from '@/shared/models'
 import type { ToolCallPart, ToolResultPart } from '@/shared/parts'
-import { useSessionFork } from '@/client/composables/use-session-fork'
+import { useConversationFork } from '@/client/composables/use-conversation-fork'
 import { useTheme } from '@/client/composables/use-theme'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/client/ui/dropdown-menu'
 
@@ -56,13 +56,13 @@ const toolRows = computed(() => {
 })
 const canContinueTools = computed(() => canContinueToolMessage(
   props.message,
-  [...(sync.messages.get(props.message.session_id)?.values() ?? [])],
-  sync.sessions.get(props.message.session_id)?.head_message_id,
+  [...(sync.messages.get(props.message.conversation_id)?.values() ?? [])],
+  sync.conversations.get(props.message.conversation_id)?.head_message_id,
 ))
-const isSessionHead = computed(() => sync.sessions.get(props.message.session_id)?.head_message_id === props.message.id)
+const isConversationHead = computed(() => sync.conversations.get(props.message.conversation_id)?.head_message_id === props.message.id)
 /** Spec §7.4: the shell is visible the moment it arrives, and never claims reasoning it lacks. */
 const wait = computed(() => assistantWaitState(props.message))
-const { pending: forkPending, fork } = useSessionFork()
+const { pending: forkPending, fork } = useConversationFork()
 
 function startEdit() {
   draft.value = textParts.value.map((p) => p.text).join('\n')
@@ -117,7 +117,7 @@ MessageRoot(
           ToolPartRenderer(
             v-for="row in toolRows" :key="row.call.id" :message-id="message.id"
             :call="row.call" :result="row.result" :can-continue="canContinueTools"
-            :defer-pending="isSessionHead" :input-pending="streaming && typeof row.call.args === 'string'")
+            :defer-pending="isConversationHead" :input-pending="streaming && typeof row.call.args === 'string'")
           //- Generated images are served by the same authenticated attachment route as uploads.
           .flex.flex-wrap.gap-2.pt-2(v-if="images.length")
             img.max-h-80.rounded.border(v-for="(img, i) in images" :key="i" :src="api.attachmentUrl(img.attachment_id)")
@@ -146,7 +146,7 @@ MessageRoot(
             title="更多操作" aria-label="更多消息操作")
             EllipsisIcon
         DropdownMenuContent(align="start")
-          DropdownMenuItem(class="min-h-10" :disabled="!!forkPending" @select="fork(message.session_id, message.id)")
+          DropdownMenuItem(class="min-h-10" :disabled="!!forkPending" @select="fork(message.conversation_id, message.id)")
             GitForkIcon
             span 从此处分叉
       MessageUsage(v-if="message.usage" :usage="message.usage")

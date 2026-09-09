@@ -9,8 +9,8 @@ import CollectionState from '@/client/components/collection-state.vue'
 import { Button } from '@/client/ui/button'
 import ProjectCreateDialog from '@/client/components/layout/project-create-dialog.vue'
 import ProjectNavRow from '@/client/components/layout/project-nav-row.vue'
-import SessionNavRow from '@/client/components/layout/session-nav-row.vue'
-import { projectPresentation, recentProjects, searchProjects, searchSessions } from '@/client/lib/ui-models'
+import ConversationNavRow from '@/client/components/layout/conversation-nav-row.vue'
+import { projectPresentation, recentProjects, searchProjects, searchConversations } from '@/client/lib/ui-models'
 import { useSyncStore } from '@/client/stores/sync'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/client/ui/collapsible'
 import {
@@ -35,19 +35,19 @@ const project = computed(() => typeof props.projectId === 'number' ? sync.projec
 const projectTitle = computed(() => project.value ? projectPresentation(project.value.name).title : '')
 const displayProjectName = (name: string) => projectPresentation(name).title
 const isProjectMode = computed(() => typeof props.projectId === 'number' && project.value !== undefined)
-const allProjectsByActivity = computed(() => recentProjects(sync.projectList, sync.sessionList, Number.MAX_SAFE_INTEGER))
+const allProjectsByActivity = computed(() => recentProjects(sync.projectList, sync.conversationList, Number.MAX_SAFE_INTEGER))
 const visibleProjects = computed(() => {
   const source = query.value.trim()
     ? searchProjects(allProjectsByActivity.value, query.value)
     : allProjectsByActivity.value.slice(0, 5)
   return source
 })
-const outerSessions = computed(() => query.value.trim()
-  ? searchSessions(sync.sessionList, query.value)
-  : searchSessions(sync.sessionList, '', null))
-const projectSessions = computed(() => searchSessions(sync.sessionList, query.value, props.projectId))
-const openSessionId = computed(() => {
-  const raw = 'sessionId' in route.params ? route.params.sessionId : undefined
+const outerConversations = computed(() => query.value.trim()
+  ? searchConversations(sync.conversationList, query.value)
+  : searchConversations(sync.conversationList, '', null))
+const projectConversations = computed(() => searchConversations(sync.conversationList, query.value, props.projectId))
+const openConversationId = computed(() => {
+  const raw = 'conversationId' in route.params ? route.params.conversationId : undefined
   const value = typeof raw === 'string' ? Number(raw) : Number.NaN
   return Number.isInteger(value) && value > 0 ? value : null
 })
@@ -122,19 +122,19 @@ function clearSearch() {
     <SidebarContent class="overflow-hidden">
       <ScrollArea class="min-h-0 flex-1">
         <SidebarGroup>
-          <SidebarGroupLabel>对话 {{ projectSessions.length }}</SidebarGroupLabel>
+          <SidebarGroupLabel>对话 {{ projectConversations.length }}</SidebarGroupLabel>
           <SidebarGroupContent>
-            <CollectionState :loaded="sync.sessionsLoaded" :error="sync.sessionsError" :retry="sync.loadSessions" :empty="projectSessions.length === 0" :empty-title="query ? '没有匹配的对话' : '这个 Project 还没有对话'">
+            <CollectionState :loaded="sync.conversationsLoaded" :error="sync.conversationsError" :retry="sync.loadConversations" :empty="projectConversations.length === 0" :empty-title="query ? '没有匹配的对话' : '这个 Project 还没有对话'">
               <template #empty-action>
                 <Button v-if="query" variant="outline" class="min-h-10" @click="clearSearch">清除搜索</Button>
                 <Button v-else as-child variant="outline" class="min-h-10"><RouterLink :to="`/project/${project.id}/new`">开始对话</RouterLink></Button>
               </template>
               <SidebarMenu>
-                <SessionNavRow
-                  v-for="session in projectSessions" :key="session.id"
-                  :session="session"
+                <ConversationNavRow
+                  v-for="conversation in projectConversations" :key="conversation.id"
+                  :conversation="conversation"
                   :projects="sync.projectList"
-                  :active="openSessionId === session.id"
+                  :active="openConversationId === conversation.id"
                 />
               </SidebarMenu>
             </CollectionState>
@@ -201,17 +201,17 @@ function clearSearch() {
             </CollapsibleTrigger>
             <CollapsibleContent>
               <SidebarGroupContent>
-                <CollectionState :loaded="sync.sessionsLoaded" :error="sync.sessionsError" :retry="sync.loadSessions" :empty="outerSessions.length === 0" :empty-title="query ? '没有匹配的对话' : '还没有随心聊'">
+                <CollectionState :loaded="sync.conversationsLoaded" :error="sync.conversationsError" :retry="sync.loadConversations" :empty="outerConversations.length === 0" :empty-title="query ? '没有匹配的对话' : '还没有随心聊'">
                   <template #empty-action>
                     <Button v-if="query" variant="outline" class="min-h-10" @click="clearSearch">清除搜索</Button>
                     <Button v-else as-child variant="outline" class="min-h-10"><RouterLink to="/new">开始对话</RouterLink></Button>
                   </template>
                   <SidebarMenu>
-                    <SessionNavRow
-                      v-for="session in outerSessions" :key="session.id"
-                      :session="session"
+                    <ConversationNavRow
+                      v-for="conversation in outerConversations" :key="conversation.id"
+                      :conversation="conversation"
                       :projects="sync.projectList"
-                      :active="openSessionId === session.id"
+                      :active="openConversationId === conversation.id"
                     />
                   </SidebarMenu>
                 </CollectionState>

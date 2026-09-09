@@ -3,11 +3,11 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { DownloadIcon, EllipsisIcon, FolderInputIcon, GitForkIcon, MessageCircleIcon, PencilIcon, Trash2Icon } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 import { toast } from 'vue-sonner'
-import { useSessionFork } from '@/client/composables/use-session-fork'
+import { useConversationFork } from '@/client/composables/use-conversation-fork'
 import { api } from '@/client/lib/api'
-import { downloadSessionExport, type ExportFormat } from '@/client/lib/session-export'
-import { DISCONNECTED_MESSAGE, moveSessionCommand, useSyncStore } from '@/client/stores/sync'
-import { sessionPath } from '@/client/lib/ui-models'
+import { conversationExport, type ExportFormat } from '@/client/lib/conversation-export'
+import { DISCONNECTED_MESSAGE, moveConversationCommand, useSyncStore } from '@/client/stores/sync'
+import { conversationPath } from '@/client/lib/ui-models'
 import { SidebarMenuAction, SidebarMenuButton, SidebarMenuItem, useSidebar } from '@/client/ui/sidebar'
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
@@ -20,10 +20,10 @@ import {
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/client/ui/dialog'
 import { Input } from '@/client/ui/input'
 import { Button } from '@/client/ui/button'
-import type { Project, Session } from '@/shared/models'
+import type { Project, Conversation } from '@/shared/models'
 
 const props = defineProps<{
-  session: Session
+  conversation: Conversation
   projects: readonly Project[]
   active?: boolean
 }>()
@@ -34,9 +34,9 @@ const { isMobile } = useSidebar()
 const deleteOpen = ref(false)
 const action = ref<InstanceType<typeof SidebarMenuAction> | null>(null)
 const renameOpen = ref(false)
-const title = ref(props.session.title)
-const { pending: forkPending, fork } = useSessionFork()
-watch(() => props.session.title, value => { if (!renameOpen.value) title.value = value })
+const title = ref(props.conversation.title)
+const { pending: forkPending, fork } = useConversationFork()
+watch(() => props.conversation.title, value => { if (!renameOpen.value) title.value = value })
 
 function restoreActionFocus(event: Event) {
   event.preventDefault()
@@ -47,33 +47,33 @@ function restoreActionFocus(event: Event) {
 }
 
 const moveTargets = computed(() => [
-  ...(props.session.project_id === null ? [] : [{ id: null, label: '移出 Project' }]),
+  ...(props.conversation.project_id === null ? [] : [{ id: null, label: '移出 Project' }]),
   ...props.projects
-    .filter(project => project.id !== props.session.project_id)
+    .filter(project => project.id !== props.conversation.project_id)
     .map(project => ({ id: project.id, label: project.name })),
 ])
 
 function move(projectId: number | null) {
-  send(moveSessionCommand(props.session.id, projectId))
+  send(moveConversationCommand(props.conversation.id, projectId))
 }
 
 function remove() {
-  send({ type: 'session.delete', session_id: props.session.id })
+  send({ type: 'conversation.delete', conversation_id: props.conversation.id })
 }
 
 function rename() {
   const value = title.value.trim()
-  if (!value || value === props.session.title) { renameOpen.value = false; return }
-  if (send({ type: 'session.update', session_id: props.session.id, title: value })) renameOpen.value = false
+  if (!value || value === props.conversation.title) { renameOpen.value = false; return }
+  if (send({ type: 'conversation.update', conversation_id: props.conversation.id, title: value })) renameOpen.value = false
 }
 
-async function exportSession(format: ExportFormat) {
+async function exportConversation(format: ExportFormat) {
   try {
-    await sync.loadMessages(props.session.id)
-    downloadSessionExport(format, {
-      session: props.session,
-      project: props.session.project_id === null ? undefined : sync.projects.get(props.session.project_id),
-      messages: sync.pathFor(props.session.id),
+    await sync.loadMessages(props.conversation.id)
+    conversationExport(format, {
+      conversation: props.conversation,
+      project: props.conversation.project_id === null ? undefined : sync.projects.get(props.conversation.project_id),
+      messages: sync.pathFor(props.conversation.id),
       attachmentUrl: id => new URL(api.attachmentUrl(id), location.origin).href,
     })
   } catch (error) { toast.error(error instanceof Error ? error.message : String(error)) }
@@ -89,16 +89,16 @@ function send(command: Parameters<typeof sync.send>[0]): boolean {
 
 <template>
   <SidebarMenuItem>
-    <SidebarMenuButton as-child class="min-h-10 md:min-h-0 group-has-data-[sidebar=menu-action]/menu-item:pr-12" :is-active="active" :tooltip="session.title">
-      <RouterLink :to="sessionPath(session)" @click="emit('navigate')">
+    <SidebarMenuButton as-child class="min-h-10 md:min-h-0 group-has-data-[sidebar=menu-action]/menu-item:pr-12" :is-active="active" :tooltip="conversation.title">
+      <RouterLink :to="conversationPath(conversation)" @click="emit('navigate')">
         <MessageCircleIcon />
-        <span>{{ session.title }}</span>
+        <span>{{ conversation.title }}</span>
       </RouterLink>
     </SidebarMenuButton>
 
     <DropdownMenu>
       <DropdownMenuTrigger as-child>
-        <SidebarMenuAction ref="action" data-row-action show-on-hover type="button" class="peer-data-[size=default]/menu-button:top-1/2 -translate-y-1/2 size-8 w-8 h-8 max-md:size-10 after:inset-0 [&>svg]:size-4" :aria-label="`对话操作：${session.title}`">
+        <SidebarMenuAction ref="action" data-row-action show-on-hover type="button" class="peer-data-[size=default]/menu-button:top-1/2 -translate-y-1/2 size-8 w-8 h-8 max-md:size-10 after:inset-0 [&>svg]:size-4" :aria-label="`对话操作：${conversation.title}`">
           <EllipsisIcon class="size-4" />
         </SidebarMenuAction>
       </DropdownMenuTrigger>
@@ -107,14 +107,14 @@ function send(command: Parameters<typeof sync.send>[0]): boolean {
           <DropdownMenuItem class="min-h-10" @select="renameOpen = true">
             <PencilIcon /><span>重命名</span>
           </DropdownMenuItem>
-          <DropdownMenuItem class="min-h-10" :disabled="session.head_message_id === null || !!forkPending" @select="session.head_message_id !== null && fork(session.id, session.head_message_id)">
+          <DropdownMenuItem class="min-h-10" :disabled="conversation.head_message_id === null || !!forkPending" @select="conversation.head_message_id !== null && fork(conversation.id, conversation.head_message_id)">
             <GitForkIcon /><span>从此处分叉</span>
           </DropdownMenuItem>
           <DropdownMenuSub>
             <DropdownMenuSubTrigger class="min-h-10"><DownloadIcon /><span>导出</span></DropdownMenuSubTrigger>
             <DropdownMenuSubContent>
-              <DropdownMenuItem class="min-h-10" @select="exportSession('markdown')">Markdown</DropdownMenuItem>
-              <DropdownMenuItem class="min-h-10" @select="exportSession('json')">JSON</DropdownMenuItem>
+              <DropdownMenuItem class="min-h-10" @select="exportConversation('markdown')">Markdown</DropdownMenuItem>
+              <DropdownMenuItem class="min-h-10" @select="exportConversation('json')">JSON</DropdownMenuItem>
             </DropdownMenuSubContent>
           </DropdownMenuSub>
           <DropdownMenuSub>
@@ -139,7 +139,7 @@ function send(command: Parameters<typeof sync.send>[0]): boolean {
       <AlertDialogContent @close-auto-focus="restoreActionFocus">
         <AlertDialogHeader>
           <AlertDialogTitle>删除这个对话？</AlertDialogTitle>
-          <AlertDialogDescription>“{{ session.title }}”及其所有消息将被永久删除。</AlertDialogDescription>
+          <AlertDialogDescription>“{{ conversation.title }}”及其所有消息将被永久删除。</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel class="min-h-10">取消</AlertDialogCancel>

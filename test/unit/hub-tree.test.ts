@@ -3,7 +3,7 @@ import { pathToRoot, siblingsOf, titleFromParts } from '@/server/plugins/hub/tre
 import type { Message } from '@/shared/models'
 
 function m(id: number, parent_id: number | null, seq = id): Message {
-  return { id, session_id: 1, parent_id, seq, role: id % 2 ? 'user' : 'assistant', parts: [], provider_id: null, model_id: null, usage: null, status: 'done', error: null, created_at: 0 }
+  return { id, conversation_id: 1, parent_id, seq, role: id % 2 ? 'user' : 'assistant', parts: [], provider_id: null, model_id: null, usage: null, status: 'done', error: null, created_at: 0 }
 }
 // 1 → 2 → 3 ; 1 → 4 (sibling of 2) ; 4 → 5
 const all = [m(1, null), m(2, 1), m(3, 2), m(4, 1), m(5, 4)]

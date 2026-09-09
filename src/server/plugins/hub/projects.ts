@@ -1,7 +1,7 @@
 import { and, desc, eq } from 'drizzle-orm'
 import type { DB } from '../../db/client'
-import { attachments, projects, sessions } from '../../db/schema'
-import type { ProjectRow, SessionRow } from '../../db/schema'
+import { attachments, projects, conversations } from '../../db/schema'
+import type { ProjectRow, ConversationRow } from '../../db/schema'
 
 /** Every read and write is scoped to the owning user; D1 is the source of truth (spec §5.1). */
 
@@ -52,7 +52,7 @@ export async function validateProjectIcon(db: DB, userId: number, attachmentId: 
 }
 
 /**
- * Sessions keep existing: the `ON DELETE SET NULL` foreign key moves them back to Chats (spec §3.1).
+ * Conversations keep existing: the `ON DELETE SET NULL` foreign key moves them back to Chats (spec §3.1).
  * Returns the deleted row, and throws when nothing matched, so a caller cannot mistake "not yours"
  * for "deleted" and broadcast `project.deleted` for a project it never touched.
  */
@@ -62,8 +62,8 @@ export async function deleteProject(db: DB, id: number, userId: number): Promise
   return row
 }
 
-export async function listProjectSessions(db: DB, projectId: number, userId: number): Promise<SessionRow[]> {
-  return db.select().from(sessions)
-    .where(and(eq(sessions.project_id, projectId), eq(sessions.user_id, userId)))
-    .orderBy(desc(sessions.updated_at))
+export async function listProjectConversations(db: DB, projectId: number, userId: number): Promise<ConversationRow[]> {
+  return db.select().from(conversations)
+    .where(and(eq(conversations.project_id, projectId), eq(conversations.user_id, userId)))
+    .orderBy(desc(conversations.updated_at))
 }

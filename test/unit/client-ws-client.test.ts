@@ -25,13 +25,13 @@ describe('WsClient', () => {
       socketFactory: (url) => new FakeSocket(url) as unknown as WebSocket, minDelayMs: 100, maxDelayMs: 400,
     })
     client.connect()
-    client.send({ type: 'stop', session_id: 1 })
+    client.send({ type: 'stop', conversation_id: 1 })
     const s1 = FakeSocket.instances[0]!
     expect(s1.sent).toEqual([])
     s1.open()
-    expect(s1.sent).toEqual([JSON.stringify({ type: 'stop', session_id: 1 })])
-    s1.onmessage?.({ data: JSON.stringify({ type: 'session.deleted', session_id: 3 }) })
-    expect(events).toEqual([{ type: 'session.deleted', session_id: 3 }])
+    expect(s1.sent).toEqual([JSON.stringify({ type: 'stop', conversation_id: 1 })])
+    s1.onmessage?.({ data: JSON.stringify({ type: 'conversation.deleted', conversation_id: 3 }) })
+    expect(events).toEqual([{ type: 'conversation.deleted', conversation_id: 3 }])
 
     s1.close()
     expect(statuses.at(-1)).toBe('closed')

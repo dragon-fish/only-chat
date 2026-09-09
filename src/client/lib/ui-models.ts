@@ -1,5 +1,5 @@
 import type { CatalogProviderSummary } from '@/shared/api'
-import type { ModelWithMetadata, Project, ProviderWithInterfaces, Session, Usage } from '@/shared/models'
+import type { ModelWithMetadata, Project, ProviderWithInterfaces, Conversation, Usage } from '@/shared/models'
 
 export type EnabledModelEntry = {
   provider: ProviderWithInterfaces
@@ -17,8 +17,8 @@ export function projectPresentation(name: string): { icon: string | null, title:
   return { icon: first, title: value.slice(first.length).trimStart() || value }
 }
 
-export function sessionPath(session: Pick<Session, 'id' | 'project_id'>): string {
-  return session.project_id === null ? `/c/${session.id}` : `/project/${session.project_id}/c/${session.id}`
+export function conversationPath(conversation: Pick<Conversation, 'id' | 'project_id'>): string {
+  return conversation.project_id === null ? `/c/${conversation.id}` : `/project/${conversation.project_id}/c/${conversation.id}`
 }
 
 /** Builds a stable avatar fallback without depending on the host's default locale. */
@@ -34,21 +34,21 @@ export function displayInitials(name: string, fallback = 'AI'): string {
   return initials.toUpperCase()
 }
 
-/** Returns the newest activity timestamp belonging to a Project or one of its sessions. */
-export function projectActivity(project: Project, sessions: readonly Session[]): number {
-  return sessions.reduce(
-    (latest, session) => session.project_id === project.id ? Math.max(latest, session.updated_at) : latest,
+/** Returns the newest activity timestamp belonging to a Project or one of its conversations. */
+export function projectActivity(project: Project, conversations: readonly Conversation[]): number {
+  return conversations.reduce(
+    (latest, conversation) => conversation.project_id === project.id ? Math.max(latest, conversation.updated_at) : latest,
     project.updated_at,
   )
 }
 
 export function recentProjects(
   projects: readonly Project[],
-  sessions: readonly Session[],
+  conversations: readonly Conversation[],
   limit = 5,
 ): Project[] {
   return projects
-    .map((project, index) => ({ project, activity: projectActivity(project, sessions), index }))
+    .map((project, index) => ({ project, activity: projectActivity(project, conversations), index }))
     .sort((a, b) => b.activity - a.activity || b.project.id - a.project.id || a.index - b.index)
     .slice(0, Math.max(0, limit))
     .map(({ project }) => project)
@@ -59,15 +59,15 @@ export function searchProjects(projects: readonly Project[], query: string): Pro
   return projects.filter(project => !normalized || project.name.toLocaleLowerCase().includes(normalized))
 }
 
-export function searchSessions(
-  sessions: readonly Session[],
+export function searchConversations(
+  conversations: readonly Conversation[],
   query: string,
   projectId?: number | null,
-): Session[] {
+): Conversation[] {
   const normalized = normalizeQuery(query)
-  return sessions.filter(session => {
-    const inScope = projectId === undefined || session.project_id === projectId
-    return inScope && (!normalized || session.title.toLocaleLowerCase().includes(normalized))
+  return conversations.filter(conversation => {
+    const inScope = projectId === undefined || conversation.project_id === projectId
+    return inScope && (!normalized || conversation.title.toLocaleLowerCase().includes(normalized))
   })
 }
 

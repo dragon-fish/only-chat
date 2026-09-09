@@ -27,7 +27,7 @@ export type PersistedStatus = z.infer<typeof PersistedStatusSchema>
 export const ReasoningEffortSchema = z.enum(['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'])
 export type ReasoningEffort = z.infer<typeof ReasoningEffortSchema>
 
-export const SessionParamsSchema = z.object({
+export const ConversationParamsSchema = z.object({
   temperature: z.number().min(0).max(2).optional(),
   top_p: z.number().min(0).max(1).optional(),
   max_tokens: z.number().int().positive().optional(),
@@ -36,7 +36,7 @@ export const SessionParamsSchema = z.object({
   /** Missing = inherit; `null` = explicit Auto (reasoning on, no effort sent); string = explicit effort. */
   reasoning_effort: ReasoningEffortSchema.nullable().optional(),
 })
-export type SessionParams = z.infer<typeof SessionParamsSchema>
+export type ConversationParams = z.infer<typeof ConversationParamsSchema>
 
 export const UserSettingsSchema = z.object({
   plugins: z.record(z.string(), z.boolean()).default({}),
@@ -51,7 +51,7 @@ export const UserSchema = z.object({
 })
 export type User = z.infer<typeof UserSchema>
 
-export const SessionSchema = z.object({
+export const ConversationSchema = z.object({
   id: z.number().int(),
   user_id: z.number().int(),
   project_id: z.number().int().nullable(),
@@ -60,14 +60,14 @@ export const SessionSchema = z.object({
   provider_id: z.number().int().nullable(),
   model_id: z.string().nullable(),
   system_prompt: z.string().nullable(),
-  params: SessionParamsSchema.nullable(),
-  /** Stable selected tool IDs, captured when the Session is first created. */
+  params: ConversationParamsSchema.nullable(),
+  /** Stable selected tool IDs, captured when the Conversation is first created. */
   tools: z.array(z.string()),
   created_at: z.number(),
   updated_at: z.number(),
   archived_at: z.number().nullable(),
 })
-export type Session = z.infer<typeof SessionSchema>
+export type Conversation = z.infer<typeof ConversationSchema>
 
 /** Only `name` is required; prompt, model and params may all be absent. */
 export const ProjectSchema = z.object({
@@ -78,7 +78,7 @@ export const ProjectSchema = z.object({
   system_prompt: z.string().nullable(),
   provider_id: z.number().int().nullable(),
   model_id: z.string().nullable(),
-  params: SessionParamsSchema.nullable(),
+  params: ConversationParamsSchema.nullable(),
   created_at: z.number(),
   updated_at: z.number(),
 })
@@ -86,7 +86,7 @@ export type Project = z.infer<typeof ProjectSchema>
 
 export const MessageSchema = z.object({
   id: z.number().int(),
-  session_id: z.number().int(),
+  conversation_id: z.number().int(),
   parent_id: z.number().int().nullable(),
   seq: z.number().int(),
   role: z.enum(['user', 'assistant']),

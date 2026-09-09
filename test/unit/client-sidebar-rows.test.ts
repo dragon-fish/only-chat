@@ -5,10 +5,10 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import { afterEach, expect, it, vi } from 'vitest'
 import { compile } from 'tailwindcss'
 import ProjectNavRow from '@/client/components/layout/project-nav-row.vue'
-import SessionNavRow from '@/client/components/layout/session-nav-row.vue'
+import ConversationNavRow from '@/client/components/layout/conversation-nav-row.vue'
 import { SidebarMenu, SidebarProvider } from '@/client/ui/sidebar'
 import { useSyncStore } from '@/client/stores/sync'
-import type { Project, Session } from '@/shared/models'
+import type { Project, Conversation } from '@/shared/models'
 
 let cleanup = () => {}
 afterEach(() => { cleanup(); vi.restoreAllMocks(); document.body.innerHTML = '' })
@@ -27,14 +27,14 @@ async function mountRows(options: { mobile?: boolean } = {}) {
   const pinia = createPinia()
   const sync = useSyncStore(pinia)
   const project: Project = { id: 7, user_id: 1, name: 'Design', icon_attachment_id: null, system_prompt: null, provider_id: null, model_id: null, params: null, created_at: 0, updated_at: 0 }
-  const session: Session = { id: 12, user_id: 1, project_id: 7, title: 'Notes', head_message_id: null, provider_id: null, model_id: null, system_prompt: null, params: null, tools: [], archived_at: null, created_at: 0, updated_at: 0 }
+  const conversation: Conversation = { id: 12, user_id: 1, project_id: 7, title: 'Notes', head_message_id: null, provider_id: null, model_id: null, system_prompt: null, params: null, tools: [], archived_at: null, created_at: 0, updated_at: 0 }
   const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/:pathMatch(.*)*', component: { template: '<div />' } }] })
   await router.push('/project/7')
   const host = document.createElement('div')
   document.body.append(host)
   const app = createApp({ render: () => h(SidebarProvider, null, () => h(SidebarMenu, null, () => [
     h(ProjectNavRow, { project }),
-    h(SessionNavRow, { session, projects: [project, { ...project, id: 8, name: 'Research' }] }),
+    h(ConversationNavRow, { conversation, projects: [project, { ...project, id: 8, name: 'Research' }] }),
   ])) }).use(pinia).use(router)
   app.mount(host)
   cleanup = () => app.unmount()
@@ -76,7 +76,7 @@ it.each([
   }
 })
 
-it('offers session movement and confirmed deletion from one row action menu', async () => {
+it('offers conversation movement and confirmed deletion from one row action menu', async () => {
   const send = await mountRows()
   const actions = document.querySelector<HTMLButtonElement>('[aria-label="对话操作：Notes"]')
   expect(actions).not.toBeNull()
@@ -86,7 +86,7 @@ it('offers session movement and confirmed deletion from one row action menu', as
   menuItem('移动到').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
   await vi.waitFor(() => expect(menuItem('Research')).toBeDefined())
   menuItem('Research').click()
-  await vi.waitFor(() => expect(send).toHaveBeenCalledWith({ type: 'session.update', session_id: 12, project_id: 8 }))
+  await vi.waitFor(() => expect(send).toHaveBeenCalledWith({ type: 'conversation.update', conversation_id: 12, project_id: 8 }))
   await vi.waitFor(() => expect(document.querySelector('[role="menu"]')).toBeNull())
   send.mockClear()
   actions!.click()
@@ -103,7 +103,7 @@ it('offers session movement and confirmed deletion from one row action menu', as
   menuItem('删除对话').click()
   await vi.waitFor(() => expect(document.querySelector('[role="alertdialog"]')).not.toBeNull())
   ;[...document.querySelectorAll('button')].find(button => button.textContent?.trim() === '删除')!.click()
-  expect(send).toHaveBeenCalledWith({ type: 'session.delete', session_id: 12 })
+  expect(send).toHaveBeenCalledWith({ type: 'conversation.delete', conversation_id: 12 })
 })
 
 it('requires Project deletion confirmation after opening its row action menu', async () => {

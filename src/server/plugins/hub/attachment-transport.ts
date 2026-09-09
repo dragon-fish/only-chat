@@ -5,7 +5,7 @@ import type { Assets } from '../assets'
 import type { Llm } from '../llm'
 import type { AttachmentInput } from '../llm/messages'
 import { PROVIDER_FILE_TTL_SECONDS, type ScopedFilesClient } from '../llm/files/types'
-import { findReusableProviderFile, getAttachment, insertProviderFile } from './sessions'
+import { findReusableProviderFile, getAttachment, insertProviderFile } from './conversations'
 
 /** Spec §5.7: uploads ask the provider to expire the file after seven days. */
 const PROVIDER_FILE_TTL_MS = PROVIDER_FILE_TTL_SECONDS * 1000

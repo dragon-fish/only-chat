@@ -3,10 +3,10 @@ import { createApp, h, nextTick } from 'vue'
 import { createPinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { afterEach, expect, it, vi } from 'vitest'
-import ProjectSessions from '@/client/views/project-sessions.vue'
+import ProjectConversations from '@/client/views/project-conversations.vue'
 import { SidebarProvider } from '@/client/ui/sidebar'
 import { useSyncStore } from '@/client/stores/sync'
-import type { Project, Session } from '@/shared/models'
+import type { Project, Conversation } from '@/shared/models'
 
 let cleanup = () => {}
 afterEach(() => { cleanup(); document.body.innerHTML = '' })
@@ -16,15 +16,15 @@ it('filters the current Project only and restores its full list when search is c
   const pinia = createPinia()
   const sync = useSyncStore(pinia)
   const project: Project = { id: 7, user_id: 1, name: 'Design', icon_attachment_id: null, system_prompt: null, provider_id: null, model_id: null, params: null, created_at: 0, updated_at: 0 }
-  const session = (id: number, title: string, project_id: number | null): Session => ({ id, user_id: 1, title, project_id, head_message_id: null, provider_id: null, model_id: null, system_prompt: null, params: null, tools: [], archived_at: null, created_at: 0, updated_at: id })
+  const conversation = (id: number, title: string, project_id: number | null): Conversation => ({ id, user_id: 1, title, project_id, head_message_id: null, provider_id: null, model_id: null, system_prompt: null, params: null, tools: [], archived_at: null, created_at: 0, updated_at: id })
   sync.projects.set(7, project)
   sync.projectsLoaded = true
-  sync.sessionsLoaded = true
-  for (const value of [session(1, 'Design notes', 7), session(2, 'Release', 7), session(3, 'Design elsewhere', 8), session(4, 'Design free chat', null)]) sync.sessions.set(value.id, value)
+  sync.conversationsLoaded = true
+  for (const value of [conversation(1, 'Design notes', 7), conversation(2, 'Release', 7), conversation(3, 'Design elsewhere', 8), conversation(4, 'Design free chat', null)]) sync.conversations.set(value.id, value)
   const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/:pathMatch(.*)*', component: { template: '<div />' } }] })
   await router.push('/project/7')
   document.body.innerHTML = '<header id="page-header"></header><main id="test-host"></main>'
-  const app = createApp({ render: () => h(SidebarProvider, null, () => h(ProjectSessions, { projectId: 7 })) }).use(pinia).use(router)
+  const app = createApp({ render: () => h(SidebarProvider, null, () => h(ProjectConversations, { projectId: 7 })) }).use(pinia).use(router)
   app.mount('#test-host')
   cleanup = () => app.unmount()
   const links = () => [...document.querySelectorAll<HTMLAnchorElement>('a[href*="/c/"]')].map(link => link.getAttribute('href'))

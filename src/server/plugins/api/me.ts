@@ -1,7 +1,7 @@
 import type { Context } from 'cordis'
 import { Hono } from 'hono'
 import { DEFAULT_USER_ID } from '@/shared/constants'
-import { getUser } from '../hub/sessions'
+import { getUser } from '../hub/conversations'
 import { PRESET_PROVIDERS } from '../llm/presets'
 
 export function meRoutes(ctx: Context) {

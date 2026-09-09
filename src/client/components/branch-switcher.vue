@@ -7,17 +7,17 @@ import type { Message } from '@/shared/models'
 
 const props = defineProps<{ message: Message }>()
 const sync = useSyncStore()
-const siblings = computed(() => sync.siblingsOf(props.message.session_id, props.message.id))
+const siblings = computed(() => sync.siblingsOf(props.message.conversation_id, props.message.id))
 const index = computed(() => siblings.value.findIndex((m) => m.id === props.message.id))
 
 function go(delta: number) {
   const target = siblings.value[index.value + delta]
-  if (target) sync.send({ type: 'switch_head', session_id: props.message.session_id, message_id: leafOf(target) })
+  if (target) sync.send({ type: 'switch_head', conversation_id: props.message.conversation_id, message_id: leafOf(target) })
 }
 
 /** Switching to a sibling shows that sibling's deepest descendant along newest children. */
 function leafOf(m: Message): number {
-  const b = sync.messages.get(m.session_id)
+  const b = sync.messages.get(m.conversation_id)
   if (!b) return m.id
   let cur = m
   for (;;) {

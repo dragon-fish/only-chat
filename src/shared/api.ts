@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { ModelMetadataOverrideSchema } from './model-metadata'
-import { InterfaceProtocolSchema, SessionParamsSchema } from './models'
+import { InterfaceProtocolSchema, ConversationParamsSchema } from './models'
 
 export interface ModelRef {
   provider_id: number
@@ -14,7 +14,7 @@ export const ProjectInputSchema = z.object({
   system_prompt: z.string().nullable().optional(),
   provider_id: z.number().int().nullable().optional(),
   model_id: z.string().nullable().optional(),
-  params: SessionParamsSchema.nullable().optional(),
+  params: ConversationParamsSchema.nullable().optional(),
 })
 export type ProjectInput = z.infer<typeof ProjectInputSchema>
 

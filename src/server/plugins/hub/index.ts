@@ -2,19 +2,19 @@ import { Context, Service } from 'cordis'
 import { ZodError } from 'zod'
 import type { DB } from '../../db/client'
 import { DEFAULT_USER_ID, GENERATION_TIMEOUT_MS } from '@/shared/constants'
-import type { Message, Project, Session, UserSettings } from '@/shared/models'
+import type { Message, Project, Conversation, UserSettings } from '@/shared/models'
 import type { Part } from '@/shared/parts'
 import { encodeEvent, parseCommand, type WsCommand, type WsEvent } from '@/shared/ws'
 import {
-  deleteSession, finalizeMessage, forkSession, getMessage, getSession, getUser, toMessage, updateSession, updateUserSettings,
-} from './sessions'
-import { createProject, deleteProject, getProject, listProjectSessions, updateProject, validateProjectIcon } from './projects'
+  deleteConversation, finalizeMessage, forkConversation, getMessage, getConversation, getUser, toMessage, updateConversation, updateUserSettings,
+} from './conversations'
+import { createProject, deleteProject, getProject, listProjectConversations, updateProject, validateProjectIcon } from './projects'
 import { SeqAllocator } from './seq'
 import { runEdit, runRegenerate, runSend, runToolContinue, runToolRespond } from './generation'
 
 export interface InflightJob {
   message: Message
-  sessionId: number
+  conversationId: number
   controller: AbortController
   startedAt: number
   parts: Part[]
@@ -100,11 +100,11 @@ export class Hub extends Service {
       case 'send': return runSend(this, cmd)
       case 'regenerate': return runRegenerate(this, cmd)
       case 'edit': return runEdit(this, cmd)
-      case 'stop': return this.stop(cmd.session_id)
-      case 'switch_head': return this.switchHead(cmd.session_id, cmd.message_id)
-      case 'session.update': return this.sessionUpdate(cmd)
-      case 'session.delete': return this.sessionDelete(cmd.session_id)
-      case 'session.fork': return this.sessionFork(cmd)
+      case 'stop': return this.stop(cmd.conversation_id)
+      case 'switch_head': return this.switchHead(cmd.conversation_id, cmd.message_id)
+      case 'conversation.update': return this.conversationUpdate(cmd)
+      case 'conversation.delete': return this.conversationDelete(cmd.conversation_id)
+      case 'conversation.fork': return this.conversationFork(cmd)
       case 'settings.update': return this.settingsUpdate(cmd.settings)
       case 'project.create': return this.projectCreate(cmd)
       case 'project.update': return this.projectUpdate(cmd)
@@ -117,14 +117,14 @@ export class Hub extends Service {
   // ---- non-generation commands
 
   /**
-   * Aborts the session's generations and waits for them to unwind, so a caller like `sessionDelete`
+   * Aborts the conversation's generations and waits for them to unwind, so a caller like `conversationDelete`
    * can touch the rows right afterwards. `generation.ts` must always call `untrackInflight()` from
    * its finally path; otherwise a job only settles through the timeout below.
    */
-  async stop(sessionId: number): Promise<void> {
+  async stop(conversationId: number): Promise<void> {
     const settled: Promise<void>[] = []
     for (const job of this._inflight.values()) {
-      if (job.sessionId !== sessionId) continue
+      if (job.conversationId !== conversationId) continue
       job.controller.abort('user stopped')
       settled.push(job.settled)
     }
@@ -140,41 +140,41 @@ export class Hub extends Service {
     }
   }
 
-  async switchHead(sessionId: number, messageId: number): Promise<void> {
+  async switchHead(conversationId: number, messageId: number): Promise<void> {
     const m = await getMessage(this.db, messageId)
-    if (!m || m.session_id !== sessionId) throw new Error('message not in session')
-    const s = await updateSession(this.db, sessionId, { head_message_id: messageId })
-    this.broadcast({ type: 'head.changed', session_id: sessionId, message_id: messageId })
-    this.emitSessionUpdated(s)
+    if (!m || m.conversation_id !== conversationId) throw new Error('message not in conversation')
+    const s = await updateConversation(this.db, conversationId, { head_message_id: messageId })
+    this.broadcast({ type: 'head.changed', conversation_id: conversationId, message_id: messageId })
+    this.emitConversationUpdated(s)
   }
 
-  async sessionUpdate(cmd: Extract<WsCommand, { type: 'session.update' }>): Promise<void> {
-    const { type: _t, request_id: _r, session_id, tools, ...patch } = cmd
-    if (!(await getSession(this.db, session_id))) throw new Error('session not found')
-    // Moving a session into a Project must never cross into another user's Project (spec §5.1).
+  async conversationUpdate(cmd: Extract<WsCommand, { type: 'conversation.update' }>): Promise<void> {
+    const { type: _t, request_id: _r, conversation_id, tools, ...patch } = cmd
+    if (!(await getConversation(this.db, conversation_id))) throw new Error('conversation not found')
+    // Moving a conversation into a Project must never cross into another user's Project (spec §5.1).
     if (patch.project_id != null && !(await getProject(this.db, patch.project_id, DEFAULT_USER_ID))) {
       throw new Error('project not found')
     }
-    const s = await updateSession(this.db, session_id, {
+    const s = await updateConversation(this.db, conversation_id, {
       ...patch,
       ...(tools === undefined ? {} : { tools: this.app.tools.normalize(tools) }),
     })
-    this.emitSessionUpdated(s)
+    this.emitConversationUpdated(s)
   }
 
-  async sessionDelete(sessionId: number): Promise<void> {
-    await this.stop(sessionId)
-    await deleteSession(this.db, sessionId)
-    this.seq.forget(sessionId)
-    this.broadcast({ type: 'session.deleted', session_id: sessionId })
-    this.app.emit('session/deleted', sessionId)
+  async conversationDelete(conversationId: number): Promise<void> {
+    await this.stop(conversationId)
+    await deleteConversation(this.db, conversationId)
+    this.seq.forget(conversationId)
+    this.broadcast({ type: 'conversation.deleted', conversation_id: conversationId })
+    this.app.emit('conversation/deleted', conversationId)
   }
 
-  async sessionFork(cmd: Extract<WsCommand, { type: 'session.fork' }>): Promise<void> {
+  async conversationFork(cmd: Extract<WsCommand, { type: 'conversation.fork' }>): Promise<void> {
     if (this._inflight.has(cmd.message_id)) throw new Error('cannot fork a streaming message')
-    const session = await forkSession(this.db, cmd.session_id, DEFAULT_USER_ID, cmd.message_id)
-    this.emitSessionCreated(session)
-    this.broadcast({ type: 'session.forked', request_id: cmd.request_id, session_id: session.id })
+    const conversation = await forkConversation(this.db, cmd.conversation_id, DEFAULT_USER_ID, cmd.message_id)
+    this.emitConversationCreated(conversation)
+    this.broadcast({ type: 'conversation.forked', request_id: cmd.request_id, conversation_id: conversation.id })
   }
 
   async settingsUpdate(patch: { plugins?: Record<string, boolean> }): Promise<void> {
@@ -203,24 +203,24 @@ export class Hub extends Service {
   }
 
   /**
-   * Fetches affected sessions before deleting (spec §5.1): the FK nulls their `project_id` in the
-   * same delete statement, so the pre-delete read is the only way to know which sessions moved.
+   * Fetches affected conversations before deleting (spec §5.1): the FK nulls their `project_id` in the
+   * same delete statement, so the pre-delete read is the only way to know which conversations moved.
    */
   async projectDelete(projectId: number): Promise<void> {
-    const affected = await listProjectSessions(this.db, projectId, DEFAULT_USER_ID)
+    const affected = await listProjectConversations(this.db, projectId, DEFAULT_USER_ID)
     const deleted = await deleteProject(this.db, projectId, DEFAULT_USER_ID)
     this.emitProjectDeleted(deleted.id)
-    for (const row of affected) this.emitSessionUpdated({ ...row, project_id: null })
+    for (const row of affected) this.emitConversationUpdated({ ...row, project_id: null })
   }
 
-  emitSessionCreated(s: Session): void {
-    this.broadcast({ type: 'session.created', session: s })
-    this.app.emit('session/created', s)
+  emitConversationCreated(s: Conversation): void {
+    this.broadcast({ type: 'conversation.created', conversation: s })
+    this.app.emit('conversation/created', s)
   }
 
-  emitSessionUpdated(s: Session): void {
-    this.broadcast({ type: 'session.updated', session: s })
-    this.app.emit('session/updated', s)
+  emitConversationUpdated(s: Conversation): void {
+    this.broadcast({ type: 'conversation.updated', conversation: s })
+    this.app.emit('conversation/updated', s)
   }
 
   emitProjectCreated(p: Project): void {

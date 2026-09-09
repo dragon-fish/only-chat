@@ -14,7 +14,7 @@ import { SidebarMenu } from '@/client/ui/sidebar'
 const sync = useSyncStore()
 const query = ref('')
 const projects = computed(() => searchProjects(
-  recentProjects(sync.projectList, sync.sessionList, Number.MAX_SAFE_INTEGER),
+  recentProjects(sync.projectList, sync.conversationList, Number.MAX_SAFE_INTEGER),
   query.value,
 ))
 </script>

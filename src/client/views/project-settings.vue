@@ -68,7 +68,7 @@ const defaultModel = computed(() => config.modelFor(form.model))
 const stops = computed(() => form.model
   ? reasoningStopsFor(defaultModel.value?.model.metadata)
   : [...REASONING_ORDER])
-const chatCount = computed(() => (props.projectId === null ? 0 : sync.sessionsInProject(props.projectId).length))
+const chatCount = computed(() => (props.projectId === null ? 0 : sync.conversationsInProject(props.projectId).length))
 
 /**
  * The live text of each box while it is being edited, `null` when it is not. reka only writes typed
@@ -198,7 +198,7 @@ type ParamKey = 'temperature' | 'top_p' | 'max_tokens'
 /**
  * Blank means "inherit", so no stepper may turn it into a value. reka's `handleChangingValue`
  * writes `clampInputValue(min ?? 0)` whenever the input is empty and disables neither stepper
- * there, so one press of + on a blank box silently filled it with the bound. The session form
+ * there, so one press of + on a blank box silently filled it with the bound. The conversation form
  * commits on the spot and made that immediate data loss; here it only waits for 保存, which is the
  * same lie one click later. Same guard on both pages: the two buttons are disabled while blank,
  * and this covers what has no button — reka routes ArrowUp/ArrowDown, PageUp/PageDown, Home/End

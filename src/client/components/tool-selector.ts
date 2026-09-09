@@ -67,7 +67,7 @@ export function toolSelectionSupported(
   return modelSupportsTools || !selected.some(toolId => globallyAvailable.has(toolId))
 }
 
-export function sessionToolBlockReason(state: {
+export function conversationToolBlockReason(state: {
   draft: boolean
   settingsLoaded: boolean
   pending: boolean

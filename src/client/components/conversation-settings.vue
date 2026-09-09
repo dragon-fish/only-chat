@@ -14,21 +14,21 @@ import {
   NumberFieldInput,
 } from '@/client/ui/number-field'
 import { Textarea } from '@/client/ui/textarea'
-import { fieldLooksBlank, optionalNumber, type SessionSettingSources, type SessionSettingsForm, type SettingSource } from '@/client/stores/sync'
+import { fieldLooksBlank, optionalNumber, type ConversationSettingSources, type ConversationSettingsForm, type SettingSource } from '@/client/stores/sync'
 import type { Project } from '@/shared/models'
 
 const props = defineProps<{
   /**
    * The live form the chat view owns. Both this overlay and the Composer's reasoning slider edit
-   * fields of one session, so the state is shared by reference and edits are written in place;
+   * fields of one conversation, so the state is shared by reference and edits are written in place;
    * `commit` asks the owner to persist the whole form.
    */
-  form: SessionSettingsForm
-  sources: SessionSettingSources
-  /** The Project this session inherits from, if any — its values are shown as placeholders only. */
+  form: ConversationSettingsForm
+  sources: ConversationSettingSources
+  /** The Project this conversation inherits from, if any — its values are shown as placeholders only. */
   project: Project | undefined
-  /** A draft has no title yet: the session does not exist until the first message is sent. */
-  hasSession: boolean
+  /** A draft has no title yet: the conversation does not exist until the first message is sent. */
+  hasConversation: boolean
 }>()
 const emit = defineEmits<{ commit: [] }>()
 const open = ref(false)
@@ -36,7 +36,7 @@ const open = ref(false)
 const inherited = computed(() => props.project?.params)
 
 const BADGES: Record<SettingSource, string> = {
-  session: '会话覆盖',
+  conversation: '会话覆盖',
   project: '继承自 Project',
   default: '默认',
 }
@@ -104,7 +104,7 @@ function inheritHint(field: ParamKey, value: number | undefined): string {
 }
 /**
  * `NumberField` clears to `undefined`; the field keeps holding `''` for blank so that
- * `paramsFromFields` drops the key instead of writing a value the session never chose.
+ * `paramsFromFields` drops the key instead of writing a value the conversation never chose.
  */
 function setParam(field: ParamKey, value: number | undefined) {
   props.form[field] = value ?? ''
@@ -125,23 +125,23 @@ Button(
   span.hidden(class="md:inline") 会话设置
 ResponsiveOverlay(:open="open" title="会话设置" @update:open="setOpen")
     FieldGroup(class="gap-4")
-      Field(v-if="hasSession")
-        FieldLabel(for="oc-session-title" class="text-xs") 标题
+      Field(v-if="hasConversation")
+        FieldLabel(for="oc-conversation-title" class="text-xs") 标题
         Input(
-          id="oc-session-title" v-model="form.title" class="h-8 text-sm" placeholder="对话标题"
+          id="oc-conversation-title" v-model="form.title" class="h-8 text-sm" placeholder="对话标题"
           @change="emit('commit')")
 
       Field
         .flex.items-center.gap-2
-          FieldLabel(for="oc-session-prompt" class="text-xs") 会话提示词
+          FieldLabel(for="oc-conversation-prompt" class="text-xs") 会话提示词
           Badge.ml-auto(variant="secondary") {{ BADGES[sources.system_prompt] }}
           Button(
-            v-if="sources.system_prompt === 'session'" type="button" variant="ghost" size="icon-xs"
+            v-if="sources.system_prompt === 'conversation'" type="button" variant="ghost" size="icon-xs"
             class="size-10 md:size-6" title="恢复继承"
             aria-label="恢复继承会话提示词" @click="restore('system_prompt')")
             RotateCcw(data-icon="inline-start")
         Textarea(
-          id="oc-session-prompt" v-model="form.system_prompt" rows="4" class="text-sm"
+          id="oc-conversation-prompt" v-model="form.system_prompt" rows="4" class="text-sm"
           placeholder="留空则只使用项目提示词" @change="emit('commit')")
         FieldDescription(class="text-xs") 项目提示词在前、会话提示词在后，中间固定两个换行。
         details.text-xs.text-muted-foreground(v-if="project?.system_prompt")
@@ -150,10 +150,10 @@ ResponsiveOverlay(:open="open" title="会话设置" @update:open="setOpen")
 
       Field
         .flex.items-center.gap-2
-          FieldLabel(for="oc-session-temperature" class="text-xs") temperature
+          FieldLabel(for="oc-conversation-temperature" class="text-xs") temperature
           Badge.ml-auto(variant="secondary") {{ BADGES[sources.temperature] }}
           Button(
-            v-if="sources.temperature === 'session'" type="button" variant="ghost" size="icon-xs"
+            v-if="sources.temperature === 'conversation'" type="button" variant="ghost" size="icon-xs"
             class="size-10 md:size-6" title="恢复继承"
             aria-label="恢复继承 temperature" @click="restore('temperature')")
             RotateCcw(data-icon="inline-start")
@@ -163,7 +163,7 @@ ResponsiveOverlay(:open="open" title="会话设置" @update:open="setOpen")
           //- 17 significant digits, so 20 fractional digits cannot lose one. reka round-trips every value
         //- through `Intl.NumberFormat`, whose default of 3 rewrote a stored 0.6667 to 0.667.
         NumberField(
-          id="oc-session-temperature" :model-value="optionalNumber(form.temperature)"
+          id="oc-conversation-temperature" :model-value="optionalNumber(form.temperature)"
           :min="0" :max="2" :step="0.1" :step-snapping="false" :disable-wheel-change="true"
           :format-options="{ maximumFractionDigits: 20 }"
           @update:model-value="setParam('temperature', $event)"
@@ -177,15 +177,15 @@ ResponsiveOverlay(:open="open" title="会话设置" @update:open="setOpen")
 
       Field
         .flex.items-center.gap-2
-          FieldLabel(for="oc-session-top-p" class="text-xs") top_p
+          FieldLabel(for="oc-conversation-top-p" class="text-xs") top_p
           Badge.ml-auto(variant="secondary") {{ BADGES[sources.top_p] }}
           Button(
-            v-if="sources.top_p === 'session'" type="button" variant="ghost" size="icon-xs"
+            v-if="sources.top_p === 'conversation'" type="button" variant="ghost" size="icon-xs"
             class="size-10 md:size-6" title="恢复继承"
             aria-label="恢复继承 top_p" @click="restore('top_p')")
             RotateCcw(data-icon="inline-start")
         NumberField(
-          id="oc-session-top-p" :model-value="optionalNumber(form.top_p)"
+          id="oc-conversation-top-p" :model-value="optionalNumber(form.top_p)"
           :min="0" :max="1" :step="0.05" :step-snapping="false" :disable-wheel-change="true"
           :format-options="{ maximumFractionDigits: 20 }"
           @update:model-value="setParam('top_p', $event)"
@@ -199,15 +199,15 @@ ResponsiveOverlay(:open="open" title="会话设置" @update:open="setOpen")
 
       Field
         .flex.items-center.gap-2
-          FieldLabel(for="oc-session-max-tokens" class="text-xs") 最大 tokens
+          FieldLabel(for="oc-conversation-max-tokens" class="text-xs") 最大 tokens
           Badge.ml-auto(variant="secondary") {{ BADGES[sources.max_tokens] }}
           Button(
-            v-if="sources.max_tokens === 'session'" type="button" variant="ghost" size="icon-xs"
+            v-if="sources.max_tokens === 'conversation'" type="button" variant="ghost" size="icon-xs"
             class="size-10 md:size-6" title="恢复继承"
             aria-label="恢复继承最大 tokens" @click="restore('max_tokens')")
             RotateCcw(data-icon="inline-start")
         NumberField(
-          id="oc-session-max-tokens" :model-value="optionalNumber(form.max_tokens)"
+          id="oc-conversation-max-tokens" :model-value="optionalNumber(form.max_tokens)"
           :min="1" :step="1" :step-snapping="false" :disable-wheel-change="true" :format-options="{ useGrouping: false }"
           @update:model-value="setParam('max_tokens', $event)"
           @keydown.capture="guardStep('max_tokens', $event)"
@@ -218,6 +218,6 @@ ResponsiveOverlay(:open="open" title="会话设置" @update:open="setOpen")
             NumberFieldIncrement(:disabled="blank('max_tokens')")
         FieldDescription(class="text-xs") {{ inheritHint('max_tokens', inherited?.max_tokens) }}
 
-      Field(v-if="!hasSession")
+      Field(v-if="!hasConversation")
         FieldDescription(class="text-xs") 这些设置会随第一条消息一起创建会话。
 </template>

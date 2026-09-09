@@ -6,7 +6,7 @@ import type { BeforeSendPayload } from './plugins/hub/generation'
 import type { ApiApp } from './plugins/api'
 import type { ModelCatalog } from './plugins/model-catalog'
 import type { ToolRegistry } from './plugins/tools'
-import type { Message, Project, Session } from '@/shared/models'
+import type { Message, Project, Conversation } from '@/shared/models'
 
 declare module 'cordis' {
   interface Context {
@@ -27,9 +27,9 @@ declare module 'cordis' {
   }
 
   interface Events {
-    'session/created'(session: Session): void
-    'session/updated'(session: Session): void
-    'session/deleted'(sessionId: number): void
+    'conversation/created'(conversation: Conversation): void
+    'conversation/updated'(conversation: Conversation): void
+    'conversation/deleted'(conversationId: number): void
     'message/before-send'(payload: BeforeSendPayload): void
     'message/done'(message: Message): void
     'project/created'(project: Project): void

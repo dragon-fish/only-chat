@@ -1,8 +1,8 @@
 import { z } from 'zod'
 import { PartSchema, PartsSchema } from './parts'
 import {
-  MessageSchema, MessageStatusSchema, PersistedStatusSchema, ProjectSchema, SessionParamsSchema,
-  SessionSchema, UsageSchema, UserSettingsSchema,
+  MessageSchema, MessageStatusSchema, PersistedStatusSchema, ProjectSchema, ConversationParamsSchema,
+  ConversationSchema, UsageSchema, UserSettingsSchema,
 } from './models'
 import { AskUserResultSchema } from '@/plugins/ask-user/shared'
 
@@ -11,26 +11,26 @@ const base = { request_id: z.string().optional() }
 export const SendCommandSchema = z.object({
   type: z.literal('send'),
   ...base,
-  session_id: z.number().int().nullable(),
+  conversation_id: z.number().int().nullable(),
   parent_id: z.number().int().nullable(),
   parts: PartsSchema.min(1),
-  /** The provider/model actually used for this generation — always required, independent of any session override below. */
+  /** The provider/model actually used for this generation — always required, independent of any conversation override below. */
   provider_id: z.number().int(),
   model_id: z.string().min(1),
   /**
-   * Session-init fields, used only when `session_id` is null (first message of a new session):
-   * `project_id`, session prompt, session params overrides, and an optional session-level model
-   * override. `session_provider_id`/`session_model_id` are the session's *persisted* model
-   * override (maps to `sessions.provider_id`/`sessions.model_id`) — distinct from the required
+   * Conversation-init fields, used only when `conversation_id` is null (first message of a new conversation):
+   * `project_id`, conversation prompt, conversation params overrides, and an optional conversation-level model
+   * override. `conversation_provider_id`/`conversation_model_id` are the conversation's *persisted* model
+   * override (maps to `conversations.provider_id`/`conversations.model_id`) — distinct from the required
    * `provider_id`/`model_id` above, which is only the model used for this turn's generation.
-   * Missing/null means the session has no override and inherits from its Project (spec §3.2/§5.3).
+   * Missing/null means the conversation has no override and inherits from its Project (spec §3.2/§5.3).
    */
   project_id: z.number().int().nullable().optional(),
   system_prompt: z.string().nullable().optional(),
-  params: SessionParamsSchema.nullable().optional(),
-  session_provider_id: z.number().int().nullable().optional(),
-  session_model_id: z.string().nullable().optional(),
-  /** Selected tool snapshot, used only when creating the first Session row. */
+  params: ConversationParamsSchema.nullable().optional(),
+  conversation_provider_id: z.number().int().nullable().optional(),
+  conversation_model_id: z.string().nullable().optional(),
+  /** Selected tool snapshot, used only when creating the first Conversation row. */
   tools: z.array(z.string()).optional(),
 })
 export const RegenerateCommandSchema = z.object({
@@ -46,34 +46,34 @@ export const EditCommandSchema = z.object({
   message_id: z.number().int(),
   parts: PartsSchema.min(1),
 })
-export const StopCommandSchema = z.object({ type: z.literal('stop'), ...base, session_id: z.number().int() })
+export const StopCommandSchema = z.object({ type: z.literal('stop'), ...base, conversation_id: z.number().int() })
 export const SwitchHeadCommandSchema = z.object({
   type: z.literal('switch_head'),
   ...base,
-  session_id: z.number().int(),
+  conversation_id: z.number().int(),
   message_id: z.number().int(),
 })
-export const SessionUpdateCommandSchema = z.object({
-  type: z.literal('session.update'),
+export const ConversationUpdateCommandSchema = z.object({
+  type: z.literal('conversation.update'),
   ...base,
-  session_id: z.number().int(),
+  conversation_id: z.number().int(),
   title: z.string().min(1).max(200).optional(),
   project_id: z.number().int().nullable().optional(),
   provider_id: z.number().int().nullable().optional(),
   model_id: z.string().nullable().optional(),
   system_prompt: z.string().nullable().optional(),
-  params: SessionParamsSchema.nullable().optional(),
+  params: ConversationParamsSchema.nullable().optional(),
   tools: z.array(z.string()).optional(),
 })
-export const SessionDeleteCommandSchema = z.object({
-  type: z.literal('session.delete'),
+export const ConversationDeleteCommandSchema = z.object({
+  type: z.literal('conversation.delete'),
   ...base,
-  session_id: z.number().int(),
+  conversation_id: z.number().int(),
 })
-export const SessionForkCommandSchema = z.object({
-  type: z.literal('session.fork'),
+export const ConversationForkCommandSchema = z.object({
+  type: z.literal('conversation.fork'),
   request_id: z.string().min(1),
-  session_id: z.number().int(),
+  conversation_id: z.number().int(),
   message_id: z.number().int(),
 })
 export const SettingsUpdateCommandSchema = z.object({
@@ -89,7 +89,7 @@ export const ProjectCreateCommandSchema = z.object({
   system_prompt: z.string().nullable().optional(),
   provider_id: z.number().int().nullable().optional(),
   model_id: z.string().nullable().optional(),
-  params: SessionParamsSchema.nullable().optional(),
+  params: ConversationParamsSchema.nullable().optional(),
 })
 export const ProjectUpdateCommandSchema = z.object({
   type: z.literal('project.update'),
@@ -100,7 +100,7 @@ export const ProjectUpdateCommandSchema = z.object({
   system_prompt: z.string().nullable().optional(),
   provider_id: z.number().int().nullable().optional(),
   model_id: z.string().nullable().optional(),
-  params: SessionParamsSchema.nullable().optional(),
+  params: ConversationParamsSchema.nullable().optional(),
 })
 export const ProjectDeleteCommandSchema = z.object({
   type: z.literal('project.delete'),
@@ -126,9 +126,9 @@ export const WsCommandSchema = z.discriminatedUnion('type', [
   EditCommandSchema,
   StopCommandSchema,
   SwitchHeadCommandSchema,
-  SessionUpdateCommandSchema,
-  SessionDeleteCommandSchema,
-  SessionForkCommandSchema,
+  ConversationUpdateCommandSchema,
+  ConversationDeleteCommandSchema,
+  ConversationForkCommandSchema,
   SettingsUpdateCommandSchema,
   ProjectCreateCommandSchema,
   ProjectUpdateCommandSchema,
@@ -141,10 +141,10 @@ export type SendCommand = z.infer<typeof SendCommandSchema>
 
 export const WsEventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('snapshot'), inflight: z.array(MessageSchema) }),
-  z.object({ type: z.literal('session.created'), session: SessionSchema }),
-  z.object({ type: z.literal('session.updated'), session: SessionSchema }),
-  z.object({ type: z.literal('session.deleted'), session_id: z.number().int() }),
-  z.object({ type: z.literal('session.forked'), request_id: z.string(), session_id: z.number().int() }),
+  z.object({ type: z.literal('conversation.created'), conversation: ConversationSchema }),
+  z.object({ type: z.literal('conversation.updated'), conversation: ConversationSchema }),
+  z.object({ type: z.literal('conversation.deleted'), conversation_id: z.number().int() }),
+  z.object({ type: z.literal('conversation.forked'), request_id: z.string(), conversation_id: z.number().int() }),
   z.object({ type: z.literal('message.created'), message: MessageSchema }),
   z.object({
     type: z.literal('message.delta'),
@@ -166,7 +166,7 @@ export const WsEventSchema = z.discriminatedUnion('type', [
     usage: UsageSchema.nullable(),
     error: z.string().nullable(),
   }),
-  z.object({ type: z.literal('head.changed'), session_id: z.number().int(), message_id: z.number().int() }),
+  z.object({ type: z.literal('head.changed'), conversation_id: z.number().int(), message_id: z.number().int() }),
   z.object({ type: z.literal('settings.updated'), settings: UserSettingsSchema }),
   z.object({ type: z.literal('project.created'), project: ProjectSchema }),
   z.object({ type: z.literal('project.updated'), project: ProjectSchema }),

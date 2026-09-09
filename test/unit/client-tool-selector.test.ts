@@ -8,7 +8,7 @@ import {
   defaultToolsForSettings,
   ensureSelectedPlugins,
   nextToolSelection,
-  sessionToolBlockReason,
+  conversationToolBlockReason,
   toolSelectionSupported,
 } from '@/client/components/tool-selector'
 
@@ -17,7 +17,7 @@ const manifests = [
   { id: 'ask_user', name: 'Ask User', description: 'Ask', defaultTools: ['ask_user'] },
 ]
 
-describe('session tool selection', () => {
+describe('conversation tool selection', () => {
   it('defaults a new draft to tools from globally enabled manifests in stable order', () => {
     expect(defaultToolsForSettings(manifests, { ask_user: true })).toEqual(['ask_user'])
     expect(defaultToolsForSettings(manifests, { ask_user: true, zeta: true })).toEqual(['ask_user', 'z_tool'])
@@ -43,11 +43,11 @@ describe('session tool selection', () => {
   })
 
   it('blocks draft sends until plugin settings have loaded and pending calls until resolved', () => {
-    expect(sessionToolBlockReason({ draft: true, settingsLoaded: false, pending: false, toolsSupported: true }))
+    expect(conversationToolBlockReason({ draft: true, settingsLoaded: false, pending: false, toolsSupported: true }))
       .toBe('正在加载插件设置…')
-    expect(sessionToolBlockReason({ draft: false, settingsLoaded: true, pending: true, toolsSupported: true }))
+    expect(conversationToolBlockReason({ draft: false, settingsLoaded: true, pending: true, toolsSupported: true }))
       .toBe('请先回答或取消当前问题')
-    expect(sessionToolBlockReason({ draft: false, settingsLoaded: true, pending: false, toolsSupported: true })).toBeNull()
+    expect(conversationToolBlockReason({ draft: false, settingsLoaded: true, pending: false, toolsSupported: true })).toBeNull()
   })
 
   it('consumes lazy plugin load failures and reports them once', async () => {

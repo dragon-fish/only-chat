@@ -18,15 +18,15 @@ describe('application route contracts', () => {
     expect(router.currentRoute.value.path).toBe(entry)
     const draft = router.resolve('/new').matched.filter(route => route.components?.default)
     const chat = router.resolve('/c/42').matched.filter(route => route.components?.default)
-    expect(draft.map(route => route.path)).toEqual(['/new/:sessionId?'])
-    expect(chat.map(route => route.path)).toEqual(['/c/:sessionId?'])
+    expect(draft.map(route => route.path)).toEqual(['/new/:conversationId?'])
+    expect(chat.map(route => route.path)).toEqual(['/c/:conversationId?'])
     expect(chat[0]?.components?.default).toBe(draft[0]?.components?.default)
   })
 
   it('keeps every Project page under its workspace parent without legacy aliases', () => {
     const router = createRouter({ history: createMemoryHistory(), routes })
     expect(router.resolve('/project/7').matched.filter(route => route.components?.default).map(route => route.path)).toEqual(['/project/:projectId', '/project/:projectId'])
-    for (const [path, leaf] of [['settings', 'settings'], ['new', 'new/:sessionId?'], ['c/42', 'c/:sessionId?']]) {
+    for (const [path, leaf] of [['settings', 'settings'], ['new', 'new/:conversationId?'], ['c/42', 'c/:conversationId?']]) {
       expect(router.resolve(`/project/7/${path}`).matched.filter(route => route.components?.default).map(route => route.path)).toEqual(['/project/:projectId', `/project/:projectId/${leaf}`])
     }
     const draft = router.resolve('/project/7/new').matched.at(-1)

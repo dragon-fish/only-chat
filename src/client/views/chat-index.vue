@@ -5,8 +5,8 @@ import ProjectNavRow from '@/client/components/layout/project-nav-row.vue'
 import ProjectCreateDialog from '@/client/components/layout/project-create-dialog.vue'
 import CollectionState from '@/client/components/collection-state.vue'
 import { Button } from '@/client/ui/button'
-import SessionNavRow from '@/client/components/layout/session-nav-row.vue'
-import { recentProjects, searchProjects, searchSessions } from '@/client/lib/ui-models'
+import ConversationNavRow from '@/client/components/layout/conversation-nav-row.vue'
+import { recentProjects, searchProjects, searchConversations } from '@/client/lib/ui-models'
 import { useSyncStore } from '@/client/stores/sync'
 import { Input } from '@/client/ui/input'
 import { ScrollArea } from '@/client/ui/scroll-area'
@@ -15,14 +15,14 @@ import { SidebarMenu } from '@/client/ui/sidebar'
 const sync = useSyncStore()
 const query = ref('')
 
-const allProjectsByActivity = computed(() => recentProjects(sync.projectList, sync.sessionList, Number.MAX_SAFE_INTEGER))
+const allProjectsByActivity = computed(() => recentProjects(sync.projectList, sync.conversationList, Number.MAX_SAFE_INTEGER))
 const projects = computed(() => {
   const source = query.value.trim() ? allProjectsByActivity.value : allProjectsByActivity.value.slice(0, 5)
   return searchProjects(source, query.value)
 })
-const sessions = computed(() => query.value.trim()
-  ? searchSessions(sync.sessionList, query.value)
-  : searchSessions(sync.sessionList, '', null))
+const conversations = computed(() => query.value.trim()
+  ? searchConversations(sync.conversationList, query.value)
+  : searchConversations(sync.conversationList, '', null))
 </script>
 
 <template>
@@ -61,9 +61,9 @@ const sessions = computed(() => query.value.trim()
           <MessageCircleIcon />
           <h2 id="oc-free-chats" class="text-sm font-medium">{{ query.trim() ? '搜索结果' : '随心聊' }}</h2>
         </div>
-        <CollectionState :loaded="sync.sessionsLoaded" :error="sync.sessionsError" :retry="sync.loadSessions" :empty="sessions.length === 0" :empty-title="query ? '没有匹配的对话' : '还没有随心聊'">
+        <CollectionState :loaded="sync.conversationsLoaded" :error="sync.conversationsError" :retry="sync.loadConversations" :empty="conversations.length === 0" :empty-title="query ? '没有匹配的对话' : '还没有随心聊'">
           <SidebarMenu>
-            <SessionNavRow v-for="session in sessions" :key="session.id" :session="session" :projects="sync.projectList" />
+            <ConversationNavRow v-for="conversation in conversations" :key="conversation.id" :conversation="conversation" :projects="sync.projectList" />
           </SidebarMenu>
           <template #empty-action>
             <Button v-if="query" variant="outline" class="min-h-10" @click="query = ''">清除搜索</Button>
