@@ -30,7 +30,13 @@ describe('Artifact API', () => {
     const userId = Number(identity.user.id)
     const providerId = await seedImageModel(userId)
     const create = vi.fn(async ({ id }: { id: string }) => ({ id, dispose() {} }))
-    const app = await createApp({ env: { ...env, ARTIFACT_WORKFLOW: { create } } as unknown as Env, side: 'worker' })
+    const publishConversation = vi.fn(async () => {})
+    const hub = { publishConversation, dispose() {} }
+    const app = await createApp({ env: {
+      ...env,
+      ARTIFACT_WORKFLOW: { create },
+      USER_HUB: { getByName: vi.fn(() => hub) },
+    } as unknown as Env, side: 'worker' })
     const body = {
       client_request_id: crypto.randomUUID(), model: { provider_id: providerId, model_id: 'image-model' },
       prompt: 'A sea otter', reference_attachment_ids: [], params: { count: 1, size: null },
@@ -46,6 +52,10 @@ describe('Artifact API', () => {
     })
     expect(await retry.json()).toEqual(created)
     expect(create).toHaveBeenCalledOnce()
+    expect(publishConversation).toHaveBeenCalledOnce()
+    expect(publishConversation).toHaveBeenCalledWith(userId, expect.objectContaining({
+      id: created.conversation_id, kind: 'image', head_message_id: created.message_id,
+    }), true)
     expect(await createDb(env.DB).query.artifactRuns.findFirst({ where: eq(artifactRuns.id, created.run_id) }))
       .toMatchObject({ user_id: userId, status: 'queued', operation: 'generate', conversation_id: created.conversation_id, message_id: created.message_id })
     expect(await createDb(env.DB).query.conversations.findFirst({ where: (row, { eq }) => eq(row.id, created.conversation_id) }))

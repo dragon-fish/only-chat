@@ -18,8 +18,10 @@ export const responsesProtocol = {
       createFiles(provider, providerInterface, apiKey) {
         return createOpenAIFiles({ baseURL: providerInterface.base_url, apiKey, credentialVersion: provider.credential_version })
       },
-      createImages(_provider, providerInterface, apiKey) {
-        return createOpenAIImagesClient(providerInterface.base_url, apiKey)
+      createImages(provider, providerInterface, apiKey) {
+        return createOpenAIImagesClient(providerInterface.base_url, apiKey, {
+          referenceMode: provider.models_dev_provider_id === 'volcengine' ? 'generation-json' : 'multipart-edits',
+        })
       },
     })
   },

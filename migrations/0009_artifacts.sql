@@ -32,6 +32,7 @@ CREATE TABLE `artifact_runs` (
 	`params` text NOT NULL,
 	`workflow_instance_id` text NOT NULL,
 	`error` text,
+	`usage` text,
 	`created_at` integer NOT NULL,
 	`started_at` integer,
 	`completed_at` integer,

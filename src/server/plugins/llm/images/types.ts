@@ -1,4 +1,4 @@
-import type { ImageGenerationParams } from '@/shared/artifacts'
+import type { ArtifactUsage, ImageGenerationParams } from '@/shared/artifacts'
 
 export interface ImageReference {
   bytes: Uint8Array<ArrayBuffer>
@@ -21,6 +21,11 @@ export interface GeneratedImage {
   revisedPrompt?: string
 }
 
+export interface ImageGenerationResult {
+  images: GeneratedImage[]
+  usage: ArtifactUsage | null
+}
+
 export interface ScopedImagesClient {
-  generate(request: ImageGenerationRequest): Promise<GeneratedImage[]>
+  generate(request: ImageGenerationRequest): Promise<ImageGenerationResult>
 }

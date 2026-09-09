@@ -66,6 +66,17 @@ declare module 'vue-router/auto-routes' {
       Record<never, never>,
       | never
     >,
+    '/images': RouteRecordInfo<
+      '/images',
+      '/images',
+      Record<never, never>,
+      Record<never, never>,
+      | '/images/'
+      | '/images/a/[artifactId]'
+      | '/images/new'
+      | '/images/s/[conversationId]'
+      | '/images/s/[conversationId]/a/[artifactId]'
+    >,
     '/images/': RouteRecordInfo<
       '/images/',
       '/images',
@@ -92,6 +103,13 @@ declare module 'vue-router/auto-routes' {
       '/images/s/:conversationId',
       { conversationId: ParamValue<true> },
       { conversationId: ParamValue<false> },
+      | '/images/s/[conversationId]/a/[artifactId]'
+    >,
+    '/images/s/[conversationId]/a/[artifactId]': RouteRecordInfo<
+      '/images/s/[conversationId]/a/[artifactId]',
+      '/images/s/:conversationId/a/:artifactId',
+      { artifactId: ParamValue<true>, conversationId: ParamValue<true> },
+      { artifactId: ParamValue<false>, conversationId: ParamValue<false> },
       | never
     >,
     '/login': RouteRecordInfo<
@@ -254,6 +272,19 @@ declare module 'vue-router/auto-routes' {
       pathParamNames:
         | never
     }
+    'src/client/pages/images.vue': {
+      routes:
+        | '/images'
+        | '/images/'
+        | '/images/a/[artifactId]'
+        | '/images/new'
+        | '/images/s/[conversationId]'
+        | '/images/s/[conversationId]/a/[artifactId]'
+      views:
+        | 'default'
+      pathParamNames:
+        | never
+    }
     'src/client/pages/images/index.vue': {
       routes:
         | '/images/'
@@ -281,10 +312,19 @@ declare module 'vue-router/auto-routes' {
     'src/client/pages/images/s/[conversationId].vue': {
       routes:
         | '/images/s/[conversationId]'
+        | '/images/s/[conversationId]/a/[artifactId]'
+      views:
+        | 'default'
+      pathParamNames:
+        | 'conversationId'
+    }
+    'src/client/pages/images/s/[conversationId]/a/[artifactId].vue': {
+      routes:
+        | '/images/s/[conversationId]/a/[artifactId]'
       views:
         | never
       pathParamNames:
-        | 'conversationId'
+        | 'artifactId'
     }
     'src/client/pages/login.vue': {
       routes:

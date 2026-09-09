@@ -43,7 +43,10 @@ describe('Artifact generation Workflow', () => {
     let providerCalls = 0
     vi.stubGlobal('fetch', async () => {
       providerCalls++
-      return Response.json({ data: [{ b64_json: btoa(String.fromCharCode(...png)) }] })
+      return Response.json({
+        data: [{ b64_json: btoa(String.fromCharCode(...png)) }],
+        usage: { generated_images: 1, output_tokens: 2048, total_tokens: 2048 },
+      })
     })
     const workflowApp = await createApp({ env, side: 'workflow' })
 
@@ -52,7 +55,10 @@ describe('Artifact generation Workflow', () => {
 
     expect(providerCalls).toBe(1)
     expect(await db.query.artifactRuns.findFirst({ where: eq(artifactRuns.id, created.run_id) }))
-      .toMatchObject({ status: 'completed', error: null })
+      .toMatchObject({
+        status: 'completed', error: null,
+        usage: { generated_images: 1, output_tokens: 2048, total_tokens: 2048 },
+      })
     const output = await db.query.artifacts.findFirst({ where: eq(artifacts.run_id, created.run_id) })
     expect(output).toMatchObject({ user_id: userId, output_index: 0, mime: 'image/png', width: 1024, height: 1024 })
     expect(await db.query.messages.findFirst({ where: (row, { eq }) => eq(row.id, created.message_id) }))

@@ -22,7 +22,7 @@ describe('OpenAI-compatible Images client', () => {
     expect(request?.headers.get('authorization')).toBe('Bearer secret')
     expect(request?.headers.get('idempotency-key')).toBe('run-1')
     expect(await request?.json()).toEqual({ model: 'image-model', prompt: 'An otter', n: 1 })
-    expect(output).toEqual([{ bytes: png, mime: 'image/png', revisedPrompt: 'Revised' }])
+    expect(output).toEqual({ images: [{ bytes: png, mime: 'image/png', revisedPrompt: 'Revised' }], usage: null })
   })
 
   it('sends explicit generation options without inventing provider defaults', async () => {
@@ -67,6 +67,30 @@ describe('OpenAI-compatible Images client', () => {
     expect(form?.get('prompt')).toBe('Make it dusk')
     expect(form?.get('n')).toBe('1')
     expect(form?.getAll('image')).toHaveLength(1)
-    expect(output).toEqual([{ bytes: png, mime: 'image/webp' }])
+    expect(output).toEqual({ images: [{ bytes: png, mime: 'image/webp' }], usage: null })
+  })
+
+  it('uses generations JSON for providers whose image input is a generation extension', async () => {
+    let request: Request | undefined
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+      request = new Request(input, init)
+      return Response.json({
+        data: [{ b64_json: btoa(String.fromCharCode(...png)) }],
+        usage: { generated_images: 1, output_tokens: 2048, total_tokens: 2048 },
+      })
+    })
+    const output = await createOpenAIImagesClient('https://ark.example/v1', 'secret', { referenceMode: 'generation-json' }).generate({
+      modelId: 'seedream', prompt: 'Full body', idempotencyKey: 'run-4',
+      references: [{ bytes: png, mime: 'image/png', filename: 'reference.png' }],
+      params: { count: 1, size: null },
+    })
+
+    expect(request?.url).toBe('https://ark.example/v1/images/generations')
+    expect(request?.headers.get('content-type')).toBe('application/json')
+    expect(await request?.json()).toEqual({
+      model: 'seedream', prompt: 'Full body', n: 1,
+      image: `data:image/png;base64,${btoa(String.fromCharCode(...png))}`,
+    })
+    expect(output.usage).toEqual({ generated_images: 1, output_tokens: 2048, total_tokens: 2048 })
   })
 })

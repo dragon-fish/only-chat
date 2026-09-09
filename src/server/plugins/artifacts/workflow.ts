@@ -3,6 +3,7 @@ import { and, asc, eq } from 'drizzle-orm'
 import { artifactLinks, artifactRunInputs, artifactRuns, artifacts, attachments, messages } from '@/server/db/schema'
 import { MAX_UPLOAD_BYTES, r2Key } from '../api/attachments'
 import { getAttachment, getModel, getProvider, getProviderInterface } from '../hub/conversations'
+import { disposeRpcStub } from '@/server/rpc'
 
 const ACCEPTED_MIME = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
 
@@ -42,21 +43,23 @@ export async function executeImageRun(ctx: Context, userId: number, runId: numbe
       return { bytes: stored.bytes as Uint8Array<ArrayBuffer>, mime: attachment.mime, filename: `reference-${input.position}` }
     }))
     const client = await ctx.llm.createImages(provider, selected)
-    const outputs = await client.generate({
+    const result = await client.generate({
       modelId: run.model_id, prompt: run.prompt, references, params: run.params,
       idempotencyKey: run.workflow_instance_id,
     })
     const current = await db.query.artifactRuns.findFirst({ where: and(eq(artifactRuns.id, run.id), eq(artifactRuns.user_id, userId)) })
     if (current?.status !== 'running') return
     const imageParts: Array<{ type: 'image'; attachment_id: number; artifact_id: number }> = []
-    for (const [outputIndex, output] of outputs.entries()) {
+    for (const [outputIndex, output] of result.images.entries()) {
       if (!ACCEPTED_MIME.has(output.mime)) throw new Error(`Unsupported generated image type: ${output.mime}`)
       if (output.bytes.byteLength === 0 || output.bytes.byteLength > MAX_UPLOAD_BYTES) throw new Error('Generated image has an invalid size')
       const digest = await sha256(output.bytes)
       let dimensions = run.params.size
       try {
         const info = await ctx.env.IMAGES.info(new Blob([output.bytes as BlobPart], { type: output.mime }).stream())
-        if ('width' in info) dimensions = { width: info.width, height: info.height }
+        try {
+          if ('width' in info) dimensions = { width: info.width, height: info.height }
+        } finally { disposeRpcStub(info) }
       } catch { /* Requested dimensions remain a useful fallback for unsupported or malformed metadata. */ }
       let attachment = await db.query.attachments.findFirst({ where: and(eq(attachments.user_id, userId), eq(attachments.sha256, digest)) })
       if (!attachment) {
@@ -89,10 +92,16 @@ export async function executeImageRun(ctx: Context, userId: number, runId: numbe
         eq(messages.id, run.message_id), eq(messages.conversation_id, run.conversation_id),
       ))
     }
-    await db.update(artifactRuns).set({ status: 'completed', error: null, completed_at: Date.now() })
+    await db.update(artifactRuns).set({ status: 'completed', error: null, usage: result.usage, completed_at: Date.now() })
       .where(and(eq(artifactRuns.id, run.id), eq(artifactRuns.user_id, userId), eq(artifactRuns.status, 'running')))
   } catch (error) {
-    await db.update(artifactRuns).set({ status: 'failed', error: safeError(error), completed_at: Date.now() })
-      .where(and(eq(artifactRuns.id, run.id), eq(artifactRuns.user_id, userId), eq(artifactRuns.status, 'running')))
+    const failure = safeError(error)
+    const [failed] = await db.update(artifactRuns).set({ status: 'failed', error: failure, completed_at: Date.now() })
+      .where(and(eq(artifactRuns.id, run.id), eq(artifactRuns.user_id, userId), eq(artifactRuns.status, 'running'))).returning({ id: artifactRuns.id })
+    if (failed && run.message_id !== null && run.conversation_id !== null) {
+      await db.update(messages).set({ status: 'error', error: failure }).where(and(
+        eq(messages.id, run.message_id), eq(messages.conversation_id, run.conversation_id),
+      ))
+    }
   }
 }

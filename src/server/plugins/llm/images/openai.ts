@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import type { GeneratedImage, ImageGenerationRequest, ScopedImagesClient } from './types'
+import type { ImageGenerationRequest, ImageGenerationResult, ScopedImagesClient } from './types'
 
 const ResponseSchema = z.object({
   data: z.array(z.object({
@@ -7,6 +7,12 @@ const ResponseSchema = z.object({
     url: z.string().url().optional(),
     revised_prompt: z.string().optional(),
   }).refine(value => value.b64_json !== undefined || value.url !== undefined, 'image data missing')).min(1),
+  usage: z.object({
+    input_tokens: z.number().nonnegative().optional(),
+    output_tokens: z.number().nonnegative().optional(),
+    total_tokens: z.number().nonnegative().optional(),
+    generated_images: z.number().nonnegative().optional(),
+  }).passthrough().optional(),
 })
 
 function fromBase64(value: string): Uint8Array<ArrayBuffer> {
@@ -14,6 +20,14 @@ function fromBase64(value: string): Uint8Array<ArrayBuffer> {
   const bytes = new Uint8Array(decoded.length)
   for (let index = 0; index < decoded.length; index++) bytes[index] = decoded.charCodeAt(index)
   return bytes
+}
+
+function toBase64(bytes: Uint8Array<ArrayBuffer>): string {
+  let binary = ''
+  for (let offset = 0; offset < bytes.length; offset += 32_768) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 32_768))
+  }
+  return btoa(binary)
 }
 
 function requestedMime(request: ImageGenerationRequest): string {
@@ -31,10 +45,10 @@ function appendOptions(body: FormData, request: ImageGenerationRequest): void {
   if (params.output_format) body.set('output_format', params.output_format)
 }
 
-async function readResponse(response: Response, request: ImageGenerationRequest): Promise<GeneratedImage[]> {
+async function readResponse(response: Response, request: ImageGenerationRequest): Promise<ImageGenerationResult> {
   if (!response.ok) throw new Error(`Images API request failed: ${response.status}`)
   const parsed = ResponseSchema.parse(await response.json())
-  return Promise.all(parsed.data.map(async (item) => {
+  const images = await Promise.all(parsed.data.map(async (item) => {
     let bytes: Uint8Array<ArrayBuffer>
     let mime = requestedMime(request)
     if (item.b64_json !== undefined) bytes = fromBase64(item.b64_json)
@@ -46,16 +60,21 @@ async function readResponse(response: Response, request: ImageGenerationRequest)
     }
     return { bytes, mime, ...(item.revised_prompt ? { revisedPrompt: item.revised_prompt } : {}) }
   }))
+  return { images, usage: parsed.usage ?? null }
 }
 
-export function createOpenAIImagesClient(baseURL: string, apiKey: string): ScopedImagesClient {
+export function createOpenAIImagesClient(
+  baseURL: string,
+  apiKey: string,
+  options: { referenceMode?: 'multipart-edits' | 'generation-json' } = {},
+): ScopedImagesClient {
   const base = baseURL.replace(/\/+$/, '')
   return {
     async generate(request) {
       const editing = request.references.length > 0
       let body: BodyInit
       const headers = new Headers({ authorization: `Bearer ${apiKey}`, 'idempotency-key': request.idempotencyKey })
-      if (editing) {
+      if (editing && options.referenceMode !== 'generation-json') {
         const form = new FormData()
         form.set('model', request.modelId)
         form.set('prompt', request.prompt)
@@ -75,9 +94,14 @@ export function createOpenAIImagesClient(baseURL: string, apiKey: string): Scope
           ...(params.quality ? { quality: params.quality } : {}),
           ...(params.background ? { background: params.background } : {}),
           ...(params.output_format ? { output_format: params.output_format } : {}),
+          ...(editing ? {
+            image: request.references.length === 1
+              ? `data:${request.references[0]!.mime};base64,${toBase64(request.references[0]!.bytes)}`
+              : request.references.map(reference => `data:${reference.mime};base64,${toBase64(reference.bytes)}`),
+          } : {}),
         })
       }
-      const endpoint = `${base}/images/${editing ? 'edits' : 'generations'}`
+      const endpoint = `${base}/images/${editing && options.referenceMode !== 'generation-json' ? 'edits' : 'generations'}`
       return readResponse(await fetch(endpoint, { method: 'POST', headers, body, signal: request.signal }), request)
     },
   }

@@ -1,9 +1,9 @@
 import type { Context } from 'cordis'
 import { Hono } from 'hono'
 import { CreateImageRunInputSchema } from '@/shared/artifacts'
-import { and, desc, eq, isNull, lt, or } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, isNull, lt, or } from 'drizzle-orm'
 import { z } from 'zod'
-import { artifactRuns, artifacts, attachments } from '@/server/db/schema'
+import { artifactRunInputs, artifactRuns, artifacts, attachments, messages } from '@/server/db/schema'
 import { disposeRpcStub } from '@/server/rpc'
 import { ArtifactRunInputError, createImageRun } from '../artifacts/runs'
 import { authUserId, type ApiEnv } from './auth'
@@ -29,6 +29,20 @@ function artifactDto(row: { artifact: typeof artifacts.$inferSelect; run: typeof
   }
 }
 
+async function withReferenceInputs(ctx: Context, rows: Array<typeof artifactRuns.$inferSelect>) {
+  if (!rows.length) return []
+  const inputs = await ctx.db.orm.select().from(artifactRunInputs)
+    .where(inArray(artifactRunInputs.run_id, rows.map(row => row.id)))
+    .orderBy(asc(artifactRunInputs.run_id), asc(artifactRunInputs.position))
+  const byRun = new Map<number, number[]>()
+  for (const input of inputs) {
+    const list = byRun.get(input.run_id) ?? []
+    list.push(input.attachment_id)
+    byRun.set(input.run_id, list)
+  }
+  return rows.map(row => ({ ...row, reference_attachment_ids: byRun.get(row.id) ?? [] }))
+}
+
 export function artifactRoutes(ctx: Context) {
   const router = new Hono<ApiEnv>()
   router.post('/artifact-runs/image', async (c) => {
@@ -44,14 +58,15 @@ export function artifactRoutes(ctx: Context) {
     const id = parseId(c.req.param('id'))
     if (id === null) return c.json({ error: 'not found' }, 404)
     const run = await ctx.db.orm.query.artifactRuns.findFirst({ where: and(eq(artifactRuns.id, id), eq(artifactRuns.user_id, authUserId(c))) })
-    return run ? c.json(run) : c.json({ error: 'not found' }, 404)
+    return run ? c.json((await withReferenceInputs(ctx, [run]))[0]!) : c.json({ error: 'not found' }, 404)
   })
   router.get('/artifact-runs', async (c) => {
     const conversationId = Number(c.req.query('conversation_id'))
     if (!Number.isInteger(conversationId) || conversationId <= 0) return c.json({ error: 'invalid conversation' }, 400)
-    return c.json(await ctx.db.orm.select().from(artifactRuns).where(and(
+    const rows = await ctx.db.orm.select().from(artifactRuns).where(and(
       eq(artifactRuns.user_id, authUserId(c)), eq(artifactRuns.conversation_id, conversationId),
-    )).orderBy(desc(artifactRuns.created_at), desc(artifactRuns.id)))
+    )).orderBy(desc(artifactRuns.created_at), desc(artifactRuns.id))
+    return c.json(await withReferenceInputs(ctx, rows))
   })
   router.post('/artifact-runs/:id/cancel', async (c) => {
     const id = parseId(c.req.param('id'))
@@ -62,13 +77,18 @@ export function artifactRoutes(ctx: Context) {
     const current = run ?? await ctx.db.orm.query.artifactRuns.findFirst({ where: and(eq(artifactRuns.id, id), eq(artifactRuns.user_id, userId)) })
     if (!current) return c.json({ error: 'not found' }, 404)
     if (run) {
+      if (run.message_id !== null && run.conversation_id !== null) {
+        await ctx.db.orm.update(messages).set({ status: 'aborted', error: 'Image generation cancelled' }).where(and(
+          eq(messages.id, run.message_id), eq(messages.conversation_id, run.conversation_id),
+        ))
+      }
+      const instance = await ctx.env.ARTIFACT_WORKFLOW.get(run.workflow_instance_id)
       try {
-        const instance = await ctx.env.ARTIFACT_WORKFLOW.get(run.workflow_instance_id)
         await instance.terminate()
-        disposeRpcStub(instance)
       } catch { /* The persisted cancelled state remains authoritative. */ }
+      finally { disposeRpcStub(instance) }
     }
-    return c.json(current)
+    return c.json((await withReferenceInputs(ctx, [current]))[0]!)
   })
   router.get('/artifacts', async (c) => {
     const userId = authUserId(c)
@@ -107,13 +127,19 @@ export function artifactRoutes(ctx: Context) {
     if (variant === 'gallery' || variant === 'preview') {
       const stored = await ctx.assets.getBytes(row.attachment.r2_key)
       if (!stored) return c.json({ error: 'not found' }, 404)
+      const source = ctx.env.IMAGES.input(new Blob([stored.bytes as BlobPart], { type: stored.mime }).stream())
+      let transformer: ImageTransformer | undefined
+      let result: ImageTransformationResult | undefined
       try {
-        const transformed = await ctx.env.IMAGES.input(new Blob([stored.bytes as BlobPart], { type: stored.mime }).stream())
-          .transform({ width: variant === 'gallery' ? 512 : 1536, fit: 'scale-down' })
-          .output({ format: 'image/webp' })
-        return transformed.response({ headers })
+        transformer = source.transform({ width: variant === 'gallery' ? 512 : 1536, fit: 'scale-down' })
+        result = await transformer.output({ format: 'image/webp' })
+        return result.response({ headers })
       } catch {
         return new Response(stored.bytes as BodyInit, { headers: { ...headers, 'content-type': stored.mime } })
+      } finally {
+        if (result) disposeRpcStub(result)
+        if (transformer && transformer !== source) disposeRpcStub(transformer)
+        disposeRpcStub(source)
       }
     }
     const stored = await ctx.assets.getStream(row.attachment.r2_key)

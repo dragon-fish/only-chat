@@ -1,7 +1,7 @@
 import { sql } from 'drizzle-orm'
 import { check, index, integer, primaryKey, sqliteTable, text, uniqueIndex, type AnySQLiteColumn } from 'drizzle-orm/sqlite-core'
 import type { CatalogMatches, ModelMetadata, ModelMetadataOverride } from '@/shared/model-metadata'
-import type { ArtifactRunStatus, ImageGenerationParams } from '@/shared/artifacts'
+import type { ArtifactRunStatus, ArtifactUsage, ImageGenerationParams } from '@/shared/artifacts'
 import type { Part } from '@/shared/parts'
 import type {
   InterfaceProtocol, PersistedStatus, ConversationParams, Usage, UserSettings,
@@ -228,6 +228,7 @@ export const artifactRuns = sqliteTable('artifact_runs', {
   params: text({ mode: 'json' }).$type<ImageGenerationParams>().notNull(),
   workflow_instance_id: text().notNull(),
   error: text(),
+  usage: text({ mode: 'json' }).$type<ArtifactUsage>(),
   created_at: integer().notNull(),
   started_at: integer(),
   completed_at: integer(),

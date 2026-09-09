@@ -37,6 +37,7 @@ export async function createImageRun(ctx: Context, userId: number, input: Create
   const references = await Promise.all(input.reference_attachment_ids.map(id => getAttachment(db, id, userId)))
   if (references.some(value => value === undefined)) throw new ArtifactRunInputError('reference attachment not found', 404)
 
+  const createdConversation = input.conversation_id === undefined
   let conversation = input.conversation_id === undefined
     ? await createConversation(db, {
         user_id: userId, title: input.prompt.trim().slice(0, 80), kind: 'image',
@@ -73,6 +74,15 @@ export async function createImageRun(ctx: Context, userId: number, input: Create
   if (input.reference_attachment_ids.length) await db.insert(artifactRunInputs).values(
     input.reference_attachment_ids.map((attachment_id, position) => ({ run_id: run!.id, attachment_id, position })),
   )
+  const hub = ctx.env.USER_HUB.getByName(String(userId))
+  try {
+    await hub.publishConversation(userId, conversation, createdConversation)
+  } catch {
+    // Realtime navigation is an acceleration path; the durable Conversation and REST snapshot remain authoritative.
+    console.warn('Could not broadcast image conversation update')
+  } finally {
+    disposeRpcStub(hub)
+  }
   try {
     const instance = await ctx.env.ARTIFACT_WORKFLOW.create({ id: workflowId, params: { userId, runId: run!.id } })
     disposeRpcStub(instance)
