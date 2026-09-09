@@ -27,12 +27,21 @@ export type CodexDevicePoll =
 
 export type CodexProtocolErrorCategory = 'permanent' | 'transient' | 'upstream'
 
+export interface CodexProtocolDiagnostics {
+  upstreamServer?: string
+  upstreamContentType?: string
+  cfRay?: string
+  requestId?: string
+  cfMitigated?: string
+}
+
 /** A sanitized upstream failure that is safe to persist or surface to application code. */
 export class CodexProtocolError extends Error {
   constructor(
     readonly operation: string,
     readonly category: CodexProtocolErrorCategory,
     readonly status: number | null,
+    readonly diagnostics: CodexProtocolDiagnostics = {},
   ) {
     super(`Codex ${operation} failed${status === null ? '' : ` (${status})`}`)
     this.name = 'CodexProtocolError'

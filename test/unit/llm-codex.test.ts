@@ -61,7 +61,10 @@ describe('Codex Responses transport', () => {
     await result.stream.cancel()
     expect(lm.provider).toBe('responses.responses')
     expect(request.url).toBe('https://chatgpt.com/backend-api/codex/responses')
-    expect(Object.fromEntries(request.headers)).toMatchObject({ authorization: 'Bearer private-access', 'chatgpt-account-id': 'private-account', originator: 'codex_cli_rs' })
+    expect(Object.fromEntries(request.headers)).toMatchObject({
+      authorization: 'Bearer private-access', 'chatgpt-account-id': 'private-account', originator: 'codex-tui',
+      'user-agent': 'codex-tui/0.153.3 (Mac OS 26.5.1; arm64) iTerm.app/3.6.11 (codex-tui; 0.153.3)',
+    })
     expect(await request.json()).toMatchObject({ model: 'gpt-test', input: [{ content: [{ text: 'private-prompt' }] }], store: false, instructions: '', include: ['reasoning.encrypted_content'] })
   })
 

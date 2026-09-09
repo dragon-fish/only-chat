@@ -4,7 +4,7 @@ import type { LanguageModelV4, LanguageModelV4StreamPart } from '@ai-sdk/provide
 import type { FetchFunction } from '@ai-sdk/provider-utils'
 import type { ModelRow, ProviderInterfaceRow, ProviderRow } from '@/server/db/schema'
 import { CodexReconnectRequiredError, type Codex } from '../../codex'
-import { CODEX_API_BASE_URL, CODEX_ORIGINATOR } from '../../codex/constants'
+import { CODEX_API_BASE_URL, CODEX_RESPONSES_ORIGINATOR, CODEX_RESPONSES_USER_AGENT } from '../../codex/constants'
 import { createFileAwareResponsesModel } from '../files/references'
 import { observedProviderFetch, type LlmRequestTrace } from '../observability'
 import { readResponsesReasoningDelta, RESPONSES_PROVIDER_NAME } from '../responses-reasoning'
@@ -84,7 +84,8 @@ export async function createCodexModel(codex: Codex, provider: ProviderRow, _pro
       const headers = new Headers(init.headers)
       headers.set('Authorization', `Bearer ${current.bundle.accessToken}`)
       headers.set('ChatGPT-Account-ID', current.bundle.accountId)
-      headers.set('Originator', CODEX_ORIGINATOR)
+      headers.set('Originator', CODEX_RESPONSES_ORIGINATOR)
+      headers.set('User-Agent', CODEX_RESPONSES_USER_AGENT)
       const safeFetch: FetchFunction = async (input, options) => {
         try { return await fetch(input, options) } catch {
           // Network errors may contain tokens or upstream bodies; sanitize before observability.

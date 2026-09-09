@@ -42,7 +42,7 @@ beforeEach(async () => {
     }
     if (req.url.endsWith('/oauth/token')) return Response.json({ id_token: jwt(accountId), access_token: 'private-access', refresh_token: 'private-refresh', token_type: 'Bearer', expires_in: 3600 })
     if (new URL(req.url).pathname.endsWith('/models')) return modelFailure
-      ? Response.json({ error: 'private-upstream-body' }, { status: 500 })
+      ? Response.json({ error: 'private-upstream-body' }, { status: 500, headers: { 'cf-ray': 'fixture-ray', server: 'fixture-edge' } })
       : Response.json({ models: [{ slug: 'codex-test' }] })
     throw new Error(`Unexpected URL ${req.url}`)
   })
@@ -59,9 +59,16 @@ async function poll(id: string) {
   expect(response.status).toBe(200)
   return CodexOAuthPollResponseSchema.parse(await response.json())
 }
+function structuredLogs(spy: { mock: { calls: unknown[][] } }): Array<Record<string, unknown>> {
+  return spy.mock.calls.flatMap(call => call.flatMap(value => {
+    if (typeof value !== 'string' || !value.startsWith('{')) return []
+    try { return [JSON.parse(value) as Record<string, unknown>] } catch { return [] }
+  }))
+}
 
 describe('Codex OAuth REST boundary', () => {
   it('completes the mocked lifecycle while preserving populated chat history on disconnect', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {})
     const defaultFetch = globalThis.fetch
     const refreshRequests: unknown[] = []
     const generationAuthorization: Array<string | null> = []
@@ -74,9 +81,12 @@ describe('Codex OAuth REST boundary', () => {
         generationAuthorization.push(req.headers.get('authorization'))
         return deepseekResponsesStream()
       }
-      if (req.url.endsWith('/oauth/token') && req.headers.get('content-type') === 'application/json') {
-        refreshRequests.push(await req.clone().json())
-        return Response.json({ access_token: 'rotated-access', refresh_token: 'rotated-refresh', expires_in: 3600 })
+      if (req.url.endsWith('/oauth/token')) {
+        const body = Object.fromEntries(await req.clone().formData())
+        if (body.grant_type === 'refresh_token') {
+          refreshRequests.push(body)
+          return Response.json({ access_token: 'rotated-access', refresh_token: 'rotated-refresh', expires_in: 3600 })
+        }
       }
       if (req.url.endsWith('/oauth/revoke')) return new Response(null, { status: 200 })
       return defaultFetch(req)
@@ -114,7 +124,7 @@ describe('Codex OAuth REST boundary', () => {
         status: 'connected', bundle: { accessToken: 'rotated-access', refreshToken: 'rotated-refresh' },
       })
     })
-    expect(refreshRequests).toEqual([{ client_id: expect.any(String), grant_type: 'refresh_token', refresh_token: 'private-refresh' }])
+    expect(refreshRequests).toEqual([{ client_id: expect.any(String), grant_type: 'refresh_token', refresh_token: 'private-refresh', scope: 'openid profile email' }])
     expect((await request('POST', `/providers/${providerId}/codex/disconnect`)).status).toBe(204)
 
     expect(await env.DB.prepare('SELECT status, encrypted_bundle FROM provider_oauth_credentials WHERE provider_id = ?').bind(providerId).first()).toEqual({
@@ -124,6 +134,14 @@ describe('Codex OAuth REST boundary', () => {
     expect(await env.DB.prepare('SELECT COUNT(*) AS count FROM models WHERE provider_id = ?').bind(providerId).first()).toMatchObject({ count: 2 })
     expect(await env.DB.prepare('SELECT id, title, head_message_id FROM sessions WHERE id = ?').bind(sessionId).first()).toEqual(sessionBefore)
     expect((await env.DB.prepare('SELECT id, session_id, parent_id, seq, role, parts, provider_id, model_id, status, error FROM messages WHERE session_id = ? ORDER BY seq').bind(sessionId).all()).results).toEqual(messagesBefore.results)
+    const events = structuredLogs(info)
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ event: 'codex.oauth_start.succeeded', operation: 'device code request', reconnect: false, durationMs: expect.any(Number) }),
+      expect.objectContaining({ event: 'codex.oauth_complete.succeeded', providerId, operation: 'authorization completion', initialConnection: true, durationMs: expect.any(Number) }),
+      expect.objectContaining({ event: 'codex.token_refresh.succeeded', providerId, operation: 'token refresh', previousRevision: 1, credentialRevision: 2, durationMs: expect.any(Number) }),
+      expect.objectContaining({ event: 'codex.disconnect.succeeded', providerId, operation: 'disconnect', credentialRevision: 2, durationMs: expect.any(Number) }),
+    ]))
+    expect(JSON.stringify(events)).not.toMatch(/private-|owner@example|account/)
   })
 
   it.each(['disconnect', 'delete'] as const)('still performs local %s when revoke fails and sends only the refresh token', async operation => {
@@ -145,7 +163,9 @@ describe('Codex OAuth REST boundary', () => {
     expect(response.status).toBe(204)
     expect(revoked).toEqual([{ token: 'private-refresh', token_type_hint: 'refresh_token', client_id: expect.any(String) }])
     expect(JSON.stringify(warn.mock.calls)).not.toMatch(/private-|owner@example|account/)
-    expect(warn).toHaveBeenCalled()
+    expect(structuredLogs(warn)).toContainEqual(expect.objectContaining({
+      event: 'codex.token_revoke.failed', providerId: id, operation: 'token revoke', category: 'transient', status: 500,
+    }))
     if (operation === 'delete') {
       expect(await store.read(id)).toBeNull()
       expect(await db.query.providerInterfaces.findMany()).toEqual([])
@@ -297,11 +317,11 @@ describe('Codex OAuth REST boundary', () => {
       const requests: unknown[] = []
       vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
         const req = new Request(input, init)
-        requests.push(await req.json())
+        requests.push(Object.fromEntries(await req.formData()))
         return Response.json({ access_token: 'rotated-access', refresh_token: 'rotated-refresh', expires_in: 3600 })
       })
       const snapshots = await Promise.all(Array.from({ length: 8 }, () => instance.app.codex.getValidCredentials(id)))
-      expect(requests).toEqual([{ client_id: 'app_EMoamEEZ73f0CkXaXp7hrann', grant_type: 'refresh_token', refresh_token: 'private-refresh' }])
+      expect(requests).toEqual([{ client_id: 'app_EMoamEEZ73f0CkXaXp7hrann', grant_type: 'refresh_token', refresh_token: 'private-refresh', scope: 'openid profile email' }])
       for (const snapshot of snapshots) expect(snapshot).toMatchObject({ status: 'connected', revision: 3, credentialVersion: 1, bundle: { accessToken: 'rotated-access', refreshToken: 'rotated-refresh' } })
       expect(await instance.app.codex.getValidCredentials(id)).toEqual(snapshots[0])
       expect(requests).toHaveLength(1)
@@ -617,14 +637,27 @@ describe('Codex OAuth REST boundary', () => {
   })
 
   it('retains credentials and returns a sanitized warning when model listing fails', async () => {
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
     modelFailure = true
     const result = await poll((await start()).flow_id)
     expect(result).toMatchObject({ status: 'complete', model_sync_warning: expect.any(String), provider: { oauth: { status: 'connected' } } })
+    if (result.status !== 'complete') throw new Error('Missing provider')
     expect(JSON.stringify(result)).not.toMatch(/private-upstream-body|private-access|private-refresh/)
     expect(await db.select().from(providers)).toHaveLength(1)
+    const entries = warning.mock.calls.flatMap(call => call.flatMap(value => {
+      if (typeof value !== 'string' || !value.startsWith('{')) return []
+      try { return [JSON.parse(value) as Record<string, unknown>] } catch { return [] }
+    }))
+    expect(entries).toContainEqual(expect.objectContaining({
+      event: 'codex.model_list.failed', providerId: result.provider.id, operation: 'model listing',
+      category: 'transient', status: 500, credentialRevision: 1, durationMs: expect.any(Number),
+      upstreamServer: 'fixture-edge', upstreamContentType: 'application/json', cfRay: 'fixture-ray',
+    }))
+    expect(JSON.stringify(entries)).not.toMatch(/private-upstream-body|private-account|private-access|private-refresh/)
   })
 
   it('terminates denied polls and sanitizes authorization request failures', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const grant = await start()
     vi.stubGlobal('fetch', async () => Response.json({ error: 'private-denial-body' }, { status: 400 }))
     const denied = await poll(grant.flow_id)
@@ -635,6 +668,11 @@ describe('Codex OAuth REST boundary', () => {
     expect(failedStart.status).toBe(502)
     expect(await failedStart.text()).not.toContain('private-denial-body')
     expect(await db.select().from(providers)).toEqual([])
+    expect(structuredLogs(warn)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ event: 'codex.oauth_complete.failed', operation: 'authorization completion', category: 'upstream', status: 400 }),
+      expect.objectContaining({ event: 'codex.oauth_start.failed', operation: 'device code request', category: 'upstream', status: 400 }),
+    ]))
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('private-denial-body')
   })
 
   it('projects reconnect-required and disconnected summaries without credentials', async () => {

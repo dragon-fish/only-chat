@@ -135,10 +135,11 @@ describe('Codex OAuth client', () => {
       ...currentTokens, accessToken: 'new-access', refreshToken: 'new-refresh', expiresAt: 3_600_100,
     })
     expect(requests[0]).toMatchObject({ url: 'https://auth.openai.com/oauth/token', method: 'POST' })
-    expect(JSON.parse(requests[0]?.body ?? '{}')).toEqual({
+    expect(new URLSearchParams(requests[0]?.body ?? '')).toEqual(new URLSearchParams({
       client_id: 'app_EMoamEEZ73f0CkXaXp7hrann', grant_type: 'refresh_token', refresh_token: 'old-refresh',
-    })
-    expect(requests[0]?.headers.get('originator')).toBe('codex_cli_rs')
+      scope: 'openid profile email',
+    }))
+    expect(requests[0]?.headers.get('content-type')).toBe('application/x-www-form-urlencoded')
   })
 
   it('accepts a replacement ID token for the bound account', async () => {
@@ -219,10 +220,11 @@ describe('Codex OAuth client', () => {
     ] })])
 
     await expect(createCodexClient(fetchStub).listModels({ accessToken: 'access-1', accountId: 'account-1' })).resolves.toEqual(['alpha', 'chatgpt-only', 'zeta'])
-    expect(requests[0]).toMatchObject({ url: 'https://chatgpt.com/backend-api/codex/models?client_version=0.153.4', method: 'GET' })
+    expect(requests[0]).toMatchObject({ url: 'https://chatgpt.com/backend-api/codex/models?client_version=0.153.3', method: 'GET' })
     expect(requests[0]?.headers.get('authorization')).toBe('Bearer access-1')
     expect(requests[0]?.headers.get('chatgpt-account-id')).toBe('account-1')
     expect(requests[0]?.headers.get('originator')).toBe('codex_cli_rs')
+    expect(requests[0]?.headers.get('user-agent')).toBe('codex_cli_rs/0.153.3 (Mac OS 26.3.1; arm64) iTerm.app/3.6.9')
   })
 
   it('returns sanitized protocol errors for malformed responses', async () => {

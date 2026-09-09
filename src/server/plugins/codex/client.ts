@@ -5,9 +5,11 @@ import {
   CODEX_CLIENT_VERSION,
   CODEX_DEVICE_REDIRECT_URI,
   CODEX_ORIGINATOR,
+  CODEX_USER_AGENT,
 } from './constants'
 import {
   CodexProtocolError,
+  type CodexProtocolDiagnostics,
   type CodexDeviceGrant,
   type CodexDevicePoll,
   type CodexIdentity,
@@ -44,8 +46,16 @@ function optionalString(record: JsonRecord, key: string, operation: string): str
   return requiredString(record, key, operation)
 }
 
-function protocolError(operation: string, category: CodexProtocolErrorCategory, status: number | null): CodexProtocolError {
-  return new CodexProtocolError(operation, category, status)
+function protocolError(operation: string, category: CodexProtocolErrorCategory, status: number | null, diagnostics: CodexProtocolDiagnostics = {}): CodexProtocolError {
+  return new CodexProtocolError(operation, category, status, diagnostics)
+}
+
+function responseDiagnostics(response: Response): CodexProtocolDiagnostics {
+  const field = (name: string) => response.headers.get(name) || undefined
+  return {
+    upstreamServer: field('server'), upstreamContentType: field('content-type'), cfRay: field('cf-ray'),
+    requestId: field('x-request-id'), cfMitigated: field('cf-mitigated'),
+  }
 }
 
 async function parseJson(response: Response, operation: string, status: number | null = response.status): Promise<JsonRecord> {
@@ -135,7 +145,7 @@ async function refreshFailure(response: Response): Promise<CodexProtocolError> {
     || code === 'refresh_token_expired'
     || code === 'refresh_token_reused'
     || code === 'refresh_token_invalidated')
-  return protocolError('token refresh', permanent ? 'permanent' : response.status >= 500 ? 'transient' : 'upstream', response.status)
+  return protocolError('token refresh', permanent ? 'permanent' : response.status >= 500 ? 'transient' : 'upstream', response.status, responseDiagnostics(response))
 }
 
 export function createCodexClient(fetchFn: typeof fetch = fetch, now: () => number = Date.now): CodexClient {
@@ -154,7 +164,7 @@ export function createCodexClient(fetchFn: typeof fetch = fetch, now: () => numb
       headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
       body: JSON.stringify({ client_id: CODEX_CLIENT_ID }),
     }, signal)
-    if (!response.ok) throw protocolError(operation, response.status >= 500 ? 'transient' : 'upstream', response.status)
+    if (!response.ok) throw protocolError(operation, response.status >= 500 ? 'transient' : 'upstream', response.status, responseDiagnostics(response))
     const body = await parseJson(response, operation)
     return {
       deviceAuthId: requiredString(body, 'device_auth_id', operation),
@@ -173,7 +183,7 @@ export function createCodexClient(fetchFn: typeof fetch = fetch, now: () => numb
       body: JSON.stringify({ device_auth_id: deviceAuthId, user_code: userCode }),
     }, signal)
     if (response.status === 403 || response.status === 404) return { status: 'pending' }
-    if (!response.ok) throw protocolError(operation, response.status >= 500 ? 'transient' : 'upstream', response.status)
+    if (!response.ok) throw protocolError(operation, response.status >= 500 ? 'transient' : 'upstream', response.status, responseDiagnostics(response))
     const body = await parseJson(response, operation)
     return {
       status: 'authorized',
@@ -197,7 +207,7 @@ export function createCodexClient(fetchFn: typeof fetch = fetch, now: () => numb
       headers: { Accept: 'application/json', 'Content-Type': 'application/x-www-form-urlencoded' },
       body,
     }, signal)
-    if (!response.ok) throw protocolError(operation, response.status >= 500 ? 'transient' : 'upstream', response.status)
+    if (!response.ok) throw protocolError(operation, response.status >= 500 ? 'transient' : 'upstream', response.status, responseDiagnostics(response))
     const tokens = await parseJson(response, operation)
     const idToken = requiredString(tokens, 'id_token', operation)
     const identity = parseCodexIdentity(idToken)
@@ -213,10 +223,16 @@ export function createCodexClient(fetchFn: typeof fetch = fetch, now: () => numb
 
   async function refreshTokens(current: CodexTokenBundle, signal?: AbortSignal): Promise<CodexTokenBundle> {
     const operation = 'token refresh'
+    const body = new URLSearchParams({
+      client_id: CODEX_CLIENT_ID,
+      grant_type: 'refresh_token',
+      refresh_token: current.refreshToken,
+      scope: 'openid profile email',
+    })
     const response = await request(operation, `${CODEX_AUTH_BASE_URL}/oauth/token`, {
       method: 'POST',
-      headers: { Accept: 'application/json', 'Content-Type': 'application/json', Originator: CODEX_ORIGINATOR },
-      body: JSON.stringify({ client_id: CODEX_CLIENT_ID, grant_type: 'refresh_token', refresh_token: current.refreshToken }),
+      headers: { Accept: 'application/json', 'Content-Type': 'application/x-www-form-urlencoded' },
+      body,
     }, signal)
     if (!response.ok) throw await refreshFailure(response)
     const tokens = await parseJson(response, operation)
@@ -242,7 +258,7 @@ export function createCodexClient(fetchFn: typeof fetch = fetch, now: () => numb
       headers: { Accept: 'application/json', 'Content-Type': 'application/json', Originator: CODEX_ORIGINATOR },
       body: JSON.stringify({ token: refreshToken, token_type_hint: 'refresh_token', client_id: CODEX_CLIENT_ID }),
     }, signal)
-    if (!response.ok) throw protocolError(operation, response.status >= 500 ? 'transient' : 'upstream', response.status)
+    if (!response.ok) throw protocolError(operation, response.status >= 500 ? 'transient' : 'upstream', response.status, responseDiagnostics(response))
   }
 
   async function listModels(credentials: Pick<CodexTokenBundle, 'accessToken' | 'accountId'>, signal?: AbortSignal): Promise<string[]> {
@@ -253,9 +269,10 @@ export function createCodexClient(fetchFn: typeof fetch = fetch, now: () => numb
         Authorization: `Bearer ${credentials.accessToken}`,
         'ChatGPT-Account-ID': credentials.accountId,
         Originator: CODEX_ORIGINATOR,
+        'User-Agent': CODEX_USER_AGENT,
       },
     }, signal)
-    if (!response.ok) throw protocolError(operation, response.status >= 500 ? 'transient' : 'upstream', response.status)
+    if (!response.ok) throw protocolError(operation, response.status >= 500 ? 'transient' : 'upstream', response.status, responseDiagnostics(response))
     const body = await parseJson(response, operation)
     if (!Array.isArray(body.models)) throw protocolError(operation, 'upstream', response.status)
     const slugs = body.models.map(model => {
