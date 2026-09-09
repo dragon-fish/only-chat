@@ -63,7 +63,19 @@ Conversations, Projects, Providers, models, attachments, messages, or settings.
 
 ## Upgrading an existing deployment
 
-Apply migrations and deploy the matching Worker as one coordinated upgrade:
+Before the schema/code cutover, update `wrangler.jsonc`: set `BETTER_AUTH_URL` to this
+deployment's exact public origin rather than the repository's example origin, and set
+`ALLOW_REGISTER=false`. An absent or invalid `ALLOW_REGISTER` value also closes registration, but
+keeping the explicit `false` makes the upgrade intent clear. Existing MVP `uid=1` data must be
+recovered with `auth:reset-user` below; opening self-registration would create a different user.
+
+Set the new production authentication secret before the coordinated upgrade. Use an independent
+random value of at least 32 characters; the existing `KEY_ENCRYPTION_SECRET` remains required and
+must not be replaced as part of this upgrade.
+
+    wrangler secret put BETTER_AUTH_SECRET
+
+Then apply migrations and deploy the matching Worker as one coordinated upgrade:
 
     pnpm db:migrate:remote            # 1. schema
     pnpm deploy                       # 2. code
