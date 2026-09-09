@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory, stringifyQuery, type RouteLocationNormalized, type RouteRecordRaw, type Router, type RouterHistory } from 'vue-router'
 import { routes } from 'vue-router/auto-routes'
 import { useAuthStore } from '@/client/stores/auth'
+import { isAuthAdmin } from '@/shared/auth'
 
 declare module 'vue-router' {
   interface RouteMeta {
@@ -44,6 +45,7 @@ export function createAppRouter(history: RouterHistory = createWebHistory()): Ro
     const auth = useAuthStore()
     if (!auth.ready) await auth.refresh()
     if (to.meta.requiresAuth && !auth.authUser) return { path: '/login', query: { redirect: to.fullPath } }
+    if (to.path.startsWith('/admin') && !isAuthAdmin(auth.authUser)) return '/new'
     if (to.meta.guestOnly && auth.authUser) return authenticatedDestination(to, appRouter)
   })
   return appRouter

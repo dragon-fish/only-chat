@@ -9,7 +9,9 @@ import { attachmentRoutes } from './attachments'
 import { projectRoutes } from './projects'
 import { modelCatalogRoutes } from './model-catalog'
 import { CatalogUnavailableError } from '../model-catalog/storage'
-import { authUserId, requireAuth, type ApiEnv } from './auth'
+import { authUserId, requireAdmin, requireAuth, type ApiEnv } from './auth'
+import { adminEndpoints } from '../auth/access'
+import { AdminCreateUserSchema, AdminSetRoleSchema } from '@/shared/auth'
 import { adminSiteSettingsRoutes, publicSiteSettingsRoutes } from './site-settings'
 
 export type ApiApp = Hono<ApiEnv>
@@ -19,6 +21,16 @@ export const ApiPlugin = {
   inject: ['env', 'db', 'auth', 'assets', 'modelCatalog'],
   apply(ctx: Context) {
     const app: ApiApp = new Hono()
+    app.use('/api/auth/admin/*', async (c, next) => {
+      if (!adminEndpoints.has(`${c.req.method} ${c.req.path}`)) return c.json({ error: 'Forbidden' }, 403)
+      await next()
+    })
+    app.use('/api/auth/admin/*', requireAuth(ctx), requireAdmin(ctx))
+    app.use('/api/auth/admin/*', async (c, next) => {
+      const schema = c.req.path.endsWith('/create-user') ? AdminCreateUserSchema : c.req.path.endsWith('/set-role') ? AdminSetRoleSchema : null
+      if (schema && !schema.safeParse(await c.req.raw.clone().json().catch(() => null)).success) return c.json({ error: 'Invalid account input' }, 400)
+      await next()
+    })
     app.all('/api/auth/*', c => ctx.auth.instance.handler(c.req.raw))
     app.get('/api/health', (c) => c.json({ ok: true }))
     app.route('/api', publicSiteSettingsRoutes(ctx))

@@ -5,7 +5,7 @@ import { z } from 'zod'
 import { drizzleAdapter } from '@better-auth/drizzle-adapter'
 import { admin as adminPlugin } from 'better-auth/plugins/admin'
 import { authAccounts, authSessions, authVerifications, users } from '@/server/db/schema'
-import { authRoles } from './access'
+import { authAccess, authRoles } from './access'
 import { protectOwner, registrationPolicy } from './policy'
 import { parseAuthUserId } from './user-id'
 import { AUTH_REVOKED_PATH, INTERNAL_USER_ID_HEADER } from '../hub/identity'
@@ -32,7 +32,7 @@ export class Authentication extends Service {
       account: { modelName: 'authAccounts' },
       session: { modelName: 'authSessions' },
       verification: { modelName: 'authVerifications' },
-      plugins: [adminPlugin({ adminUserIds: ['1'], roles: authRoles })],
+      plugins: [adminPlugin({ adminUserIds: ['1'], ac: authAccess, roles: authRoles })],
       hooks: {
         before: protectOwner,
         after: createAuthMiddleware(async context => {

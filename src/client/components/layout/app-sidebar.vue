@@ -12,7 +12,7 @@ import { Sidebar, SidebarRail } from '@/client/ui/sidebar'
 const route = useRoute()
 const router = useRouter()
 const sync = useSyncStore()
-const isSettings = computed(() => route.path.startsWith('/settings'))
+const isSettings = computed(() => route.path.startsWith('/settings') || route.path.startsWith('/admin'))
 
 const activeConversationId = computed(() => routeParamToId(
   'conversationId' in route.params && typeof route.params.conversationId === 'string' ? route.params.conversationId : undefined,

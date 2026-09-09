@@ -21,6 +21,12 @@ function authenticatedRouter() {
 }
 
 describe('application route contracts', () => {
+  it.each([['user', '2', '/new'], ['admin', '2', '/admin/users'], ['user', '1', '/admin/users']] as const)('gates administrator pages for %s uid %s', async (role, id, destination) => {
+    const router = authenticatedRouter()
+    useAuthStore().authUser = { id, role, name: 'Person', email: 'person@example.com', banned: false, emailVerified: false, createdAt: new Date(), updatedAt: new Date() }
+    await router.push('/admin/users')
+    expect(router.currentRoute.value.path).toBe(destination)
+  })
   it.each([{ desktop: true, entry: '/new' }, { desktop: false, entry: '/chats' }])('routes the root to $entry before rendering (desktop=$desktop)', async ({ desktop, entry }) => {
     const matchMedia = window.matchMedia.bind(window)
     vi.spyOn(window, 'matchMedia').mockImplementation(query => {

@@ -195,14 +195,14 @@ describe('authenticated UserHub', () => {
     expect(other.events.filter(event => event.type === 'error')).toEqual([])
   })
 
-  it.each(['ban-user', 'update-user'])('closes every banned user socket immediately after successful admin %s', async endpoint => {
+  it('closes every banned user socket immediately after successful admin ban', async () => {
     const admin = await registerAndLogin()
     const bob = await registerAndLogin({ ...signupBody, email: 'bob@example.com' })
     const { userId } = await identity(bob)
     const first = await connect(bob)
     const second = await connect(bob)
     const closing = Promise.all([closed(first.ws), closed(second.ws)])
-    expect((await admin.json('POST', `/api/auth/admin/${endpoint}`, { userId: String(userId), ...(endpoint === 'update-user' ? { data: { banned: true } } : {}) })).status).toBe(200)
+    expect((await admin.json('POST', '/api/auth/admin/ban-user', { userId: String(userId) })).status).toBe(200)
     expect((await closing).map(event => event.code)).toEqual([4001, 4001])
     expect((await workerFetch('/internal/auth-revoked', { method: 'POST' })).status).toBe(404)
   })

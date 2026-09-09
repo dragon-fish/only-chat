@@ -1,16 +1,24 @@
 <script setup lang="ts">
-import { ArrowLeftIcon, ChevronRightIcon, PaletteIcon, PlugIcon, ServerIcon } from '@lucide/vue'
+import { ArrowLeftIcon, ChevronRightIcon, CircleUserRoundIcon, PaletteIcon, PlugIcon, ServerIcon, SettingsIcon, UsersIcon } from '@lucide/vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { useSettingsReturn } from '@/client/composables/use-settings-return'
+import { useAuthStore } from '@/client/stores/auth'
+import { isAuthAdmin } from '@/shared/auth'
 import { Button } from '@/client/ui/button'
 import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle } from '@/client/ui/item'
 
 const router = useRouter()
 const returnTo = useSettingsReturn()
+const auth = useAuthStore()
 const categories = [
+  { label: '账户', description: '管理个人信息与登录密码', to: '/settings/account', icon: CircleUserRoundIcon },
   { label: '模型服务', description: '连接供应商，管理模型与能力', to: '/settings/providers', icon: ServerIcon },
   { label: '插件', description: '管理聊天中的工具与扩展', to: '/settings/plugins', icon: PlugIcon },
   { label: '外观', description: '调整主题与显示偏好', to: '/settings/appearance', icon: PaletteIcon },
+]
+const administration = [
+  { label: '用户管理', description: '管理账户、角色与登录权限', to: '/admin/users', icon: UsersIcon },
+  { label: '注册设置', description: '设置本站是否开放注册', to: '/admin/settings', icon: SettingsIcon },
 ]
 
 function backToChat() {
@@ -36,6 +44,18 @@ function backToChat() {
             ItemDescription {{ category.description }}
           ItemActions
             ChevronRightIcon
+    template(v-if="isAuthAdmin(auth.authUser)")
+      h2.text-sm.font-medium.text-muted-foreground 站点管理
+      ItemGroup(class="gap-2")
+        Item(v-for="category in administration" :key="category.to" as-child variant="outline")
+          RouterLink(:to="category.to")
+            ItemMedia(variant="icon")
+              component(:is="category.icon")
+            ItemContent
+              ItemTitle {{ category.label }}
+              ItemDescription {{ category.description }}
+            ItemActions
+              ChevronRightIcon
     Button(variant="ghost" class="min-h-10 self-start md:hidden" @click="backToChat")
       ArrowLeftIcon(data-icon="inline-start")
       | 返回聊天

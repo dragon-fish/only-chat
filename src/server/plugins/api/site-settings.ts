@@ -1,7 +1,8 @@
 import type { Context } from 'cordis'
 import { Hono } from 'hono'
+import { eq } from 'drizzle-orm'
 import { siteSettings } from '@/server/db/schema'
-import { PublicSiteSettingsSchema } from '@/shared/auth'
+import { AdminSiteSettingsUpdateSchema } from '@/shared/auth'
 import { resolveAllowRegister } from '../auth/site-settings'
 import { requireAdmin, type ApiEnv } from './auth'
 
@@ -22,8 +23,13 @@ export function adminSiteSettingsRoutes(ctx: Context) {
     return c.json({ allowRegister: setting.value, source: setting.source })
   })
   r.put('/admin/settings', async c => {
-    const body = PublicSiteSettingsSchema.strict().safeParse(await c.req.json().catch(() => null))
+    const body = AdminSiteSettingsUpdateSchema.safeParse(await c.req.json().catch(() => null))
     if (!body.success) return c.json({ error: 'Invalid site settings' }, 400)
+    if (body.data.allowRegister === null) {
+      await ctx.db.orm.delete(siteSettings).where(eq(siteSettings.key, 'auth.allow_register'))
+      const setting = await resolveAllowRegister(ctx.db.orm, ctx.env.ALLOW_REGISTER)
+      return c.json({ allowRegister: setting.value, source: setting.source })
+    }
     const value = String(body.data.allowRegister)
     const updatedAt = new Date()
     await ctx.db.orm.insert(siteSettings).values({ key: 'auth.allow_register', value, updatedAt })

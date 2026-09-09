@@ -38,6 +38,27 @@ declare module 'vue-router/auto-routes' {
       Record<never, never>,
       | never
     >,
+    '/admin/': RouteRecordInfo<
+      '/admin/',
+      '/admin',
+      Record<never, never>,
+      Record<never, never>,
+      | never
+    >,
+    '/admin/settings': RouteRecordInfo<
+      '/admin/settings',
+      '/admin/settings',
+      Record<never, never>,
+      Record<never, never>,
+      | never
+    >,
+    '/admin/users': RouteRecordInfo<
+      '/admin/users',
+      '/admin/users',
+      Record<never, never>,
+      Record<never, never>,
+      | never
+    >,
     '/chats/': RouteRecordInfo<
       '/chats/',
       '/chats',
@@ -110,6 +131,13 @@ declare module 'vue-router/auto-routes' {
       Record<never, never>,
       | never
     >,
+    '/settings/account': RouteRecordInfo<
+      '/settings/account',
+      '/settings/account',
+      Record<never, never>,
+      Record<never, never>,
+      | never
+    >,
     '/settings/appearance': RouteRecordInfo<
       '/settings/appearance',
       '/settings/appearance',
@@ -154,6 +182,30 @@ declare module 'vue-router/auto-routes' {
     'src/client/pages/index.vue': {
       routes:
         | '/'
+      views:
+        | never
+      pathParamNames:
+        | never
+    }
+    'src/client/pages/admin/index.vue': {
+      routes:
+        | '/admin/'
+      views:
+        | never
+      pathParamNames:
+        | never
+    }
+    'src/client/pages/admin/settings.vue': {
+      routes:
+        | '/admin/settings'
+      views:
+        | never
+      pathParamNames:
+        | never
+    }
+    'src/client/pages/admin/users.vue': {
+      routes:
+        | '/admin/users'
       views:
         | never
       pathParamNames:
@@ -237,6 +289,14 @@ declare module 'vue-router/auto-routes' {
     'src/client/pages/settings/index.vue': {
       routes:
         | '/settings/'
+      views:
+        | never
+      pathParamNames:
+        | never
+    }
+    'src/client/pages/settings/account.vue': {
+      routes:
+        | '/settings/account'
       views:
         | never
       pathParamNames:

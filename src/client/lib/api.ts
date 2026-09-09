@@ -1,7 +1,7 @@
 import type { AttachmentCheckResponse, AttachmentUploadResponse, BulkModelStateInput, BulkModelStateResponse, CatalogProviderSummary, CatalogRefreshJobStatus, CatalogRefreshStartResponse, CatalogStatus, FetchModelsResponse, ModelRef, ModelWriteInput, ProviderWriteInput } from '@/shared/api'
 import type { Message, ModelPage, ModelQuery, ModelWithMetadata, Project, ProviderWithInterfaces, Conversation, User } from '@/shared/models'
 import type { PresetProvider } from '@/server/plugins/llm/presets'
-import type { PublicSiteSettings } from '@/shared/auth'
+import type { AdminSiteSettings, AdminSiteSettingsUpdate, PublicSiteSettings } from '@/shared/auth'
 import { useAuthStore } from '@/client/stores/auth'
 
 export class ApiError extends Error {
@@ -51,6 +51,8 @@ function queryString(input: Record<string, unknown>): string {
 
 export const api = {
   siteSettings: () => request<PublicSiteSettings>('GET', '/api/site-settings'),
+  adminSettings: () => request<AdminSiteSettings>('GET', '/api/admin/settings'),
+  updateAdminSettings: (input: AdminSiteSettingsUpdate) => request<AdminSiteSettings>('PUT', '/api/admin/settings', input),
   me: () => request<User>('GET', '/api/me'),
   presets: () => request<PresetProvider[]>('GET', '/api/presets'),
   conversations: () => request<Conversation[]>('GET', '/api/conversations'),

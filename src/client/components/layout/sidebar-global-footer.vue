@@ -2,7 +2,7 @@
 import { SettingsIcon } from '@lucide/vue'
 import { computed } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
-import SidebarAccountPlaceholder from '@/client/components/layout/sidebar-account-placeholder.vue'
+import SidebarAccountMenu from '@/client/components/layout/sidebar-account-menu.vue'
 import { SidebarFooter, SidebarMenu, SidebarMenuButton, SidebarMenuItem } from '@/client/ui/sidebar'
 
 const route = useRoute()
@@ -21,6 +21,6 @@ const isSettings = computed(() => route.path.startsWith('/settings'))
         </SidebarMenuButton>
       </SidebarMenuItem>
     </SidebarMenu>
-    <SidebarAccountPlaceholder />
+    <SidebarAccountMenu />
   </SidebarFooter>
 </template>

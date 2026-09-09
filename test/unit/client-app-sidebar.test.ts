@@ -5,6 +5,7 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import { afterEach, expect, it, vi } from 'vitest'
 import AppSidebar from '@/client/components/layout/app-sidebar.vue'
 import { useSyncStore } from '@/client/stores/sync'
+import { useAuthStore } from '@/client/stores/auth'
 import { SidebarProvider } from '@/client/ui/sidebar'
 import type { Project } from '@/shared/models'
 
@@ -43,6 +44,7 @@ async function mountSidebar(path: string, status: 'connecting' | 'open' | 'close
   await router.push(path)
 
   const pinia = createPinia()
+  useAuthStore(pinia).authUser = { id: '2', name: 'Sidebar Person', email: 'sidebar@example.com', role: 'user', banned: false, emailVerified: false, createdAt: new Date(), updatedAt: new Date() }
   const sync = useSyncStore(pinia)
   sync.status = status
   const project: Project = { id: 1, user_id: 1, name: 'Design', icon_attachment_id: null, system_prompt: null, provider_id: null, model_id: null, params: null, created_at: 0, updated_at: 0 }
@@ -65,7 +67,7 @@ function expectGlobalFrame(status: string) {
   expect(connection).not.toBeNull()
   expect(connection!.getAttribute('data-status')).toBe(status)
   expect(document.querySelector('a[href="/settings/providers"]')).not.toBeNull()
-  expect(document.body.textContent).toContain('Only Chat User')
+  expect(document.body.textContent).toContain('Sidebar Person')
 }
 
 for (const path of ['/new', '/settings/providers']) {
@@ -110,7 +112,7 @@ it('keeps settings navigation contextual and activates the global settings link'
   expect(document.querySelectorAll('[data-global-settings]')).toHaveLength(1)
   expect(globalSettings?.getAttribute('data-active')).toBe('true')
   expect(settingsHeader!.querySelectorAll('[data-settings-back]')).toHaveLength(1)
-  expect(settingsContent!.querySelectorAll('[data-settings-category]')).toHaveLength(3)
+  expect(settingsContent!.querySelector('a[href="/settings/account"]')).not.toBeNull()
   expect(settingsContent!.querySelectorAll('[data-global-settings]')).toHaveLength(0)
 })
 
