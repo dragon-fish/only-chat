@@ -5,6 +5,7 @@ import { ChevronsUpDownIcon, CircleUserRoundIcon, LogOutIcon, ShieldIcon } from 
 import { toast } from 'vue-sonner'
 import { useAuthStore } from '@/client/stores/auth'
 import { isAuthAdmin } from '@/shared/auth'
+import { Avatar, AvatarFallback, AvatarImage } from '@/client/ui/avatar'
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from '@/client/ui/sidebar'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/client/ui/dropdown-menu'
 
@@ -26,7 +27,10 @@ SidebarMenu(v-if="auth.authUser")
     DropdownMenu
       DropdownMenuTrigger(as-child)
         SidebarMenuButton(data-account-menu size="lg" tooltip="账户")
-          CircleUserRoundIcon
+          Avatar
+            AvatarImage(v-if="auth.authUser.image" :src="auth.authUser.image" :alt="auth.authUser.name")
+            AvatarFallback
+              CircleUserRoundIcon
           span.min-w-0.flex-1.text-left(class="group-data-[collapsible=icon]:hidden")
             span.block.truncate.font-medium {{ auth.authUser.name }}
             span.block.truncate.text-xs.text-muted-foreground {{ auth.authUser.email }}
