@@ -8,6 +8,7 @@ import { models, providerInterfaces, providers, users } from '../../db/schema'
 import { decryptSecret } from '../llm/crypto'
 import { listRemoteModels } from '../llm/list-models'
 import { cleanupProviderFilesBeforeChange, invalidatedProviderFiles } from '../files-cleanup'
+import { elapsed } from '../timings'
 import { parseId } from './params'
 import { ProviderWriteError, toProviderDto, writeProvider } from './provider-write'
 import { catalogForModels, changedModelFields, ModelSourceConflict, modelSourceColumns, modelSourceFence, modelSourceMatches, providerSourceFence, resolveModelFields, retryModelSource } from './model-write'
@@ -70,15 +71,19 @@ export function providerRoutes(ctx: Context) {
     if (!endpoint) return c.json({ error: 'Configure a default interface first' }, 400)
     if (endpoint.protocol === 'vertex-compatible') return c.json({ error: 'Model listing is not supported for Vertex-compatible interfaces' }, 400)
     const key = provider.api_key ? await decryptSecret(ctx.env.KEY_ENCRYPTION_SECRET, provider.api_key) : null
+    // Stage durations only. Never log listing payloads, DB values or credentials.
+    const timings = elapsed()
     const remote = await listRemoteModels(endpoint, key)
     const ids = [...new Set(remote.map(model => model.id))]
     const remoteById = new Map(remote.map(model => [model.id, model]))
+    timings.mark('listing', { models: ids.length })
     try {
       return await retryModelSource(async () => {
         const currentProvider = await db.query.providers.findFirst({ where: owned(id, userId) })
         if (!currentProvider) return c.json({ error: 'not found' }, 404)
         const existing = await db.select(modelSourceColumns).from(models).where(eq(models.provider_id, id))
         const catalog = await catalogForModels(ctx, currentProvider.models_dev_provider_id, [...ids, ...existing.map(model => model.model_id)])
+        timings.mark('catalog', { stored: existing.length })
         const operations: BatchItem<'sqlite'>[] = [providerSourceFence(db, currentProvider, catalog.version, existing)]
         const existingIds = new Set(existing.map(model => model.model_id))
         const returnedIds = new Set(ids)
@@ -111,8 +116,11 @@ export function providerRoutes(ctx: Context) {
           if (Object.keys(changed).length) operations.push(db.update(models).set(changed).where(modelSourceMatches(model, currentProvider, catalog.version)))
         }
         operations.push(...bumpModelListRevisions(db, userId, id))
+        timings.mark('prepare', { statements: operations.length })
         const results = await db.batch(operations as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]])
+        timings.mark('batch')
         const imported = insertResultIndexes.reduce((count, index) => count + (results[index] as unknown[]).length, 0)
+        console.log('Provider model listing timings', { provider_id: id, ...timings.report() })
         return c.json({ imported, removed, unavailable, models: ids })
       })
     } catch (error) {

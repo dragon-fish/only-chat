@@ -3,6 +3,7 @@ import type { BatchItem } from 'drizzle-orm/batch'
 import type { DB } from '@/server/db/client'
 import { models, providerInterfaces, providers } from '@/server/db/schema'
 import { providerModelMetadata } from '../llm/list-models'
+import { elapsed } from '../timings'
 import { matchProviderByEndpoints } from './match'
 import { materializeModelMetadata, resolveModelMetadata } from './resolve'
 import { CatalogStorage, projectProviderIndex, type CatalogCounts } from './storage'
@@ -71,30 +72,41 @@ export async function refreshCatalog(storage: CatalogStorage, db: DB): Promise<C
 async function refreshWithLease(storage: CatalogStorage, db: DB, lease: CatalogLease): Promise<CatalogRefreshResult> {
   let stage = 'download'
   let result: CatalogRefreshResult
+  // Stage durations only. Never log upstream payloads, DB values or credentials.
+  const timings = elapsed()
   try {
     const response = await fetch('https://models.dev/catalog.json')
     if (!response.ok) throw new Error(`Catalog HTTP ${response.status}`)
     const bytes = await response.arrayBuffer()
+    timings.mark('download', { bytes: bytes.byteLength })
     stage = 'validation'
     const catalog = parseModelCatalog(JSON.parse(new TextDecoder().decode(bytes)))
     const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), byte => byte.toString(16).padStart(2, '0')).join('')
     await lease.renew()
+    timings.mark('validation')
     stage = 'storage'
     const pointer = lease.pointer
     const active = pointer ? await storage.manifest(pointer.current) : null
     if (active?.hash === hash) {
       await lease.recordUnchangedSuccess()
+      timings.mark('unchanged')
       result = { version: active.version, changed: false, providers: active.providers, globalModels: active.globalModels, providerModels: active.providerModels }
     } else {
       const manifest = await storage.stage(catalog, hash, Date.now(), () => lease.renew())
+      timings.mark('stage', { shards: manifest.shards.length })
       stage = 'materialization'
       await retryModelSource(async () => {
         await lease.renew()
-        await lease.commit(await materialize(db, catalog, pointer?.current ?? null), { current: manifest.version, previous: pointer?.current ?? null })
+        const updates = await materialize(db, catalog, pointer?.current ?? null)
+        timings.mark('materialize', { statements: updates.length })
+        await lease.commit(updates, { current: manifest.version, previous: pointer?.current ?? null })
+        timings.mark('commit')
       })
       result = { version: manifest.version, changed: true, providers: manifest.providers, globalModels: manifest.globalModels, providerModels: manifest.providerModels }
     }
+    console.log('Catalog refresh timings', { changed: result.changed, ...timings.report() })
   } catch (error) {
+    console.log('Catalog refresh timings', { failedAt: stage, ...timings.report() })
     if (error instanceof CatalogLeaseLostError) throw error
     // Keep status/API errors bounded and free of upstream payloads, DB values or credentials.
     const message = `Catalog refresh failed during ${stage}`
