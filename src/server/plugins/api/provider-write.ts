@@ -1,7 +1,6 @@
 import type { Context } from 'cordis'
 import { and, eq, inArray, notInArray, sql } from 'drizzle-orm'
 import type { BatchItem } from 'drizzle-orm/batch'
-import { DEFAULT_USER_ID } from '@/shared/constants'
 import type { ProviderWriteInput } from '@/shared/api'
 import { ProviderWithInterfacesSchema } from '@/shared/models'
 import { attachmentProviderFiles, models, providerInterfaces, providers, type ProviderRow, type ProviderInterfaceRow } from '@/server/db/schema'
@@ -25,24 +24,24 @@ export function toProviderDto(row: ProviderRow, interfaces: ProviderInterfaceRow
 
 type CredentialExpectation = Readonly<Pick<ProviderRow, 'api_key' | 'credential_version'>>
 
-export async function writeProvider(ctx: Context, input: ProviderWriteInput, id?: number) {
+export async function writeProvider(ctx: Context, userId: number, input: ProviderWriteInput, id?: number) {
   let credentialExpectation: CredentialExpectation | undefined
   if (id !== undefined && input.api_key !== undefined) {
-    const original = await ctx.db.orm.query.providers.findFirst({ where: and(eq(providers.id, id), eq(providers.user_id, DEFAULT_USER_ID)) })
+    const original = await ctx.db.orm.query.providers.findFirst({ where: and(eq(providers.id, id), eq(providers.user_id, userId)) })
     if (!original) throw new ProviderWriteError('not found', 404)
     // Source retries may refresh metadata, but must never adopt another request's credential version.
     credentialExpectation = { api_key: original.api_key, credential_version: original.credential_version }
   }
-  try { return await retryModelSource(() => writeProviderAttempt(ctx, input, id, credentialExpectation)) }
+  try { return await retryModelSource(() => writeProviderAttempt(ctx, userId, input, id, credentialExpectation)) }
   catch (error) {
     if (error instanceof ModelSourceConflict) throw new ProviderWriteError(error.message, 409)
     throw error
   }
 }
 
-async function writeProviderAttempt(ctx: Context, input: ProviderWriteInput, id: number | undefined, credentialExpectation: CredentialExpectation | undefined) {
+async function writeProviderAttempt(ctx: Context, userId: number, input: ProviderWriteInput, id: number | undefined, credentialExpectation: CredentialExpectation | undefined) {
   const db = ctx.db.orm
-  const before = id === undefined ? undefined : await db.query.providers.findFirst({ where: and(eq(providers.id, id), eq(providers.user_id, DEFAULT_USER_ID)) })
+  const before = id === undefined ? undefined : await db.query.providers.findFirst({ where: and(eq(providers.id, id), eq(providers.user_id, userId)) })
   if (id !== undefined && !before) throw new ProviderWriteError('not found', 404)
   if (before && credentialExpectation && (before.credential_version !== credentialExpectation.credential_version || before.api_key !== credentialExpectation.api_key)) {
     throw new ProviderWriteError('Credentials changed concurrently; reload and retry', 409)
@@ -94,9 +93,9 @@ async function writeProviderAttempt(ctx: Context, input: ProviderWriteInput, id:
       // A stale credential edit must abort the whole batch. Never reuse a version for another key.
       credential_version: sql`CASE WHEN ${providers.credential_version} = ${credentialExpectation!.credential_version} AND ${providers.api_key} IS ${credentialExpectation!.api_key} THEN ${providers.credential_version} + ${Number(keyChanged)} ELSE NULL END`,
     }),
-  }).where(eq(providers.id, before.id)))
+  }).where(and(eq(providers.id, before.id), eq(providers.user_id, userId))))
   else operations.push(db.insert(providers).values({
-    ...fields, enabled: input.enabled ?? true, api_key: encryptedKey, credential_version: 1, user_id: DEFAULT_USER_ID, created_at: now,
+    ...fields, enabled: input.enabled ?? true, api_key: encryptedKey, credential_version: 1, user_id: userId, created_at: now,
   }))
   operations.push(db.delete(providerInterfaces).where(and(eq(providerInterfaces.provider_id, providerId), notInArray(providerInterfaces.protocol, protocols))))
   for (const endpoint of input.interfaces) {
@@ -110,7 +109,7 @@ async function writeProviderAttempt(ctx: Context, input: ProviderWriteInput, id:
   }
   operations.push(db.update(providers).set({
     default_interface_id: sql`(SELECT id FROM provider_interfaces WHERE provider_id = ${providerId} AND protocol = ${input.default_protocol})`,
-  }).where(eq(providers.id, providerId)))
+  }).where(and(eq(providers.id, providerId), eq(providers.user_id, userId))))
   if (before && rows) {
     operations.push(...materializationUpdates(db, rows, await catalogForModels(ctx, match.id, rows.map(model => model.model_id), version), {
       id: before.id, models_dev_provider_id: match.id, models_dev_provider_source: match.source,
@@ -124,7 +123,7 @@ async function writeProviderAttempt(ctx: Context, input: ProviderWriteInput, id:
     // uploads that completed during remote cleanup. Never store the previous credentials.
     operations.push(db.delete(attachmentProviderFiles).where(invalidated))
   }
-  operations.push(db.select().from(providers).where(eq(providers.id, providerId)))
+  operations.push(db.select().from(providers).where(and(eq(providers.id, providerId), eq(providers.user_id, userId))))
   operations.push(db.select().from(providerInterfaces).where(eq(providerInterfaces.provider_id, providerId)).orderBy(providerInterfaces.id))
   const results = await db.batch(operations as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]]).catch((error: unknown) => {
     if (isModelSourceConflict(error)) throw new ModelSourceConflict()

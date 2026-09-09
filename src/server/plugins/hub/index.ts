@@ -150,7 +150,7 @@ export class Hub extends Service {
 
   async conversationUpdate(cmd: Extract<WsCommand, { type: 'conversation.update' }>): Promise<void> {
     const { type: _t, request_id: _r, conversation_id, tools, ...patch } = cmd
-    if (!(await getConversation(this.db, conversation_id))) throw new Error('conversation not found')
+    if (!(await getConversation(this.db, conversation_id, DEFAULT_USER_ID))) throw new Error('conversation not found')
     // Moving a conversation into a Project must never cross into another user's Project (spec §5.1).
     if (patch.project_id != null && !(await getProject(this.db, patch.project_id, DEFAULT_USER_ID))) {
       throw new Error('project not found')

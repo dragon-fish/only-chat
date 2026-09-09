@@ -219,7 +219,7 @@ describe('generation', () => {
     }))
     await c.next('message.done')
 
-    const rows = await listMessages(db, conversationIdOf(c))
+    const rows = await listMessages(db, conversationIdOf(c), DEFAULT_USER_ID)
     expect(rows[1]!.parts).toEqual([{ type: 'tool_call', id: 'call-ask-1', name: 'ask_user', args: ASK_USER_INPUT }])
     expect(rows[1]!.parts.some(part => part.type === 'tool_result')).toBe(false)
     expect(created).toHaveLength(1)
@@ -259,7 +259,7 @@ describe('generation', () => {
       provider_id: providerId, model_id: 'invalid-tool-model', tools: ['ask_user'],
     }))
     expect(await c.next('message.done')).toMatchObject({ status: 'done', error: null })
-    expect((await listMessages(db, conversationIdOf(c)))[1]).toMatchObject({
+    expect((await listMessages(db, conversationIdOf(c), DEFAULT_USER_ID))[1]).toMatchObject({
       status: 'done', error: null,
       parts: [{ type: 'tool_call', id: 'bad-call', name: 'ask_user', args: ASK_USER_INPUT }],
     })
@@ -296,7 +296,7 @@ describe('generation', () => {
       provider_id: providerId, model_id: 'disabled-tool-model', tools: ['ask_user'],
     }))
     await c.next('message.done')
-    expect((await getConversation(db, conversationIdOf(c)))!.tools).toEqual(['ask_user'])
+    expect((await getConversation(db, conversationIdOf(c), DEFAULT_USER_ID))!.tools).toEqual(['ask_user'])
     expect(created[0]!.doStreamCalls[0]!.tools).toBeUndefined()
   })
 
@@ -315,7 +315,7 @@ describe('generation', () => {
     }))
     await c.next('message.done')
     const conversationId = conversationIdOf(c)
-    const firstAssistant = (await listMessages(db, conversationId))[1]!
+    const firstAssistant = (await listMessages(db, conversationId, DEFAULT_USER_ID))[1]!
     // Pending historical calls remain answerable after global disablement; only the next request's
     // actual tool set is filtered.
     await db.update(users).set({ settings: { plugins: { ask_user: false } } }).where(eq(users.id, DEFAULT_USER_ID))
@@ -330,7 +330,7 @@ describe('generation', () => {
       part: { type: 'tool_result', call_id: 'call-ask-1', name: 'ask_user', content: { status: 'answered' } },
     })
     await c.next('message.done')
-    const rows = await listMessages(db, conversationId)
+    const rows = await listMessages(db, conversationId, DEFAULT_USER_ID)
     expect(rows.map(row => [row.role, row.parent_id])).toEqual([
       ['user', null], ['assistant', rows[0]!.id], ['assistant', firstAssistant.id],
     ])
@@ -358,14 +358,14 @@ describe('generation', () => {
     }))
     await c.next('message.done')
     const conversationId = conversationIdOf(c)
-    const firstAssistant = (await listMessages(db, conversationId))[1]!
+    const firstAssistant = (await listMessages(db, conversationId, DEFAULT_USER_ID))[1]!
     c.events.length = 0
     c.ws.send(JSON.stringify({
       type: 'tool.respond', request_id: 'cancel-1', message_id: firstAssistant.id, call_id: 'call-ask-1',
       result: { status: 'cancelled', message: '用户选择了取消回答' },
     }))
     await c.next('message.part')
-    const rows = await listMessages(db, conversationId)
+    const rows = await listMessages(db, conversationId, DEFAULT_USER_ID)
     expect(rows).toHaveLength(2)
     expect(rows[1]!.parts.at(-1)).toMatchObject({ type: 'tool_result', content: { status: 'cancelled' } })
     expect(created).toHaveLength(1)
@@ -385,7 +385,7 @@ describe('generation', () => {
       provider_id: providerId, model_id: 'skip-all-model', tools: ['ask_user'],
     }))
     await c.next('message.done')
-    const assistant = (await listMessages(db, conversationIdOf(c)))[1]!
+    const assistant = (await listMessages(db, conversationIdOf(c), DEFAULT_USER_ID))[1]!
     c.events.length = 0
     c.ws.send(JSON.stringify({
       type: 'tool.respond', request_id: 'skip-all', message_id: assistant.id, call_id: 'call-ask-1',
@@ -413,7 +413,7 @@ describe('generation', () => {
     }))
     await c.next('message.done')
     const conversationId = conversationIdOf(c)
-    const assistant = (await listMessages(db, conversationId))[1]!
+    const assistant = (await listMessages(db, conversationId, DEFAULT_USER_ID))[1]!
     const cancelled = { status: 'cancelled', message: '用户选择了取消回答' }
     c.events.length = 0
     c.ws.send(JSON.stringify({ type: 'tool.respond', request_id: 'r1', message_id: assistant.id, call_id: 'call-ask-1', result: cancelled }))
@@ -425,7 +425,7 @@ describe('generation', () => {
       result: { status: 'answered', answers: [{ id: 'framework', value: 'Vue' }] },
     }))
     expect(await c.next('error')).toMatchObject({ request_id: 'r3', message: expect.stringMatching(/conflict/i) })
-    const stored = (await listMessages(db, conversationId))[1]!
+    const stored = (await listMessages(db, conversationId, DEFAULT_USER_ID))[1]!
     expect(stored.parts.filter(part => part.type === 'tool_result')).toHaveLength(1)
   })
 
@@ -443,7 +443,7 @@ describe('generation', () => {
     }))
     await c.next('message.done')
     const conversationId = conversationIdOf(c)
-    const assistant = (await listMessages(db, conversationId))[1]!
+    const assistant = (await listMessages(db, conversationId, DEFAULT_USER_ID))[1]!
     c.events.length = 0
     c.ws.send(JSON.stringify({
       type: 'tool.respond', request_id: 'unknown-call', message_id: assistant.id, call_id: 'missing',
@@ -455,7 +455,7 @@ describe('generation', () => {
       result: { status: 'answered', answers: [{ id: 'framework', value: ['Svelte'] }] },
     }))
     expect(await c.nextAfter('error', 2)).toMatchObject({ request_id: 'bad-shape' })
-    expect((await listMessages(db, conversationId))[1]!.parts.filter(part => part.type === 'tool_result')).toEqual([])
+    expect((await listMessages(db, conversationId, DEFAULT_USER_ID))[1]!.parts.filter(part => part.type === 'tool_result')).toEqual([])
   })
 
   it('rejects a tool response for another user conversation without mutating it', async () => {
@@ -494,7 +494,7 @@ describe('generation', () => {
     }))
     await c.next('message.done')
     const conversationId = conversationIdOf(c)
-    const assistant = (await listMessages(db, conversationId))[1]!
+    const assistant = (await listMessages(db, conversationId, DEFAULT_USER_ID))[1]!
 
     await runInDurableObject(env.USER_HUB.getByName(String(DEFAULT_USER_ID)), async (instance: UserHub) => {
       await instance.app.hub.handleCommand(JSON.stringify({
@@ -503,7 +503,7 @@ describe('generation', () => {
       }))
     })
     expect(created).toHaveLength(1)
-    expect(await listMessages(db, conversationId)).toHaveLength(2)
+    expect(await listMessages(db, conversationId, DEFAULT_USER_ID)).toHaveLength(2)
 
     c.events.length = 0
     c.ws.send(JSON.stringify({
@@ -512,7 +512,7 @@ describe('generation', () => {
     }))
     await c.next('message.done')
     expect(created).toHaveLength(2)
-    expect(await listMessages(db, conversationId)).toHaveLength(3)
+    expect(await listMessages(db, conversationId, DEFAULT_USER_ID)).toHaveLength(3)
   })
 
   it('recovers continuation when an identical answered retry follows a stored result without a child shell', async () => {
@@ -530,7 +530,7 @@ describe('generation', () => {
     }))
     await c.next('message.done')
     const conversationId = conversationIdOf(c)
-    const assistant = (await listMessages(db, conversationId))[1]!
+    const assistant = (await listMessages(db, conversationId, DEFAULT_USER_ID))[1]!
     expect(await appendToolResult(db, assistant.id, conversationId, {
       type: 'tool_result', call_id: 'call-ask-1', name: 'ask_user',
       content: { status: 'answered', answers: [{ id: 'framework', value: 'Vue' }] },
@@ -543,7 +543,7 @@ describe('generation', () => {
       }))
     })
     expect(created).toHaveLength(2)
-    const rows = await listMessages(db, conversationId)
+    const rows = await listMessages(db, conversationId, DEFAULT_USER_ID)
     expect(rows).toHaveLength(3)
     expect(rows[2]!.parent_id).toBe(assistant.id)
   })
@@ -579,7 +579,7 @@ describe('generation', () => {
       }))
     })
 
-    expect((await getConversation(db, conversation.id))!.head_message_id).toBe(child.id)
+    expect((await getConversation(db, conversation.id, DEFAULT_USER_ID))!.head_message_id).toBe(child.id)
     expect(await c.next('head.changed')).toMatchObject({ conversation_id: conversation.id, message_id: child.id })
   })
 
@@ -619,7 +619,7 @@ describe('generation', () => {
       }))
     })
 
-    expect((await getConversation(db, conversation.id))!.head_message_id).toBe(newer.id)
+    expect((await getConversation(db, conversation.id, DEFAULT_USER_ID))!.head_message_id).toBe(newer.id)
     expect(c.events.some(event => event.type === 'head.changed')).toBe(false)
     expect(c.events.some(event => event.type === 'error')).toBe(false)
     expect(c.events.some(event => event.type === 'conversation.updated')).toBe(false)
@@ -654,8 +654,8 @@ describe('generation', () => {
     expect((await getMessage(db, toolMessage.id))!.parts.at(-1)).toMatchObject({
       type: 'tool_result', call_id: 'delayed-call', content: { status: 'answered' },
     })
-    expect(await listMessages(db, conversation.id)).toHaveLength(2)
-    expect((await getConversation(db, conversation.id))!.head_message_id).toBe(newer.id)
+    expect(await listMessages(db, conversation.id, DEFAULT_USER_ID)).toHaveLength(2)
+    expect((await getConversation(db, conversation.id, DEFAULT_USER_ID))!.head_message_id).toBe(newer.id)
     expect(c.events.some(event => event.type === 'head.changed')).toBe(false)
     expect(c.events.some(event => event.type === 'error')).toBe(false)
   })
@@ -689,7 +689,7 @@ describe('generation', () => {
       },
     })
     expect(await c.next('message.done')).toMatchObject({ status: 'done' })
-    expect(await listMessages(db, conversation.id)).toHaveLength(3)
+    expect(await listMessages(db, conversation.id, DEFAULT_USER_ID)).toHaveLength(3)
     expect(created).toHaveLength(1)
   })
 
@@ -827,7 +827,7 @@ describe('generation', () => {
       parts: [{ type: 'text', text: 'stale reply' }], provider_id: providerId, model_id: 'stale-resolved-model',
     }))
     expect(await c.next('error')).toMatchObject({ request_id: 'stale-resolved', message: expect.stringMatching(/head|resync/i) })
-    expect(await listMessages(db, conversation.id)).toHaveLength(2)
+    expect(await listMessages(db, conversation.id, DEFAULT_USER_ID)).toHaveLength(2)
     expect(created).toHaveLength(0)
   })
 
@@ -874,8 +874,8 @@ describe('generation', () => {
     } finally {
       await db.$client.exec('DROP TRIGGER continuation_head_race')
     }
-    expect((await getConversation(db, conversation.id))!.head_message_id).toBe(newer.id)
-    expect(await listMessages(db, conversation.id)).toHaveLength(2)
+    expect((await getConversation(db, conversation.id, DEFAULT_USER_ID))!.head_message_id).toBe(newer.id)
+    expect(await listMessages(db, conversation.id, DEFAULT_USER_ID)).toHaveLength(2)
     expect(created).toHaveLength(0)
     expect(c.events.some(event => event.type === 'message.created' || event.type === 'head.changed')).toBe(false)
   })
@@ -919,9 +919,9 @@ describe('generation', () => {
     } finally {
       await db.$client.exec('DROP TRIGGER continuation_recovered_race')
     }
-    const rows = await listMessages(db, conversation.id)
+    const rows = await listMessages(db, conversation.id, DEFAULT_USER_ID)
     expect(rows).toHaveLength(2)
-    expect((await getConversation(db, conversation.id))!.head_message_id).toBe(rows[1]!.id)
+    expect((await getConversation(db, conversation.id, DEFAULT_USER_ID))!.head_message_id).toBe(rows[1]!.id)
     expect(rows[1]).toMatchObject({ parent_id: toolMessage.id, status: 'done' })
     expect(created).toHaveLength(1)
     expect(c.events.some(event => event.type === 'message.created')).toBe(true)
@@ -946,7 +946,7 @@ describe('generation', () => {
 
     expect(await deleteMessageIfUnreferenced(db, child.id)).toBe(false)
     expect(await getMessage(db, child.id)).toBeDefined()
-    expect((await getConversation(db, conversation.id))!.head_message_id).toBe(child.id)
+    expect((await getConversation(db, conversation.id, DEFAULT_USER_ID))!.head_message_id).toBe(child.id)
   })
 
   it('publishes the reserved user head when assistant shell creation fails', async () => {
@@ -973,10 +973,10 @@ describe('generation', () => {
     } finally {
       await db.$client.exec('DROP TRIGGER fail_assistant_shell')
     }
-    const rows = await listMessages(db, conversation.id)
+    const rows = await listMessages(db, conversation.id, DEFAULT_USER_ID)
     expect(rows).toHaveLength(1)
     expect(rows[0]).toMatchObject({ role: 'user', parts: [{ type: 'text', text: 'persist me' }] })
-    expect((await getConversation(db, conversation.id))!.head_message_id).toBe(rows[0]!.id)
+    expect((await getConversation(db, conversation.id, DEFAULT_USER_ID))!.head_message_id).toBe(rows[0]!.id)
     expect(c.events.find(event => event.type === 'head.changed')).toMatchObject({ message_id: rows[0]!.id })
     expect(c.events.find(event => event.type === 'conversation.updated')).toMatchObject({ conversation: { head_message_id: rows[0]!.id } })
   })
@@ -1018,8 +1018,8 @@ describe('generation', () => {
     } finally {
       await db.$client.exec('DROP TRIGGER skip_head_race')
     }
-    expect((await getConversation(db, conversation.id))!.head_message_id).toBe(newer.id)
-    expect(await listMessages(db, conversation.id)).toHaveLength(2)
+    expect((await getConversation(db, conversation.id, DEFAULT_USER_ID))!.head_message_id).toBe(newer.id)
+    expect(await listMessages(db, conversation.id, DEFAULT_USER_ID)).toHaveLength(2)
     expect(created).toHaveLength(0)
   })
 
@@ -1046,7 +1046,7 @@ describe('generation', () => {
     const created1 = a.events.find((e) => e.type === 'conversation.created')!
     const conversationId = (created1 as { conversation: { id: number; title: string } }).conversation.id
     expect((created1 as { conversation: { title: string } }).conversation.title).toBe('hi there')
-    const rows = await listMessages(createDb(env.DB), conversationId)
+    const rows = await listMessages(createDb(env.DB), conversationId, DEFAULT_USER_ID)
     expect(rows.map((r) => r.role)).toEqual(['user', 'assistant'])
     expect(rows[1]!.parts).toEqual([
       { type: 'reasoning', text: 'think', providerOptions: { anthropic: { signature: 'SIG' } } },
@@ -1094,7 +1094,7 @@ describe('generation', () => {
     const done = await c.next('message.done')
     // An aborted stream never emits `finish`, so usage is genuinely unknown rather than zero.
     expect(done).toMatchObject({ status: 'aborted', usage: null })
-    const rows = await listMessages(createDb(env.DB), conversationId)
+    const rows = await listMessages(createDb(env.DB), conversationId, DEFAULT_USER_ID)
     expect(rows[1]!.status).toBe('aborted')
     // The delta we waited for is already accumulated, so the partial content must survive the abort.
     expect(rows[1]!.parts.length).toBeGreaterThan(0)
@@ -1139,7 +1139,7 @@ describe('project inheritance', () => {
     expect(call).toMatchObject({ temperature: 0, topP: 0.25, maxOutputTokens: 64 })
 
     const conversationId = (c.events.find((e) => e.type === 'conversation.created') as { conversation: { id: number } }).conversation.id
-    const row = (await getConversation(createDb(env.DB), conversationId))!
+    const row = (await getConversation(createDb(env.DB), conversationId, DEFAULT_USER_ID))!
     expect(row.project_id).toBe(projectId)
     expect(row.system_prompt).toBe('CONVERSATION')
     expect(row.params).toEqual({ top_p: 0.25, temperature: 0 })
@@ -1147,7 +1147,7 @@ describe('project inheritance', () => {
     expect(row.provider_id).toBeNull()
     expect(row.model_id).toBeNull()
 
-    const rows = await listMessages(createDb(env.DB), conversationId)
+    const rows = await listMessages(createDb(env.DB), conversationId, DEFAULT_USER_ID)
     expect(rows[1]).toMatchObject({ provider_id: projectProvider, model_id: 'model-a' })
   })
 
@@ -1165,9 +1165,9 @@ describe('project inheritance', () => {
     await c.next('message.done')
 
     const conversationId = (c.events.find((e) => e.type === 'conversation.created') as { conversation: { id: number } }).conversation.id
-    const row = (await getConversation(createDb(env.DB), conversationId))!
+    const row = (await getConversation(createDb(env.DB), conversationId, DEFAULT_USER_ID))!
     expect(row).toMatchObject({ provider_id: conversationProvider, model_id: 'model-b' })
-    const rows = await listMessages(createDb(env.DB), conversationId)
+    const rows = await listMessages(createDb(env.DB), conversationId, DEFAULT_USER_ID)
     expect(rows[1]).toMatchObject({ provider_id: conversationProvider, model_id: 'model-b' })
   })
 
@@ -1211,12 +1211,12 @@ describe('project inheritance', () => {
     c.ws.send(JSON.stringify({ type: 'regenerate', message_id: first.id, provider_id: pickedProvider, model_id: 'model-c' }))
     await c.nextAfter('message.done', 2)
 
-    const rows = await listMessages(createDb(env.DB), first.conversation_id)
+    const rows = await listMessages(createDb(env.DB), first.conversation_id, DEFAULT_USER_ID)
     expect(rows[1]).toMatchObject({ provider_id: conversationProvider, model_id: 'model-b' })
     // The one-shot choice wins outright — it is not the lowest fallback layer.
     expect(rows[2]).toMatchObject({ provider_id: pickedProvider, model_id: 'model-c' })
     // ...and it is never persisted onto the conversation, which keeps its own override.
-    expect(await getConversation(createDb(env.DB), first.conversation_id)).toMatchObject({ provider_id: conversationProvider, model_id: 'model-b' })
+    expect(await getConversation(createDb(env.DB), first.conversation_id, DEFAULT_USER_ID)).toMatchObject({ provider_id: conversationProvider, model_id: 'model-b' })
     // Prompt and params still inherit from the Project on the regenerated turn.
     expect(created[1]!.doStreamCalls[0]!.prompt[0]).toMatchObject({ role: 'system', content: 'PROJECT' })
     expect(created[1]!.doStreamCalls[0]).toMatchObject({ temperature: 0.4 })
@@ -1281,7 +1281,7 @@ describe('project inheritance', () => {
     expect(err).toMatchObject({ request_id: 'i1' })
     expect((err as { message: string }).message).toContain('conversation init fields')
     // The rejected command must not have persisted anything.
-    expect(await listMessages(createDb(env.DB), conversationId)).toHaveLength(2)
+    expect(await listMessages(createDb(env.DB), conversationId, DEFAULT_USER_ID)).toHaveLength(2)
   })
 
   it('accepts the Composer’s own payloads: the draft creates the conversation, the follow-up omits every init field', async () => {
@@ -1299,7 +1299,7 @@ describe('project inheritance', () => {
     expect(await c.next('message.done')).toMatchObject({ status: 'done' })
 
     const conversationId = (c.events.find((e) => e.type === 'conversation.created') as { conversation: { id: number } }).conversation.id
-    const row = (await getConversation(createDb(env.DB), conversationId))!
+    const row = (await getConversation(createDb(env.DB), conversationId, DEFAULT_USER_ID))!
     expect(row).toMatchObject({ project_id: projectId, system_prompt: 'DRAFT', provider_id: null, model_id: null })
     // Explicit Auto survives the round trip as `null`, not as an absent (inherited) key.
     expect(row.params).toEqual({ reasoning_enabled: true, reasoning_effort: null })
@@ -1311,7 +1311,7 @@ describe('project inheritance', () => {
     })))
     expect(await c.nextAfter('message.done', 2)).toMatchObject({ status: 'done' })
     expect(c.events.some((e) => e.type === 'error')).toBe(false)
-    expect(await listMessages(createDb(env.DB), conversationId)).toHaveLength(4)
+    expect(await listMessages(createDb(env.DB), conversationId, DEFAULT_USER_ID)).toHaveLength(4)
   })
 })
 
@@ -1388,7 +1388,7 @@ describe('DeepSeek Responses reasoning lifecycle', () => {
     c.ws.send(JSON.stringify({ type: 'send', conversation_id: null, parent_id: null, parts: [{ type: 'text', text: 'first' }], provider_id: providerId, model_id: 'deepseek-fixture', params: { reasoning_effort: 'high' } }))
     expect(await c.next('message.done')).toMatchObject({ status: 'done', usage: { prompt: 11, completion: 9, cached: 3, reasoning: 6 } })
     const conversationId = conversationIdOf(c)
-    const saved = (await listMessages(db, conversationId))[1]!
+    const saved = (await listMessages(db, conversationId, DEFAULT_USER_ID))[1]!
     expect(saved.parts.map(part => part.type)).toEqual(['reasoning', 'tool_call', 'text'])
     expect(saved.parts[0]).toEqual({
       type: 'reasoning', text: 'complete reasoning', providerOptions: { responses: {
@@ -1421,7 +1421,7 @@ describe('DeepSeek Responses reasoning lifecycle', () => {
       { type: 'function_call_output', call_id: 'call_fixture', output: '{"found":true}' },
       { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'next' }] },
     ])
-    expect((await listMessages(db, conversationId))[3]!.parts).toEqual(saved.parts)
+    expect((await listMessages(db, conversationId, DEFAULT_USER_ID))[3]!.parts).toEqual(saved.parts)
   })
 })
 
@@ -1454,7 +1454,7 @@ describe('provider metadata round trip', () => {
       { type: 'text', text: 'Hello', providerOptions: { google: { thoughtSignature: 'TS_TEXT' } } },
     ]
     // An empty summary is not an absent round trip: the encrypted item still has to reach D1.
-    expect((await listMessages(createDb(env.DB), conversationId))[1]!.parts).toEqual(stored)
+    expect((await listMessages(createDb(env.DB), conversationId, DEFAULT_USER_ID))[1]!.parts).toEqual(stored)
 
     c.ws.send(JSON.stringify({ type: 'send', conversation_id: conversationId, parent_id: null, parts: [{ type: 'text', text: 'more' }], provider_id: providerId, model_id: 'mock-1' }))
     await c.nextAfter('message.done', 2)
@@ -1482,7 +1482,7 @@ describe('provider metadata round trip', () => {
 
     // The literals never left memory; the rows came back out of the D1 JSON column.
     const inMemory: Message[] = [{ ...toMessage(user), parts: userParts }, { ...toMessage(assistant), parts: assistantParts }]
-    const fromD1 = (await listMessages(db, conversation.id)).map((r) => toMessage(r))
+    const fromD1 = (await listMessages(db, conversation.id, DEFAULT_USER_ID)).map((r) => toMessage(r))
     expect(fromD1).toEqual(inMemory)
     for (const protocol of ['chat-completions', 'responses', 'anthropic', 'vertex-compatible'] as const) {
       const args = { protocol, systemPrompt: null, attachments: new Map() }
@@ -1763,7 +1763,7 @@ describe('generated image output', () => {
     expect(object).not.toBeNull()
     expect(new Uint8Array(await object!.arrayBuffer())).toEqual(bytes)
 
-    const rows = await listMessages(createDb(env.DB), conversationIdOf(a))
+    const rows = await listMessages(createDb(env.DB), conversationIdOf(a), DEFAULT_USER_ID)
     expect(rows[1]!.parts).toEqual([
       { type: 'text', text: 'here it is' },
       { type: 'image', attachment_id: attachmentId },
@@ -1806,7 +1806,7 @@ describe('generated image output', () => {
       expect(imageEventsOf(c).map((e) => e.part.attachment_id)).toEqual([saved.id])
       // The provider's temporary URL reaches neither the socket nor D1.
       expect(JSON.stringify(c.events)).not.toContain('provider.example')
-      const rows = await listMessages(createDb(env.DB), conversationIdOf(c))
+      const rows = await listMessages(createDb(env.DB), conversationIdOf(c), DEFAULT_USER_ID)
       expect(rows[1]!.parts).toEqual([
         { type: 'text', text: 'here it is' },
         { type: 'image', attachment_id: saved.id },
@@ -1847,7 +1847,7 @@ describe('generated image output', () => {
     expect(await c.next('message.done')).toMatchObject({ status: 'error', error: expect.stringContaining('image/svg+xml') })
 
     expect(imageEventsOf(c)).toHaveLength(0)
-    const rows = await listMessages(createDb(env.DB), conversationIdOf(c))
+    const rows = await listMessages(createDb(env.DB), conversationIdOf(c), DEFAULT_USER_ID)
     expect(rows[1]!.status).toBe('error')
     // Spec §9: the text already received survives, and no trace of the file is written anywhere.
     expect(rows[1]!.parts).toEqual([{ type: 'text', text: 'here it is' }])
@@ -2180,7 +2180,7 @@ describe('cross-feature integration', () => {
       expect(await c.next('message.done')).toMatchObject({ status: 'done' })
       const conversationId = conversationIdOf(c)
 
-      const conversation = (await getConversation(db, conversationId))!
+      const conversation = (await getConversation(db, conversationId, DEFAULT_USER_ID))!
       expect(conversation).toMatchObject({ project_id: projectId, system_prompt: 'CONVERSATION', provider_id: null, model_id: null })
       // Explicit Auto is a present key holding `null`, not an absent (inherited) one — through D1.
       expect(conversation.params).toEqual({ reasoning_enabled: true, reasoning_effort: null })
@@ -2193,7 +2193,7 @@ describe('cross-feature integration', () => {
         ({ type: 'file', mediaType: 'image/png', data: { type: 'reference', reference: { mock: `file-${providerId}-${n}` } } })
       expect(filePartsOf(created[0]!)).toEqual([reference(providerA, 1)])
 
-      const turn1 = await listMessages(db, conversationId)
+      const turn1 = await listMessages(db, conversationId, DEFAULT_USER_ID)
       // The Project default won over the command model, and was recorded on the reply.
       expect(turn1[1]).toMatchObject({ provider_id: providerA, model_id: 'int-a-1' })
       expect(turn1[1]!.parts).toEqual([
@@ -2246,7 +2246,7 @@ describe('cross-feature integration', () => {
       expect(pointers[0]).not.toHaveProperty('api_key')
 
       // Nothing in this chat's persisted history is bytes, base64 or a provider URL.
-      const history = await listMessages(db, conversationId)
+      const history = await listMessages(db, conversationId, DEFAULT_USER_ID)
       const json = JSON.stringify(history.map((r) => r.parts))
       expect(json).not.toContain('provider.example')
       expect(json).not.toContain('base64')
@@ -2259,11 +2259,11 @@ describe('cross-feature integration', () => {
       expect(await c.next('project.deleted')).toEqual({ type: 'project.deleted', project_id: projectId })
       expect(await c.next('conversation.updated')).toMatchObject({ conversation: { id: conversationId, project_id: null } })
 
-      const released = (await getConversation(db, conversationId))!
+      const released = (await getConversation(db, conversationId, DEFAULT_USER_ID))!
       expect(released.project_id).toBeNull()
       // Its own override, its history and its media all outlive the Project that framed them.
       expect(released).toMatchObject({ provider_id: providerA, model_id: 'int-a-1', system_prompt: 'CONVERSATION' })
-      expect(await listMessages(db, conversationId)).toHaveLength(history.length)
+      expect(await listMessages(db, conversationId, DEFAULT_USER_ID)).toHaveLength(history.length)
       expect(await env.BUCKET.head(generated.r2_key)).not.toBeNull()
       expect(await db.query.attachments.findFirst({ where: eq(attachments.id, generatedId) })).toBeDefined()
     } finally {
@@ -2288,7 +2288,7 @@ describe('cross-feature integration', () => {
       const created = await createConversation(db, {
         user_id: DEFAULT_USER_ID, title: 'r', project_id: projectId, provider_id: null, model_id: null, params,
       })
-      const stored = (await getConversation(db, created.id))!
+      const stored = (await getConversation(db, created.id, DEFAULT_USER_ID))!
       expect('reasoning_effort' in (stored.params ?? {})).toBe(key)
       expect(resolveEffectiveConfig({ conversation: stored, project }).params.reasoning_effort).toBe(effort)
     }

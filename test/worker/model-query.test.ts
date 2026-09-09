@@ -251,7 +251,7 @@ describe('catalog-backed model membership and queries', () => {
       SELECT ?, 'scale-' || n, 1, n % ? = 0, 'scale model ' || n FROM ids`).bind(provider.id, interval).run()
     let cursor: string | undefined
     for (const pageNumber of [1, 2]) {
-      const query = buildModelQuery({ provider_id: provider.id, enabled: true, vision: true, limit, cursor })
+      const query = buildModelQuery({ provider_id: provider.id, enabled: true, vision: true, limit, cursor }, provider.user_id)
       const plan = await env.DB.prepare(`EXPLAIN QUERY PLAN ${query.sql}`).bind(...query.params).all<{ detail: string }>()
       expect(plan.results.some(row => /USING (?:COVERING )?INDEX/u.test(row.detail))).toBe(true)
       expect(plan.results.some(row => /SCAN (?:m|models)(?: |$)/u.test(row.detail))).toBe(false)

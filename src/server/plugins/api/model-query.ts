@@ -1,5 +1,4 @@
 import { z } from 'zod'
-import { DEFAULT_USER_ID } from '@/shared/constants'
 import { ModelQuerySchema, ModelWithMetadataSchema, type ModelPage, type ModelQuery } from '@/shared/models'
 
 export interface ModelCursor { provider_id: number; sort: number; id: number }
@@ -7,7 +6,7 @@ const CursorSchema = z.strictObject({ provider_id: z.number().int().positive(), 
 
 export class ModelQueryError extends Error {}
 
-export function buildModelQuery(input: ModelQuery, userId = DEFAULT_USER_ID) {
+export function buildModelQuery(input: ModelQuery, userId: number) {
   const query = ModelQuerySchema.parse(input)
   const predicates = ['p.user_id = ?']
   const params: (string | number)[] = [userId]
@@ -45,8 +44,8 @@ export function buildModelQuery(input: ModelQuery, userId = DEFAULT_USER_ID) {
   }
 }
 
-export async function queryModels(db: D1Database, input: ModelQuery): Promise<ModelPage> {
-  const query = buildModelQuery(input)
+export async function queryModels(db: D1Database, input: ModelQuery, userId: number): Promise<ModelPage> {
+  const query = buildModelQuery(input, userId)
   const result = await db.prepare(query.sql).bind(...query.params).all<{
     id: number; provider_id: number; model_id: string; interface_id: number | null;
     metadata_resolved: string; metadata_override: string; catalog_matches: string;

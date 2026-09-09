@@ -78,7 +78,7 @@ function modelUnavailable(source: ModelSource): Error {
 // ---- stage 1: resolve conversation + effective config + model
 
 async function resolveTarget(hub: Hub, args: ResolveArgs): Promise<Target> {
-  const existing = args.conversationId === null ? undefined : await getConversation(hub.db, args.conversationId)
+  const existing = args.conversationId === null ? undefined : await getConversation(hub.db, args.conversationId, DEFAULT_USER_ID)
   if (args.conversationId !== null && !existing) throw new Error('conversation not found')
 
   // For a new conversation the draft stands in for the row that does not exist yet, so an unavailable
@@ -226,7 +226,7 @@ async function openContinuationShell(hub: Hub, target: Target, parentId: number)
 // ---- stage 4: context assembly
 
 async function assembleContext(hub: Hub, target: Target, leafMessageId: number): Promise<{ path: Message[]; attachments: Map<number, AttachmentInput> }> {
-  const rows = await listMessages(hub.db, target.conversation.id)
+  const rows = await listMessages(hub.db, target.conversation.id, DEFAULT_USER_ID)
   const byId = new Map(rows.map((r) => [r.id, toMessage(r)]))
   const path = pathToRoot(byId, leafMessageId)
   // Which ids the request needs is the message builder's own answer, not a second one kept in step
@@ -363,7 +363,7 @@ const SKIPPED_ASK_USER_MESSAGE = '用户跳过了问题并继续回复'
 async function resolveSendParent(hub: Hub, conversation: ConversationRow, parentId: number) {
   const parent = await getMessage(hub.db, parentId)
   if (!parent || parent.conversation_id !== conversation.id) throw new Error('parent message not in conversation')
-  const current = await getConversation(hub.db, conversation.id)
+  const current = await getConversation(hub.db, conversation.id, DEFAULT_USER_ID)
   if (!current || current.head_message_id !== parent.id) throw new Error('conversation head changed; resync before sending')
   const results = new Set(parent.parts.filter(part => part.type === 'tool_result').map(part => part.call_id))
   const pending = parent.parts.filter((part): part is ToolCallPart => part.type === 'tool_call' && !results.has(part.id))
@@ -461,7 +461,7 @@ function sameJson(a: unknown, b: unknown): boolean {
 async function ownedTerminalToolMessage(hub: Hub, messageId: number) {
   const message = await getMessage(hub.db, messageId)
   if (!message || message.role !== 'assistant') throw new Error('tool-call message not found')
-  const conversation = await getConversation(hub.db, message.conversation_id)
+  const conversation = await getConversation(hub.db, message.conversation_id, DEFAULT_USER_ID)
   if (!conversation || conversation.user_id !== DEFAULT_USER_ID) throw new Error('tool-call message not found')
   if (hub.inflight().some(job => job.message.id === messageId) || message.status !== 'done') {
     throw new Error('cannot respond to a streaming or incomplete message')
@@ -489,7 +489,7 @@ async function continueFromToolMessage(hub: Hub, messageId: number): Promise<voi
   if (state === 'cancelled') throw new Error('cancelled tool calls cannot continue automatically')
 
   const reconcileChildHead = async (child: Message): Promise<void> => {
-    const current = await getConversation(hub.db, conversation.id)
+    const current = await getConversation(hub.db, conversation.id, DEFAULT_USER_ID)
     if (!current) throw new Error('conversation not found')
     if (current.head_message_id === child.id) return
     if (current.head_message_id !== message.id) return
@@ -508,7 +508,7 @@ async function continueFromToolMessage(hub: Hub, messageId: number): Promise<voi
   }
 
   const headStillParent = async (): Promise<boolean> => {
-    const current = await getConversation(hub.db, conversation.id)
+    const current = await getConversation(hub.db, conversation.id, DEFAULT_USER_ID)
     if (!current) throw new Error('conversation not found')
     if (current.head_message_id === message.id) return true
     return false

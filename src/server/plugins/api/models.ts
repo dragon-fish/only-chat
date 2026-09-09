@@ -1,8 +1,8 @@
 import type { Context } from 'cordis'
-import { Hono } from 'hono'
+import { Hono, type Context as HonoContext } from 'hono'
 import { and, eq, isNull } from 'drizzle-orm'
 import type { BatchItem } from 'drizzle-orm/batch'
-import { DEFAULT_USER_ID } from '@/shared/constants'
+import { authUserId, type ApiEnv } from './auth'
 import { BulkModelStateInputSchema, ModelWriteInputSchema } from '@/shared/api'
 import { ModelQuerySchema } from '@/shared/models'
 import { models, providerInterfaces, providers } from '../../db/schema'
@@ -11,22 +11,23 @@ import { ModelQueryError, queryModels } from './model-query'
 import { catalogForModels, changedModelFields, ModelSourceConflict, modelSourceColumns, modelSourceFence, modelSourceMatches, providerSourceFence, resolveModelFields, retryModelSource, toModelDto } from './model-write'
 
 export function modelRoutes(ctx: Context) {
-  const r = new Hono<{ Bindings: Env }>()
+  const r = new Hono<ApiEnv>()
   const db = ctx.db.orm
-  const ownedProvider = (id: number) => db.query.providers.findFirst({ where: and(eq(providers.id, id), eq(providers.user_id, DEFAULT_USER_ID)) })
+  const ownedProvider = (id: number, userId: number) => db.query.providers.findFirst({ where: and(eq(providers.id, id), eq(providers.user_id, userId)) })
   const ownsInterface = async (pid: number, iid: number | null | undefined) => iid == null || !!await db.query.providerInterfaces.findFirst({
     where: and(eq(providerInterfaces.id, iid), eq(providerInterfaces.provider_id, pid)),
   })
 
   r.get('/providers/:id/models/by-ref', async c => {
+    const userId = authUserId(c)
     const pid = parseId(c.req.param('id'))
-    if (pid === null || !await ownedProvider(pid)) return c.json({ error: 'not found' }, 404)
+    if (pid === null || !await ownedProvider(pid, userId)) return c.json({ error: 'not found' }, 404)
     const row = await db.query.models.findFirst({ where: and(eq(models.provider_id, pid), eq(models.model_id, c.req.query('model_id') ?? '')) })
     return row ? c.json(toModelDto(row)) : c.json({ error: 'not found' }, 404)
   })
 
-  r.get('/models', async c => {
-    const raw: Record<string, unknown> = { ...c.req.query() }
+  async function modelPage(c: HonoContext<ApiEnv>, userId: number, providerId?: number) {
+    const raw: Record<string, unknown> = { ...c.req.query(), ...(providerId === undefined ? {} : { provider_id: providerId }) }
     for (const name of ['provider_id', 'interface_id', 'min_context', 'limit']) if (raw[name] !== undefined) raw[name] = Number(raw[name])
     for (const name of ['enabled', 'vision', 'reasoning', 'tools', 'image_output']) {
       if (raw[name] === 'true') raw[name] = true
@@ -34,25 +35,26 @@ export function modelRoutes(ctx: Context) {
     }
     const parsed = ModelQuerySchema.safeParse(raw)
     if (!parsed.success) return c.json({ error: 'invalid query', issues: parsed.error.issues }, 400)
-    try { return c.json(await queryModels(ctx.env.DB, parsed.data)) }
+    try { return c.json(await queryModels(ctx.env.DB, parsed.data, userId)) }
     catch (error) {
       if (error instanceof ModelQueryError) return c.json({ error: error.message }, 400)
       throw error
     }
-  })
+  }
+
+  r.get('/models', c => modelPage(c, authUserId(c)))
 
   r.get('/providers/:id/models', async c => {
+    const userId = authUserId(c)
     const pid = parseId(c.req.param('id'))
-    if (pid === null || !await ownedProvider(pid)) return c.json({ error: 'not found' }, 404)
-    const url = new URL(c.req.url)
-    url.pathname = '/models'
-    url.searchParams.set('provider_id', String(pid))
-    return r.request(url)
+    if (pid === null || !await ownedProvider(pid, userId)) return c.json({ error: 'not found' }, 404)
+    return modelPage(c, userId, pid)
   })
 
   r.post('/providers/:id/models', async c => {
+    const userId = authUserId(c)
     const pid = parseId(c.req.param('id'))
-    const provider = pid === null ? undefined : await ownedProvider(pid)
+    const provider = pid === null ? undefined : await ownedProvider(pid, userId)
     if (!provider) return c.json({ error: 'not found' }, 404)
     const parsed = ModelWriteInputSchema.safeParse(await c.req.json())
     if (!parsed.success) return c.json({ error: 'invalid input', issues: parsed.error.issues }, 400)
@@ -60,7 +62,7 @@ export function modelRoutes(ctx: Context) {
     if (!await ownsInterface(provider.id, input.interface_id)) return c.json({ error: 'Interface must belong to this provider' }, 400)
     try {
       return await retryModelSource(async () => {
-        const currentProvider = await ownedProvider(provider.id)
+        const currentProvider = await ownedProvider(provider.id, userId)
         if (!currentProvider) return c.json({ error: 'not found' }, 404)
         const override = input.metadata_override ?? {}
         const catalog = await catalogForModels(ctx, currentProvider.models_dev_provider_id, [input.model_id])
@@ -91,14 +93,15 @@ export function modelRoutes(ctx: Context) {
   })
 
   r.put('/providers/:id/models/bulk', async c => {
+    const userId = authUserId(c)
     const pid = parseId(c.req.param('id'))
-    const provider = pid === null ? undefined : await ownedProvider(pid)
+    const provider = pid === null ? undefined : await ownedProvider(pid, userId)
     if (!provider) return c.json({ error: 'not found' }, 404)
     const parsed = BulkModelStateInputSchema.safeParse(await c.req.json())
     if (!parsed.success) return c.json({ error: 'invalid input', issues: parsed.error.issues }, 400)
     try {
       return await retryModelSource(async () => {
-        const currentProvider = await ownedProvider(provider.id)
+        const currentProvider = await ownedProvider(provider.id, userId)
         if (!currentProvider) return c.json({ error: 'not found' }, 404)
         const condition = and(eq(models.provider_id, provider.id), parsed.data.lab_id === undefined
           ? undefined
@@ -128,9 +131,10 @@ export function modelRoutes(ctx: Context) {
   })
 
   r.put('/providers/:id/models/:modelRowId', async c => {
+    const userId = authUserId(c)
     const pid = parseId(c.req.param('id'))
     const mid = parseId(c.req.param('modelRowId'))
-    const provider = pid === null ? undefined : await ownedProvider(pid)
+    const provider = pid === null ? undefined : await ownedProvider(pid, userId)
     if (!provider || mid === null) return c.json({ error: 'not found' }, 404)
     const parsed = ModelWriteInputSchema.partial().safeParse(await c.req.json())
     if (!parsed.success) return c.json({ error: 'invalid input', issues: parsed.error.issues }, 400)
@@ -138,7 +142,7 @@ export function modelRoutes(ctx: Context) {
     if (!await ownsInterface(provider.id, input.interface_id)) return c.json({ error: 'Interface must belong to this provider' }, 400)
     try {
       return await retryModelSource(async () => {
-        const currentProvider = await ownedProvider(provider.id)
+        const currentProvider = await ownedProvider(provider.id, userId)
         if (!currentProvider) return c.json({ error: 'not found' }, 404)
         const before = await db.select(modelSourceColumns).from(models).where(and(eq(models.id, mid), eq(models.provider_id, provider.id))).get()
         if (!before) return c.json({ error: 'not found' }, 404)
@@ -165,11 +169,12 @@ export function modelRoutes(ctx: Context) {
   })
 
   r.delete('/providers/:id/models/:modelRowId', async c => {
+    const userId = authUserId(c)
     const pid = parseId(c.req.param('id'))
     const mid = parseId(c.req.param('modelRowId'))
-    if (pid === null || mid === null || !await ownedProvider(pid)) return c.json({ error: 'not found' }, 404)
-    await db.delete(models).where(and(eq(models.id, mid), eq(models.provider_id, pid)))
-    return c.body(null, 204)
+    if (pid === null || mid === null || !await ownedProvider(pid, userId)) return c.json({ error: 'not found' }, 404)
+    const rows = await db.delete(models).where(and(eq(models.id, mid), eq(models.provider_id, pid))).returning({ id: models.id })
+    return rows.length ? c.body(null, 204) : c.json({ error: 'not found' }, 404)
   })
   return r
 }

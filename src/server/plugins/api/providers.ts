@@ -2,7 +2,7 @@ import type { Context } from 'cordis'
 import { Hono } from 'hono'
 import { and, eq } from 'drizzle-orm'
 import type { BatchItem } from 'drizzle-orm/batch'
-import { DEFAULT_USER_ID } from '@/shared/constants'
+import { authUserId, type ApiEnv } from './auth'
 import { ProviderWriteInputSchema } from '@/shared/api'
 import { models, providerInterfaces, providers } from '../../db/schema'
 import { decryptSecret } from '../llm/crypto'
@@ -13,25 +13,27 @@ import { ProviderWriteError, toProviderDto, writeProvider } from './provider-wri
 import { catalogForModels, changedModelFields, ModelSourceConflict, modelSourceColumns, modelSourceFence, modelSourceMatches, providerSourceFence, resolveModelFields, retryModelSource } from './model-write'
 
 export function providerRoutes(ctx: Context) {
-  const r = new Hono<{ Bindings: Env }>()
+  const r = new Hono<ApiEnv>()
   const db = ctx.db.orm
-  const owned = (id: number) => and(eq(providers.id, id), eq(providers.user_id, DEFAULT_USER_ID))
+  const owned = (id: number, userId: number) => and(eq(providers.id, id), eq(providers.user_id, userId))
 
   r.get('/providers', async c => {
-    const rows = await db.select().from(providers).where(eq(providers.user_id, DEFAULT_USER_ID)).orderBy(providers.id)
+    const userId = authUserId(c)
+    const rows = await db.select().from(providers).where(eq(providers.user_id, userId)).orderBy(providers.id)
     const endpoints = await db.select({ interface: providerInterfaces }).from(providerInterfaces)
-      .innerJoin(providers, eq(providers.id, providerInterfaces.provider_id)).where(eq(providers.user_id, DEFAULT_USER_ID))
+      .innerJoin(providers, eq(providers.id, providerInterfaces.provider_id)).where(eq(providers.user_id, userId))
       .orderBy(providerInterfaces.id)
     return c.json(rows.map(row => toProviderDto(row, endpoints.filter(endpoint => endpoint.interface.provider_id === row.id).map(endpoint => endpoint.interface))))
   })
 
   r.on(['POST', 'PUT'], ['/providers', '/providers/:id'], async c => {
+    const userId = authUserId(c)
     const id = c.req.param('id') === undefined ? undefined : parseId(c.req.param('id')!)
     if (id === null || (c.req.method === 'PUT' && id === undefined) || (c.req.method === 'POST' && id !== undefined)) return c.json({ error: 'not found' }, 404)
     const parsed = ProviderWriteInputSchema.safeParse(await c.req.json())
     if (!parsed.success) return c.json({ error: 'invalid input', issues: parsed.error.issues }, 400)
     try {
-      const result = await writeProvider(ctx, parsed.data, id)
+      const result = await writeProvider(ctx, userId, parsed.data, id)
       if (result.warning) c.header('X-Provider-Association-Warning', result.warning)
       return c.json(result.provider, id === undefined ? 201 : 200)
     } catch (error) {
@@ -41,21 +43,22 @@ export function providerRoutes(ctx: Context) {
   })
 
   r.delete('/providers/:id', async c => {
+    const userId = authUserId(c)
     const id = parseId(c.req.param('id'))
     if (id === null) return c.json({ error: 'not found' }, 404)
-    const provider = await db.query.providers.findFirst({ where: owned(id) })
-    if (provider) {
-      const interfaces = await db.select().from(providerInterfaces).where(eq(providerInterfaces.provider_id, id))
-      await cleanupProviderFilesBeforeChange(ctx, provider, interfaces, invalidatedProviderFiles(provider))
-    }
-    await db.delete(providers).where(owned(id))
+    const provider = await db.query.providers.findFirst({ where: owned(id, userId) })
+    if (!provider) return c.json({ error: 'not found' }, 404)
+    const interfaces = await db.select().from(providerInterfaces).where(eq(providerInterfaces.provider_id, id))
+    await cleanupProviderFilesBeforeChange(ctx, provider, interfaces, invalidatedProviderFiles(provider))
+    await db.delete(providers).where(owned(id, userId))
     return c.body(null, 204)
   })
 
   r.post('/providers/:id/fetch-models', async c => {
+    const userId = authUserId(c)
     const id = parseId(c.req.param('id'))
     if (id === null) return c.json({ error: 'not found' }, 404)
-    const provider = await db.query.providers.findFirst({ where: owned(id) })
+    const provider = await db.query.providers.findFirst({ where: owned(id, userId) })
     if (!provider) return c.json({ error: 'not found' }, 404)
     const endpoint = provider.default_interface_id === null ? undefined : await db.query.providerInterfaces.findFirst({
       where: and(eq(providerInterfaces.id, provider.default_interface_id), eq(providerInterfaces.provider_id, id)),
@@ -66,7 +69,7 @@ export function providerRoutes(ctx: Context) {
     const ids = [...new Set(await listRemoteModels(endpoint, key))]
     try {
       return await retryModelSource(async () => {
-        const currentProvider = await db.query.providers.findFirst({ where: owned(id) })
+        const currentProvider = await db.query.providers.findFirst({ where: owned(id, userId) })
         if (!currentProvider) return c.json({ error: 'not found' }, 404)
         const existing = await db.select(modelSourceColumns).from(models).where(eq(models.provider_id, id))
         const catalog = await catalogForModels(ctx, currentProvider.models_dev_provider_id, [...ids, ...existing.map(model => model.model_id)])

@@ -29,15 +29,15 @@ describe('indexed model query plans', () => {
     ]) {
       db.exec(readFileSync(new URL(`../../migrations/${migration}`, import.meta.url), 'utf8'))
     }
-    const query = buildModelQuery({ ...input, limit: 50 })
+    const query = buildModelQuery({ ...input, limit: 50 }, 1)
     const plan = db.prepare(`EXPLAIN QUERY PLAN ${query.sql}`).all(...query.params) as { detail: string }[]
     expect(plan.some(row => /USING (?:COVERING )?INDEX|USING INTEGER PRIMARY KEY/u.test(row.detail))).toBe(true)
     expect(plan.some(row => /SCAN (?:m|models)(?: |$)/u.test(row.detail))).toBe(false)
   })
 
   it('rejects short trigram queries before issuing SQL and escapes FTS operators as literal text', () => {
-    expect(() => buildModelQuery({ search: 'ab', limit: 50 })).toThrow(/3/u)
-    const query = buildModelQuery({ search: 'alpha" OR beta', limit: 50 })
+    expect(() => buildModelQuery({ search: 'ab', limit: 50 }, 1)).toThrow(/3/u)
+    const query = buildModelQuery({ search: 'alpha" OR beta', limit: 50 }, 1)
     expect(query.params).toContain('"alpha"" OR beta"')
   })
 })

@@ -18,8 +18,8 @@ export async function listConversations(db: DB, userId: number): Promise<Convers
   return db.select().from(conversations).where(and(eq(conversations.user_id, userId), isNull(conversations.archived_at))).orderBy(desc(conversations.updated_at))
 }
 
-export async function getConversation(db: DB, id: number): Promise<ConversationRow | undefined> {
-  return db.query.conversations.findFirst({ where: eq(conversations.id, id) })
+export async function getConversation(db: DB, id: number, userId: number): Promise<ConversationRow | undefined> {
+  return db.query.conversations.findFirst({ where: and(eq(conversations.id, id), eq(conversations.user_id, userId)) })
 }
 
 /**
@@ -87,7 +87,7 @@ export async function deleteConversation(db: DB, id: number): Promise<void> {
 export async function forkConversation(db: DB, sourceConversationId: number, userId: number, headMessageId: number): Promise<ConversationRow> {
   const source = await db.query.conversations.findFirst({ where: and(eq(conversations.id, sourceConversationId), eq(conversations.user_id, userId)) })
   if (!source) throw new Error('conversation not found')
-  const rows = await listMessages(db, source.id)
+  const rows = await listMessages(db, source.id, userId)
   const byId = new Map(rows.map(message => [message.id, message]))
   const path: MessageRow[] = []
   const seen = new Set<number>()
@@ -119,8 +119,11 @@ export async function forkConversation(db: DB, sourceConversationId: number, use
   }
 }
 
-export async function listMessages(db: DB, conversationId: number): Promise<MessageRow[]> {
-  return db.select().from(messages).where(eq(messages.conversation_id, conversationId)).orderBy(messages.seq)
+export async function listMessages(db: DB, conversationId: number, userId: number): Promise<MessageRow[]> {
+  const rows = await db.select({ message: messages }).from(messages)
+    .innerJoin(conversations, eq(conversations.id, messages.conversation_id))
+    .where(and(eq(messages.conversation_id, conversationId), eq(conversations.user_id, userId))).orderBy(messages.seq)
+  return rows.map(row => row.message)
 }
 
 export async function getMessage(db: DB, id: number): Promise<MessageRow | undefined> {

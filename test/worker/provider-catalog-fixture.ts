@@ -38,5 +38,5 @@ export async function catalogApp() {
     if (response.status !== 201) throw new Error(`Provider creation failed: ${await response.text()}`)
     return await response.json() as ProviderWithInterfaces
   }
-  return { ctx, request, createProvider }
+  return { ctx, request, createProvider, client }
 }

@@ -17,7 +17,7 @@ describe('conversation ops', () => {
     const u = await insertMessage(db, { conversation_id: s.id, parent_id: null, seq: 1, role: 'user', parts: [{ type: 'text', text: 'hi' }], provider_id: null, model_id: null, usage: null, status: 'done', error: null, created_at: 1 })
     const a = await insertMessage(db, { conversation_id: s.id, parent_id: u.id, seq: 2, role: 'assistant', parts: [], provider_id: null, model_id: 'm', usage: null, status: 'error', error: null, created_at: 2 })
     await finalizeMessage(db, a.id, { parts: [{ type: 'text', text: 'yo' }], usage: { prompt: 1 }, status: 'done', error: null })
-    const rows = await listMessages(db, s.id)
+    const rows = await listMessages(db, s.id, DEFAULT_USER_ID)
     expect(rows.map((r) => r.status)).toEqual(['done', 'done'])
     expect(toMessage(rows[1]!, 'streaming').status).toBe('streaming')
     expect(await maxSeq(db, s.id)).toBe(2)
@@ -49,7 +49,7 @@ describe('conversation ops', () => {
 
     const forked = await forkConversation(db, source.id, 1, selected.id)
     expect(forked).toMatchObject({ title: 'Source 副本', project_id: null, provider_id: 7, model_id: 'model', system_prompt: 'prompt', params: { temperature: 0.3 } })
-    const copied = await listMessages(db, forked.id)
+    const copied = await listMessages(db, forked.id, DEFAULT_USER_ID)
     expect(copied.map(message => ({ role: message.role, text: message.parts[0], usage: message.usage }))).toEqual([
       { role: 'user', text: { type: 'text', text: 'root' }, usage: null },
       { role: 'assistant', text: { type: 'text', text: 'selected' }, usage: { prompt: 10, completion: 2 } },
@@ -93,7 +93,7 @@ describe('project ops', () => {
     expect((await listProjectConversations(db, p.id, DEFAULT_USER_ID)).map((r) => r.id)).toEqual([s.id])
 
     expect(await deleteProject(db, p.id, DEFAULT_USER_ID)).toMatchObject({ id: p.id })
-    expect((await getConversation(db, s.id))!.project_id).toBeNull()
+    expect((await getConversation(db, s.id, DEFAULT_USER_ID))!.project_id).toBeNull()
   })
 })
 
@@ -137,7 +137,7 @@ describe('project realtime commands', () => {
     const { ws, next } = await connect()
     ws.send(JSON.stringify({ type: 'conversation.update', conversation_id: s.id, project_id: theirs.id, request_id: 'r1' }))
     expect(await next('error')).toMatchObject({ type: 'error', request_id: 'r1' })
-    expect((await getConversation(db, s.id))!.project_id).toBeNull()
+    expect((await getConversation(db, s.id, DEFAULT_USER_ID))!.project_id).toBeNull()
   })
 
   it('answers a project.update for a project it does not own with an error carrying request_id', async () => {

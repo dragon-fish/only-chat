@@ -4,14 +4,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createDb } from '@/server/db/client'
 import { attachmentProviderFiles, attachments, providers } from '@/server/db/schema'
 import { createProject } from '@/server/plugins/hub/projects'
-import { DEFAULT_USER_ID } from '@/shared/constants'
-import { ProviderWithInterfacesSchema, UserSchema } from '@/shared/models'
+import { ProviderWithInterfacesSchema } from '@/shared/models'
 import { catalogApp } from './provider-catalog-fixture'
 import { decryptSecret } from '@/server/plugins/llm/crypto'
 import { createApp } from '@/server/app'
 import { ensureTestUser, authenticatedFetch, authenticatedRequest } from './auth-helper'
 
-beforeEach(async () => { await ensureTestUser() })
+let userId: number
+beforeEach(async () => {
+  const client = await ensureTestUser()
+  const session = await (await client.request('/api/auth/get-session')).json() as { user: { id: string } }
+  userId = Number(session.user.id)
+})
 
 const json = (method: string, path: string, body?: unknown) =>
   authenticatedFetch(new Request(`https://x${path}`, { method, headers: { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) }))
@@ -26,7 +30,7 @@ describe('provider file cleanup before configuration changes', () => {
       { protocol: 'anthropic' as const, base_url: 'https://gateway.test/messages', native_files: true },
     ]
     const provider = await createProvider({ api_key: 'original-key', interfaces: inputs })
-    const [attachment] = await ctx.db.orm.insert(attachments).values({ user_id: 1, sha256: crypto.randomUUID(), mime: 'text/plain', size: 1, r2_key: crypto.randomUUID(), origin: 'upload', created_at: 0 }).returning()
+    const [attachment] = await ctx.db.orm.insert(attachments).values({ user_id: userId, sha256: crypto.randomUUID(), mime: 'text/plain', size: 1, r2_key: crypto.randomUUID(), origin: 'upload', created_at: 0 }).returning()
     for (const [family, base_url] of [['openai', 'https://gateway.test/v1'], ['anthropic', 'https://gateway.test/messages']] as const) {
       await ctx.db.orm.insert(attachmentProviderFiles).values({
         attachment_id: attachment!.id, provider_id: provider.id, credential_version: 1, file_family: family, base_url,
@@ -72,7 +76,7 @@ describe('provider file cleanup before configuration changes', () => {
       { protocol: 'responses', base_url: 'https://gateway.test/v1/', native_files: true },
       { protocol: 'chat-completions', base_url: 'https://gateway.test/v1', native_files: true },
     ] })
-    const [attachment] = await ctx.db.orm.insert(attachments).values({ user_id: 1, sha256: crypto.randomUUID(), mime: 'text/plain', size: 1, r2_key: crypto.randomUUID(), origin: 'upload', created_at: 0 }).returning()
+    const [attachment] = await ctx.db.orm.insert(attachments).values({ user_id: userId, sha256: crypto.randomUUID(), mime: 'text/plain', size: 1, r2_key: crypto.randomUUID(), origin: 'upload', created_at: 0 }).returning()
     await ctx.db.orm.insert(attachmentProviderFiles).values({ attachment_id: attachment!.id, provider_id: provider.id, credential_version: 1, file_family: 'openai', base_url: 'https://gateway.test/v1', provider_reference: { openai: 'file-shared' }, expires_at: Date.now() + 86_400_000, cleanup_after: Date.now() + 86_400_000, created_at: 0 })
     const remote = vi.fn()
     vi.stubGlobal('fetch', remote)
@@ -86,7 +90,7 @@ describe('provider file cleanup before configuration changes', () => {
     const provider = await createProvider({ api_key: 'original-key', interfaces: [
       { protocol: 'responses', base_url: 'https://GATEWAY.test:443/api/./v1///', native_files: true },
     ] })
-    const [attachment] = await ctx.db.orm.insert(attachments).values({ user_id: 1, sha256: crypto.randomUUID(), mime: 'text/plain', size: 1, r2_key: crypto.randomUUID(), origin: 'upload', created_at: 0 }).returning()
+    const [attachment] = await ctx.db.orm.insert(attachments).values({ user_id: userId, sha256: crypto.randomUUID(), mime: 'text/plain', size: 1, r2_key: crypto.randomUUID(), origin: 'upload', created_at: 0 }).returning()
     await env.DB.prepare(`WITH RECURSIVE ids(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM ids WHERE n < 53)
       INSERT INTO attachment_provider_files (attachment_id, provider_id, credential_version, file_family, base_url, provider_reference, expires_at, cleanup_after, created_at)
       SELECT ?, ?, 1, 'openai', 'https://GATEWAY.test:443/api/./v1', json_object('openai', 'legacy-' || n), 1000, 1000, n FROM ids`)
@@ -262,8 +266,8 @@ describe('REST api', () => {
   it('returns the application user DTO with a millisecond creation timestamp', async () => {
     const res = await json('GET', '/api/me')
     expect(res.status).toBe(200)
-    const stored = await env.DB.prepare('SELECT created_at FROM users WHERE id = 1').first<{ created_at: number }>()
-    expect(UserSchema.parse(await res.json())).toEqual({ id: 1, name: 'owner', settings: { plugins: {} }, created_at: stored!.created_at })
+    const stored = await env.DB.prepare('SELECT created_at FROM users WHERE id = ?').bind(userId).first<{ created_at: number }>()
+    expect(await res.json()).toEqual({ id: userId, name: 'owner', email: 'owner@example.com', role: 'user', settings: { plugins: {} }, created_at: stored!.created_at })
   })
 
   it('creates a provider without leaking the key, lists models, deletes', async () => {
@@ -313,10 +317,10 @@ describe('REST api', () => {
     const db = createDb(env.DB)
     const bytes = new Uint8Array([137, 80, 78, 71, 71, 69, 78])
     const sha = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map((b) => b.toString(16).padStart(2, '0')).join('')
-    const key = `${DEFAULT_USER_ID}/${sha.slice(0, 2)}/${sha}`
+    const key = `${userId}/${sha.slice(0, 2)}/${sha}`
     await env.BUCKET.put(key, bytes, { httpMetadata: { contentType: 'image/png' } })
     const [row] = await db.insert(attachments).values({
-      user_id: DEFAULT_USER_ID, sha256: sha, mime: 'image/png', size: bytes.byteLength,
+      user_id: userId, sha256: sha, mime: 'image/png', size: bytes.byteLength,
       width: null, height: null, r2_key: key, origin: 'generated', created_at: 0,
     }).onConflictDoUpdate({ target: [attachments.user_id, attachments.sha256], set: { r2_key: key } }).returning()
 
@@ -340,7 +344,7 @@ describe('REST api', () => {
 
   it('lists projects for the current user, read-only', async () => {
     const db = createDb(env.DB)
-    const mine = await createProject(db, { user_id: DEFAULT_USER_ID, name: 'Mine', system_prompt: 'sys' })
+    const mine = await createProject(db, { user_id: userId, name: 'Mine', system_prompt: 'sys' })
     const list = await (await json('GET', '/api/projects')).json() as Array<{ id: number; name: string }>
     expect(list.find((p) => p.id === mine.id)).toMatchObject({ name: 'Mine', system_prompt: 'sys' })
     expect((await json('POST', '/api/projects', { name: 'nope' })).status).toBe(404)
@@ -380,7 +384,7 @@ describe('REST api', () => {
     const created = await json('POST', '/api/providers', { ...input, api_key: 'sk-one' })
     const p = (await created.json()) as { id: number }
     const [a] = await db.insert(attachments).values({
-      user_id: DEFAULT_USER_ID, sha256: 'f'.repeat(64), mime: 'image/png', size: 4, width: null, height: null,
+      user_id: userId, sha256: 'f'.repeat(64), mime: 'image/png', size: 4, width: null, height: null,
       r2_key: 'k/fp', origin: 'upload', created_at: 0,
     }).returning()
 
