@@ -7,6 +7,40 @@ import { modelRecords, provider } from './provider-fixtures'
 afterEach(() => vi.restoreAllMocks())
 
 describe('catalog config cache', () => {
+  // A same-session provider refresh supersedes metadata, not the committed rename's old-key cleanup.
+  it('removes a renamed model reference after same-generation provider invalidation', () => {
+    const config = useConfigStore(createPinia())
+    const model = modelRecords[0]!
+    config.retainModels([model])
+    config.pickerRefs = ['1:first-model']
+    const acknowledge = config.beginModelWrite(model)
+    config.invalidateProviderModels(model.provider_id)
+
+    const retained = acknowledge({ ...model, model_id: 'renamed-model' })
+
+    expect(retained).toBe(false)
+    expect(config.modelsByRef['1:first-model']).toBeUndefined()
+    expect(config.modelsByRef['1:renamed-model']).toBeUndefined()
+    expect(config.pickerRefs).toEqual([])
+  })
+
+  // A rename acknowledgment from an old authenticated identity must not mutate the new cache at all.
+  it('rejects renamed model cleanup after the auth generation changes', () => {
+    const config = useConfigStore(createPinia())
+    const model = modelRecords[0]!
+    const acknowledge = config.beginModelWrite(model)
+    config.reset()
+    config.retainModels([{ ...model, metadata: { name: 'Current user model' } }])
+    config.pickerRefs = ['1:first-model']
+
+    const retained = acknowledge({ ...model, model_id: 'renamed-model' })
+
+    expect(retained).toBe(false)
+    expect(config.modelsByRef['1:first-model']?.metadata.name).toBe('Current user model')
+    expect(config.modelsByRef['1:renamed-model']).toBeUndefined()
+    expect(config.pickerRefs).toEqual(['1:first-model'])
+  })
+
   it('fences obsolete write metadata and an exact refresh overtaken by another provider revision', async () => {
     const config = useConfigStore(createPinia())
     const model = modelRecords[0]!

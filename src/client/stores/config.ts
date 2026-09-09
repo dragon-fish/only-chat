@@ -79,10 +79,11 @@ export const useConfigStore = defineStore('config', () => {
     const providerRevision = providerRevisions.get(reference.provider_id)
     const modelRevision = revisions.get(key)
     return (result: ModelWithMetadata) => {
-      const current = generation === startedGeneration && providerRevisions.get(reference.provider_id) === providerRevision && revisions.get(key) === modelRevision
-      // A committed PUT can arrive after a provider save has rematerialized its metadata.
-      if (!current) return false
+      if (generation !== startedGeneration) return false
+      const currentMetadata = providerRevisions.get(reference.provider_id) === providerRevision && revisions.get(key) === modelRevision
+      // A same-session provider refresh supersedes metadata, but not a committed rename's old key.
       if (reference.model_id !== result.model_id) forgetModel(reference)
+      if (!currentMetadata) return false
       retainModels([result])
       return true
     }
