@@ -1,7 +1,7 @@
 import type { Context } from 'cordis'
 import type { DB } from '@/server/db/client'
 import { models, type ModelRow } from '@/server/db/schema'
-import type { ModelMetadataOverride } from '@/shared/model-metadata'
+import type { ModelMetadata, ModelMetadataOverride } from '@/shared/model-metadata'
 import { ModelWithMetadataSchema, type ModelWithMetadata } from '@/shared/models'
 import type { ModelCatalog } from '../model-catalog/types'
 import { materializeModelMetadata, resolveModelMetadata } from '../model-catalog/resolve'
@@ -17,8 +17,8 @@ export async function catalogForModels(ctx: Context, providerId: string | null, 
   return { ...await ctx.modelCatalog.materializationCatalog(version, providerId, modelIds), version }
 }
 
-export function resolveModelFields(catalog: ModelCatalog, providerId: string | null, modelId: string, override: ModelMetadataOverride) {
-  const result = resolveModelMetadata({ catalog, providerId, modelId, metadataOverride: override })
+export function resolveModelFields(catalog: ModelCatalog, providerId: string | null, modelId: string, override: ModelMetadataOverride, providerMetadata?: ModelMetadata) {
+  const result = resolveModelMetadata({ catalog, providerId, modelId, metadataOverride: override, providerMetadata })
   return {
     metadata_resolved: result.metadata, catalog_matches: result.matches, lab_id: result.labId,
     ...materializeModelMetadata(result.metadata, modelId, result.labName),

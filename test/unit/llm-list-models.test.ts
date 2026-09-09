@@ -14,7 +14,7 @@ describe('listRemoteModels', () => {
       return new Response(JSON.stringify({ data: [{ id: 'b' }, { id: 'a' }] }), { status: 200 })
     }) as unknown as typeof fetch
     const ids = await listRemoteModels(base, 'sk', fetchFn)
-    expect(ids).toEqual(['a', 'b'])
+    expect(ids.map(model => model.id)).toEqual(['a', 'b'])
     expect(calls[0]![0]).toBe('https://api.example.com/v1/models')
     expect((calls[0]![1]!.headers as Record<string, string>).Authorization).toBe('Bearer sk')
   })
@@ -26,7 +26,7 @@ describe('listRemoteModels', () => {
       return new Response(JSON.stringify({ data: [{ id: 'claude-x' }] }), { status: 200 })
     }) as unknown as typeof fetch
     const ids = await listRemoteModels({ ...base, protocol: 'anthropic' }, 'sk', fetchFn)
-    expect(ids).toEqual(['claude-x'])
+    expect(ids.map(model => model.id)).toEqual(['claude-x'])
     expect(headers['x-api-key']).toBe('sk')
     expect(headers['anthropic-version']).toBe('2023-06-01')
   })
@@ -34,6 +34,27 @@ describe('listRemoteModels', () => {
   it('throws on non-2xx', async () => {
     const fetchFn = (async () => new Response('nope', { status: 401 })) as unknown as typeof fetch
     await expect(listRemoteModels(base, 'sk', fetchFn)).rejects.toThrow(/401/)
+  })
+
+  it('normalizes Volcengine and ZenMux image capability extensions while retaining raw metadata', async () => {
+    const fetchFn = (async () => Response.json({ data: [
+      {
+        id: 'doubao-seedream', name: 'Seedream', domain: 'ImageGeneration',
+        modalities: { input_modalities: ['text', 'image'], output_modalities: ['image'] },
+        task_type: ['TextToImage', 'ImageToImage'],
+      },
+      {
+        id: 'openai/gpt-image', display_name: 'OpenAI: GPT Image', owned_by: 'openai',
+        input_modalities: ['text', 'image'], output_modalities: ['image'], capabilities: { reasoning: false },
+      },
+    ] })) as unknown as typeof fetch
+    const models = await listRemoteModels(base, 'sk', fetchFn)
+    expect(models).toEqual([
+      expect.objectContaining({ id: 'doubao-seedream', metadata: expect.objectContaining({ name: 'Seedream', modalities: { input: ['text', 'image'], output: ['image'] } }) }),
+      expect.objectContaining({ id: 'openai/gpt-image', metadata: expect.objectContaining({ name: 'OpenAI: GPT Image', modalities: { input: ['text', 'image'], output: ['image'] } }) }),
+    ])
+    expect(models[0]!.providerMetadata).toMatchObject({ domain: 'ImageGeneration', task_type: ['TextToImage', 'ImageToImage'] })
+    expect(models[1]!.providerMetadata).toMatchObject({ owned_by: 'openai', capabilities: { reasoning: false } })
   })
 
   // A Vertex-shaped Base URL has no `/models` listing: the gateway's catalogue lives under its

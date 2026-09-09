@@ -130,20 +130,23 @@ export function resolveModelMetadata({
   providerId,
   modelId,
   metadataOverride = {},
+  providerMetadata = {},
   catalog,
 }: {
   providerId: string | null
   modelId: string
   metadataOverride?: ModelMetadataOverride
+  providerMetadata?: ModelMetadata
   catalog: ModelCatalog
 }): ResolvedModelMetadata {
   const matched = matchCatalogModel({ providerId, modelId, catalog })
   const metadata = matched.operatorProvider
-    ? mergeMetadata(CONSERVATIVE_MODEL_METADATA, catalogMetadata(matched.operatorProvider.model), metadataOverride)
+    ? mergeMetadata(CONSERVATIVE_MODEL_METADATA, catalogMetadata(matched.operatorProvider.model), providerMetadata, metadataOverride)
     : mergeMetadata(
         CONSERVATIVE_MODEL_METADATA,
         matched.globalModel ? catalogMetadata(matched.globalModel.model) : {},
         matched.labProvider ? labProviderFallback(matched.labProvider.model) : {},
+        providerMetadata,
         metadataOverride,
       )
   const labName = matched.labId === null

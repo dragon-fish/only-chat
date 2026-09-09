@@ -66,7 +66,9 @@ export function providerRoutes(ctx: Context) {
     if (!endpoint) return c.json({ error: 'Configure a default interface first' }, 400)
     if (endpoint.protocol === 'vertex-compatible') return c.json({ error: 'Model listing is not supported for Vertex-compatible interfaces' }, 400)
     const key = provider.api_key ? await decryptSecret(ctx.env.KEY_ENCRYPTION_SECRET, provider.api_key) : null
-    const ids = [...new Set(await listRemoteModels(endpoint, key))]
+    const remote = await listRemoteModels(endpoint, key)
+    const ids = [...new Set(remote.map(model => model.id))]
+    const remoteById = new Map(remote.map(model => [model.id, model]))
     try {
       return await retryModelSource(async () => {
         const currentProvider = await db.query.providers.findFirst({ where: owned(id, userId) })
@@ -82,7 +84,8 @@ export function providerRoutes(ctx: Context) {
           insertResultIndexes.push(operations.length)
           operations.push(db.insert(models).values({
             provider_id: id, model_id, enabled: false, manual_pinned: false, upstream_available: true,
-            ...resolveModelFields(catalog, currentProvider.models_dev_provider_id, model_id, {}),
+            ...resolveModelFields(catalog, currentProvider.models_dev_provider_id, model_id, {}, remoteById.get(model_id)?.metadata),
+            provider_metadata: remoteById.get(model_id)?.providerMetadata ?? {},
           }).onConflictDoNothing().returning({ id: models.id }))
         }
         let removed = 0
@@ -98,7 +101,8 @@ export function providerRoutes(ctx: Context) {
           if (!upstreamAvailable) unavailable++
           const changed = changedModelFields(model, {
             upstream_available: upstreamAvailable,
-            ...resolveModelFields(catalog, currentProvider.models_dev_provider_id, model.model_id, model.metadata_override),
+            ...resolveModelFields(catalog, currentProvider.models_dev_provider_id, model.model_id, model.metadata_override, remoteById.get(model.model_id)?.metadata),
+            ...(remoteById.get(model.model_id) ? { provider_metadata: remoteById.get(model.model_id)!.providerMetadata } : {}),
           })
           if (Object.keys(changed).length) operations.push(db.update(models).set(changed).where(modelSourceMatches(model, currentProvider, catalog.version)))
         }
