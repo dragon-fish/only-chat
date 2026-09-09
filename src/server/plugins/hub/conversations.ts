@@ -1,8 +1,8 @@
-import { and, desc, eq, gt, inArray, isNotNull, isNull, sql } from 'drizzle-orm'
+import { and, desc, eq, gt, inArray, isNotNull, isNull, not, notExists, sql } from 'drizzle-orm'
 import type { ScopedFilesClient } from '../llm/files/types'
 import { normalizeFilesBaseURL } from '../llm/files/shared'
 import type { DB } from '../../db/client'
-import { attachmentProviderFiles, attachments, messages, models, providerInterfaces, providers, conversations, users } from '../../db/schema'
+import { artifactLinks, artifacts, attachmentProviderFiles, attachments, messages, models, providerInterfaces, providers, conversations, users } from '../../db/schema'
 import type {
   AttachmentProviderFileRow, AttachmentRow, MessageRow, ModelRow, ProviderInterfaceRow, ProviderRow, ConversationRow, UserRow,
 } from '../../db/schema'
@@ -90,7 +90,16 @@ export async function compareAndSwapConversationHead(
   return row
 }
 
-export async function deleteConversation(db: DB, id: number, userId: number): Promise<void> {
+export async function deleteConversation(db: DB, id: number, userId: number, options: { deleteArtifacts?: boolean } = {}): Promise<void> {
+  if (options.deleteArtifacts) {
+    await db.update(artifacts).set({ deleted_at: Date.now() }).where(and(
+      eq(artifacts.user_id, userId),
+      inArray(artifacts.id, db.select({ id: artifactLinks.artifact_id }).from(artifactLinks).where(eq(artifactLinks.conversation_id, id))),
+      notExists(db.select({ artifact_id: artifactLinks.artifact_id }).from(artifactLinks).where(and(
+        eq(artifactLinks.artifact_id, artifacts.id), not(eq(artifactLinks.conversation_id, id)),
+      ))),
+    ))
+  }
   const [row] = await db.delete(conversations).where(and(eq(conversations.id, id), eq(conversations.user_id, userId))).returning({ id: conversations.id })
   if (!row) throw new Error('conversation not found')
 }

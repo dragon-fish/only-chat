@@ -48,6 +48,12 @@ async function writeProviderAttempt(ctx: Context, userId: number, input: Provide
     throw new ProviderWriteError('Credentials changed concurrently; reload and retry', 409)
   }
   const existing = id === undefined ? [] : await db.select().from(providerInterfaces).where(eq(providerInterfaces.provider_id, id))
+  if (input.default_image_model_id && before) {
+    const imageModel = await db.query.models.findFirst({ where: and(
+      eq(models.provider_id, before.id), eq(models.model_id, input.default_image_model_id), eq(models.enabled, true), eq(models.supports_image_output, true),
+    ) })
+    if (!imageModel) throw new ProviderWriteError('Default image model must be an enabled image-output model')
+  }
   for (const endpoint of input.interfaces) {
     if (endpoint.id !== undefined && !existing.some(row => row.id === endpoint.id && row.protocol === endpoint.protocol)) {
       throw new ProviderWriteError('Interface ID must belong to this provider and protocol')

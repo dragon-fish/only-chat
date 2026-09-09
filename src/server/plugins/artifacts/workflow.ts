@@ -46,18 +46,25 @@ export async function executeImageRun(ctx: Context, userId: number, runId: numbe
       modelId: run.model_id, prompt: run.prompt, references, params: run.params,
       idempotencyKey: run.workflow_instance_id,
     })
+    const current = await db.query.artifactRuns.findFirst({ where: and(eq(artifactRuns.id, run.id), eq(artifactRuns.user_id, userId)) })
+    if (current?.status !== 'running') return
     const imageParts: Array<{ type: 'image'; attachment_id: number; artifact_id: number }> = []
     for (const [outputIndex, output] of outputs.entries()) {
       if (!ACCEPTED_MIME.has(output.mime)) throw new Error(`Unsupported generated image type: ${output.mime}`)
       if (output.bytes.byteLength === 0 || output.bytes.byteLength > MAX_UPLOAD_BYTES) throw new Error('Generated image has an invalid size')
       const digest = await sha256(output.bytes)
+      let dimensions = run.params.size
+      try {
+        const info = await ctx.env.IMAGES.info(new Blob([output.bytes as BlobPart], { type: output.mime }).stream())
+        if ('width' in info) dimensions = { width: info.width, height: info.height }
+      } catch { /* Requested dimensions remain a useful fallback for unsupported or malformed metadata. */ }
       let attachment = await db.query.attachments.findFirst({ where: and(eq(attachments.user_id, userId), eq(attachments.sha256, digest)) })
       if (!attachment) {
         const key = r2Key(userId, digest)
         await ctx.assets.put(key, output.bytes, output.mime)
         await db.insert(attachments).values({
           user_id: userId, sha256: digest, mime: output.mime, size: output.bytes.byteLength,
-          width: run.params.size?.width ?? null, height: run.params.size?.height ?? null,
+          width: dimensions?.width ?? null, height: dimensions?.height ?? null,
           r2_key: key, origin: 'generated', created_at: Date.now(),
         }).onConflictDoNothing()
         attachment = await db.query.attachments.findFirst({ where: and(eq(attachments.user_id, userId), eq(attachments.sha256, digest)) })

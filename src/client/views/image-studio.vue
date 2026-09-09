@@ -53,6 +53,9 @@ const modelOptions = computed(() => entries.value.map(entry => ({
 const selectedEntry = computed(() => entries.value.find(entry => `${entry.provider.id}:${entry.model.model_id}` === modelKey.value))
 const latestRun = computed(() => runs.value[0])
 const running = computed(() => latestRun.value && ['queued', 'running'].includes(latestRun.value.status))
+const statusLabel = computed(() => ({
+  queued: '等待中', running: '生成中', completed: '已完成', failed: '失败', cancelled: '已取消',
+}[latestRun.value?.status ?? 'completed']))
 const referenceAllowed = computed(() => selectedEntry.value?.model.metadata.modalities?.input.includes('image') === true)
 const canSubmit = computed(() => Boolean(modelKey.value && prompt.value.trim() && !submitting.value && !running.value && (!references.value.length || referenceAllowed.value)))
 
@@ -112,7 +115,8 @@ async function loadConversationData() {
   if (props.conversationId === null) { runs.value = []; outputs.value = []; return }
   const [nextRuns, page] = await Promise.all([api.artifactRuns(props.conversationId), api.artifacts({ conversation_id: props.conversationId, limit: 100 })])
   runs.value = nextRuns
-  outputs.value = page.artifacts
+  const latestCompleted = nextRuns.find(run => run.status === 'completed')
+  outputs.value = latestCompleted ? page.artifacts.filter(artifact => artifact.run_id === latestCompleted.id) : []
 }
 async function load() {
   loading.value = true
@@ -133,15 +137,19 @@ async function load() {
 }
 async function poll(runId: number) {
   clearTimeout(pollTimer)
-  const run = await api.artifactRun(runId)
-  const index = runs.value.findIndex(item => item.id === run.id)
-  if (index < 0) runs.value.unshift(run)
-  else runs.value[index] = run
-  if (run.status === 'queued' || run.status === 'running') pollTimer = setTimeout(() => void poll(runId), 1000)
-  else {
-    submitting.value = false
-    await loadConversationData()
-    if (run.status === 'failed') toast.error(run.error ?? '图片生成失败')
+  try {
+    const run = await api.artifactRun(runId)
+    const index = runs.value.findIndex(item => item.id === run.id)
+    if (index < 0) runs.value.unshift(run)
+    else runs.value[index] = run
+    if (run.status === 'queued' || run.status === 'running') pollTimer = setTimeout(() => void poll(runId), 1000)
+    else {
+      submitting.value = false
+      await loadConversationData()
+      if (run.status === 'failed') toast.error(run.error ?? '图片生成失败')
+    }
+  } catch {
+    pollTimer = setTimeout(() => void poll(runId), 2000)
   }
 }
 async function submit() {
@@ -194,6 +202,7 @@ onBeforeUnmount(() => { clearTimeout(pollTimer); releaseReferences() })
       <ScrollArea class="min-h-0 flex-1">
         <div class="mx-auto flex min-h-full w-full max-w-5xl items-center justify-center p-4 md:p-8">
           <div v-if="loading" class="grid w-full grid-cols-2 gap-3"><Skeleton class="aspect-square rounded-xl" /><Skeleton class="aspect-square rounded-xl" /></div>
+          <div v-else-if="running && !outputs.length" class="flex w-full max-w-xl flex-col gap-3 text-center"><Skeleton class="aspect-square rounded-xl" /><span class="text-sm text-muted-foreground">正在生成图片，可以安全离开此页面。</span></div>
           <div v-else-if="outputs.length" class="grid w-full gap-3" :class="outputs.length > 1 ? 'grid-cols-2' : 'grid-cols-1'">
             <RouterLink v-for="artifact in outputs" :key="artifact.id" :to="`/images/a/${artifact.id}`" class="group relative overflow-hidden rounded-xl border bg-muted">
               <img :src="api.artifactContentUrl(artifact.id)" :alt="artifact.prompt" class="h-full w-full object-contain" loading="lazy" />
@@ -217,7 +226,7 @@ onBeforeUnmount(() => { clearTimeout(pollTimer); releaseReferences() })
               <InputGroupButton size="icon-sm" aria-label="添加参考图" :disabled="!referenceAllowed" @click="chooseFiles"><ImagePlusIcon /></InputGroupButton>
               <span v-if="references.length && !referenceAllowed" class="text-xs text-destructive">当前模型不支持图片输入</span>
               <div class="ml-auto flex items-center gap-2">
-                <Badge v-if="latestRun" variant="outline">{{ latestRun.status }}</Badge>
+                <Badge v-if="latestRun" variant="outline">{{ statusLabel }}</Badge>
                 <InputGroupButton v-if="running" variant="destructive" size="sm" @click="cancel"><XIcon data-icon="inline-start" />取消</InputGroupButton>
                 <InputGroupButton v-else size="sm" variant="default" :disabled="!canSubmit" @click="submit"><LoaderCircleIcon v-if="submitting" class="animate-spin" data-icon="inline-start" /><SparklesIcon v-else data-icon="inline-start" />生成</InputGroupButton>
               </div>

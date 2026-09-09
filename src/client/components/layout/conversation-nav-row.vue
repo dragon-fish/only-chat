@@ -20,6 +20,8 @@ import {
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/client/ui/dialog'
 import { Input } from '@/client/ui/input'
 import { Button } from '@/client/ui/button'
+import { Checkbox } from '@/client/ui/checkbox'
+import { Label } from '@/client/ui/label'
 import type { Project, Conversation } from '@/shared/models'
 
 const props = defineProps<{
@@ -32,6 +34,7 @@ const emit = defineEmits<{ navigate: [] }>()
 const sync = useSyncStore()
 const { isMobile } = useSidebar()
 const deleteOpen = ref(false)
+const deleteArtifacts = ref(false)
 const action = ref<InstanceType<typeof SidebarMenuAction> | null>(null)
 const renameOpen = ref(false)
 const title = ref(props.conversation.title)
@@ -58,7 +61,10 @@ function move(projectId: number | null) {
 }
 
 function remove() {
-  send({ type: 'conversation.delete', conversation_id: props.conversation.id })
+  send({
+    type: 'conversation.delete', conversation_id: props.conversation.id,
+    ...(deleteArtifacts.value ? { delete_artifacts: true } : {}),
+  })
 }
 
 function rename() {
@@ -140,6 +146,10 @@ function send(command: Parameters<typeof sync.send>[0]): boolean {
         <AlertDialogHeader>
           <AlertDialogTitle>删除这个对话？</AlertDialogTitle>
           <AlertDialogDescription>“{{ conversation.title }}”及其所有消息将被永久删除。</AlertDialogDescription>
+          <div class="flex min-h-10 items-center gap-2 text-sm">
+            <Checkbox id="delete-conversation-artifacts" v-model="deleteArtifacts" />
+            <Label for="delete-conversation-artifacts">同时从 Gallery 删除仅属于此对话的生成图片</Label>
+          </div>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel class="min-h-10">取消</AlertDialogCancel>

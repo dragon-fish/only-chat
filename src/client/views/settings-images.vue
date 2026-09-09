@@ -20,6 +20,7 @@ const saving = ref(false)
 const entries = computed(() => config.enabledModels().filter(entry => isStudioImageModel(entry.provider, entry.model)))
 const savedKey = computed(() => sync.settings.image_model ? `${sync.settings.image_model.provider_id}:${sync.settings.image_model.model_id}` : '')
 watch(savedKey, value => { selected.value = value; saving.value = false })
+watch(() => sync.lastError, error => { if (error) saving.value = false })
 async function load() {
   loading.value = true
   try {
