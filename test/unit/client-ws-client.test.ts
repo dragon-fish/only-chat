@@ -47,4 +47,21 @@ describe('WsClient', () => {
     expect(FakeSocket.instances).toHaveLength(3)
     vi.useRealTimers()
   })
+
+  // A queued command belongs to the credential epoch that created it and must die with that client.
+  it('discards queued commands when explicitly closed', () => {
+    FakeSocket.instances = []
+    const client = new WsClient('/ws', { onEvent: vi.fn(), onStatus: vi.fn() }, {
+      socketFactory: url => new FakeSocket(url) as unknown as WebSocket,
+    })
+    client.connect()
+    client.send({ type: 'stop', conversation_id: 41 })
+
+    client.close()
+    client.connect()
+    FakeSocket.instances[1]!.open()
+
+    expect(FakeSocket.instances[1]!.sent).toEqual([])
+    client.close()
+  })
 })

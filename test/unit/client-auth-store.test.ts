@@ -24,6 +24,12 @@ const authSession = {
   },
 }
 
+const secondAuthSession = {
+  ...authSession,
+  session: { ...authSession.session, id: 'session-2', token: 'token-2', userId: '2' },
+  user: { ...authSession.user, id: '2', name: 'Second', email: 'second@example.com' },
+}
+
 describe('frontend authentication state', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
@@ -43,6 +49,56 @@ describe('frontend authentication state', () => {
     expect(authStore.ready).toBe(true)
     expect(authStore.authSession).toEqual(authSession)
     expect(authStore.authUser).toMatchObject({ email: 'owner@example.com' })
+  })
+
+  // Starting duplicate initialization reads can make their completion order define auth state.
+  it('deduplicates concurrent initialization refreshes', async () => {
+    let finish!: (value: unknown) => void
+    vi.mocked(authClient.getSession).mockImplementation(() => new Promise(resolve => { finish = resolve }) as never)
+    const authStore = useAuthStore()
+
+    const first = authStore.refresh()
+    const second = authStore.refresh()
+    expect(authClient.getSession).toHaveBeenCalledOnce()
+    finish({ data: authSession, error: null })
+    await Promise.all([first, second])
+
+    expect(authStore.authUser).toMatchObject({ email: 'owner@example.com' })
+  })
+
+  // A guest read started before login must not overwrite the explicitly refreshed new session.
+  it('invalidates a slow refresh when auth changes', async () => {
+    let finishGuest!: (value: unknown) => void
+    let finishLogin!: (value: unknown) => void
+    vi.mocked(authClient.getSession)
+      .mockImplementationOnce(() => new Promise(resolve => { finishGuest = resolve }) as never)
+      .mockImplementationOnce(() => new Promise(resolve => { finishLogin = resolve }) as never)
+    const authStore = useAuthStore()
+
+    const guest = authStore.refresh()
+    const login = authStore.refresh(true)
+    finishLogin({ data: secondAuthSession, error: null })
+    await login
+    finishGuest({ data: null, error: null })
+    await guest
+
+    expect(authStore.authSession).toEqual(secondAuthSession)
+    expect(authStore.authUser).toMatchObject({ email: 'second@example.com' })
+  })
+
+  // Clearing credentials must permanently invalidate an already-started session read.
+  it('does not restore a refresh response that completes after clear', async () => {
+    let finish!: (value: unknown) => void
+    vi.mocked(authClient.getSession).mockImplementation(() => new Promise(resolve => { finish = resolve }) as never)
+    const authStore = useAuthStore()
+
+    const pending = authStore.refresh()
+    authStore.clear()
+    finish({ data: authSession, error: null })
+    await pending
+
+    expect(authStore.authSession).toBeNull()
+    expect(authStore.authUser).toBeNull()
   })
 
   // Failing to clear local state after server sign-out would leave private UI visible.

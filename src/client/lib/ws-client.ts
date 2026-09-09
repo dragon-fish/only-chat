@@ -43,9 +43,17 @@ export class WsClient {
   close(): void {
     this._closedByUser = true
     if (this._reconnectTimer) clearTimeout(this._reconnectTimer)
+    this._reconnectTimer = null
     this._stopPing()
-    this._socket?.close()
+    this._queue = []
+    const socket = this._socket
     this._socket = null
+    if (!socket) return
+    socket.onopen = null
+    socket.onmessage = null
+    socket.onerror = null
+    socket.onclose = null
+    socket.close()
   }
 
   send(cmd: WsCommand): void {

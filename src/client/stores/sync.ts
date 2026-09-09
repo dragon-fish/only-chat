@@ -594,6 +594,30 @@ export const useSyncStore = defineStore('sync', () => {
   const settingsError = ref<string | null>(null)
   const client = shallowRef<WsClient | null>(null)
   const optimisticMutations = reactive(new Map<string, OptimisticMutation>())
+  let loadEpoch = 0
+
+  function reset(): void {
+    loadEpoch++
+    client.value?.close()
+    client.value = null
+    status.value = 'closed'
+    snapshotSeq.value = 0
+    conversations.clear()
+    projects.clear()
+    messages.clear()
+    loadedMessageConversations.clear()
+    streamingIds.clear()
+    optimisticMutations.clear()
+    forkResult.value = null
+    settings.value = { plugins: {} }
+    lastError.value = null
+    projectsLoaded.value = false
+    conversationsLoaded.value = false
+    settingsLoaded.value = false
+    conversationsError.value = null
+    projectsError.value = null
+    settingsError.value = null
+  }
 
   function beginOptimistic(requestId: string, mutation: OptimisticMutation): void {
     optimisticMutations.set(requestId, mutation)
@@ -764,50 +788,63 @@ export const useSyncStore = defineStore('sync', () => {
   }
 
   async function loadConversations(): Promise<void> {
+    const epoch = loadEpoch
     conversationsError.value = null
     try {
-      for (const s of await api.conversations()) conversations.set(s.id, s)
+      const rows = await api.conversations()
+      if (epoch !== loadEpoch) return
+      for (const s of rows) conversations.set(s.id, s)
       conversationsLoaded.value = true
     } catch (error) {
-      conversationsError.value = error instanceof Error ? error.message : String(error)
+      if (epoch === loadEpoch) conversationsError.value = error instanceof Error ? error.message : String(error)
       throw error
     }
   }
 
   async function loadProjects(): Promise<void> {
+    const epoch = loadEpoch
     projectsError.value = null
     try {
-      for (const p of await api.projects()) projects.set(p.id, p)
+      const rows = await api.projects()
+      if (epoch !== loadEpoch) return
+      for (const p of rows) projects.set(p.id, p)
       projectsLoaded.value = true
     } catch (error) {
-      projectsError.value = error instanceof Error ? error.message : String(error)
+      if (epoch === loadEpoch) projectsError.value = error instanceof Error ? error.message : String(error)
       throw error
     }
   }
 
   async function loadSettings(): Promise<void> {
+    const epoch = loadEpoch
     settingsError.value = null
     try {
-      settings.value = (await api.me()).settings
+      const result = await api.me()
+      if (epoch !== loadEpoch) return
+      settings.value = result.settings
       settingsLoaded.value = true
     } catch (error) {
-      settingsError.value = error instanceof Error ? error.message : String(error)
+      if (epoch === loadEpoch) settingsError.value = error instanceof Error ? error.message : String(error)
       throw error
     }
   }
 
   async function loadMessages(conversationId: number): Promise<void> {
-    ingestMessages(conversationId, await api.messages(conversationId))
+    const epoch = loadEpoch
+    const rows = await api.messages(conversationId)
+    if (epoch !== loadEpoch) return
+    ingestMessages(conversationId, rows)
     loadedMessageConversations.add(conversationId)
   }
 
   function connect(): void {
     if (client.value) return
-    client.value = new WsClient('/ws', {
-      onEvent: applyEvent,
-      onStatus: (s) => { status.value = s },
+    const next = new WsClient('/ws', {
+      onEvent: event => { if (client.value === next) applyEvent(event) },
+      onStatus: nextStatus => { if (client.value === next) status.value = nextStatus },
     })
-    client.value.connect()
+    client.value = next
+    next.connect()
   }
 
   /**
@@ -825,7 +862,7 @@ export const useSyncStore = defineStore('sync', () => {
     status, snapshotSeq, conversations, projects, messages, streamingIds, forkResult, settings, lastError, projectsLoaded, conversationsLoaded, settingsLoaded,
     optimisticMutations,
     conversationsError, projectsError, settingsError, loadedMessageConversations, conversationList, projectList,
-    applyEvent, ingestMessages, conversationsInProject, pathFor, siblingsOf, isStreaming, loadConversations, loadProjects, loadSettings, loadMessages, connect, send,
+    applyEvent, ingestMessages, conversationsInProject, pathFor, siblingsOf, isStreaming, loadConversations, loadProjects, loadSettings, loadMessages, connect, reset, send,
     beginOptimistic, confirmOptimistic, rejectOptimistic, abandonOptimistic, optimisticToolResult, optimisticToolCallIds,
   }
 })

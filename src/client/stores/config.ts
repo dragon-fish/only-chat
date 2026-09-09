@@ -32,9 +32,10 @@ export const useConfigStore = defineStore('config', () => {
   const revisions = new Map<string, number>()
   const providerRevisions = new Map<number, number>()
   const staleRefs = new Set<string>()
+  let generation = 0
 
   function readRevisions() {
-    return { models: new Map(revisions), providers: new Map(providerRevisions) }
+    return { generation, models: new Map(revisions), providers: new Map(providerRevisions) }
   }
 
   function retainModels(models: readonly ModelWithMetadata[]) {
@@ -46,6 +47,7 @@ export const useConfigStore = defineStore('config', () => {
     }
   }
   function retainRead(models: readonly ModelWithMetadata[], started: ReturnType<typeof readRevisions>) {
+    if (started.generation !== generation) return []
     return models.flatMap(model => {
       const key = keyFor(model)
       if (revisions.get(key) !== started.models.get(key) || providerRevisions.get(model.provider_id) !== started.providers.get(model.provider_id)) {
@@ -71,15 +73,16 @@ export const useConfigStore = defineStore('config', () => {
     pickerRefs.value = pickerRefs.value.filter(key => key !== keyFor(model))
   }
   function beginModelWrite(model: ModelRef) {
+    const startedGeneration = generation
     const reference = { provider_id: model.provider_id, model_id: model.model_id }
     const key = keyFor(reference)
     const providerRevision = providerRevisions.get(reference.provider_id)
     const modelRevision = revisions.get(key)
     return (result: ModelWithMetadata) => {
-      const current = providerRevisions.get(reference.provider_id) === providerRevision && revisions.get(key) === modelRevision
-      if (reference.model_id !== result.model_id) forgetModel(reference)
+      const current = generation === startedGeneration && providerRevisions.get(reference.provider_id) === providerRevision && revisions.get(key) === modelRevision
       // A committed PUT can arrive after a provider save has rematerialized its metadata.
       if (!current) return false
+      if (reference.model_id !== result.model_id) forgetModel(reference)
       retainModels([result])
       return true
     }
@@ -145,7 +148,11 @@ export const useConfigStore = defineStore('config', () => {
     pickerLoading.value = false
   }
   async function loadCatalogProviders() {
-    try { catalogProviders.value = await api.catalogProviders() }
+    const startedGeneration = generation
+    try {
+      const result = await api.catalogProviders()
+      if (startedGeneration === generation) catalogProviders.value = result
+    }
     catch { /* Existing model metadata remains usable when catalog names are unavailable. */ }
   }
   async function loadProviderPage(providerId: number, query: Partial<ModelQuery> = {}, signal?: AbortSignal) {
@@ -153,6 +160,7 @@ export const useConfigStore = defineStore('config', () => {
     pageTokens.set(providerId, token)
     const started = readRevisions()
     const page = await api.queryModels({ ...query, provider_id: providerId }, signal)
+    if (started.generation !== generation) return { ...page, models: [], next_cursor: null }
     if (pageTokens.get(providerId) === token && !signal?.aborted) return { ...page, models: retainRead(page.models, started) }
     return page
   }
@@ -161,13 +169,14 @@ export const useConfigStore = defineStore('config', () => {
     selectedRefs.set(keyFor(model), { provider_id: model.provider_id, model_id: model.model_id })
     if (modelsByRef.value[keyFor(model)] && !staleRefs.has(keyFor(model))) return
     const key = keyFor(model)
+    const startedGeneration = generation
     const pending = pendingRefs.get(key)
     if (pending) return pending
     const started = revisions.get(key)
     const providerStarted = providerRevisions.get(model.provider_id)
     const operation = api.modelByRef(model).then(value => {
       // Saves and tombstones both supersede this read, even if the cache is currently empty.
-      if (revisions.get(key) === started && providerRevisions.get(model.provider_id) === providerStarted && (!modelsByRef.value[key] || staleRefs.has(key))) retainModels([value])
+      if (generation === startedGeneration && revisions.get(key) === started && providerRevisions.get(model.provider_id) === providerStarted && (!modelsByRef.value[key] || staleRefs.has(key))) retainModels([value])
     }).finally(() => { if (pendingRefs.get(key) === operation) pendingRefs.delete(key) })
     pendingRefs.set(key, operation)
     return operation
@@ -197,8 +206,33 @@ export const useConfigStore = defineStore('config', () => {
     const found = modelFor(model)
     return found !== undefined && found.provider.enabled && found.model.enabled
   }
+
+  function reset(): void {
+    generation++
+    loadToken++
+    pickerToken++
+    pickerController?.abort()
+    pickerController = undefined
+    pickerQuery = ''
+    pageTokens.clear()
+    pendingRefs.clear()
+    selectedRefs.clear()
+    revisions.clear()
+    providerRevisions.clear()
+    staleRefs.clear()
+    providerRecords.value = []
+    modelsByRef.value = {}
+    catalogProviders.value = []
+    loaded.value = false
+    loadError.value = null
+    pickerRefs.value = []
+    pickerCursor.value = null
+    pickerLoaded.value = false
+    pickerLoading.value = false
+    pickerError.value = null
+  }
   return {
     providerRecords, providers, catalogProviders, modelsByRef, modelsByProvider, loaded, loadError, pickerRefs, pickerCursor, pickerLoaded, pickerLoading, pickerError,
-    load, loadCatalogProviders, loadEnabledModels, cancelPickerQuery, loadProviderPage, ensureModel, refreshSelectedModels, invalidateProviderModels, beginModelWrite, refreshModel, retainModels, forgetModel, enabledModels, modelFor, isAvailable,
+    load, loadCatalogProviders, loadEnabledModels, cancelPickerQuery, loadProviderPage, ensureModel, refreshSelectedModels, invalidateProviderModels, beginModelWrite, refreshModel, retainModels, forgetModel, enabledModels, modelFor, isAvailable, reset,
   }
 })

@@ -1,12 +1,16 @@
 // @vitest-environment happy-dom
 import { createApp } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
-import { createMemoryHistory, createRouter } from 'vue-router'
+import { createMemoryHistory } from 'vue-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from '@/client/app.vue'
 import { authClient } from '@/client/lib/auth-client'
+import { api } from '@/client/lib/api'
+import { createAppRouter } from '@/client/router'
 import { useSyncStore } from '@/client/stores/sync'
 import { useConfigStore } from '@/client/stores/config'
+import { modelRecords, provider } from './provider-fixtures'
+import type { Conversation } from '@/shared/models'
 
 vi.mock('@/client/lib/auth-client', () => ({
   authClient: {
@@ -20,6 +24,7 @@ vi.mock('@/client/lib/auth-client', () => ({
 describe('collection load state', () => {
   beforeEach(() => setActivePinia(createPinia()))
   afterEach(() => {
+    vi.restoreAllMocks()
     vi.unstubAllGlobals()
     document.body.innerHTML = ''
   })
@@ -30,10 +35,8 @@ describe('collection load state', () => {
     const fetch = vi.fn(() => { throw new Error('private request started') })
     vi.stubGlobal('fetch', fetch)
     const pinia = createPinia()
-    const router = createRouter({
-      history: createMemoryHistory(),
-      routes: [{ path: '/login', component: { template: '<main>login</main>' }, meta: { guestOnly: true } }],
-    })
+    setActivePinia(pinia)
+    const router = createAppRouter(createMemoryHistory())
     await router.push('/login')
     const host = document.createElement('div')
     document.body.append(host)
@@ -52,6 +55,45 @@ describe('collection load state', () => {
     expect(sync.settingsLoaded).toBe(false)
     expect(config.loaded).toBe(false)
     app.unmount()
+  })
+
+  // A response from the previous identity must not repopulate reset collection state.
+  it('invalidates pending private loads while clearing sync and config state', async () => {
+    const sync = useSyncStore()
+    const config = useConfigStore()
+    let finishConversations!: (value: Conversation[]) => void
+    let finishProviders!: (value: typeof config.providerRecords) => void
+    vi.spyOn(api, 'conversations').mockImplementation(() => new Promise(resolve => { finishConversations = resolve }))
+    vi.spyOn(api, 'providers').mockImplementation(() => new Promise(resolve => { finishProviders = resolve }))
+    sync.applyEvent({ type: 'project.created', project: { id: 7, user_id: 1, name: 'Old', icon_attachment_id: null, system_prompt: null, provider_id: null, model_id: null, params: null, created_at: 1, updated_at: 1 } })
+    const oldConversation: Conversation = { id: 9, user_id: 1, project_id: null, title: 'Old chat', head_message_id: null, provider_id: null, model_id: null, system_prompt: null, params: null, tools: [], created_at: 1, updated_at: 1, archived_at: null }
+    sync.applyEvent({ type: 'conversation.created', conversation: oldConversation })
+    sync.applyEvent({ type: 'message.created', message: { id: 11, conversation_id: 9, parent_id: null, seq: 1, role: 'user', parts: [{ type: 'text', text: 'private' }], provider_id: null, model_id: null, usage: null, status: 'done', error: null, created_at: 1 } })
+    sync.applyEvent({ type: 'settings.updated', settings: { plugins: { old: true } } })
+    sync.beginOptimistic('old-request', { kind: 'tool_result', messageId: 11, part: { type: 'tool_result', call_id: 'old-call', name: 'old-tool', content: { ok: true } } })
+    config.providerRecords = [provider]
+    config.retainModels(modelRecords)
+    config.catalogProviders = [{ id: 'old', name: 'Old', api: 'https://old.test' }]
+    const oldConversations = sync.loadConversations()
+    const oldProviders = config.load()
+
+    sync.reset()
+    config.reset()
+    finishConversations([oldConversation])
+    finishProviders([provider])
+    await Promise.all([oldConversations, oldProviders])
+
+    expect(sync.projects.size).toBe(0)
+    expect(sync.conversations.size).toBe(0)
+    expect(sync.messages.size).toBe(0)
+    expect(sync.optimisticMutations.size).toBe(0)
+    expect(sync.settings).toEqual({ plugins: {} })
+    expect(sync.conversationsLoaded).toBe(false)
+    expect(sync.status).toBe('closed')
+    expect(config.providerRecords).toEqual([])
+    expect(config.modelsByRef).toEqual({})
+    expect(config.catalogProviders).toEqual([])
+    expect(config.loaded).toBe(false)
   })
 
   // Marking an unknown/failed collection as loaded would expose a false empty state.

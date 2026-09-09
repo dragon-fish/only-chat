@@ -34,7 +34,7 @@ async function submit() {
       errorMessage.value = authErrorMessage(result.error, 'login')
       return
     }
-    await auth.refresh()
+    await auth.refresh(true)
     if (!auth.authUser) {
       errorMessage.value = '登录失败，请稍后重试'
       return
