@@ -3,6 +3,9 @@ import { z } from 'zod'
 export const PublicSiteSettingsSchema = z.object({ allowRegister: z.boolean() })
 export type PublicSiteSettings = z.infer<typeof PublicSiteSettingsSchema>
 
+export const AdminSiteSettingsSchema = PublicSiteSettingsSchema.extend({ source: z.enum(['db', 'env', 'default']) })
+export type AdminSiteSettings = z.infer<typeof AdminSiteSettingsSchema>
+
 export const AuthUserSummarySchema = z.object({
   id: z.number().int().positive(),
   name: z.string(),

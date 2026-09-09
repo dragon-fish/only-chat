@@ -3,7 +3,7 @@ import { vi } from 'vitest'
 import { createApp } from '@/server/app'
 import type { ProviderWithInterfaces } from '@/shared/models'
 import type { ProviderWriteInput } from '@/shared/api'
-import { seedTestUser } from './user-fixture'
+import { ensureTestUser } from './auth-helper'
 
 export const catalogFixture = {
   providers: {
@@ -21,14 +21,14 @@ export const catalogFixture = {
 }
 
 export async function catalogApp() {
-  await seedTestUser()
+  const client = await ensureTestUser()
   await env.DB.exec('DELETE FROM model_catalog_refresh')
   const ctx = await createApp({ env, side: 'worker' })
   vi.stubGlobal('fetch', async () => Response.json(catalogFixture))
   await ctx.modelCatalog.refresh('manual')
   vi.unstubAllGlobals()
   const request = (method: string, path: string, body?: unknown) => ctx.api.request(`/api${path}`, {
-    method, headers: { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body),
+    method, headers: { 'content-type': 'application/json', cookie: client.cookie }, body: body === undefined ? undefined : JSON.stringify(body),
   })
   async function createProvider(patch: Partial<ProviderWriteInput> = {}): Promise<ProviderWithInterfaces> {
     const response = await request('POST', '/providers', {

@@ -4,6 +4,7 @@ import { drizzleAdapter } from '@better-auth/drizzle-adapter'
 import { admin as adminPlugin } from 'better-auth/plugins/admin'
 import { authAccounts, authSessions, authVerifications, users } from '@/server/db/schema'
 import { authRoles } from './access'
+import { protectOwner, registrationPolicy } from './policy'
 
 const authSchema = { users, authAccounts, authSessions, authVerifications }
 
@@ -23,11 +24,12 @@ export class Authentication extends Service {
         ipAddress: { ipAddressHeaders: ['cf-connecting-ip'] },
       },
       emailAndPassword: { enabled: true },
-      user: { modelName: 'users' },
+      user: { modelName: 'users', validateUserInfo: registrationPolicy(ctx.db.orm, ctx.env.ALLOW_REGISTER) },
       account: { modelName: 'authAccounts' },
       session: { modelName: 'authSessions' },
       verification: { modelName: 'authVerifications' },
       plugins: [adminPlugin({ adminUserIds: ['1'], roles: authRoles })],
+      hooks: { before: protectOwner },
     })
   }
 }

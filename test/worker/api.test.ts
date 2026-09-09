@@ -1,4 +1,4 @@
-import { env, exports } from 'cloudflare:workers'
+import { env } from 'cloudflare:workers'
 import { eq } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createDb } from '@/server/db/client'
@@ -9,12 +9,12 @@ import { ProviderWithInterfacesSchema, UserSchema } from '@/shared/models'
 import { catalogApp } from './provider-catalog-fixture'
 import { decryptSecret } from '@/server/plugins/llm/crypto'
 import { createApp } from '@/server/app'
-import { seedTestUser } from './user-fixture'
+import { ensureTestUser, authenticatedFetch, authenticatedRequest } from './auth-helper'
 
-beforeEach(() => seedTestUser())
+beforeEach(async () => { await ensureTestUser() })
 
 const json = (method: string, path: string, body?: unknown) =>
-  exports.default.fetch(new Request(`https://x${path}`, { method, headers: { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) }))
+  authenticatedFetch(new Request(`https://x${path}`, { method, headers: { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) }))
 
 describe('provider file cleanup before configuration changes', () => {
   afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
@@ -120,7 +120,7 @@ describe('atomic provider interface API', () => {
       },
     })
     const delayed = await createApp({ env: { ...env, DB: delayedDB }, side: 'worker' })
-    const pending = delayed.api.request(`/api/providers/${provider.id}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
+    const pending = authenticatedRequest(delayed.api, `/api/providers/${provider.id}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
       name: 'Stale request', enabled: true, api_key, default_protocol: 'responses', models_dev_provider: { source: 'endpoint' },
       interfaces: [{ protocol: 'responses', base_url: 'https://gateway.test/v1' }],
     }) })
@@ -160,7 +160,7 @@ describe('atomic provider interface API', () => {
     })
     const delayed = await createApp({ env: { ...env, DB: delayedDB }, side: 'worker' })
     const input = { name: 'Concurrent rename', default_protocol: 'responses', interfaces: [{ protocol: 'responses', base_url: 'https://gateway.test/v1' }] }
-    const pending = delayed.api.request(`/api/providers/${provider.id}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...input, ...(writesKey ? { api_key: 'stale-key' } : {}) }) })
+    const pending = authenticatedRequest(delayed.api, `/api/providers/${provider.id}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...input, ...(writesKey ? { api_key: 'stale-key' } : {}) }) })
     await arrived
     try {
       expect((await request('PUT', `/providers/${provider.id}`, { ...input, api_key: 'current-key' })).status).toBe(200)
@@ -262,7 +262,8 @@ describe('REST api', () => {
   it('returns the application user DTO with a millisecond creation timestamp', async () => {
     const res = await json('GET', '/api/me')
     expect(res.status).toBe(200)
-    expect(UserSchema.parse(await res.json())).toEqual({ id: 1, name: 'owner', settings: { plugins: {} }, created_at: 0 })
+    const stored = await env.DB.prepare('SELECT created_at FROM users WHERE id = 1').first<{ created_at: number }>()
+    expect(UserSchema.parse(await res.json())).toEqual({ id: 1, name: 'owner', settings: { plugins: {} }, created_at: stored!.created_at })
   })
 
   it('creates a provider without leaking the key, lists models, deletes', async () => {
@@ -296,12 +297,12 @@ describe('REST api', () => {
     const sha = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map((b) => b.toString(16).padStart(2, '0')).join('')
     const check1 = await (await json('POST', '/api/attachments/check', { sha256: sha })).json() as { exists: boolean }
     expect(check1.exists).toBe(false)
-    const up = await exports.default.fetch(new Request(`https://x/api/attachments/${sha}?w=2&h=2`, { method: 'PUT', headers: { 'content-type': 'image/png' }, body: bytes }))
+    const up = await authenticatedFetch(new Request(`https://x/api/attachments/${sha}?w=2&h=2`, { method: 'PUT', headers: { 'content-type': 'image/png' }, body: bytes }))
     expect(up.status).toBe(201)
     const { attachment_id } = (await up.json()) as { attachment_id: number }
     const check2 = await (await json('POST', '/api/attachments/check', { sha256: sha })).json() as { exists: boolean; attachment_id: number }
     expect(check2).toEqual({ exists: true, attachment_id })
-    const got = await exports.default.fetch(new Request(`https://x/api/attachments/${attachment_id}`))
+    const got = await authenticatedFetch(new Request(`https://x/api/attachments/${attachment_id}`))
     expect(got.status).toBe(200)
     expect(got.headers.get('content-type')).toBe('image/png')
     expect(new Uint8Array(await got.arrayBuffer())).toEqual(bytes)
@@ -319,14 +320,14 @@ describe('REST api', () => {
       width: null, height: null, r2_key: key, origin: 'generated', created_at: 0,
     }).onConflictDoUpdate({ target: [attachments.user_id, attachments.sha256], set: { r2_key: key } }).returning()
 
-    const got = await exports.default.fetch(new Request(`https://x/api/attachments/${row!.id}`))
+    const got = await authenticatedFetch(new Request(`https://x/api/attachments/${row!.id}`))
     expect(got.status).toBe(200)
     expect(got.headers.get('content-type')).toBe('image/png')
     expect(new Uint8Array(await got.arrayBuffer())).toEqual(bytes)
   })
 
   it('rejects an upload whose hash does not match', async () => {
-    const res = await exports.default.fetch(new Request(`https://x/api/attachments/${'0'.repeat(64)}`, { method: 'PUT', headers: { 'content-type': 'image/png' }, body: new Uint8Array([9]) }))
+    const res = await authenticatedFetch(new Request(`https://x/api/attachments/${'0'.repeat(64)}`, { method: 'PUT', headers: { 'content-type': 'image/png' }, body: new Uint8Array([9]) }))
     expect(res.status).toBe(400)
   })
 

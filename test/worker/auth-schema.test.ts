@@ -4,6 +4,7 @@ import { getTableName } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
 import { createApp } from '@/server/app'
 import { authSessions, conversations, users } from '@/server/db/schema'
+import { setAllowRegister } from './auth-helper'
 
 describe('authentication foundation', () => {
   it('does not create a default user at startup', async () => {
@@ -17,6 +18,7 @@ describe('authentication foundation', () => {
   })
 
   it('signs up with database-generated user IDs and persists string credential and session IDs', async () => {
+    await setAllowRegister(true)
     const app = await createApp({ env, side: 'worker' })
     const result = await app.auth.instance.api.signUpEmail({ body: { name: 'First', email: 'first@example.com', password: 'a-long-test-password' } })
     expect(result.user.id).toBe('1')

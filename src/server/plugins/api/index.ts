@@ -9,20 +9,26 @@ import { attachmentRoutes } from './attachments'
 import { projectRoutes } from './projects'
 import { modelCatalogRoutes } from './model-catalog'
 import { CatalogUnavailableError } from '../model-catalog/storage'
+import { requireAuth, type ApiEnv } from './auth'
+import { adminSiteSettingsRoutes, publicSiteSettingsRoutes } from './site-settings'
 
-export type ApiApp = Hono<{ Bindings: Env }>
+export type ApiApp = Hono<ApiEnv>
 
 export const ApiPlugin = {
   name: 'api',
-  inject: ['env', 'db', 'assets', 'modelCatalog'],
+  inject: ['env', 'db', 'auth', 'assets', 'modelCatalog'],
   apply(ctx: Context) {
     const app: ApiApp = new Hono()
+    app.all('/api/auth/*', c => ctx.auth.instance.handler(c.req.raw))
     app.get('/api/health', (c) => c.json({ ok: true }))
+    app.route('/api', publicSiteSettingsRoutes(ctx))
+    app.use('/api/*', requireAuth(ctx))
+    app.use('/ws', requireAuth(ctx))
+    app.route('/api', adminSiteSettingsRoutes(ctx))
     app.get('/ws', (c) => {
       if (c.req.header('Upgrade') !== 'websocket') return c.text('Expected websocket', 426)
       // R17: browsers always send Origin, so a mismatch there means some other site's page is
-      // trying to open this socket cross-origin. Non-browser clients send no Origin at all and
-      // are allowed through — Cloudflare Access still gates the request in front of the Worker.
+      // trying to open this socket cross-origin. Authenticated non-browser clients may omit Origin.
       const origin = c.req.header('Origin')
       if (origin) {
         const requestHost = new URL(c.req.url).host.toLowerCase()

@@ -4,9 +4,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp } from '@/server/app'
 import { models, providerInterfaces, providers } from '@/server/db/schema'
 import { CatalogLease } from '@/server/plugins/model-catalog/lease'
-import { seedTestUser } from './user-fixture'
+import { ensureTestUser, authenticatedRequest } from './auth-helper'
 
-beforeEach(() => seedTestUser())
+beforeEach(async () => { await ensureTestUser() })
 
 function catalog(name = 'Catalog model') {
   return {
@@ -227,7 +227,7 @@ describe('model catalog', () => {
     let published
     try {
       serve(catalog('Contender version'))
-      const conflict = await contender.api.request('/api/model-catalog/refresh', { method: 'POST' })
+      const conflict = await authenticatedRequest(contender.api, '/api/model-catalog/refresh', { method: 'POST' })
       expect(conflict.status).toBe(202)
       expect(await conflict.json()).toHaveProperty('instanceId')
       expect(await contender.modelCatalog.refresh('cron')).toBeNull()
@@ -445,22 +445,22 @@ describe('model catalog', () => {
       }),
     }
     const ctx = await createApp({ env: { ...env, MODEL_CATALOG_REFRESH: workflow as unknown as Workflow }, side: 'worker' })
-    const initial = await ctx.api.request('/api/model-catalog/status')
+    const initial = await authenticatedRequest(ctx.api, '/api/model-catalog/status')
     expect(initial.status).toBe(200)
     expect(await initial.json()).toMatchObject({ version: null })
-    const refresh = await ctx.api.request('/api/model-catalog/refresh', { method: 'POST' })
+    const refresh = await authenticatedRequest(ctx.api, '/api/model-catalog/refresh', { method: 'POST' })
     expect(refresh.status).toBe(202)
     expect(await refresh.json()).toEqual({ instanceId: 'catalog-manual-refresh-test-id' })
     expect(create).toHaveBeenCalledWith(expect.objectContaining({ params: { source: 'manual' } }))
     expect(createdDispose).toHaveBeenCalledOnce()
-    const running = await ctx.api.request('/api/model-catalog/refresh/catalog-manual-refresh-test-id')
+    const running = await authenticatedRequest(ctx.api, '/api/model-catalog/refresh/catalog-manual-refresh-test-id')
     expect(await running.json()).toEqual({ status: 'running' })
     expect(statusResultDispose).toHaveBeenCalledOnce()
     expect(instanceDispose).toHaveBeenCalledOnce()
     serve()
     await ctx.modelCatalog.refresh('manual')
-    const found = await ctx.api.request('/api/model-catalog/providers?q=ACM')
+    const found = await authenticatedRequest(ctx.api, '/api/model-catalog/providers?q=ACM')
     expect(await found.json()).toEqual([{ id: 'acme', name: 'Acme', api: 'https://acme.test/v1' }])
-    expect(await (await ctx.api.request('/api/model-catalog/providers?q=missing')).json()).toEqual([])
+    expect(await (await authenticatedRequest(ctx.api, '/api/model-catalog/providers?q=missing')).json()).toEqual([])
   })
 })

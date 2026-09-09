@@ -1,16 +1,16 @@
 import { runInDurableObject } from 'cloudflare:test'
-import { env, exports } from 'cloudflare:workers'
+import { env } from 'cloudflare:workers'
 import { describe, expect, it } from 'vitest'
 import { createDb } from '@/server/db/client'
 import type { UserHub } from '@/server/index'
-import { seedTestUser } from './user-fixture'
+import { ensureTestUser as seedTestUser, authenticatedFetch } from './auth-helper'
 import { createConversation } from '@/server/plugins/hub/conversations'
 import type { Message } from '@/shared/models'
 import { connect } from './ws-helper'
 
 describe('UserHub DO', () => {
   it('sends a snapshot on connect and rejects non-upgrade requests', async () => {
-    const plain = await exports.default.fetch(new Request('https://x/ws'))
+    const plain = await authenticatedFetch(new Request('https://x/ws'))
     expect(plain.status).toBe(426)
     const { next } = await connect()
     const snap = await next('snapshot')
@@ -18,13 +18,13 @@ describe('UserHub DO', () => {
   })
 
   it('rejects a websocket upgrade whose Origin does not match the request host', async () => {
-    const res = await exports.default.fetch(new Request('https://x/ws', { headers: { Upgrade: 'websocket', Origin: 'https://evil.example' } }))
+    const res = await authenticatedFetch(new Request('https://x/ws', { headers: { Upgrade: 'websocket', Origin: 'https://evil.example' } }))
     expect(res.status).toBe(403)
     expect(await res.json()).toEqual({ error: 'origin not allowed' })
   })
 
   it('accepts a websocket upgrade whose Origin matches the request host', async () => {
-    const res = await exports.default.fetch(new Request('https://x/ws', { headers: { Upgrade: 'websocket', Origin: 'https://x' } }))
+    const res = await authenticatedFetch(new Request('https://x/ws', { headers: { Upgrade: 'websocket', Origin: 'https://x' } }))
     expect(res.status).toBe(101)
   })
 

@@ -1,4 +1,5 @@
 import { env } from 'cloudflare:workers'
+import { authenticatedRequest } from './auth-helper'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ModelPageSchema, ModelWithMetadataSchema, type ModelPage } from '@/shared/models'
 import { catalogApp, catalogFixture } from './provider-catalog-fixture'
@@ -123,7 +124,7 @@ describe('catalog-backed model membership and queries', () => {
       },
     })
     const contested = await createApp({ env: { ...env, DB: contestedDB }, side: 'worker' })
-    const response = await contested.api.request(`/api/providers/${provider.id}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
+    const response = await authenticatedRequest(contested.api, `/api/providers/${provider.id}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
       name: 'Must roll back', default_protocol: 'responses', interfaces: [{ protocol: 'responses', base_url: 'https://unknown.test/v1' }],
     }) })
     expect(response.status).toBe(409)
@@ -175,7 +176,7 @@ describe('catalog-backed model membership and queries', () => {
     const resume = new Promise<void>(resolve => { release = resolve })
     const readCatalog = delayed.modelCatalog.materializationCatalog.bind(delayed.modelCatalog)
     vi.spyOn(delayed.modelCatalog, 'materializationCatalog').mockImplementationOnce(async (...args) => { arrive(); await resume; return readCatalog(...args) })
-    const pending = delayed.api.request(`/api/providers/${provider.id}/models/${created.id}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model_id: 'lab/alpha' }) })
+    const pending = authenticatedRequest(delayed.api, `/api/providers/${provider.id}/models/${created.id}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model_id: 'lab/alpha' }) })
     await arrived
     try {
       const edit = source === 'override'
@@ -212,8 +213,8 @@ describe('catalog-backed model membership and queries', () => {
     })
     const delayed = await createApp({ env: { ...env, DB: delayedDB }, side: 'worker' })
     const pending = operation === 'import'
-      ? delayed.api.request(`/api/providers/${provider.id}/fetch-models`, { method: 'POST' })
-      : delayed.api.request(`/api/providers/${provider.id}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
+      ? authenticatedRequest(delayed.api, `/api/providers/${provider.id}/fetch-models`, { method: 'POST' })
+      : authenticatedRequest(delayed.api, `/api/providers/${provider.id}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
         name: provider.name, default_protocol: 'responses', interfaces: [{ protocol: 'responses', base_url: 'https://unknown.test/v1' }],
       }) })
     await arrived

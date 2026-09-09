@@ -1,7 +1,7 @@
 import { env } from 'cloudflare:workers'
 import { describe, expect, it } from 'vitest'
 import { createDb } from '@/server/db/client'
-import { seedTestUser } from './user-fixture'
+import { ensureTestUser as seedTestUser } from './auth-helper'
 import { createConversation, finalizeMessage, forkConversation, getConversation, insertMessage, listMessages, maxSeq, toMessage, updateConversation } from '@/server/plugins/hub/conversations'
 import { createProject, deleteProject, getProject, listProjectConversations, listProjects, updateProject } from '@/server/plugins/hub/projects'
 import { users } from '@/server/db/schema'

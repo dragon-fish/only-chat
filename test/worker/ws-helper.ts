@@ -1,4 +1,4 @@
-import { exports } from 'cloudflare:workers'
+import { authenticatedFetch } from './auth-helper'
 import type { WsEvent } from '@/shared/ws'
 
 export interface WsHarness {
@@ -19,7 +19,7 @@ interface Waiter {
 }
 
 export async function connect(): Promise<WsHarness> {
-  const res = await exports.default.fetch(new Request('https://x/ws', { headers: { Upgrade: 'websocket' } }))
+  const res = await authenticatedFetch(new Request('https://x/ws', { headers: { Upgrade: 'websocket' } }))
   if (res.status !== 101 || !res.webSocket) throw new Error(`upgrade failed: ${res.status}`)
   const ws = res.webSocket
   ws.accept()
