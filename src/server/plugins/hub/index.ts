@@ -50,6 +50,7 @@ export class Hub extends Service {
   private readonly _settlers = new Map<number, () => void>()
   private _revoked = false
   private _accessEpoch = 0
+  private _broadcastTail: Promise<void> = Promise.resolve()
 
   constructor(ctx: Context, config: { userId: number }) {
     super(ctx, 'hub')
@@ -70,6 +71,14 @@ export class Hub extends Service {
 
   async broadcast(event: WsEvent): Promise<void> {
     const raw = encodeEvent(event)
+    // Serialize whole broadcasts so all recipients observe the same order across producers.
+    const sending = this._broadcastTail.then(() => this._deliverBroadcast(raw))
+    // Keep a rejected delivery visible to its caller without blocking subsequent broadcasts.
+    this._broadcastTail = sending.catch(() => {})
+    return sending
+  }
+
+  private async _deliverBroadcast(raw: string): Promise<void> {
     for (const ws of this.state.getWebSockets()) {
       try {
         const epoch = this._accessEpoch
