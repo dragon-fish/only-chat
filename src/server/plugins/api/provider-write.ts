@@ -18,6 +18,7 @@ export function toProviderDto(row: ProviderRow, interfaces: ProviderInterfaceRow
     id: row.id, user_id: row.user_id, name: row.name, enabled: row.enabled, has_key: row.api_key !== null,
     default_interface_id: row.default_interface_id, credential_version: row.credential_version,
     models_dev_provider_id: row.models_dev_provider_id, models_dev_provider_source: row.models_dev_provider_source,
+    default_image_model_id: row.default_image_model_id,
     interfaces, created_at: row.created_at,
   })
 }
@@ -78,6 +79,7 @@ async function writeProviderAttempt(ctx: Context, userId: number, input: Provide
   const fields = {
     name: input.name, ...(input.enabled === undefined ? {} : { enabled: input.enabled }),
     models_dev_provider_id: match.id, models_dev_provider_source: match.source,
+    ...(input.default_image_model_id === undefined ? {} : { default_image_model_id: input.default_image_model_id }),
   }
   const operations: BatchItem<'sqlite'>[] = []
   const rows = before && before.models_dev_provider_id !== match.id

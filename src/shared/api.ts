@@ -1,11 +1,8 @@
 import { z } from 'zod'
 import { ModelMetadataOverrideSchema } from './model-metadata'
 import { InterfaceProtocolSchema, ConversationParamsSchema } from './models'
-
-export interface ModelRef {
-  provider_id: number
-  model_id: string
-}
+export type { ModelRef } from './model-ref'
+export { ModelRefSchema } from './model-ref'
 
 /** Only `name` is required; prompt, model and params may all be absent or explicitly cleared. */
 export const ProjectInputSchema = z.object({
@@ -47,6 +44,7 @@ export const ProviderWriteInputSchema = z.strictObject({
   interfaces: z.array(ProviderInterfaceInputSchema).min(1),
   default_protocol: InterfaceProtocolSchema,
   models_dev_provider: ModelsDevProviderAssociationInputSchema.optional(),
+  default_image_model_id: z.string().min(1).nullable().optional(),
 }).superRefine((value, context) => {
   const protocols = value.interfaces.map(entry => entry.protocol)
   if (new Set(protocols).size !== protocols.length) {

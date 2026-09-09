@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm'
-import { check, index, integer, sqliteTable, text, uniqueIndex, type AnySQLiteColumn } from 'drizzle-orm/sqlite-core'
+import { check, index, integer, primaryKey, sqliteTable, text, uniqueIndex, type AnySQLiteColumn } from 'drizzle-orm/sqlite-core'
 import type { CatalogMatches, ModelMetadata, ModelMetadataOverride } from '@/shared/model-metadata'
+import type { ArtifactRunStatus, ImageGenerationParams } from '@/shared/artifacts'
 import type { Part } from '@/shared/parts'
 import type {
   InterfaceProtocol, PersistedStatus, ConversationParams, Usage, UserSettings,
@@ -85,6 +86,7 @@ export const providers = sqliteTable('providers', {
   credential_version: integer().notNull().default(1),
   models_dev_provider_id: text(),
   models_dev_provider_source: text().$type<'manual' | 'endpoint'>(),
+  default_image_model_id: text(),
   created_at: integer().notNull(),
 }, (t) => [index('providers_user_idx').on(t.user_id)])
 
@@ -110,6 +112,7 @@ export const models = sqliteTable('models', {
   metadata_override: text({ mode: 'json' }).$type<ModelMetadataOverride>().notNull().default({}),
   metadata_resolved: text({ mode: 'json' }).$type<ModelMetadata>().notNull().default({}),
   catalog_matches: text({ mode: 'json' }).$type<CatalogMatches>().notNull().default({ operator: null, lab: null, global: null }),
+  provider_metadata: text({ mode: 'json' }).$type<Record<string, unknown>>().notNull().default({}),
   search_name: text().notNull().default(''),
   lab_id: text(),
   supports_image_input: integer({ mode: 'boolean' }).notNull().default(false),
@@ -153,9 +156,12 @@ export const conversations = sqliteTable('conversations', {
   user_id: integer().notNull().references(() => users.id, { onDelete: 'cascade' }),
   project_id: integer().references(() => projects.id, { onDelete: 'set null' }),
   title: text().notNull(),
+  kind: text().$type<'chat' | 'image'>().notNull().default('chat'),
   head_message_id: integer(),
   provider_id: integer(),
   model_id: text(),
+  image_provider_id: integer(),
+  image_model_id: text(),
   system_prompt: text(),
   params: text({ mode: 'json' }).$type<ConversationParams>(),
   tools: text({ mode: 'json' }).$type<string[]>().notNull().default([]),
@@ -164,7 +170,9 @@ export const conversations = sqliteTable('conversations', {
   archived_at: integer(),
 }, (t) => [
   index('conversations_user_updated_idx').on(t.user_id, t.updated_at),
+  index('conversations_user_kind_updated_idx').on(t.user_id, t.kind, t.updated_at),
   index('conversations_project_updated_idx').on(t.project_id, t.updated_at),
+  check('conversations_kind_check', sql`${t.kind} IN ('chat', 'image')`),
 ])
 
 export const messages = sqliteTable('messages', {
@@ -198,6 +206,83 @@ export const attachments = sqliteTable('attachments', {
   created_at: integer().notNull(),
 }, (t) => [uniqueIndex('attachments_user_sha_uq').on(t.user_id, t.sha256)])
 
+export const artifactRuns = sqliteTable('artifact_runs', {
+  id: integer().primaryKey({ autoIncrement: true }),
+  user_id: integer().notNull().references(() => users.id, { onDelete: 'cascade' }),
+  client_request_id: text().notNull(),
+  kind: text().$type<'image_generation'>().notNull(),
+  source: text().$type<'studio' | 'tool' | 'provider_tool' | 'chat_output'>().notNull(),
+  operation: text().$type<'generate' | 'edit'>().notNull(),
+  status: text().$type<ArtifactRunStatus>().notNull(),
+  conversation_id: integer().references(() => conversations.id, { onDelete: 'set null' }),
+  message_id: integer().references(() => messages.id, { onDelete: 'set null' }),
+  tool_call_id: text(),
+  provider_id: integer().references(() => providers.id, { onDelete: 'set null' }),
+  provider_name: text().notNull(),
+  interface_id: integer().references(() => providerInterfaces.id, { onDelete: 'set null' }),
+  interface_protocol: text().$type<InterfaceProtocol>().notNull(),
+  credential_version: integer().notNull(),
+  model_id: text().notNull(),
+  model_name: text().notNull(),
+  prompt: text().notNull(),
+  params: text({ mode: 'json' }).$type<ImageGenerationParams>().notNull(),
+  workflow_instance_id: text().notNull(),
+  error: text(),
+  created_at: integer().notNull(),
+  started_at: integer(),
+  completed_at: integer(),
+}, (t) => [
+  uniqueIndex('artifact_runs_user_request_uq').on(t.user_id, t.client_request_id),
+  uniqueIndex('artifact_runs_workflow_uq').on(t.workflow_instance_id),
+  index('artifact_runs_user_status_created_idx').on(t.user_id, t.status, t.created_at, t.id),
+  index('artifact_runs_conversation_idx').on(t.conversation_id, t.id),
+  check('artifact_runs_kind_check', sql`${t.kind} = 'image_generation'`),
+  check('artifact_runs_source_check', sql`${t.source} IN ('studio', 'tool', 'provider_tool', 'chat_output')`),
+  check('artifact_runs_operation_check', sql`${t.operation} IN ('generate', 'edit')`),
+  check('artifact_runs_status_check', sql`${t.status} IN ('queued', 'running', 'completed', 'failed', 'cancelled')`),
+])
+
+export const artifactRunInputs = sqliteTable('artifact_run_inputs', {
+  run_id: integer().notNull().references(() => artifactRuns.id, { onDelete: 'cascade' }),
+  attachment_id: integer().notNull().references(() => attachments.id, { onDelete: 'restrict' }),
+  position: integer().notNull(),
+}, (t) => [
+  primaryKey({ columns: [t.run_id, t.position] }),
+  index('artifact_run_inputs_attachment_idx').on(t.attachment_id, t.run_id),
+])
+
+export const artifacts = sqliteTable('artifacts', {
+  id: integer().primaryKey({ autoIncrement: true }),
+  user_id: integer().notNull().references(() => users.id, { onDelete: 'cascade' }),
+  run_id: integer().notNull().references(() => artifactRuns.id, { onDelete: 'cascade' }),
+  kind: text().$type<'image'>().notNull(),
+  attachment_id: integer().notNull().references(() => attachments.id, { onDelete: 'restrict' }),
+  output_index: integer().notNull(),
+  width: integer(),
+  height: integer(),
+  mime: text().notNull(),
+  created_at: integer().notNull(),
+  deleted_at: integer(),
+}, (t) => [
+  uniqueIndex('artifacts_run_output_uq').on(t.run_id, t.output_index),
+  index('artifacts_user_gallery_idx').on(t.user_id, t.kind, t.deleted_at, t.created_at, t.id),
+  index('artifacts_attachment_idx').on(t.attachment_id, t.id),
+  check('artifacts_kind_check', sql`${t.kind} = 'image'`),
+])
+
+export const artifactLinks = sqliteTable('artifact_links', {
+  artifact_id: integer().notNull().references(() => artifacts.id, { onDelete: 'cascade' }),
+  conversation_id: integer().notNull().references(() => conversations.id, { onDelete: 'cascade' }),
+  message_id: integer().notNull().references(() => messages.id, { onDelete: 'cascade' }),
+  tool_call_id: text(),
+  purpose: text().$type<'output' | 'reference'>().notNull(),
+}, (t) => [
+  primaryKey({ columns: [t.artifact_id, t.conversation_id, t.message_id, t.purpose] }),
+  index('artifact_links_conversation_idx').on(t.conversation_id, t.artifact_id),
+  index('artifact_links_message_idx').on(t.message_id, t.artifact_id),
+  check('artifact_links_purpose_check', sql`${t.purpose} IN ('output', 'reference')`),
+])
+
 /**
  * One upload per row, including expired pointers awaiting cleanup. Never overwrite historical
  * references or keep upload credentials on a pointer.
@@ -230,4 +315,6 @@ export type ProjectRow = typeof projects.$inferSelect
 export type ConversationRow = typeof conversations.$inferSelect
 export type MessageRow = typeof messages.$inferSelect
 export type AttachmentRow = typeof attachments.$inferSelect
+export type ArtifactRunRow = typeof artifactRuns.$inferSelect
+export type ArtifactRow = typeof artifacts.$inferSelect
 export type AttachmentProviderFileRow = typeof attachmentProviderFiles.$inferSelect

@@ -5,7 +5,8 @@ import type { ProjectRow, ConversationRow } from '@/server/db/schema'
 function conversation(over: Partial<ConversationRow> = {}): ConversationRow {
   return {
     id: 1, user_id: 1, project_id: null, title: 't', head_message_id: null,
-    provider_id: null, model_id: null, system_prompt: null, params: null, tools: [],
+    kind: 'chat', provider_id: null, model_id: null, image_provider_id: null, image_model_id: null,
+    system_prompt: null, params: null, tools: [],
     created_at: 0, updated_at: 0, archived_at: null, ...over,
   }
 }

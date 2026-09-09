@@ -26,6 +26,7 @@ function built(m: LanguageModel): LanguageModelV4 {
 const model: ModelRow = {
   id: 1, provider_id: 1, model_id: 'test-model', enabled: true, sort: 0,
   interface_id: null, metadata_override: {}, metadata_resolved: {}, catalog_matches: { operator: null, lab: null, global: null },
+  provider_metadata: {},
   search_name: '', lab_id: null, supports_image_input: false, supports_image_output: false,
   supports_reasoning: false, supports_tools: false, context_limit: null, output_limit: null,
   manual_pinned: true, upstream_available: null,
@@ -38,6 +39,7 @@ async function provider(
     id: 1, user_id: 1, name: 'p',
     api_key: key ? await encryptSecret(env.KEY_ENCRYPTION_SECRET, key) : null, enabled: true, created_at: 0,
     credential_version: 1, default_interface_id: null, models_dev_provider_id: null, models_dev_provider_source: null,
+    default_image_model_id: null,
   }
 }
 
