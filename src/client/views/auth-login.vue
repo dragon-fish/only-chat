@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { CircleAlertIcon } from '@lucide/vue'
+import { api } from '@/client/lib/api'
 import { authClient, authErrorMessage } from '@/client/lib/auth-client'
 import { validatedRelativeRedirect } from '@/client/router'
 import { useAuthStore } from '@/client/stores/auth'
@@ -10,6 +11,7 @@ import { Button } from '@/client/ui/button'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/client/ui/card'
 import { Field, FieldGroup, FieldLabel } from '@/client/ui/field'
 import { Input } from '@/client/ui/input'
+import { Checkbox } from '@/client/ui/checkbox'
 import { Spinner } from '@/client/ui/spinner'
 
 const auth = useAuthStore()
@@ -17,6 +19,8 @@ const route = useRoute()
 const router = useRouter()
 const email = ref('')
 const password = ref('')
+const rememberMe = ref(true)
+const allowRegister = ref(false)
 const pending = ref(false)
 const errorMessage = ref('')
 const registerLocation = computed(() => {
@@ -29,7 +33,7 @@ async function submit() {
   pending.value = true
   errorMessage.value = ''
   try {
-    const result = await authClient.signIn.email({ email: email.value.trim(), password: password.value })
+    const result = await authClient.signIn.email({ email: email.value.trim(), password: password.value, rememberMe: rememberMe.value })
     if (result.error) {
       errorMessage.value = authErrorMessage(result.error, 'login')
       return
@@ -46,6 +50,10 @@ async function submit() {
     pending.value = false
   }
 }
+onMounted(async () => {
+  try { allowRegister.value = (await api.siteSettings()).allowRegister }
+  catch { allowRegister.value = false }
+})
 </script>
 
 <template lang="pug">
@@ -67,11 +75,14 @@ main.flex.min-h-dvh.items-center.justify-center.bg-background.p-4
           Field(:data-invalid="Boolean(errorMessage)")
             FieldLabel(for="login-password") 密码
             Input#login-password(v-model="password" type="password" autocomplete="current-password" required :aria-invalid="Boolean(errorMessage)" :disabled="pending")
+          Field(orientation="horizontal" :data-disabled="pending")
+            Checkbox#login-remember(v-model="rememberMe" :disabled="pending")
+            FieldLabel(for="login-remember") 记住登录
       CardFooter(class="flex flex-col gap-3")
         Button.w-full(type="submit" :disabled="pending")
           Spinner(v-if="pending" data-icon="inline-start")
           | {{ pending ? '正在登录' : '登录' }}
-        p.text-center.text-sm.text-muted-foreground
+        p.text-center.text-sm.text-muted-foreground(v-if="allowRegister")
           | 还没有账号？
           RouterLink.ml-1.text-foreground.underline-offset-4(:to="registerLocation" class="hover:underline") 注册
 </template>

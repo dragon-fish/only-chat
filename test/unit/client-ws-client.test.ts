@@ -7,15 +7,34 @@ class FakeSocket {
   sent: string[] = []
   onopen: (() => void) | null = null
   onmessage: ((ev: { data: string }) => void) | null = null
-  onclose: (() => void) | null = null
+  onclose: ((event: { code: number }) => void) | null = null
   onerror: (() => void) | null = null
   constructor(public url: string) { FakeSocket.instances.push(this) }
   send(d: string) { this.sent.push(d) }
-  close() { this.readyState = 3; this.onclose?.() }
+  close(code = 1000) { this.readyState = 3; this.onclose?.({ code }) }
   open() { this.readyState = 1; this.onopen?.() }
 }
 
 describe('WsClient', () => {
+  it('discards commands and stops reconnecting after an authentication close', () => {
+    vi.useFakeTimers()
+    FakeSocket.instances = []
+    const lost = vi.fn()
+    const client = new WsClient('/ws', { onEvent: vi.fn(), onStatus: vi.fn(), onAuthLost: lost }, {
+      socketFactory: url => new FakeSocket(url) as unknown as WebSocket,
+    })
+    try {
+      client.connect()
+      client.send({ type: 'stop', conversation_id: 41 })
+      FakeSocket.instances[0]!.close(4001)
+      vi.advanceTimersByTime(60_000)
+      expect(FakeSocket.instances).toHaveLength(1)
+      expect(lost).toHaveBeenCalledOnce()
+      client.connect()
+      FakeSocket.instances[1]!.open()
+      expect(FakeSocket.instances[1]!.sent).toEqual([])
+    } finally { client.close(); vi.useRealTimers() }
+  })
   it('connects, forwards events, queues sends until open, reconnects with backoff', async () => {
     vi.useFakeTimers()
     FakeSocket.instances = []

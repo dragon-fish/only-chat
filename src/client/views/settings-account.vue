@@ -51,7 +51,7 @@ async function save(kind: 'profile' | 'password') {
 
 <template lang="pug">
 .h-full.min-h-0.overflow-hidden
-  Teleport(to="#page-header")
+  Teleport(to="#page-header" defer)
     SettingsBackButton
     span.truncate.text-sm.font-medium 账户
   .oc-scroll.h-full.overflow-y-auto

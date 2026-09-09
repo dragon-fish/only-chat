@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { createApp } from 'vue'
+import { createApp, shallowRef } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { createMemoryHistory } from 'vue-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -14,6 +14,7 @@ import type { Conversation } from '@/shared/models'
 
 vi.mock('@/client/lib/auth-client', () => ({
   authClient: {
+    useSession: () => shallowRef({ isPending: true }),
     getSession: vi.fn(),
     signOut: vi.fn(),
     signIn: { email: vi.fn() },
@@ -32,7 +33,10 @@ describe('collection load state', () => {
   // Starting private requests before auth resolves would leak work into the guest entry flow.
   it('does not connect or load private collections for a guest', async () => {
     vi.mocked(authClient.getSession).mockResolvedValue({ data: null, error: null } as never)
-    const fetch = vi.fn(() => { throw new Error('private request started') })
+    const fetch = vi.fn(async path => {
+      if (path === '/api/site-settings') return Response.json({ allowRegister: false })
+      throw new Error('private request started')
+    })
     vi.stubGlobal('fetch', fetch)
     const pinia = createPinia()
     setActivePinia(pinia)
@@ -48,7 +52,7 @@ describe('collection load state', () => {
 
     const sync = useSyncStore(pinia)
     const config = useConfigStore(pinia)
-    expect(fetch).not.toHaveBeenCalled()
+    expect(fetch.mock.calls.every(([path]) => path === '/api/site-settings')).toBe(true)
     expect(sync.status).toBe('closed')
     expect(sync.conversationsLoaded).toBe(false)
     expect(sync.projectsLoaded).toBe(false)

@@ -7,7 +7,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/
 
 <template lang="pug">
 .flex.h-full.min-h-0.overflow-hidden
-  Teleport(to="#page-header")
+  Teleport(to="#page-header" defer)
     SettingsBackButton
     span.truncate.text-sm.font-medium 模型服务
   ProviderNavigation(class="w-full md:w-64 md:shrink-0 md:border-r")

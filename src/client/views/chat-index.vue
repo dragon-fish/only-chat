@@ -26,7 +26,7 @@ const conversations = computed(() => query.value.trim()
 </script>
 
 <template>
-  <Teleport to="#page-header">
+  <Teleport to="#page-header" defer>
     <span class="truncate text-sm font-medium">聊天</span>
   </Teleport>
 

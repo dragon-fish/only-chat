@@ -1,5 +1,6 @@
 import { computed, reactive, ref, shallowRef } from 'vue'
 import { defineStore } from 'pinia'
+import { useAuthStore } from './auth'
 import { api } from '@/client/lib/api'
 import { WsClient, type WsStatus } from '@/client/lib/ws-client'
 import type { ModelRef } from '@/shared/api'
@@ -842,6 +843,7 @@ export const useSyncStore = defineStore('sync', () => {
     const next = new WsClient('/ws', {
       onEvent: event => { if (client.value === next) applyEvent(event) },
       onStatus: nextStatus => { if (client.value === next) status.value = nextStatus },
+      onAuthLost: () => { if (client.value === next) useAuthStore().clear() },
     })
     client.value = next
     next.connect()

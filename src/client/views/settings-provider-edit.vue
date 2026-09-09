@@ -419,7 +419,7 @@ async function removeModel() {
 
 <template lang="pug">
 .flex.h-full.min-h-0.overflow-hidden
-  Teleport(to="#page-header")
+  Teleport(to="#page-header" defer)
     SettingsBackButton(to="/settings/providers" label="返回供应商列表")
     span.truncate.text-sm.font-medium {{ savedName }}
   ProviderNavigation(:selected-provider-id="providerId" class="hidden w-64 shrink-0 border-r md:flex" @catalog-refreshed="load()")

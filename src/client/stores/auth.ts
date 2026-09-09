@@ -1,4 +1,4 @@
-import { ref, shallowRef } from 'vue'
+import { ref, shallowRef, watch } from 'vue'
 import { defineStore } from 'pinia'
 import { authClient, type AuthSession, type AuthUser } from '@/client/lib/auth-client'
 
@@ -6,6 +6,9 @@ export const useAuthStore = defineStore('auth', () => {
   const authSession = shallowRef<AuthSession | null>(null)
   const authUser = shallowRef<AuthUser | null>(null)
   const ready = ref(false)
+  const generation = ref(0)
+  watch(() => authSession.value ? `${authSession.value.user.id}:${authSession.value.session.id}` : null,
+    () => { generation.value++ }, { flush: 'sync' })
   let refreshEpoch = 0
   let pendingRefresh: Promise<void> | null = null
 
@@ -23,11 +26,11 @@ export const useAuthStore = defineStore('auth', () => {
     const operation = (async () => {
       try {
         const result = await authClient.getSession()
-        if (epoch !== refreshEpoch) return
+        if (epoch !== refreshEpoch) return pendingRefresh ?? undefined
         authSession.value = result.data
         authUser.value = result.data?.user ?? null
       } catch {
-        if (epoch !== refreshEpoch) return
+        if (epoch !== refreshEpoch) return pendingRefresh ?? undefined
         authSession.value = null
         authUser.value = null
       } finally {
@@ -45,5 +48,5 @@ export const useAuthStore = defineStore('auth', () => {
     clear()
   }
 
-  return { authSession, authUser, ready, refresh, signOut, clear }
+  return { authSession, authUser, ready, generation, refresh, signOut, clear }
 })

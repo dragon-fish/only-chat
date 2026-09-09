@@ -41,7 +41,7 @@ onMounted(load)
 
 <template lang="pug">
 .h-full.min-h-0.overflow-hidden
-  Teleport(to="#page-header")
+  Teleport(to="#page-header" defer)
     SettingsBackButton
     span.truncate.text-sm.font-medium 注册设置
   .oc-scroll.h-full.overflow-y-auto

@@ -408,7 +408,7 @@ function onToolsChange(tools: string[]) {
 
 <template lang="pug">
 .flex.h-full.flex-col
-  Teleport(to="#page-header")
+  Teleport(to="#page-header" defer)
     .flex.min-w-0.flex-1.items-center.gap-1
       template(v-if="!isDesktop")
         Button(as-child variant="ghost" size="icon-sm" class="size-10")

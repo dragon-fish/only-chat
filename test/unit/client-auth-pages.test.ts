@@ -2,7 +2,7 @@
 import { createApp, nextTick } from 'vue'
 import { createPinia } from 'pinia'
 import { createMemoryHistory, createRouter, RouterView } from 'vue-router'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { authClient } from '@/client/lib/auth-client'
 import AuthLoginView from '@/client/views/auth-login.vue'
 import AuthRegisterView from '@/client/views/auth-register.vue'
@@ -30,6 +30,7 @@ const authSession = {
 }
 
 let cleanup = () => {}
+beforeEach(() => { vi.stubGlobal('fetch', async () => Response.json({ allowRegister: false })) })
 
 afterEach(() => {
   cleanup()
@@ -68,6 +69,26 @@ async function mountAuth(path: string) {
 }
 
 describe('authentication entry pages', () => {
+  it.each([false, true])('shows the registration link only when registration is %s', async allowRegister => {
+    vi.stubGlobal('fetch', async () => Response.json({ allowRegister }))
+    await mountAuth('/login')
+    await new Promise(resolve => setTimeout(resolve, 0))
+    await nextTick()
+    expect(document.querySelector('a[href="/register"]') !== null).toBe(allowRegister)
+  })
+
+  it.each([false, true])('passes the chosen remember-login value %s to Better Auth', async rememberMe => {
+    vi.mocked(authClient.signIn.email).mockResolvedValue({ data: null, error: { code: 'INVALID_EMAIL_OR_PASSWORD' } } as never)
+    await mountAuth('/login')
+    await type('#login-email', 'owner@example.com')
+    await type('#login-password', 'wrong password')
+    const checkbox = document.querySelector<HTMLButtonElement>('#login-remember')
+    expect(checkbox).not.toBeNull()
+    if ((checkbox!.getAttribute('aria-checked') === 'true') !== rememberMe) checkbox!.click()
+    await nextTick()
+    document.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(authClient.signIn.email).toHaveBeenCalledWith({ email: 'owner@example.com', password: 'wrong password', rememberMe }))
+  })
   // Dropping the post-login refresh or redirect would strand a valid user on the entry page.
   it('signs in, refreshes auth state and returns to the preserved private route', async () => {
     vi.mocked(authClient.signIn.email).mockResolvedValue({ data: { user: authSession.user }, error: null } as never)

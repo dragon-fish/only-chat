@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { createApp, nextTick } from 'vue'
+import { createApp, nextTick, shallowRef } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { createMemoryHistory } from 'vue-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -15,6 +15,7 @@ import type { Conversation } from '@/shared/models'
 vi.mock('@/client/lib/auth-client', async importOriginal => ({
   ...await importOriginal<typeof import('@/client/lib/auth-client')>(),
   authClient: {
+    useSession: () => shallowRef({ isPending: true }),
     getSession: vi.fn(),
     signOut: vi.fn(),
     signIn: { email: vi.fn() },
@@ -29,11 +30,11 @@ class FakeSocket {
   closed = false
   onopen: (() => void) | null = null
   onmessage: ((event: { data: string }) => void) | null = null
-  onclose: (() => void) | null = null
+  onclose: ((event: { code: number }) => void) | null = null
   onerror: (() => void) | null = null
   constructor(public url: string) { FakeSocket.instances.push(this) }
   send(value: string) { this.sent.push(value) }
-  close() { this.closed = true; this.readyState = 3; this.onclose?.() }
+  close(code = 1000) { this.closed = true; this.readyState = 3; this.onclose?.({ code }) }
   open() { this.readyState = 1; this.onopen?.() }
 }
 
@@ -89,9 +90,6 @@ async function mountGuestApp(fetch: typeof globalThis.fetch) {
   setActivePinia(pinia)
   const router = createAppRouter(createMemoryHistory())
   await router.push('/login')
-  const pageHeader = document.createElement('header')
-  pageHeader.id = 'page-header'
-  document.body.append(pageHeader)
   const host = document.createElement('div')
   document.body.append(host)
   const app = createApp(App).use(pinia).use(router)
@@ -110,6 +108,7 @@ describe('real App authentication lifecycle', () => {
     const privateRequests: string[] = []
     const fetch = vi.fn(async (input: RequestInfo | URL) => {
       const path = String(input)
+      if (path === '/api/site-settings') return Response.json({ allowRegister: false })
       privateRequests.push(path)
       if (path === '/api/me') return Response.json({ settings: { plugins: {} } })
       if (path === '/api/conversations') return Response.json([conversationFor(1)])
@@ -131,11 +130,31 @@ describe('real App authentication lifecycle', () => {
     expect(sync.conversationList.map(item => item.title)).toEqual(['User 1 chat'])
     expect(FakeSocket.instances).toHaveLength(1)
     expect(privateRequests.sort()).toEqual(['/api/conversations', '/api/me', '/api/projects', '/api/providers'])
+    expect(document.querySelector('#page-header [aria-label^="选择模型"]')).not.toBeNull()
+    expect(document.querySelector('#page-header [aria-label="会话设置"]')).not.toBeNull()
 
     await auth.refresh()
     await nextTick()
     expect(FakeSocket.instances).toHaveLength(1)
     expect(privateRequests).toHaveLength(4)
+  })
+
+  it('clears private state and navigates to login on an authentication socket close', async () => {
+    vi.mocked(authClient.getSession).mockResolvedValueOnce({ data: null, error: null } as never)
+      .mockResolvedValue({ data: sessionFor(1), error: null } as never)
+    vi.mocked(authClient.signIn.email).mockResolvedValue({ data: { user: sessionFor(1).user }, error: null } as never)
+    const { auth, config, router, sync } = await mountGuestApp(async input => {
+      if (String(input) === '/api/me') return Response.json({ settings: { plugins: {} } })
+      if (String(input) === '/api/conversations') return Response.json([conversationFor(1)])
+      return Response.json([])
+    })
+    await submitLogin('user1@example.com')
+    await vi.waitFor(() => expect(sync.conversationList).toHaveLength(1))
+    FakeSocket.instances[0]!.close(4001)
+    await vi.waitFor(() => expect(router.currentRoute.value.path).toBe('/login'))
+    expect(auth.authUser).toBeNull()
+    expect(sync.conversationList).toEqual([])
+    expect(config.providerRecords).toEqual([])
   })
 
   // Missing teardown or request fencing would expose user 1 data after user 2 logs in.
@@ -151,6 +170,7 @@ describe('real App authentication lifecycle', () => {
     const oldConversations = new Promise<Response>(resolve => { finishOldConversations = resolve })
     const fetch = vi.fn(async (input: RequestInfo | URL) => {
       const path = String(input)
+      if (path === '/api/site-settings') return Response.json({ allowRegister: false })
       const requestUser = activeUser
       if (path === '/api/me') return Response.json({ settings: { plugins: { [`user-${requestUser}`]: true } } })
       if (path === '/api/conversations') return requestUser === 1 ? oldConversations : Response.json([conversationFor(2)])

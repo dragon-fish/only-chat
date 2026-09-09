@@ -5,6 +5,7 @@ export type WsStatus = 'connecting' | 'open' | 'closed'
 export interface WsHandlers {
   onEvent(event: WsEvent): void
   onStatus(status: WsStatus): void
+  onAuthLost?(): void
 }
 
 export interface WsOptions {
@@ -86,11 +87,16 @@ export class WsClient {
       else console.warn('unknown ws event', ev.data)
     }
     ws.onerror = () => { /* onclose follows */ }
-    ws.onclose = () => {
+    ws.onclose = event => {
       if (this._socket !== ws) return
       this._stopPing()
       this._socket = null
       this._handlers.onStatus('closed')
+      if (event.code === 4001) {
+        this.close()
+        this._handlers.onAuthLost?.()
+        return
+      }
       if (!this._closedByUser) this._scheduleReconnect()
     }
   }

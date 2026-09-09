@@ -49,21 +49,21 @@ const confirmationDescription = computed(() => {
   return '此账户在所有设备上的登录会话将失效，需要重新登录。'
 })
 
-async function load() {
+async function load(targetPage = page.value) {
   loading.value = true
   error.value = ''
   try {
-    const result = await authClient.admin.listUsers({ query: { limit: pageSize, offset: page.value * pageSize, sortBy: 'id', sortDirection: 'asc' } })
+    const result = await authClient.admin.listUsers({ query: { limit: pageSize, offset: targetPage * pageSize, sortBy: 'id', sortDirection: 'asc' } })
     if (result.error) throw new Error('list failed')
     users.value = result.data.users
     total.value = result.data.total
+    page.value = targetPage
   } catch { error.value = '无法加载账户列表，请重试。' }
   finally { loading.value = false }
 }
 function movePage(direction: number) {
   if (loading.value || pending.value) return
-  page.value += direction
-  void load()
+  void load(page.value + direction)
 }
 function openForm(kind: 'create' | 'password', user: ManagedUser | null = null) {
   selected.value = user
@@ -119,12 +119,12 @@ async function performAction() {
   } catch { formError.value = '无法更新账户，请检查网络后重试。' }
   finally { pending.value = false }
 }
-onMounted(load)
+onMounted(() => load())
 </script>
 
 <template lang="pug">
 .h-full.min-h-0.overflow-hidden
-  Teleport(to="#page-header")
+  Teleport(to="#page-header" defer)
     SettingsBackButton
     span.truncate.text-sm.font-medium 用户管理
   .oc-scroll.h-full.overflow-y-auto
@@ -140,7 +140,7 @@ onMounted(load)
         AlertTitle 加载失败
         AlertDescription
           | {{ error }}
-          Button(variant="link" :disabled="loading" @click="load") 重试
+          Button(variant="link" :disabled="loading" @click="load()") 重试
       p.text-sm.text-muted-foreground(v-if="status" role="status") {{ status }}
       Card
         CardHeader

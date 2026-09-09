@@ -8,11 +8,19 @@ import { useTheme } from '@/client/composables/use-theme'
 import { useSyncStore } from '@/client/stores/sync'
 import { useConfigStore } from '@/client/stores/config'
 import { useAuthStore } from '@/client/stores/auth'
+import { authClient } from '@/client/lib/auth-client'
 import { Toaster } from '@/client/ui/sonner'
 
 const sync = useSyncStore()
 const config = useConfigStore()
 const auth = useAuthStore()
+const frameworkAuthSession = authClient.useSession()
+watch(frameworkAuthSession, state => {
+  if (state.isPending || state.isRefetching || state.error) return
+  // Mount the framework's cross-tab/focus subscriptions. Re-read the current cookie through the
+  // fenced store refresh so an older atom response cannot restore a superseded identity.
+  void auth.refresh(true)
+})
 const route = useRoute()
 const router = useRouter()
 const { resolved: resolvedTheme } = useTheme()

@@ -28,7 +28,7 @@ watch([() => sync.projectsLoaded, project], ([loaded, value]) => {
 </script>
 
 <template>
-  <Teleport to="#page-header">
+  <Teleport to="#page-header" defer>
     <Button as-child variant="ghost" size="icon-sm" class="size-10">
       <RouterLink to="/chats" aria-label="返回聊天">
         <ArrowLeftIcon />

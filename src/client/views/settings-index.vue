@@ -28,7 +28,7 @@ function backToChat() {
 
 <template lang="pug">
 .oc-scroll.h-full.min-h-0.overflow-y-auto
-  Teleport(to="#page-header")
+  Teleport(to="#page-header" defer)
     span.truncate.text-sm.font-medium 设置
   .mx-auto.flex.w-full.max-w-2xl.flex-col.gap-6.p-4(class="md:p-8")
     .flex.flex-col.gap-2

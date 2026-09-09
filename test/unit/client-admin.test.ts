@@ -136,6 +136,21 @@ it('loads the next page with an offset rather than reloading the first page', as
   await vi.waitFor(() => expect(authClient.admin.listUsers).toHaveBeenLastCalledWith({ query: { limit: 20, offset: 20, sortBy: 'id', sortDirection: 'asc' } }))
 })
 
+it('retains the displayed page and retries its successor after a pagination failure', async () => {
+  await mountUsers()
+  vi.mocked(authClient.admin.listUsers).mockResolvedValueOnce({ data: null, error: { status: 503, statusText: 'Unavailable', message: 'Unavailable' } } as never)
+  document.querySelector<HTMLButtonElement>('[data-next-page]')!.click()
+  await vi.waitFor(() => expect(document.body.textContent).toContain('无法加载账户列表'))
+  expect(document.body.textContent).toContain('第 1 页')
+  expect(document.querySelector('[data-user-actions="2"]')).not.toBeNull()
+  vi.mocked(authClient.admin.listUsers).mockResolvedValueOnce({ data: { users: [{ ...managedUser, id: '21', name: 'Next page user' }], total: 21, limit: 20, offset: 20 }, error: null })
+  document.querySelector<HTMLButtonElement>('[data-next-page]')!.click()
+  await vi.waitFor(() => expect(document.querySelector('[data-user-actions="21"]')).not.toBeNull())
+  expect(document.body.textContent).toContain('第 2 页')
+  expect(document.querySelector('[data-user-actions="2"]')).toBeNull()
+  expect(authClient.admin.listUsers).toHaveBeenLastCalledWith({ query: { limit: 20, offset: 20, sortBy: 'id', sortDirection: 'asc' } })
+})
+
 it('creates an account and refreshes the list only after successful creation', async () => {
   await mountUsers()
   vi.mocked(authClient.admin.createUser).mockResolvedValue({ data: { user: managedUser }, error: null })

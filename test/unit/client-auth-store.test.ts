@@ -1,7 +1,7 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { authClient } from '@/client/lib/auth-client'
-import { ApiError, api } from '@/client/lib/api'
+import { ApiError, api, setUnauthorizedHandler } from '@/client/lib/api'
 import { useAuthStore } from '@/client/stores/auth'
 
 vi.mock('@/client/lib/auth-client', () => ({
@@ -86,6 +86,24 @@ describe('frontend authentication state', () => {
     expect(authStore.authUser).toMatchObject({ email: 'second@example.com' })
   })
 
+  it('waits for the latest cookie read when framework observation supersedes a login refresh', async () => {
+    let finishLogin!: (value: unknown) => void
+    let finishObserved!: (value: unknown) => void
+    vi.mocked(authClient.getSession)
+      .mockImplementationOnce(() => new Promise(resolve => { finishLogin = resolve }) as never)
+      .mockImplementationOnce(() => new Promise(resolve => { finishObserved = resolve }) as never)
+    const authStore = useAuthStore()
+    let loginSettled = false
+    const login = authStore.refresh(true).then(() => { loginSettled = true })
+    const observed = authStore.refresh(true)
+    finishLogin({ data: secondAuthSession, error: null })
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(loginSettled).toBe(false)
+    finishObserved({ data: secondAuthSession, error: null })
+    await Promise.all([login, observed])
+    expect(authStore.authUser?.id).toBe('2')
+  })
+
   // Clearing credentials must permanently invalidate an already-started session read.
   it('does not restore a refresh response that completes after clear', async () => {
     let finish!: (value: unknown) => void
@@ -126,6 +144,25 @@ describe('frontend authentication state', () => {
     await expect(request).rejects.toMatchObject({ status: 401, detail: 'Authentication required' })
     expect(authStore.authSession).toBeNull()
     expect(authStore.authUser).toBeNull()
+  })
+
+  it('preserves Bob when an Alice request returns a delayed 401', async () => {
+    vi.mocked(authClient.getSession).mockResolvedValueOnce({ data: authSession, error: null } as never)
+    const authStore = useAuthStore()
+    await authStore.refresh()
+    let finish!: (response: Response) => void
+    vi.stubGlobal('fetch', () => new Promise<Response>(resolve => { finish = resolve }))
+    const navigate = vi.fn()
+    setUnauthorizedHandler(navigate)
+    try {
+      const pending = api.conversations()
+      vi.mocked(authClient.getSession).mockResolvedValueOnce({ data: secondAuthSession, error: null } as never)
+      await authStore.refresh(true)
+      finish(Response.json({ error: 'Authentication required' }, { status: 401 }))
+      await expect(pending).rejects.toMatchObject({ status: 401 })
+      expect(authStore.authUser?.id).toBe('2')
+      expect(navigate).not.toHaveBeenCalled()
+    } finally { setUnauthorizedHandler(undefined) }
   })
 
   // Authorization failures are not evidence that the login session itself expired.

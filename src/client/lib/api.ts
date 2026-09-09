@@ -18,6 +18,8 @@ export function setUnauthorizedHandler(handler: (() => void | Promise<void>) | u
 }
 
 async function request<T>(method: string, path: string, body?: unknown, init: RequestInit = {}, onWarning?: (warning: string) => void): Promise<T> {
+  const auth = useAuthStore()
+  const generation = auth.generation
   const res = await fetch(path, {
     ...init,
     method,
@@ -32,8 +34,8 @@ async function request<T>(method: string, path: string, body?: unknown, init: Re
       if (body && typeof body === 'object' && 'error' in body && typeof body.error === 'string') detail = body.error
     } catch { /* A non-JSON body is intentionally not exposed to the UI. */ }
     const error = new ApiError(res.status, detail, method, path)
-    if (res.status === 401) {
-      useAuthStore().clear()
+    if (res.status === 401 && generation === auth.generation) {
+      auth.clear()
       try { await unauthorizedHandler?.() } catch { /* Navigation failure must not replace the API error. */ }
     }
     throw error
