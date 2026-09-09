@@ -1,5 +1,8 @@
 import { DatabaseSync } from 'node:sqlite'
-import { readFile, readdir, stat } from 'node:fs/promises'
+import { fork } from 'node:child_process'
+import { once } from 'node:events'
+import { readFile, readdir, rm, stat } from 'node:fs/promises'
+import { dirname } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { hashPassword, verifyPassword } from 'better-auth/crypto'
 import { buildResetSql, escapeSqlLiteral, getResetUser, parseResetArgs, resetUserCredentials, type WranglerRunner } from '../../scripts/lib/reset-user-credentials'
@@ -81,6 +84,7 @@ describe('credential reset SQL', () => {
 
 describe('Wrangler execution boundary', () => {
   it.each([false, true])('uses a private hash-only file and removes it after success/failure (failure=%s)', async fail => {
+    const listeners = (['SIGINT', 'SIGTERM'] as const).map(signal => process.listeners(signal))
     const db = await fixture()
     const plain = 'this-only-lives-in-memory'
     let filePath = ''
@@ -111,8 +115,42 @@ describe('Wrangler execution boundary', () => {
         expect(await verifyPassword({ password: plain, hash: String(row.password) })).toBe(true)
       }
       await expect(stat(filePath)).rejects.toMatchObject({ code: 'ENOENT' })
+      expect((['SIGINT', 'SIGTERM'] as const).map(signal => process.listeners(signal))).toEqual(listeners)
     } finally { db.close() }
   })
+  it.skipIf(process.platform === 'win32').each(['SIGINT', 'SIGTERM'] as const)('cancels the runner and removes temporary SQL on %s, including repeated signals', async signal => {
+    const child = fork(new URL('../fixtures/reset-user-credentials-interruption.mjs', import.meta.url), { silent: true, execArgv: [], timeout: 5000, killSignal: 'SIGKILL' })
+    const closed = once(child, 'close')
+    const events: string[] = []
+    child.on('message', message => events.push((message as { event: string }).event))
+    let directory: string | undefined
+    try {
+      const [ready] = await once(child, 'message') as [{ event: string, file: string }]
+      expect(ready.event).toBe('ready')
+      directory = dirname(ready.file)
+      const cancelledOrClosed = Promise.race([
+        once(child, 'message').then(([message]) => message as { event: string }),
+        closed.then(() => ({ event: 'exited-without-cancellation' })),
+      ])
+      child.kill(signal)
+      const result = await cancelledOrClosed
+      if (result.event === 'cancelled') {
+        child.kill(signal === 'SIGINT' ? 'SIGTERM' : 'SIGINT')
+        child.send('finish cancellation')
+      }
+      const [code, exitSignal] = await closed
+      await expect(stat(directory)).rejects.toMatchObject({ code: 'ENOENT' })
+      expect(result.event).toBe('cancelled')
+      expect(events.filter(event => event === 'cancelled')).toHaveLength(1)
+      expect(events).toContain('drained')
+      expect(code).not.toBe(0)
+      expect(exitSignal).toBeNull()
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+      await closed
+      if (directory) await rm(directory, { recursive: true, force: true })
+    }
+  }, 10_000)
   it('fails before prompting if the target is missing or Wrangler reports failure', async () => {
     await expect(getResetUser(target, async () => JSON.stringify([{ success: true, results: [] }]))).rejects.toThrow(/not found/i)
     await expect(getResetUser(target, async () => JSON.stringify([{ success: false, results: [] }]))).rejects.toThrow(/Wrangler/i)

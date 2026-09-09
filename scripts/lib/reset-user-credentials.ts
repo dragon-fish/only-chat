@@ -18,7 +18,7 @@ interface ResetInput extends ResetTarget {
   now: number
 }
 
-export type WranglerRunner = (args: string[]) => Promise<string>
+export type WranglerRunner = (args: string[], options?: { signal?: AbortSignal }) => Promise<string>
 
 export function parseResetArgs(rawArgs: string[]): ResetTarget {
   const args = rawArgs[0] === '--' ? rawArgs.slice(1) : rawArgs
@@ -72,12 +72,17 @@ const executeFile = promisify(execFile)
 const require = createRequire(import.meta.url)
 const wranglerBin = join(dirname(require.resolve('wrangler/package.json')), 'bin/wrangler.js')
 
-export const runWrangler: WranglerRunner = async args => {
+export const runWrangler: WranglerRunner = async (args, options = {}) => {
+  const execution = executeFile(process.execPath, [wranglerBin, ...args], { maxBuffer: 4 * 1024 * 1024, signal: options.signal })
+  const closed = new Promise<void>(resolve => execution.child.once('close', () => resolve()))
   try {
     // Invoke the installed CLI with Node so Windows does not need a shell for pnpm.cmd.
-    const { stdout } = await executeFile(process.execPath, [wranglerBin, ...args], { maxBuffer: 4 * 1024 * 1024 })
+    const { stdout } = await execution
     return stdout
   } catch {
+    // Abort rejects before process exit; wait for Wrangler's signal forwarding and stdio closure.
+    await closed
+    options.signal?.throwIfAborted()
     // Subprocess errors can embed SQL/output. Keep them out of operator logs.
     throw new Error('Wrangler D1 execution failed. Check database configuration, access, and email uniqueness.')
   }
@@ -106,22 +111,44 @@ export async function getResetUser(target: ResetTarget, run: WranglerRunner = ru
 
 export async function resetUserCredentials(input: ResetInput, run: WranglerRunner = runWrangler): Promise<void> {
   const sql = buildResetSql(input)
-  const directory = await mkdtemp(join(tmpdir(), 'only-chat-reset-'))
+  const controller = new AbortController()
+  const interrupt = (signal: 'SIGINT' | 'SIGTERM') => {
+    if (controller.signal.aborted) return
+    process.exitCode = signal === 'SIGINT' ? 130 : 143
+    controller.abort(new Error(`Credential reset interrupted by ${signal}.`))
+  }
+  const onSigint = () => interrupt('SIGINT')
+  const onSigterm = () => interrupt('SIGTERM')
+  // Keep both handlers through cancellation and cleanup; repeated signals must not bypass finally.
+  process.on('SIGINT', onSigint)
+  process.on('SIGTERM', onSigterm)
+  let directory: string | undefined
   try {
+    directory = await mkdtemp(join(tmpdir(), 'only-chat-reset-'))
+    controller.signal.throwIfAborted()
     const file = join(directory, 'reset.sql')
-    await writeFile(file, sql, { mode: 0o600, flag: 'wx' })
-    await run([...commandArgs(input), '--file', file])
+    await writeFile(file, sql, { mode: 0o600, flag: 'wx', signal: controller.signal })
+    controller.signal.throwIfAborted()
+    await run([...commandArgs(input), '--file', file], { signal: controller.signal })
+    controller.signal.throwIfAborted()
     const query = `SELECT u.id, u.name, u.email, u.email_verified,
       (SELECT COUNT(*) FROM auth_sessions WHERE user_id = u.id) AS session_count,
       (SELECT COUNT(*) FROM auth_accounts WHERE user_id = u.id) AS account_count,
       (SELECT COUNT(*) FROM auth_accounts WHERE user_id = u.id AND id = ${escapeSqlLiteral(input.accountId)} AND provider_id = 'credential' AND account_id = CAST(u.id AS TEXT) AND password IS NOT NULL) AS credential_count
       FROM users u WHERE u.id = ${input.userId};`
-    const rows = readResults(await run([...commandArgs(input), '--command', query]))
+    const rows = readResults(await run([...commandArgs(input), '--command', query], { signal: controller.signal }))
+    controller.signal.throwIfAborted()
     const user = rows[0]
     if (rows.length !== 1 || !user || user.id !== input.userId || user.name !== input.name || user.email !== input.email || user.email_verified !== 0 || user.session_count !== 0 || user.account_count !== 1 || user.credential_count !== 1) {
       throw new Error('Reset verification failed. Inspect the target before attempting another reset.')
     }
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    try {
+      if (directory) await rm(directory, { recursive: true, force: true })
+    } finally {
+      process.off('SIGINT', onSigint)
+      process.off('SIGTERM', onSigterm)
+    }
   }
+  controller.signal.throwIfAborted()
 }

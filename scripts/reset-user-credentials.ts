@@ -20,5 +20,5 @@ async function main() {
 
 main().catch(error => {
   console.error(error instanceof Error ? error.message : 'Credential reset failed.')
-  process.exitCode = 1
+  process.exitCode ||= 1
 })
