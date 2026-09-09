@@ -8,7 +8,11 @@ export const TextPartSchema = z.object({
   text: z.string(),
   providerOptions: ProviderOptionsSchema.optional(),
 })
-export const ImagePartSchema = z.object({ type: z.literal('image'), attachment_id: z.number().int() })
+export const ImagePartSchema = z.object({
+  type: z.literal('image'),
+  attachment_id: z.number().int(),
+  artifact_id: z.number().int().optional(),
+})
 export const ReasoningPartSchema = z.object({
   type: z.literal('reasoning'),
   text: z.string(),

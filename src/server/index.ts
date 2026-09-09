@@ -8,6 +8,7 @@ import { CatalogStorage } from './plugins/model-catalog/storage'
 import { disposeRpcStub } from './rpc'
 import { parseAuthUserId } from './plugins/auth/user-id'
 import { AUTH_REVOKED_PATH, hasActiveAuthSession, INTERNAL_AUTH_SESSION_ID_HEADER, INTERNAL_USER_ID_HEADER, USER_ID_STORAGE_KEY, type SocketAttachment } from './plugins/hub/identity'
+import { executeImageRun } from './plugins/artifacts/workflow'
 
 let workerApp: Promise<Context> | undefined
 
@@ -42,6 +43,15 @@ export class ModelCatalogRefreshWorkflow extends WorkflowEntrypoint<Env, { sourc
       retries: { limit: 8, delay: '10 seconds', backoff: 'exponential' },
       timeout: '10 minutes',
     }, async () => refreshCatalog(new CatalogStorage(this.env.KV), createDb(this.env.DB)))
+  }
+}
+
+export class ArtifactGenerationWorkflow extends WorkflowEntrypoint<Env, { userId: number; runId: number }> {
+  async run(event: Readonly<WorkflowEvent<{ userId: number; runId: number }>>, step: WorkflowStep) {
+    return step.do('generate image artifact', {
+      retries: { limit: 0, delay: '1 second' },
+      timeout: '30 minutes',
+    }, async () => executeImageRun(await createApp({ env: this.env, side: 'workflow' }), event.payload.userId, event.payload.runId))
   }
 }
 

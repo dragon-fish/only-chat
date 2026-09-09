@@ -15,7 +15,9 @@ export function toMessage(row: MessageRow, status: MessageStatus = row.status): 
 }
 
 export async function listConversations(db: DB, userId: number): Promise<ConversationRow[]> {
-  return db.select().from(conversations).where(and(eq(conversations.user_id, userId), isNull(conversations.archived_at))).orderBy(desc(conversations.updated_at))
+  return db.select().from(conversations).where(and(
+    eq(conversations.user_id, userId), eq(conversations.kind, 'chat'), isNull(conversations.archived_at),
+  )).orderBy(desc(conversations.updated_at))
 }
 
 export async function getConversation(db: DB, id: number, userId: number): Promise<ConversationRow | undefined> {
@@ -36,14 +38,20 @@ export async function createConversation(db: DB, input: {
   system_prompt?: string | null
   params?: ConversationParams | null
   tools?: string[]
+  kind?: 'chat' | 'image'
+  image_provider_id?: number | null
+  image_model_id?: string | null
 }): Promise<ConversationRow> {
   const now = Date.now()
   const [row] = await db.insert(conversations).values({
     user_id: input.user_id,
     title: input.title,
+    kind: input.kind ?? 'chat',
     project_id: input.project_id ?? null,
     provider_id: input.provider_id,
     model_id: input.model_id,
+    image_provider_id: input.image_provider_id ?? null,
+    image_model_id: input.image_model_id ?? null,
     system_prompt: input.system_prompt ?? null,
     params: input.params ?? null,
     tools: input.tools ?? [],

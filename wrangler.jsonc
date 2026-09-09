@@ -32,6 +32,11 @@
       "name": "only-chat-model-catalog-refresh",
       "binding": "MODEL_CATALOG_REFRESH",
       "class_name": "ModelCatalogRefreshWorkflow"
+    },
+    {
+      "name": "only-chat-artifact-generation",
+      "binding": "ARTIFACT_WORKFLOW",
+      "class_name": "ArtifactGenerationWorkflow"
     }
   ],
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["UserHub"] }],
