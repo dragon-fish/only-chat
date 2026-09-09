@@ -1,9 +1,9 @@
 import type { CatalogProviderSummary } from '@/shared/api'
-import type { ModelWithMetadata, Project, ProviderWithInterfaces, Conversation, Usage } from '@/shared/models'
+import type { ModelListItem, ModelQuery, Project, ProviderWithInterfaces, Conversation, Usage } from '@/shared/models'
 
 export type EnabledModelEntry = {
   provider: ProviderWithInterfaces
-  model: ModelWithMetadata
+  model: ModelListItem
 }
 
 const normalizeQuery = (query: string) => query.trim().toLocaleLowerCase()
@@ -76,17 +76,54 @@ export const MODEL_CAPABILITY_FILTERS = [
   { key: 'tools', label: '工具' }, { key: 'image_output', label: '图片输出' },
 ] as const
 
-export function modelName(model: ModelWithMetadata): string {
+export function modelName(model: ModelListItem): string {
   return model.metadata.name ?? model.model_id
 }
 
-export function modelBadges(model: ModelWithMetadata) {
+export function modelBadges(model: ModelListItem) {
   const metadata = model.metadata
   const values = {
     vision: metadata.modalities?.input.includes('image'), reasoning: metadata.reasoning,
     tools: metadata.tool_call, image_output: metadata.modalities?.output.includes('image'),
   }
   return MODEL_CAPABILITY_FILTERS.filter(option => values[option.key] === true)
+}
+
+export function filterModelEntries(entries: readonly EnabledModelEntry[], query: Partial<ModelQuery>, searchProviders = true): EnabledModelEntry[] {
+  const search = normalizeQuery(query.search ?? '')
+  return entries.filter(({ model, provider }) => {
+    if (query.enabled !== undefined && model.enabled !== query.enabled) return false
+    if (query.interface_id !== undefined && (model.interface_id ?? provider.default_interface_id) !== query.interface_id) return false
+    if (query.lab_id !== undefined && model.lab_id !== query.lab_id) return false
+    if (query.vision !== undefined && model.metadata.modalities?.input.includes('image') !== query.vision) return false
+    if (query.reasoning !== undefined && model.metadata.reasoning !== query.reasoning) return false
+    if (query.tools !== undefined && model.metadata.tool_call !== query.tools) return false
+    if (query.image_output !== undefined && model.metadata.modalities?.output.includes('image') !== query.image_output) return false
+    if (query.min_context !== undefined && (model.metadata.limit?.context ?? -1) < query.min_context) return false
+    if (search && ![model.model_id, model.metadata.name, model.lab_id, ...(searchProviders ? [provider.name] : [])]
+      .some(value => value?.toLocaleLowerCase().includes(search))) return false
+    return true
+  })
+}
+
+export function sortModelEntries(
+  entries: readonly EnabledModelEntry[],
+  providers: readonly ProviderWithInterfaces[],
+  mode: 'provider' | 'lab',
+): EnabledModelEntry[] {
+  const providerOrder = new Map(providers.map((provider, index) => [provider.id, index]))
+  return [...entries].sort((left, right) => {
+    const provider = (providerOrder.get(left.provider.id) ?? Number.MAX_SAFE_INTEGER)
+      - (providerOrder.get(right.provider.id) ?? Number.MAX_SAFE_INTEGER)
+    if (provider) return provider
+    if (mode === 'lab') {
+      if (left.model.lab_id === null && right.model.lab_id !== null) return 1
+      if (left.model.lab_id !== null && right.model.lab_id === null) return -1
+      const lab = (left.model.lab_id ?? '').localeCompare(right.model.lab_id ?? '')
+      if (lab) return lab
+    }
+    return left.model.sort - right.model.sort || left.model.id - right.model.id
+  })
 }
 
 export function messageUsageMetrics(usage: Usage): { cachedPercent: number | null, tokensPerSecond: number | null } {

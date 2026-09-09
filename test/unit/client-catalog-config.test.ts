@@ -1,18 +1,106 @@
 import { createPinia } from 'pinia'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { api } from '@/client/lib/api'
+import { api, ApiError } from '@/client/lib/api'
 import { useConfigStore } from '@/client/stores/config'
 import { modelRecords, provider } from './provider-fixtures'
 
 afterEach(() => vi.restoreAllMocks())
 
 describe('catalog config cache', () => {
+  it('loads complete cached summaries without issuing paginated model queries', async () => {
+    const active = vi.spyOn(api, 'enabledModelSummary').mockResolvedValue({ models: modelRecords })
+    const providerModels = vi.spyOn(api, 'providerModelSummary').mockResolvedValue({ models: modelRecords })
+    const paginated = vi.spyOn(api, 'queryModels')
+    const config = useConfigStore(createPinia())
+    config.providerRecords = [provider]
+
+    await config.loadEnabledModelList()
+    expect(active).toHaveBeenCalledOnce()
+    expect(config.enabledModels().map(entry => entry.model.model_id)).toEqual(['first-model'])
+    expect(await config.loadProviderModelList(1)).toEqual(modelRecords)
+    expect(providerModels).toHaveBeenCalledWith(1, undefined)
+    expect(paginated).not.toHaveBeenCalled()
+  })
+
+  it('does not retain a provider summary superseded by cache invalidation', async () => {
+    const config = useConfigStore(createPinia())
+    let finishOld!: (value: { models: typeof modelRecords }) => void
+    vi.spyOn(api, 'providerModelSummary').mockImplementationOnce(() => new Promise(resolve => { finishOld = resolve }))
+      .mockResolvedValueOnce({ models: [{ ...modelRecords[0]!, metadata: { name: 'Current summary' } }] })
+    const old = config.loadProviderModelList(1)
+    config.invalidateProviderModels(1)
+    await config.loadProviderModelList(1)
+    finishOld({ models: [{ ...modelRecords[0]!, metadata: { name: 'Stale summary' } }] })
+    await old
+    expect(config.modelListByRef['1:first-model']?.metadata.name).toBe('Current summary')
+  })
+
+  it('does not let an older full-record read overwrite an accepted provider summary', async () => {
+    const config = useConfigStore(createPinia())
+    config.providerRecords = [provider]
+    config.retainModels([modelRecords[0]!])
+    let finish!: (value: typeof modelRecords[number]) => void
+    vi.spyOn(api, 'modelByRef').mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    vi.spyOn(api, 'providerModelSummary').mockResolvedValue({ models: [{ ...modelRecords[0]!, metadata: { name: 'Current summary' } }] })
+    const old = config.refreshModel(modelRecords[0]!)
+    await config.loadProviderModelList(1)
+    finish({ ...modelRecords[0]!, metadata: { name: 'Stale full record' } })
+    await expect(old).rejects.toThrow()
+    expect(config.modelFor(modelRecords[0]!)?.model.metadata.name).toBe('Current summary')
+    expect(config.modelsByRef['1:first-model']?.metadata.name).not.toBe('Stale full record')
+  })
+
+  it('makes a fresh provider summary canonical over stale full-record list fields', async () => {
+    const config = useConfigStore(createPinia())
+    config.providerRecords = [provider]
+    config.retainModels([modelRecords[0]!])
+    vi.spyOn(api, 'enabledModelSummary').mockResolvedValue({ models: [modelRecords[0]!] })
+    vi.spyOn(api, 'providerModelSummary').mockResolvedValue({ models: [{ ...modelRecords[0]!, enabled: false }] })
+    await config.loadEnabledModelList()
+    expect(config.enabledModels()).toHaveLength(1)
+    await config.loadProviderModelList(1)
+    expect(config.enabledModels()).toEqual([])
+    expect(config.modelFor(modelRecords[0]!)?.model.enabled).toBe(false)
+  })
+
+  it('does not make an absent selected record available after an enabled snapshot loads', async () => {
+    const config = useConfigStore(createPinia())
+    config.providerRecords = [provider]
+    config.retainModels([modelRecords[0]!])
+    vi.spyOn(api, 'enabledModelSummary').mockResolvedValue({ models: [] })
+    await config.loadEnabledModelList()
+    expect(config.modelFor(modelRecords[0]!)).toBeDefined()
+    expect(config.enabledModels([modelRecords[0]!])).toEqual([])
+    expect(config.isAvailable(modelRecords[0]!)).toBe(false)
+  })
+
+  it('replaces provider summary membership, pruning deleted rows and adding newly enabled rows', async () => {
+    const config = useConfigStore(createPinia())
+    config.providerRecords = [provider]
+    config.retainModels(modelRecords)
+    vi.spyOn(api, 'enabledModelSummary').mockResolvedValue({ models: [modelRecords[0]!] })
+    vi.spyOn(api, 'providerModelSummary').mockResolvedValue({ models: [{ ...modelRecords[1]!, enabled: true }] })
+    await config.loadEnabledModelList()
+    await config.loadProviderModelList(1)
+    expect(config.modelFor(modelRecords[0]!)).toBeUndefined()
+    expect(config.enabledModels().map(entry => entry.model.model_id)).toEqual(['second-model'])
+  })
+
+  it('tombstones a stale model when its authoritative by-ref read returns 404', async () => {
+    const config = useConfigStore(createPinia())
+    config.providerRecords = [provider]
+    config.retainModels([modelRecords[0]!])
+    config.invalidateProviderModels(1)
+    vi.spyOn(api, 'modelByRef').mockRejectedValue(new ApiError(404, 'not found', 'GET', '/models/by-ref'))
+    await expect(config.ensureModel(modelRecords[0]!)).rejects.toThrow()
+    expect(config.modelFor(modelRecords[0]!)).toBeUndefined()
+  })
+
   // A same-session provider refresh supersedes metadata, not the committed rename's old-key cleanup.
   it('removes a renamed model reference after same-generation provider invalidation', () => {
     const config = useConfigStore(createPinia())
     const model = modelRecords[0]!
     config.retainModels([model])
-    config.pickerRefs = ['1:first-model']
     const acknowledge = config.beginModelWrite(model)
     config.invalidateProviderModels(model.provider_id)
 
@@ -21,7 +109,6 @@ describe('catalog config cache', () => {
     expect(retained).toBe(false)
     expect(config.modelsByRef['1:first-model']).toBeUndefined()
     expect(config.modelsByRef['1:renamed-model']).toBeUndefined()
-    expect(config.pickerRefs).toEqual([])
   })
 
   // A rename acknowledgment from an old authenticated identity must not mutate the new cache at all.
@@ -31,14 +118,12 @@ describe('catalog config cache', () => {
     const acknowledge = config.beginModelWrite(model)
     config.reset()
     config.retainModels([{ ...model, metadata: { name: 'Current user model' } }])
-    config.pickerRefs = ['1:first-model']
 
     const retained = acknowledge({ ...model, model_id: 'renamed-model' })
 
     expect(retained).toBe(false)
     expect(config.modelsByRef['1:first-model']?.metadata.name).toBe('Current user model')
     expect(config.modelsByRef['1:renamed-model']).toBeUndefined()
-    expect(config.pickerRefs).toEqual(['1:first-model'])
   })
 
   it('fences obsolete write metadata and an exact refresh overtaken by another provider revision', async () => {
@@ -75,31 +160,6 @@ describe('catalog config cache', () => {
     expect(config.isAvailable(model)).toBe(false)
   })
 
-  it('aborts a stale filtered request, appends the current cursor, and retains the selected off-page model', async () => {
-    const config = useConfigStore(createPinia())
-    config.providerRecords = [provider]
-    config.retainModels([modelRecords[1]!])
-    let finish!: (value: { models: typeof modelRecords; next_cursor: string | null }) => void
-    const pages = vi.spyOn(api, 'queryModels').mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
-    const old = config.loadEnabledModels(false, { search: 'first' })
-    const signal = pages.mock.calls[0]![1]
-    pages.mockResolvedValueOnce({ models: [modelRecords[0]!], next_cursor: 'next' })
-    await config.loadEnabledModels(false, { vision: true, min_context: 0, lab_id: 'deepseek' })
-    expect(signal?.aborted).toBe(true)
-    pages.mockResolvedValueOnce({ models: [{ ...modelRecords[0]!, id: 20, model_id: 'appended' }], next_cursor: null })
-    await config.loadEnabledModels(true, { vision: true, min_context: 0, lab_id: 'deepseek' })
-    expect(pages.mock.calls[2]![0]).toMatchObject({ enabled: true, vision: true, min_context: 0, lab_id: 'deepseek', cursor: 'next' })
-    finish({ models: [], next_cursor: 'stale' })
-    await old
-    expect(config.enabledModels().map(entry => entry.model.model_id)).toEqual(['first-model', 'appended'])
-    expect(config.pickerCursor).toBeNull()
-    expect(config.modelFor({ provider_id: 1, model_id: 'second-model' })?.model.metadata.name).toBe('Second model')
-    pages.mockResolvedValueOnce({ models: [], next_cursor: null })
-    await config.loadEnabledModels(false, { tools: true })
-    expect(config.enabledModels()).toEqual([])
-    expect(config.modelsByRef['1:second-model']).toBeDefined()
-  })
-
   it('serializes false, zero, raw Lab IDs, and interface filters into the server query', async () => {
     const fetcher = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ models: [], next_cursor: null })))
     await api.queryModels({ vision: false, reasoning: true, tools: true, image_output: true, interface_id: 10, lab_id: 'lab/name', min_context: 0, search: 'human name' })
@@ -118,17 +178,6 @@ describe('catalog config cache', () => {
     await pending
     expect(config.modelsByRef['1:first-model']).toBeUndefined()
     expect(config.isAvailable(reference)).toBe(false)
-  })
-
-  it('does not replace a saved model with a page response that started before the save', async () => {
-    const config = useConfigStore(createPinia())
-    let finish!: (value: { models: typeof modelRecords; next_cursor: null }) => void
-    vi.spyOn(api, 'queryModels').mockImplementation(() => new Promise(resolve => { finish = resolve }))
-    const old = config.loadProviderPage(1)
-    config.retainModels([{ ...modelRecords[0]!, metadata: { name: 'Saved model' } }])
-    finish({ models: modelRecords, next_cursor: null })
-    await old
-    expect(config.modelsByRef['1:first-model']?.metadata.name).toBe('Saved model')
   })
 
   it('refreshes explicitly selected models even when they are outside the enabled page', async () => {
@@ -157,31 +206,19 @@ describe('catalog config cache', () => {
     expect(config.modelsByRef['1:first-model']?.metadata.name).toBe('Current selection')
   })
 
-  it('loads providers independently and retains an explicitly selected disabled model across model pages', async () => {
+  it('loads providers independently and retains an explicitly selected disabled model across summaries', async () => {
     vi.spyOn(api, 'providers').mockResolvedValue([provider])
-    const pages = vi.spyOn(api, 'queryModels').mockResolvedValue({ models: [modelRecords[0]!], next_cursor: 'next' })
+    vi.spyOn(api, 'enabledModelSummary').mockResolvedValue({ models: [modelRecords[0]!] })
+    vi.spyOn(api, 'providerModelSummary').mockResolvedValue({ models: modelRecords })
     vi.spyOn(api, 'modelByRef').mockResolvedValue(modelRecords[1]!)
     const config = useConfigStore(createPinia())
     await config.load()
-    expect(pages).not.toHaveBeenCalled()
     await config.ensureModel({ provider_id: 1, model_id: 'second-model' })
-    await config.loadEnabledModels()
-    pages.mockResolvedValue({ models: [], next_cursor: null })
-    await config.loadProviderPage(1)
+    await config.loadEnabledModelList()
+    await config.loadProviderModelList(1)
     expect(config.modelFor({ provider_id: 1, model_id: 'second-model' })?.model.metadata.name).toBe('Second model')
     expect(config.isAvailable({ provider_id: 1, model_id: 'second-model' })).toBe(false)
     expect(config.enabledModels().map(entry => entry.model.model_id)).toEqual(['first-model'])
   })
 
-  it('does not let a superseded provider page overwrite cached metadata', async () => {
-    const config = useConfigStore(createPinia())
-    let finish!: (value: { models: typeof modelRecords; next_cursor: null }) => void
-    const pages = vi.spyOn(api, 'queryModels').mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
-    const old = config.loadProviderPage(1)
-    pages.mockResolvedValue({ models: [{ ...modelRecords[0]!, metadata: { name: 'Current' } }], next_cursor: null })
-    await config.loadProviderPage(1)
-    finish({ models: modelRecords, next_cursor: null })
-    await old
-    expect(config.modelsByRef['1:first-model']?.metadata.name).toBe('Current')
-  })
 })

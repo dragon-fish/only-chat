@@ -10,10 +10,10 @@ export function isChatHistoryRoute(path: unknown): boolean {
 }
 
 /** Keep server replacements in click order and never publish a read overtaken by another edit. */
-export function createModelWriteQueue(options: {
+export function createModelWriteQueue<T = ModelWithMetadata>(options: {
   write: (id: number, patch: Partial<ModelWriteInput>) => Promise<unknown>
-  read: () => Promise<ModelWithMetadata[] | null>
-  apply: (models: ModelWithMetadata[]) => void
+  read: () => Promise<T[] | null>
+  apply: (models: T[]) => void
   onError: (error: unknown) => void
 }) {
   let writes: Promise<unknown> = Promise.resolve()

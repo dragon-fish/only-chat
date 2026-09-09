@@ -24,10 +24,20 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 
-async function mountEditor() {
+async function mountEditor(sourceModels: ModelWithMetadata[] = models) {
   desktop.value = true
+  const summaries = new Map<number, ModelWithMetadata[]>()
   vi.spyOn(api, 'providers').mockResolvedValue([provider])
-  vi.spyOn(api, 'queryModels').mockImplementation(async query => ({ models: structuredClone(models).filter(model => !query?.search || `${model.model_id} ${model.metadata.name}`.toLowerCase().includes(query.search.toLowerCase())), next_cursor: null }))
+  vi.spyOn(api, 'queryModels').mockImplementation(async query => ({ models: structuredClone(sourceModels).filter(model => !query?.search || `${model.model_id} ${model.metadata.name}`.toLowerCase().includes(query.search.toLowerCase())), next_cursor: null }))
+  vi.spyOn(api, 'providerModelSummary').mockImplementation(async providerId => {
+    const page = await api.queryModels({ provider_id: providerId })
+    summaries.set(providerId, structuredClone(page.models))
+    return { models: page.models }
+  })
+  vi.spyOn(api, 'modelByRef').mockImplementation(async reference => structuredClone(
+    summaries.get(reference.provider_id)?.find(model => model.model_id === reference.model_id)
+      ?? sourceModels.find(model => model.provider_id === reference.provider_id && model.model_id === reference.model_id)!,
+  ))
   vi.spyOn(api, 'catalogStatus').mockResolvedValue(catalogStatus)
   vi.spyOn(api, 'catalogProviders').mockResolvedValue([{ id: 'acme', name: 'Acme', api: 'https://acme.test/v1' }])
   const pinia = createPinia()
@@ -42,7 +52,7 @@ async function mountEditor() {
   const app = createApp({ render: () => h(RouterView) }).use(pinia).use(router)
   app.mount('#test-host')
   cleanup = () => app.unmount()
-  await vi.waitFor(() => expect(document.querySelector('[aria-label="编辑 First model"]')).not.toBeNull())
+  await vi.waitFor(() => expect(document.querySelector(`[aria-label="编辑 ${sourceModels[0]!.metadata.name ?? sourceModels[0]!.model_id}"]`)).not.toBeNull())
   return { router, config: useConfigStore(pinia) }
 }
 
@@ -105,6 +115,7 @@ async function pendingAcknowledgementAcrossAssociation() {
     next_cursor: null,
   }))
   vi.spyOn(api, 'modelByRef').mockImplementation(async reference => {
+    if (reference.provider_id === 2 && reference.model_id === secondModel.model_id) return structuredClone(secondModel)
     const model = persisted.find(model => model.provider_id === reference.provider_id && model.model_id === reference.model_id)
     if (!model) throw new Error('Unknown model reference')
     return structuredClone(model)
@@ -143,6 +154,55 @@ async function pendingAcknowledgementAcrossAssociation() {
 }
 
 describe('provider model editor', () => {
+  it('keeps advanced model filters behind a compact filter control', async () => {
+    await mountEditor()
+    expect(document.querySelector('[aria-label="筛选模型"]')).not.toBeNull()
+    expect(document.querySelector('label[for$="-context"]')).toBeNull()
+    document.querySelector<HTMLButtonElement>('[aria-label="筛选模型"]')!.click()
+    await vi.waitFor(() => expect(document.querySelector('[data-slot="popover-content"] label[for$="-context"]')).not.toBeNull())
+  })
+
+  it('reads the authoritative full model on every editor open', async () => {
+    await mountEditor()
+    const read = vi.mocked(api.modelByRef)
+    read.mockClear()
+    const open = () => document.querySelector<HTMLButtonElement>('[aria-label="编辑 First model"]')!.click()
+    open()
+    await vi.waitFor(() => expect(document.querySelector('#model-1-2-name')).not.toBeNull())
+    document.querySelector<HTMLInputElement>('#model-1-2-name')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await vi.waitFor(() => expect(document.querySelector('#model-1-2-name')).toBeNull())
+    open()
+    await vi.waitFor(() => expect(document.querySelector('#model-1-2-name')).not.toBeNull())
+    expect(read).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not let stale summary fields override the authoritative editor record', async () => {
+    await mountEditor()
+    const authoritative = { ...models[0]!, enabled: false }
+    vi.mocked(api.modelByRef).mockResolvedValue(authoritative)
+    const write = vi.spyOn(api, 'updateModel').mockResolvedValue({ ...authoritative, metadata_override: { name: 'Edited' }, metadata: { ...authoritative.metadata, name: 'Edited' } })
+    document.querySelector<HTMLButtonElement>('[aria-label="编辑 First model"]')!.click()
+    await vi.waitFor(() => expect(document.querySelector('#model-1-2-name')).not.toBeNull())
+    await type(document.querySelector<HTMLInputElement>('#model-1-2-name')!, 'Edited')
+    document.querySelector('#model-1-2-name')!.closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(write).toHaveBeenCalledOnce())
+    expect(write.mock.calls[0]?.[2]).toEqual({ metadata_override: { name: 'Edited' } })
+  })
+
+  it('ignores an earlier edit read after a newer model is opened', async () => {
+    await mountEditor()
+    let finishFirst!: (value: ModelWithMetadata) => void
+    vi.mocked(api.modelByRef).mockImplementationOnce(() => new Promise(resolve => { finishFirst = resolve }))
+      .mockResolvedValueOnce(models[1]!)
+    document.querySelector<HTMLButtonElement>('[aria-label="编辑 First model"]')!.click()
+    document.querySelector<HTMLButtonElement>('[aria-label="编辑 Second model"]')!.click()
+    await vi.waitFor(() => expect(document.querySelector('#model-1-3-name')).not.toBeNull())
+    finishFirst(models[0]!)
+    await nextTick()
+    expect(document.querySelector('#model-1-3-name')).not.toBeNull()
+    expect(document.querySelector('#model-1-2-name')).toBeNull()
+  })
+
   it.each(['filter', 'provider'] as const)('refreshes an exact off-page model after an old association acknowledgement across a %s change', async context => {
     const { config, router, releaseModel, currentModel } = await pendingAcknowledgementAcrossAssociation()
     if (context === 'filter') await type(document.querySelector<HTMLInputElement>('#model-1-2-name')!, 'Newer model draft')
@@ -256,10 +316,10 @@ describe('provider model editor', () => {
     expect(document.querySelector('[data-slot="sheet-content"] [role="status"]')?.textContent).toContain('未保存')
   })
 
-  it.each(['filter', 'provider'] as const)('does not repaint a newer %s after a provider save starts refreshing models', async context => {
+  it('does not repaint a newer provider after an earlier provider save finishes refreshing models', async () => {
     const { router, config } = await mountEditor()
     const secondProvider = { ...provider, id: 2, name: 'Second provider' }
-    const currentModel = context === 'filter' ? { ...models[1]!, metadata: { name: 'Current model' } } : { ...models[1]!, id: 20, provider_id: 2, metadata: { name: 'Current model' } }
+    const currentModel = { ...models[1]!, id: 20, provider_id: 2, metadata: { name: 'Current model' } }
     config.providerRecords.push(secondProvider)
     vi.mocked(api.providers).mockResolvedValue([provider, secondProvider])
     vi.spyOn(api, 'updateProvider').mockResolvedValue(provider)
@@ -268,8 +328,7 @@ describe('provider model editor', () => {
       .mockResolvedValue({ models: [currentModel], next_cursor: null })
     document.querySelector('#provider-name')!.closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
     await vi.waitFor(() => expect(finishPage).toBeTypeOf('function'))
-    if (context === 'filter') await type(document.querySelector<HTMLInputElement>('[aria-label="搜索模型"]')!, 'second')
-    else await router.push('/settings/providers/2')
+    await router.push('/settings/providers/2')
     await vi.waitFor(() => expect(document.querySelector('[aria-label="编辑 Current model"]')).not.toBeNull())
     finishPage({ models: structuredClone(models), next_cursor: 'stale-cursor' })
     await nextTick()
@@ -277,8 +336,8 @@ describe('provider model editor', () => {
     expect(document.querySelector('[aria-label="编辑 Current model"]')).not.toBeNull()
     expect(document.querySelector('[aria-label="编辑 First model"]')).toBeNull()
     expect([...document.querySelectorAll('button')].some(button => button.textContent?.trim() === '加载更多模型')).toBe(false)
-    expect(config.modelsByRef[`${currentModel.provider_id}:second-model`]?.metadata.name).toBe('Current model')
-    expect(document.querySelector<HTMLInputElement>('#provider-name')?.value).toBe(context === 'filter' ? 'Example' : 'Second provider')
+    expect(config.modelListByRef[`${currentModel.provider_id}:second-model`]?.metadata.name).toBe('Current model')
+    expect(document.querySelector<HTMLInputElement>('#provider-name')?.value).toBe('Second provider')
   })
 
   it('invalidates earlier selected and picker reads before refreshing a saved provider', async () => {
@@ -289,22 +348,22 @@ describe('provider model editor', () => {
     vi.spyOn(api, 'modelByRef').mockImplementationOnce(() => new Promise(resolve => { finishOldSelection = resolve }))
       .mockImplementationOnce(() => new Promise(resolve => { finishSelection = resolve }))
     const oldSelection = config.refreshSelectedModels()
-    let finishPicker!: (page: ModelPage) => void
+    let finishPicker!: (page: { models: ModelWithMetadata[] }) => void
     let finishPage!: (page: ModelPage) => void
-    vi.mocked(api.queryModels).mockImplementationOnce(() => new Promise(resolve => { finishPicker = resolve }))
-      .mockImplementationOnce(() => new Promise(resolve => { finishPage = resolve }))
-    const oldPicker = config.loadEnabledModels()
+    vi.spyOn(api, 'enabledModelSummary').mockImplementationOnce(() => new Promise(resolve => { finishPicker = resolve }))
+    vi.mocked(api.queryModels).mockImplementationOnce(() => new Promise(resolve => { finishPage = resolve }))
+    const oldPicker = config.loadEnabledModelList()
     vi.spyOn(api, 'updateProvider').mockResolvedValue(provider)
     document.querySelector('#provider-name')!.closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
     await vi.waitFor(() => expect(finishSelection).toBeTypeOf('function'))
     await vi.waitFor(() => expect(finishPage).toBeTypeOf('function'))
     finishOldSelection({ ...models[1]!, metadata: { name: 'Stale selection' } })
-    finishPicker({ models: [{ ...models[0]!, id: 99, model_id: 'uncached-stale-model' }], next_cursor: null })
+    finishPicker({ models: [{ ...models[0]!, id: 99, model_id: 'uncached-stale-model' }] })
     await Promise.all([oldSelection, oldPicker])
     expect(config.modelsByRef['1:second-model']?.metadata.name).not.toBe('Stale selection')
     expect(config.modelsByRef['1:uncached-stale-model']).toBeUndefined()
     finishSelection({ ...models[1]!, metadata: { name: 'Fresh selection' } })
-    finishPage({ models: [{ ...models[0]!, metadata: { name: 'Fresh page' } }], next_cursor: null })
+    finishPage({ models: [{ ...models[0]!, metadata: { name: 'Fresh page' } }, { ...models[1]!, metadata: { name: 'Fresh selection' } }], next_cursor: null })
     await vi.waitFor(() => expect(config.modelsByRef['1:second-model']?.metadata.name).toBe('Fresh selection'))
     await vi.waitFor(() => expect(document.querySelector('[aria-label="编辑 Fresh page"]')).not.toBeNull())
   })
@@ -336,7 +395,7 @@ describe('provider model editor', () => {
     let finishOldPage!: (page: ModelPage) => void
     vi.mocked(api.queryModels).mockImplementationOnce(() => new Promise(resolve => { finishOldPage = resolve }))
       .mockResolvedValue({ models: [secondModel], next_cursor: null })
-    const oldPage = config.loadProviderPage(1)
+    const oldPage = config.loadProviderModelList(1)
     let finishDelete!: () => void
     vi.spyOn(api, 'deleteModel').mockImplementation(async (providerId, modelId) => {
       if (providerId !== 1 || modelId !== 2) throw new Error('Deleted the wrong model')
@@ -360,7 +419,7 @@ describe('provider model editor', () => {
     finishOldPage({ models: structuredClone(models), next_cursor: null })
     await oldPage
     expect(config.modelsByRef['1:first-model']).toBeUndefined()
-    expect(config.modelsByRef['2:first-model']?.id).toBe(20)
+    expect(config.modelListByRef['2:first-model']?.id).toBe(20)
     expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain('Second provider model')
     expect(document.querySelector<HTMLInputElement>('#provider-name')?.value).toBe('Second provider')
   })
@@ -392,6 +451,7 @@ describe('provider model editor', () => {
     const { config } = await mountEditor()
     const save = delayModelSave()
     await type(document.querySelector<HTMLInputElement>('[aria-label="搜索模型"]')!, 'First model')
+    await new Promise(resolve => setTimeout(resolve, 170))
     await vi.waitFor(() => expect(document.querySelector('[aria-label="编辑 First model"]')).not.toBeNull())
     await submitModelName()
     await vi.waitFor(() => expect(save.write).toHaveBeenCalledTimes(1))
@@ -564,15 +624,15 @@ describe('provider model editor', () => {
     await vi.waitFor(() => expect(document.body.textContent).not.toContain('Conflicting catalog associations'))
   })
 
-  it('cancels a pending model search and clears its progress when the query becomes too short', async () => {
+  it('searches short model IDs locally without issuing another server query', async () => {
     await mountEditor()
     const search = document.querySelector<HTMLInputElement>('[aria-label="搜索模型"]')!
-    vi.mocked(api.queryModels).mockImplementationOnce(() => new Promise(() => {}))
-    await type(search, 'pending')
-    await vi.waitFor(() => expect(document.querySelector('[aria-label="正在更新模型列表"]')).not.toBeNull())
+    const calls = vi.mocked(api.queryModels).mock.calls.length
     await type(search, 'ab')
+    await new Promise(resolve => setTimeout(resolve, 170))
     expect(document.querySelector('[aria-label="正在更新模型列表"]')).toBeNull()
-    expect(document.body.textContent).toContain('搜索模型至少需要 3 个字符')
+    expect(document.body.textContent).not.toContain('搜索模型至少需要 3 个字符')
+    expect(vi.mocked(api.queryModels)).toHaveBeenCalledTimes(calls)
   })
 
   it('keeps its saved heading stable while editing interfaces and refreshes catalog metadata without clearing the draft', async () => {
@@ -624,10 +684,10 @@ describe('provider model editor', () => {
   })
 
   it('removes an unavailable unpinned model when its enabled switch is turned off', async () => {
-    await mountEditor()
     const removed = { ...models[0]!, model_id: 'removed-model', enabled: true, manual_pinned: false, upstream_available: false, metadata: { name: 'Removed model' } }
-    vi.mocked(api.queryModels).mockResolvedValue({ models: [removed], next_cursor: null })
+    await mountEditor([removed])
     await type(document.querySelector<HTMLInputElement>('[aria-label="搜索模型"]')!, 'removed')
+    await new Promise(resolve => setTimeout(resolve, 170))
     await vi.waitFor(() => expect(document.querySelector('[aria-label="启用 Removed model"]')).not.toBeNull())
     const destroy = vi.spyOn(api, 'deleteModel').mockResolvedValue()
     const update = vi.spyOn(api, 'updateModel')
@@ -782,11 +842,11 @@ describe('provider model editor', () => {
     const search = document.querySelector<HTMLInputElement>('input[aria-label="搜索模型"]')
     expect(search).not.toBeNull()
     await type(search!, ' SECOND-MODEL ')
-    await vi.waitFor(() => expect(document.querySelector('[aria-label="编辑 Second model"]')).not.toBeNull())
-    expect(document.querySelector('[aria-label="编辑 First model"]')).toBeNull()
+    await vi.waitFor(() => expect(document.querySelector('[aria-label="编辑 First model"]')).toBeNull())
+    expect(document.querySelector('[aria-label="编辑 Second model"]')).not.toBeNull()
     await type(search!, 'first model')
-    await vi.waitFor(() => expect(document.querySelector('[aria-label="编辑 First model"]')).not.toBeNull())
-    expect(document.querySelector('[aria-label="编辑 Second model"]')).toBeNull()
+    await vi.waitFor(() => expect(document.querySelector('[aria-label="编辑 Second model"]')).toBeNull())
+    expect(document.querySelector('[aria-label="编辑 First model"]')).not.toBeNull()
     await type(search!, 'no match')
     await vi.waitFor(() => expect(document.querySelectorAll('button[aria-label^="编辑 "]')).toHaveLength(0))
     const clear = [...document.querySelectorAll('button')].find(button => button.textContent?.trim() === '清除筛选')

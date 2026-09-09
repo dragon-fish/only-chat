@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import type { Project, Conversation } from '@/shared/models'
+import type { Project, Conversation, ProviderWithInterfaces } from '@/shared/models'
 import {
   displayInitials,
   projectPresentation,
   recentProjects,
   searchProjects,
   searchConversations,
+  filterModelEntries,
+  sortModelEntries,
 } from '@/client/lib/ui-models'
+import { modelRecords, provider } from './provider-fixtures'
 
 const project = (id: number, updated_at: number): Project => ({
   id, user_id: 1, name: `Project ${id}`, icon_attachment_id: null, system_prompt: null,
@@ -57,4 +60,32 @@ describe('navigation view models', () => {
     expect(searchConversations(conversations, 'design', null).map(s => s.id)).toEqual([2])
   })
 
+})
+
+describe('model list view models', () => {
+  it('sorts a complete provider list into stable Lab groups', () => {
+    const entries = [
+      { provider, model: { ...modelRecords[0]!, id: 4, model_id: 'b/late', lab_id: 'b', sort: 2 } },
+      { provider, model: { ...modelRecords[0]!, id: 1, model_id: 'a/early', lab_id: 'a', sort: 1 } },
+      { provider, model: { ...modelRecords[0]!, id: 3, model_id: 'b/early', lab_id: 'b', sort: 1 } },
+      { provider, model: { ...modelRecords[0]!, id: 2, model_id: 'a/late', lab_id: 'a', sort: 2 } },
+    ]
+    const sorted = sortModelEntries(entries, [provider], 'lab')
+    expect(sorted.map(entry => entry.model.model_id)).toEqual(['a/early', 'a/late', 'b/early', 'b/late'])
+  })
+
+  it('uses configured provider order even when an off-page selection is inserted first', () => {
+    const secondProvider: ProviderWithInterfaces = { ...provider, id: 2, name: 'Second' }
+    const entries = [
+      { provider: secondProvider, model: { ...modelRecords[1]!, provider_id: 2, sort: 0 } },
+      { provider, model: { ...modelRecords[0]!, sort: 1 } },
+    ]
+    expect(sortModelEntries(entries, [provider, secondProvider], 'provider').map(entry => entry.provider.id)).toEqual([1, 2])
+  })
+
+  it('filters cached model summaries locally by search and declared capabilities', () => {
+    const entries = modelRecords.map(model => ({ provider, model }))
+    expect(filterModelEntries(entries, { search: 'SECOND', reasoning: true }).map(entry => entry.model.model_id)).toEqual(['second-model'])
+    expect(filterModelEntries(entries, { min_context: 999_999 })).toEqual([])
+  })
 })

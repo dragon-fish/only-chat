@@ -17,20 +17,20 @@ vi.mock('@vueuse/core', async (importOriginal) => ({
 let cleanup = () => {}
 afterEach(() => { cleanup(); vi.restoreAllMocks(); document.body.innerHTML = '' })
 
-async function mountPicker(compact: boolean, isDesktop: boolean, loaded = true) {
+const selectedRecord = { ...modelRecords[0]!, model_id: 'test-model', metadata: { name: 'Test model', tool_call: false, modalities: { input: ['text' as const, 'image' as const], output: ['text' as const] } } }
+
+async function mountPicker(compact: boolean, isDesktop: boolean, summary: typeof modelRecords | Error = [selectedRecord], retainSelected = true) {
   vi.spyOn(api, 'catalogProviders').mockResolvedValue([])
+  const summaries = vi.spyOn(api, 'enabledModelSummary')
+  if (summary instanceof Error) summaries.mockRejectedValueOnce(summary)
+  else summaries.mockResolvedValue({ models: summary })
   desktop.value = isDesktop
   const pinia = createPinia()
   const config = useConfigStore(pinia)
   config.loaded = true
   config.providerRecords = [provider]
-  config.pickerLoaded = loaded
-  if (loaded) {
-    const records = [{ ...modelRecords[0]!, model_id: 'test-model', metadata: { name: 'Test model', tool_call: false, modalities: { input: ['text' as const, 'image' as const], output: ['text' as const] } } }]
-    config.retainModels(records)
-    vi.spyOn(api, 'queryModels').mockResolvedValue({ models: records, next_cursor: null })
-    config.pickerRefs = ['1:test-model']
-  }
+  config.pickerLoaded = false
+  if (retainSelected) config.retainModels([selectedRecord])
   const host = document.createElement('div')
   document.body.append(host)
   const router = createRouter({ history: createMemoryHistory(), routes: [
@@ -45,29 +45,30 @@ async function mountPicker(compact: boolean, isDesktop: boolean, loaded = true) 
 }
 
 describe('model picker modality', () => {
-  it('sends search and capability filters to the server and shows models outside the initial page', async () => {
-    const host = await mountPicker(false, true)
+  it('filters the complete cached summary locally without issuing model queries', async () => {
+    const remote = { ...modelRecords[1]!, enabled: true, metadata: { name: 'Remote reasoning model', reasoning: true } }
+    const query = vi.spyOn(api, 'queryModels')
+    const host = await mountPicker(false, true, [selectedRecord, remote])
     host.querySelector<HTMLButtonElement>('button')!.click()
     await vi.waitFor(() => expect(document.querySelector('[role="option"]')).not.toBeNull())
-    const remote = { ...modelRecords[1]!, enabled: true, metadata: { name: 'Remote reasoning model', reasoning: true } }
-    vi.mocked(api.queryModels).mockResolvedValue({ models: [remote], next_cursor: null })
     const input = document.querySelector<HTMLInputElement>('[data-slot="command-input"]')!
     input.value = 'remote'
     input.dispatchEvent(new Event('input', { bubbles: true }))
-    await vi.waitFor(() => expect(vi.mocked(api.queryModels).mock.calls.at(-1)?.[0]).toMatchObject({ search: 'remote' }))
-    document.querySelector<HTMLButtonElement>('[aria-label="推理"]')!.click()
-    await vi.waitFor(() => expect(vi.mocked(api.queryModels).mock.calls.at(-1)?.[0]).toMatchObject({ search: 'remote', reasoning: true }))
     await vi.waitFor(() => expect(document.querySelector('[role="option"]')?.textContent).toContain('Remote reasoning model'))
+    document.querySelector<HTMLButtonElement>('[aria-label="筛选模型"]')!.click()
+    await vi.waitFor(() => expect(document.querySelector('[aria-label="推理"]')).not.toBeNull())
+    document.querySelector<HTMLButtonElement>('[aria-label="推理"]')!.click()
+    await vi.waitFor(() => expect(document.querySelector('[role="option"]')?.textContent).toContain('Remote reasoning model'))
+    expect(query).not.toHaveBeenCalled()
     expect(host.textContent).toContain('Test model')
   })
 
   it('keeps enabled-model retry and selection usable when the selected reference returns 404', async () => {
     vi.spyOn(api, 'modelByRef').mockRejectedValue(new Error('GET selected model failed: 404 not found'))
-    const query = vi.spyOn(api, 'queryModels').mockRejectedValueOnce(new Error('Enabled model query offline'))
-    const host = await mountPicker(false, true, false)
+    const host = await mountPicker(false, true, new Error('Enabled model query offline'), false)
     host.querySelector<HTMLButtonElement>('button')!.click()
     await vi.waitFor(() => expect(document.querySelector('[role="alert"]')?.textContent).toContain('Enabled model query offline'))
-    query.mockResolvedValue({ models: [modelRecords[0]!], next_cursor: null })
+    vi.mocked(api.enabledModelSummary).mockResolvedValue({ models: [modelRecords[0]!] })
     ;[...document.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.trim() === '重试')!.click()
     await vi.waitFor(() => expect([...document.querySelectorAll('[role="option"]')].some(option => option.textContent?.includes('First model'))).toBe(true))
     document.querySelector<HTMLElement>('[role="option"]')!.click()
@@ -80,15 +81,15 @@ describe('model picker modality', () => {
     await vi.waitFor(() => expect(document.querySelector('[role="option"]')?.textContent).toContain('Test model'))
     document.querySelector('[data-slot="command-input"]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     await vi.waitFor(() => expect(document.querySelector('[data-slot="popover-content"]')).toBeNull())
-    vi.mocked(api.queryModels).mockResolvedValue({ models: [{ ...modelRecords[0]!, id: 99, model_id: 'new-model', metadata: { name: 'Newly enabled model' } }], next_cursor: null })
+    vi.mocked(api.enabledModelSummary).mockResolvedValue({ models: [{ ...modelRecords[0]!, id: 99, model_id: 'new-model', metadata: { name: 'Newly enabled model' } }] })
     host.querySelector<HTMLButtonElement>('button')!.click()
     await vi.waitFor(() => expect([...document.querySelectorAll('[role="option"]')].some(option => option.textContent?.includes('Newly enabled model'))).toBe(true))
   })
 
-  it('loads a selected model outside the enabled page and keeps it renderable', async () => {
-    vi.spyOn(api, 'modelByRef').mockResolvedValue({ ...modelRecords[1]!, enabled: true, model_id: 'test-model', metadata: { name: 'Retained selection' } })
-    vi.spyOn(api, 'queryModels').mockResolvedValue({ models: [modelRecords[0]!], next_cursor: null })
-    const host = await mountPicker(false, true, false)
+  it('keeps the selected model visible in the complete enabled summary', async () => {
+    const retained = { ...modelRecords[1]!, enabled: true, model_id: 'test-model', metadata: { name: 'Retained selection' } }
+    vi.spyOn(api, 'modelByRef').mockResolvedValue(retained)
+    const host = await mountPicker(false, true, [modelRecords[0]!, retained], false)
     await vi.waitFor(() => expect(host.textContent).toContain('Retained selection'))
     host.querySelector<HTMLButtonElement>('button')!.click()
     await vi.waitFor(() => expect([...document.querySelectorAll('[role="option"]')].some(option => option.textContent?.includes('First model'))).toBe(true))

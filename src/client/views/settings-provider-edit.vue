@@ -5,7 +5,7 @@ import { useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
 import ModelEditor from '@/client/components/model-editor.vue'
 import LabAvatar from '@/client/components/lab-avatar.vue'
-import ModelFilterBar from '@/client/components/model-filter-bar.vue'
+import ModelFilterMenu from '@/client/components/model-filter-menu.vue'
 import ModelGroupList from '@/client/components/model-group-list.vue'
 import UnsavedChangesGuard from '@/client/components/unsaved-changes-guard.vue'
 import SettingsBackButton from '@/client/components/layout/settings-back-button.vue'
@@ -15,7 +15,7 @@ import ProviderNavigation from '@/client/components/provider-navigation.vue'
 import ProviderSettingsForm from '@/client/components/provider-settings-form.vue'
 import { api } from '@/client/lib/api'
 import { providerSettingsDraft } from '@/client/lib/provider-settings'
-import { modelBadges, modelName } from '@/client/lib/ui-models'
+import { filterModelEntries, modelBadges, modelName, sortModelEntries } from '@/client/lib/ui-models'
 import { createModelWriteQueue } from '@/client/lib/settings'
 import { createModelEditorSession, type ModelEditorSession } from '@/client/lib/model-editor'
 import { useConfigStore } from '@/client/stores/config'
@@ -35,7 +35,7 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from '@/client/ui/alert-dialog'
-import { type ModelWithMetadata, type ModelQuery } from '@/shared/models'
+import { type ModelListItem, type ModelWithMetadata, type ModelQuery } from '@/shared/models'
 import { ProviderWriteInputSchema, type CatalogProviderSummary, type ModelWriteInput, type ProviderWriteInput } from '@/shared/api'
 
 const props = defineProps<{ providerId: number | null }>()
@@ -49,18 +49,23 @@ const savedName = computed(() => savedProvider.value?.name || '供应商设置')
 const catalogProviders = ref<CatalogProviderSummary[]>([])
 const associationWarning = ref<string | null>(null)
 const { dirty, markSaved } = useFormChanges(() => form)
-const models = ref<ModelWithMetadata[]>([])
+const models = ref<ModelListItem[]>([])
 const modelFilters = ref<Partial<ModelQuery>>({})
-const modelQuery = computed(() => modelFilters.value.search ?? '')
+const debouncedSearch = ref('')
 const hasModelFilters = computed(() => Object.values(modelFilters.value).some(value => value !== undefined && value !== ''))
-const visibleModels = computed(() => models.value)
-const modelEntries = computed(() => savedProvider.value ? models.value.map(model => ({ provider: savedProvider.value!, model })) : [])
+const filteredModels = computed(() => {
+  if (!savedProvider.value) return []
+  return sortModelEntries(filterModelEntries(models.value.map(model => ({ provider: savedProvider.value!, model })), {
+    ...modelFilters.value, search: debouncedSearch.value || undefined,
+  }, false), [savedProvider.value], 'lab').map(entry => entry.model)
+})
+const visibleModels = computed(() => filteredModels.value)
+const modelEntries = computed(() => savedProvider.value ? visibleModels.value.map(model => ({ provider: savedProvider.value!, model })) : [])
 const imageModels = computed(() => models.value.filter(model => model.enabled && model.metadata.modalities?.output.includes('image')))
 const providerImageModel = computed({
   get: () => form.default_image_model_id ?? '',
   set: (value: string) => { form.default_image_model_id = value || null },
 })
-const nextCursor = ref<string | null>(null)
 const modelLoadError = ref<string | null>(null)
 const newModelId = ref('')
 function focusNewModel() { document.getElementById('new-model-id')?.focus() }
@@ -78,6 +83,9 @@ const modelEditor = ref<InstanceType<typeof ModelEditor> | null>(null)
 const editorOpen = ref(false)
 const modelToDelete = ref<ModelWithMetadata | null>(null)
 const modelDeleteOpen = ref(false)
+let editRequestToken = 0
+let pendingDraftToken = 0
+const pendingModelDrafts = new Map<number, { token: number, patch: Partial<ModelWriteInput> }>()
 const busyModels = computed(() => modelAction.value || (pendingWrites.get(providerId.value ?? -1) ?? 0) > 0)
 const canFetchModels = computed(() => savedProvider.value?.interfaces.find(endpoint => endpoint.id === savedProvider.value?.default_interface_id)?.protocol !== 'vertex-compatible' && !!savedProvider.value?.default_interface_id)
 const hasKey = computed(() => config.providers.find(provider => provider.id === providerId.value)?.has_key)
@@ -95,10 +103,6 @@ let loadToken = 0
 let loadedProviderId: number | null = null
 let loadController: AbortController | undefined
 let modelLoadToken = 0
-function queryFor(id: number): Partial<ModelQuery> {
-  const search = id === providerId.value ? modelQuery.value.trim() : ''
-  return id === providerId.value ? { ...modelFilters.value, search: search || undefined } : {}
-}
 async function readModels(id: number) {
   if (id !== providerId.value) return null
   const token = ++modelLoadToken
@@ -108,16 +112,15 @@ async function readModels(id: number) {
   loadController = controller
   refreshing.value = true
   try {
-    const page = await config.loadProviderPage(id, queryFor(id), controller.signal)
+    const entries = await config.loadProviderModelList(id, controller.signal)
     if (id !== providerId.value || token !== modelLoadToken || navigation !== loadToken) return null
-    nextCursor.value = page.next_cursor
-    return page.models.map(model => JSON.parse(JSON.stringify(model)) as ModelWithMetadata)
+    return entries.map(model => JSON.parse(JSON.stringify(model)) as ModelListItem)
   } catch (error) {
     if (controller.signal.aborted || token !== modelLoadToken || navigation !== loadToken) return null
     throw error
   } finally { if (token === modelLoadToken && navigation === loadToken) refreshing.value = false }
 }
-async function loadModelPage(append = false) {
+async function loadModelPage() {
   const id = providerId.value
   if (id === null) return
   const token = ++modelLoadToken
@@ -125,34 +128,31 @@ async function loadModelPage(append = false) {
   loadController?.abort()
   const controller = new AbortController()
   loadController = controller
-  const search = modelQuery.value.trim()
   const invalidContext = modelFilters.value.min_context !== undefined && (!Number.isInteger(modelFilters.value.min_context) || modelFilters.value.min_context < 0)
-  if ((search && Array.from(search).length < 3) || invalidContext) {
-    models.value = []
-    nextCursor.value = null
-    modelLoadError.value = invalidContext ? '最小上下文需要填写非负整数。' : '搜索模型至少需要 3 个字符。'
+  if (invalidContext) {
+    modelLoadError.value = '最小上下文需要填写非负整数。'
     refreshing.value = false
     return
   }
   refreshing.value = true
   modelLoadError.value = null
   try {
-    const page = await config.loadProviderPage(id, { ...queryFor(id), ...(append && nextCursor.value ? { cursor: nextCursor.value } : {}) }, controller.signal)
+    const entries = await config.loadProviderModelList(id, controller.signal)
     if (token !== modelLoadToken || navigation !== loadToken) return
-    const result = page.models.map(model => JSON.parse(JSON.stringify(model)) as ModelWithMetadata)
-    models.value = append ? [...models.value, ...result.filter(model => !models.value.some(existing => existing.id === model.id))] : result
-    nextCursor.value = page.next_cursor
+    models.value = entries.map(model => JSON.parse(JSON.stringify(model)) as ModelListItem)
   } catch (error) {
     if (token === modelLoadToken && navigation === loadToken && !controller.signal.aborted) modelLoadError.value = error instanceof Error ? error.message : String(error)
   } finally { if (token === modelLoadToken && navigation === loadToken) refreshing.value = false }
 }
-watch(modelFilters, () => {
+let searchTimer: ReturnType<typeof setTimeout> | undefined
+watch(() => modelFilters.value.search, value => {
   if (!ready.value) return
-  models.value = []
-  nextCursor.value = null
-  void loadModelPage()
-}, { deep: true })
+  if (searchTimer) clearTimeout(searchTimer)
+  if (!value?.trim()) debouncedSearch.value = ''
+  else searchTimer = setTimeout(() => { debouncedSearch.value = value.trim() }, 150)
+})
 async function load() {
+  editRequestToken++
   const id = providerId.value
   const token = ++loadToken
   loadController?.abort()
@@ -171,6 +171,7 @@ async function load() {
       markSaved()
       models.value = JSON.parse(JSON.stringify(config.modelsByProvider[provider.id] ?? []))
       modelFilters.value = {}
+      debouncedSearch.value = ''
       newModelId.value = ''
       editorOpen.value = false
       saving.value = modelAction.value = deletingProvider.value = false
@@ -189,7 +190,7 @@ async function load() {
   }
 }
 watch(providerId, load, { immediate: true })
-onBeforeUnmount(() => { loadToken++; modelLoadToken++; loadController?.abort() })
+onBeforeUnmount(() => { loadToken++; modelLoadToken++; editRequestToken++; loadController?.abort(); if (searchTimer) clearTimeout(searchTimer) })
 
 function updateProviderForm(value: ProviderWriteInput) { Object.assign(form, value) }
 
@@ -204,10 +205,11 @@ async function save() {
     const result = await api.updateProvider(id, { ...submitted, api_key: submitted.api_key || undefined }, value => { responseWarning = value })
     if (token === loadToken) associationWarning.value = responseWarning
     config.invalidateProviderModels(id)
+    await config.load()
     await Promise.all([
-      config.load(),
       config.refreshSelectedModels(id),
       token === loadToken ? loadModelPage() : Promise.resolve(),
+      config.pickerLoaded ? config.loadEnabledModelList() : Promise.resolve(),
     ])
     if (token === loadToken) {
       for (const endpoint of submitted.interfaces) {
@@ -293,7 +295,7 @@ async function setModelsEnabled(enabled: boolean, lab_id?: string | null) {
   finally { if (token === loadToken) modelAction.value = false }
 }
 
-async function setModelEnabled(model: ModelWithMetadata, enabled: boolean) {
+async function setModelEnabled(model: ModelListItem, enabled: boolean) {
   if (enabled || model.manual_pinned || model.upstream_available !== false) {
     await applyModel(model, { enabled })
     return
@@ -330,6 +332,7 @@ function queueFor(id: number) {
     queue = createModelWriteQueue({
       write: async (modelId, patch) => {
         const record = Object.values(config.modelsByRef).find(model => model.id === modelId && model.provider_id === id)
+          ?? Object.values(config.modelListByRef).find(model => model.id === modelId && model.provider_id === id)
         if (!record) throw new Error('missing model record')
         const retainAcknowledgement = config.beginModelWrite(record)
         const result = await api.updateModel(id, modelId, patch)
@@ -358,7 +361,7 @@ function queueFor(id: number) {
   return queue
 }
 
-async function applyModel(target: Pick<ModelWithMetadata, 'id' | 'provider_id'>, patch: Partial<ModelWriteInput>) {
+async function applyModel(target: Pick<ModelListItem, 'id' | 'provider_id'>, patch: Partial<ModelWriteInput>) {
   modelLoadToken++
   loadController?.abort()
   refreshing.value = false
@@ -369,19 +372,45 @@ async function applyModel(target: Pick<ModelWithMetadata, 'id' | 'provider_id'>,
     if (patch.metadata_override?.name !== undefined) model.metadata = { ...model.metadata, name: patch.metadata_override.name }
   }
   const id = target.provider_id
+  const draftToken = ++pendingDraftToken
+  const previousDraft = pendingModelDrafts.get(target.id)?.patch ?? {}
+  pendingModelDrafts.set(target.id, { token: draftToken, patch: { ...previousDraft, ...patch } })
   pendingWrites.set(id, (pendingWrites.get(id) ?? 0) + 1)
   try {
     const saved = await queueFor(id)(target.id, patch)
     if (saved) toast.success('已保存模型')
     return saved
-  } finally { pendingWrites.set(id, (pendingWrites.get(id) ?? 1) - 1) }
+  } finally {
+    if (pendingModelDrafts.get(target.id)?.token === draftToken) pendingModelDrafts.delete(target.id)
+    pendingWrites.set(id, (pendingWrites.get(id) ?? 1) - 1)
+  }
 }
 
-function openModel(model: ModelWithMetadata) {
-  const authoritative = Object.values(config.modelsByRef).find(record => record.id === model.id && record.provider_id === model.provider_id)
-  if (!authoritative) { report(new Error('Missing model record')); return }
-  editingSession.value = createModelEditorSession(authoritative, model)
-  editorOpen.value = true
+async function openModel(model: ModelListItem) {
+  const request = ++editRequestToken
+  const navigation = loadToken
+  try {
+    const authoritative = await api.modelByRef({ provider_id: model.provider_id, model_id: model.model_id })
+    if (request !== editRequestToken || navigation !== loadToken || providerId.value !== model.provider_id) return
+    const pending = pendingModelDrafts.get(model.id)?.patch
+    const initial = pending ? {
+      ...authoritative,
+      ...(pending.model_id === undefined ? {} : { model_id: pending.model_id }),
+      ...(pending.interface_id === undefined ? {} : { interface_id: pending.interface_id }),
+      ...(pending.metadata_override === undefined ? {} : { metadata_override: pending.metadata_override }),
+      ...(pending.enabled === undefined ? {} : { enabled: pending.enabled }),
+      ...(pending.sort === undefined ? {} : { sort: pending.sort }),
+    } : authoritative
+    editingSession.value = createModelEditorSession(authoritative, initial)
+    editorOpen.value = true
+  } catch (error) {
+    if (request !== editRequestToken || navigation !== loadToken || providerId.value !== model.provider_id) return
+    if (typeof error === 'object' && error !== null && 'status' in error && error.status === 404) {
+      config.forgetModel(model)
+      models.value = models.value.filter(entry => entry.id !== model.id)
+    }
+    report(error)
+  }
 }
 
 async function saveModel(patch: Partial<ModelWriteInput>) {
@@ -475,7 +504,7 @@ async function removeModel() {
             Button(type="button" variant="ghost" size="sm" class="min-h-10" :disabled="busyModels || deletingProvider" @click="setModelsEnabled(true)") 全部启用
             Button(type="button" variant="ghost" size="sm" class="min-h-10" :disabled="busyModels || deletingProvider" @click="setModelsEnabled(false)") 全部禁用
           p.text-sm.text-muted-foreground 通过供应商拉取或手动添加模型。目录只提供元数据。
-          ModelFilterBar(v-model="modelFilters" :providers="savedProvider ? [savedProvider] : []")
+          ModelFilterMenu(v-model="modelFilters" :providers="savedProvider ? [savedProvider] : []" status)
           p.min-h-5.text-sm.text-muted-foreground(role="status") {{ modelLoadError ?? '' }}
           form(@submit.prevent="addModel")
             FieldGroup
@@ -515,7 +544,6 @@ async function removeModel() {
                 Button(v-if="hasModelFilters" variant="outline" class="min-h-10" @click="modelFilters = {}") 清除筛选
                 Button(v-else-if="canFetchModels" variant="outline" class="min-h-10" :disabled="dirty || busyModels || deletingProvider" @click="fetchModels") 拉取模型
                 Button(v-else variant="outline" class="min-h-10" @click="focusNewModel") 输入模型 ID
-          Button(v-if="nextCursor" variant="outline" :disabled="refreshing || busyModels" @click="loadModelPage(true)") 加载更多模型
         .sticky.bottom-0.-mx-4.flex.items-center.justify-between.gap-3.border-t.p-4.backdrop-blur(data-provider-save-bar class="bg-background/95 pb-[calc(1rem+env(safe-area-inset-bottom))] md:-mx-6 md:px-6 lg:-mx-8 lg:px-8")
           AlertDialog(v-model:open="providerDeleteOpen")
             AlertDialogTrigger(as-child)

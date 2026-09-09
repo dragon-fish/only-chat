@@ -25,7 +25,7 @@ async function load() {
   loading.value = true
   try {
     if (!config.loaded) await config.load()
-    await config.loadEnabledModels(false, { image_output: true })
+    await config.loadEnabledModelList()
     selected.value = savedKey.value
   } catch (error) { toast.error(error instanceof Error ? error.message : String(error)) }
   finally { loading.value = false }

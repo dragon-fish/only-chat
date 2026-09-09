@@ -10,6 +10,7 @@ import { parseId } from './params'
 import { ModelQueryError, queryModels } from './model-query'
 import { providerModelMetadata } from '../llm/list-models'
 import { catalogForModels, changedModelFields, ModelSourceConflict, modelSourceColumns, modelSourceFence, modelSourceMatches, providerSourceFence, resolveModelFields, retryModelSource, toModelDto } from './model-write'
+import { bumpModelListRevisions, enabledModelList, providerModelList } from './model-list-cache'
 
 export function modelRoutes(ctx: Context) {
   const r = new Hono<ApiEnv>()
@@ -25,6 +26,15 @@ export function modelRoutes(ctx: Context) {
     if (pid === null || !await ownedProvider(pid, userId)) return c.json({ error: 'not found' }, 404)
     const row = await db.query.models.findFirst({ where: and(eq(models.provider_id, pid), eq(models.model_id, c.req.query('model_id') ?? '')) })
     return row ? c.json(toModelDto(row)) : c.json({ error: 'not found' }, 404)
+  })
+
+  r.get('/models/summary', async c => c.json(await enabledModelList(ctx, authUserId(c))))
+
+  r.get('/providers/:id/models/summary', async c => {
+    const pid = parseId(c.req.param('id'))
+    if (pid === null) return c.json({ error: 'not found' }, 404)
+    const result = await providerModelList(ctx, authUserId(c), pid)
+    return result ? c.json(result) : c.json({ error: 'not found' }, 404)
   })
 
   async function modelPage(c: HonoContext<ApiEnv>, userId: number, providerId?: number) {
@@ -73,6 +83,7 @@ export function modelRoutes(ctx: Context) {
             providerSourceFence(db, currentProvider, catalog.version),
             modelSourceFence(db, existing, currentProvider, catalog.version),
             db.update(models).set({ manual_pinned: true }).where(modelSourceMatches(existing, currentProvider, catalog.version)).returning(),
+            ...bumpModelListRevisions(db, userId, provider.id),
           ])
           const row = rows[0]
           return row ? c.json(toModelDto(row)) : c.json({ error: 'not found' }, 404)
@@ -83,6 +94,7 @@ export function modelRoutes(ctx: Context) {
             ...input, provider_id: provider.id, metadata_override: override, manual_pinned: true, upstream_available: null,
             ...resolveModelFields(catalog, currentProvider.models_dev_provider_id, input.model_id, override),
           }).onConflictDoNothing().returning(),
+          ...bumpModelListRevisions(db, userId, provider.id),
         ])
         const row = rows[0]
         return row ? c.json(toModelDto(row), 201) : c.json({ error: 'model already exists' }, 409)
@@ -122,6 +134,7 @@ export function modelRoutes(ctx: Context) {
             operations.push(db.update(models).set({ enabled: parsed.data.enabled }).where(modelSourceMatches(row, currentProvider, version)))
           }
         }
+        operations.push(...bumpModelListRevisions(db, userId, provider.id))
         await db.batch(operations as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]])
         return c.json({ updated, deleted })
       })
@@ -162,6 +175,7 @@ export function modelRoutes(ctx: Context) {
           providerSourceFence(db, currentProvider, catalog.version),
           modelSourceFence(db, before, currentProvider, catalog.version),
           Object.keys(changed).length ? db.update(models).set(changed).where(condition).returning() : db.select().from(models).where(condition),
+          ...bumpModelListRevisions(db, userId, provider.id),
         ])
         const row = rows[0]
         return row ? c.json(toModelDto(row)) : c.json({ error: 'not found' }, 404)
@@ -177,7 +191,11 @@ export function modelRoutes(ctx: Context) {
     const pid = parseId(c.req.param('id'))
     const mid = parseId(c.req.param('modelRowId'))
     if (pid === null || mid === null || !await ownedProvider(pid, userId)) return c.json({ error: 'not found' }, 404)
-    const rows = await db.delete(models).where(and(eq(models.id, mid), eq(models.provider_id, pid))).returning({ id: models.id })
+    if (!await db.query.models.findFirst({ where: and(eq(models.id, mid), eq(models.provider_id, pid)) })) return c.json({ error: 'not found' }, 404)
+    const [rows] = await db.batch([
+      db.delete(models).where(and(eq(models.id, mid), eq(models.provider_id, pid))).returning({ id: models.id }),
+      ...bumpModelListRevisions(db, userId, pid),
+    ])
     return rows.length ? c.body(null, 204) : c.json({ error: 'not found' }, 404)
   })
   return r

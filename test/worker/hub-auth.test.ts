@@ -123,7 +123,7 @@ describe('authenticated UserHub', () => {
     expect(rows.results.map(row => [row.user_id, row.r2_key.split('/')[0]])).toEqual([[aliceId, String(aliceId)], [bobId, String(bobId)]])
     await runInDurableObject(env.USER_HUB.getByName(String(bobId)), async (instance: UserHub) => {
       const app = instance.app
-      const provider = { id: 1, user_id: bobId, name: 'transport', api_key: null, enabled: true, created_at: 0, credential_version: 1, default_interface_id: null, models_dev_provider_id: null, models_dev_provider_source: null, default_image_model_id: null }
+      const provider = { id: 1, user_id: bobId, name: 'transport', api_key: null, enabled: true, created_at: 0, credential_version: 1, default_interface_id: null, models_dev_provider_id: null, models_dev_provider_source: null, default_image_model_id: null, model_revision: 1 }
       const selected = { id: 1, provider_id: 1, protocol: 'responses' as const, base_url: 'https://example.com', native_files: false, created_at: 0 }
       await expect(resolveAttachmentInputs({ db: app.db.orm, userId: bobId, llm: app.llm, assets: app.assets }, provider, selected, [first.attachment_id])).rejects.toThrow(/attachment .* missing/)
       const owned = await resolveAttachmentInputs({ db: app.db.orm, userId: bobId, llm: app.llm, assets: app.assets }, provider, selected, [second.attachment_id])

@@ -3,7 +3,7 @@ import { and, eq, inArray, notInArray, sql } from 'drizzle-orm'
 import type { BatchItem } from 'drizzle-orm/batch'
 import type { ProviderWriteInput } from '@/shared/api'
 import { ProviderWithInterfacesSchema } from '@/shared/models'
-import { attachmentProviderFiles, models, providerInterfaces, providers, type ProviderRow, type ProviderInterfaceRow } from '@/server/db/schema'
+import { attachmentProviderFiles, models, providerInterfaces, providers, users, type ProviderRow, type ProviderInterfaceRow } from '@/server/db/schema'
 import { decryptSecret, encryptSecret } from '../llm/crypto'
 import { matchProviderByEndpoints } from '../model-catalog/match'
 import { cleanupProviderFilesBeforeChange, invalidatedProviderFiles, normalizeProviderFileScopes } from '../files-cleanup'
@@ -90,12 +90,14 @@ async function writeProviderAttempt(ctx: Context, userId: number, input: Provide
   const operations: BatchItem<'sqlite'>[] = []
   const rows = before && before.models_dev_provider_id !== match.id
     ? await db.select(modelSourceColumns).from(models).where(eq(models.provider_id, before.id)) : undefined
+  const enabledChanged = before !== undefined && input.enabled !== undefined && before.enabled !== input.enabled
   if (before) operations.push(providerSourceFence(db, before, version, rows))
   // MAX(id) refers to the just-inserted AUTOINCREMENT row inside this single atomic D1 batch.
   // Never split creation and interface/default writes into separate batches.
   const providerId = id ?? sql<number>`(SELECT MAX(id) FROM providers)`
   if (before) operations.push(db.update(providers).set({
     ...fields,
+    ...(rows === undefined ? {} : { model_revision: sql`${providers.model_revision} + 1` }),
     ...(input.api_key === undefined ? {} : {
       api_key: encryptedKey,
       // A stale credential edit must abort the whole batch. Never reuse a version for another key.
@@ -105,6 +107,9 @@ async function writeProviderAttempt(ctx: Context, userId: number, input: Provide
   else operations.push(db.insert(providers).values({
     ...fields, enabled: input.enabled ?? true, api_key: encryptedKey, credential_version: 1, user_id: userId, created_at: now,
   }))
+  if (rows !== undefined || enabledChanged) {
+    operations.push(db.update(users).set({ enabled_models_revision: sql`${users.enabled_models_revision} + 1` }).where(eq(users.id, userId)))
+  }
   operations.push(db.delete(providerInterfaces).where(and(eq(providerInterfaces.provider_id, providerId), notInArray(providerInterfaces.protocol, protocols))))
   for (const endpoint of input.interfaces) {
     operations.push(db.insert(providerInterfaces).values({

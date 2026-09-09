@@ -26,7 +26,7 @@ function remember(id: string | null) {
   } catch { /* Catalog refresh remains usable when storage is unavailable. */ }
 }
 async function finishRefresh() {
-  await Promise.all([load(), config.load(), config.refreshSelectedModels(), config.pickerLoaded ? config.loadEnabledModels() : Promise.resolve()])
+  await Promise.all([load(), config.load(), config.refreshSelectedModels(), config.pickerLoaded ? config.loadEnabledModelList() : Promise.resolve()])
   emit('refreshed')
 }
 async function track(instanceId: string) {

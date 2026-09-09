@@ -1,16 +1,17 @@
 import type { Context } from 'cordis'
 import { Hono } from 'hono'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import type { BatchItem } from 'drizzle-orm/batch'
 import { authUserId, type ApiEnv } from './auth'
 import { ProviderWriteInputSchema } from '@/shared/api'
-import { models, providerInterfaces, providers } from '../../db/schema'
+import { models, providerInterfaces, providers, users } from '../../db/schema'
 import { decryptSecret } from '../llm/crypto'
 import { listRemoteModels } from '../llm/list-models'
 import { cleanupProviderFilesBeforeChange, invalidatedProviderFiles } from '../files-cleanup'
 import { parseId } from './params'
 import { ProviderWriteError, toProviderDto, writeProvider } from './provider-write'
 import { catalogForModels, changedModelFields, ModelSourceConflict, modelSourceColumns, modelSourceFence, modelSourceMatches, providerSourceFence, resolveModelFields, retryModelSource } from './model-write'
+import { bumpModelListRevisions } from './model-list-cache'
 
 export function providerRoutes(ctx: Context) {
   const r = new Hono<ApiEnv>()
@@ -50,7 +51,10 @@ export function providerRoutes(ctx: Context) {
     if (!provider) return c.json({ error: 'not found' }, 404)
     const interfaces = await db.select().from(providerInterfaces).where(eq(providerInterfaces.provider_id, id))
     await cleanupProviderFilesBeforeChange(ctx, provider, interfaces, invalidatedProviderFiles(provider))
-    await db.delete(providers).where(owned(id, userId))
+    await db.batch([
+      db.delete(providers).where(owned(id, userId)),
+      db.update(users).set({ enabled_models_revision: sql`${users.enabled_models_revision} + 1` }).where(eq(users.id, userId)),
+    ])
     return c.body(null, 204)
   })
 
@@ -106,6 +110,7 @@ export function providerRoutes(ctx: Context) {
           })
           if (Object.keys(changed).length) operations.push(db.update(models).set(changed).where(modelSourceMatches(model, currentProvider, catalog.version)))
         }
+        operations.push(...bumpModelListRevisions(db, userId, id))
         const results = await db.batch(operations as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]])
         const imported = insertResultIndexes.reduce((count, index) => count + (results[index] as unknown[]).length, 0)
         return c.json({ imported, removed, unavailable, models: ids })

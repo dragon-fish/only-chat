@@ -18,6 +18,7 @@ export const users = sqliteTable('users', {
   banReason: text('ban_reason'),
   banExpires: integer('ban_expires', { mode: 'timestamp_ms' }),
   settings: text({ mode: 'json' }).$type<UserSettings>().notNull().default({ plugins: {} }),
+  enabled_models_revision: integer().notNull().default(1),
   createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
 }, t => [uniqueIndex('users_email_unique').on(t.email)])
@@ -87,6 +88,7 @@ export const providers = sqliteTable('providers', {
   models_dev_provider_id: text(),
   models_dev_provider_source: text().$type<'manual' | 'endpoint'>(),
   default_image_model_id: text(),
+  model_revision: integer().notNull().default(1),
   created_at: integer().notNull(),
 }, (t) => [index('providers_user_idx').on(t.user_id)])
 

@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { attachmentProviderFiles, attachments, models, providerInterfaces, providers, users } from '@/server/db/schema'
 import { createConversation, getConversation, insertMessage, listMessages } from '@/server/plugins/hub/conversations'
 import { createProject } from '@/server/plugins/hub/projects'
-import type { ModelPage, ProviderWithInterfaces } from '@/shared/models'
+import type { ModelListSnapshot, ModelPage, ProviderWithInterfaces } from '@/shared/models'
 import { registerAndLogin, workerFetch } from './auth-helper'
 import { catalogApp } from './provider-catalog-fixture'
 import * as remoteModels from '@/server/plugins/llm/list-models'
@@ -39,6 +39,8 @@ describe('authenticated REST tenant isolation', () => {
     expect.soft((await (await request('GET', '/providers')).json() as ProviderWithInterfaces[]).map(row => row.id)).toEqual([aliceProvider.id])
     expect.soft((await (await bobRequest('GET', '/providers')).json() as ProviderWithInterfaces[]).map(row => row.id)).toEqual([bobProvider.id])
     expect.soft((await (await bobRequest('GET', '/models')).json() as ModelPage).models.map(row => row.model_id)).toEqual(['bob-model'])
+    expect.soft((await (await bobRequest('GET', '/models/summary')).json() as ModelListSnapshot).models.map(row => row.model_id)).toEqual(['bob-model'])
+    expect.soft((await bobRequest('GET', `/providers/${aliceProvider.id}/models/summary`)).status).toBe(404)
     expect.soft((await (await bobRequest('GET', `/models?provider_id=${aliceProvider.id}`)).json() as ModelPage).models).toEqual([])
     expect.soft((await (await bobRequest('GET', `/models?interface_id=${aliceProvider.default_interface_id}`)).json() as ModelPage).models).toEqual([])
     expect.soft((await (await request('GET', `/providers/${aliceProvider.id}/models`)).json() as ModelPage).models.map(row => row.id)).toEqual([aliceModel.id])

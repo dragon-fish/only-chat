@@ -152,7 +152,7 @@ function applyArtifactDraft(artifact: ArtifactDto, edit: boolean) {
 }
 async function loadModels() {
   if (!config.loaded) await config.load()
-  await config.loadEnabledModels(false, { image_output: true })
+  await config.loadEnabledModelList()
   if (!modelKey.value) {
     const current = props.conversationId === null ? undefined : conversations.value.find(item => item.id === props.conversationId)
     const preferred = current?.image_provider_id && current.image_model_id

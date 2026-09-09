@@ -155,6 +155,36 @@ export const ModelWithMetadataSchema = z.strictObject({
 })
 export type ModelWithMetadata = z.infer<typeof ModelWithMetadataSchema>
 
+/** Compact, non-authoritative projection used only by model lists and selectors. */
+export const ModelListMetadataSchema = ModelMetadataSchema.pick({
+  name: true,
+  family: true,
+  reasoning: true,
+  reasoning_options: true,
+  tool_call: true,
+  modalities: true,
+  limit: true,
+  interleaved: true,
+})
+export type ModelListMetadata = z.infer<typeof ModelListMetadataSchema>
+
+export const ModelListItemSchema = z.strictObject({
+  id: z.number().int(),
+  provider_id: z.number().int(),
+  model_id: z.string(),
+  interface_id: z.number().int().nullable(),
+  metadata: ModelListMetadataSchema,
+  lab_id: z.string().nullable(),
+  enabled: z.boolean(),
+  manual_pinned: z.boolean(),
+  upstream_available: z.boolean().nullable(),
+  sort: z.number().int(),
+})
+export type ModelListItem = z.infer<typeof ModelListItemSchema>
+
+export const ModelListSnapshotSchema = z.strictObject({ models: z.array(ModelListItemSchema) })
+export type ModelListSnapshot = z.infer<typeof ModelListSnapshotSchema>
+
 /** Filters map directly to indexed model columns; cursor values remain opaque to callers. */
 export const ModelQuerySchema = z.strictObject({
   provider_id: z.number().int().optional(),

@@ -10,6 +10,73 @@ import { createApp } from '@/server/app'
 afterEach(() => vi.unstubAllGlobals())
 
 describe('catalog-backed model membership and queries', () => {
+  it('serves complete provider and enabled model summaries from revisioned KV snapshots', async () => {
+    const { request, createProvider } = await catalogApp()
+    const provider = await createProvider()
+    const first = ModelWithMetadataSchema.parse(await (await request('POST', `/providers/${provider.id}/models`, {
+      model_id: 'lab/alpha', enabled: true,
+    })).json())
+    const second = ModelWithMetadataSchema.parse(await (await request('POST', `/providers/${provider.id}/models`, {
+      model_id: 'catalog-only', enabled: false,
+    })).json())
+
+    const providerResponse = await request('GET', `/providers/${provider.id}/models/summary`)
+    expect(providerResponse.status).toBe(200)
+    const providerSnapshot = await providerResponse.json() as { models: Record<string, unknown>[] }
+    expect(providerSnapshot).toMatchObject({
+      models: [
+        { id: first.id, model_id: 'lab/alpha', metadata: { name: 'Operator alpha' }, enabled: true },
+        { id: second.id, model_id: 'catalog-only', metadata: { name: 'Never import' }, enabled: false },
+      ],
+    })
+    expect(providerSnapshot.models[0]).not.toHaveProperty('metadata_override')
+    expect(providerSnapshot.models[0]).not.toHaveProperty('catalog_matches')
+    expect(providerSnapshot.models[0]?.metadata).not.toHaveProperty('cost')
+    const providerKeys = (await env.KV.list({ prefix: `model-list:v1:user:${provider.user_id}:provider:${provider.id}:` })).keys
+    expect(providerKeys).toHaveLength(1)
+
+    await env.DB.prepare('UPDATE models SET metadata_resolved = ? WHERE id = ?')
+      .bind(JSON.stringify({ name: 'Unversioned D1 change must stay hidden' }), first.id).run()
+    const cachedSnapshot = await (await request('GET', `/providers/${provider.id}/models/summary`)).json() as { models: { metadata: { name?: string } }[] }
+    expect(cachedSnapshot.models[0]).toMatchObject({ metadata: { name: 'Operator alpha' } })
+
+    const enabledResponse = await request('GET', '/models/summary')
+    expect(enabledResponse.status).toBe(200)
+    expect((await enabledResponse.json() as { models: { model_id: string }[] }).models.map(model => model.model_id)).toEqual(['lab/alpha'])
+
+    expect((await request('PUT', `/providers/${provider.id}/models/${first.id}`, {
+      metadata_override: { name: 'Edited alpha' },
+    })).status).toBe(200)
+    const refreshed = await request('GET', `/providers/${provider.id}/models/summary`)
+    expect(await refreshed.json()).toMatchObject({ models: [
+      { id: first.id, metadata: { name: 'Edited alpha' } },
+      { id: second.id },
+    ] })
+    expect((await env.KV.list({ prefix: `model-list:v1:user:${provider.user_id}:provider:${provider.id}:` })).keys).toHaveLength(2)
+
+    expect((await request('PUT', `/providers/${provider.id}/models/${second.id}`, { enabled: true })).status).toBe(200)
+    const refreshedEnabled = await request('GET', '/models/summary')
+    expect((await refreshedEnabled.json() as { models: { model_id: string }[] }).models.map(model => model.model_id)).toEqual(['lab/alpha', 'catalog-only'])
+  })
+
+  it('switches model summary cache generations after catalog metadata changes', async () => {
+    const { ctx, request, createProvider } = await catalogApp()
+    const provider = await createProvider()
+    await request('POST', `/providers/${provider.id}/models`, { model_id: 'lab/alpha' })
+    expect(await (await request('GET', `/providers/${provider.id}/models/summary`)).json()).toMatchObject({
+      models: [{ metadata: { name: 'Operator alpha' } }],
+    })
+
+    const next = structuredClone(catalogFixture)
+    next.providers.gateway.models['lab/alpha'].name = 'New catalog name'
+    vi.stubGlobal('fetch', async () => Response.json(next))
+    expect((await ctx.modelCatalog.refresh('manual')).changed).toBe(true)
+    expect(await (await request('GET', `/providers/${provider.id}/models/summary`)).json()).toMatchObject({
+      models: [{ metadata: { name: 'New catalog name' } }],
+    })
+    expect((await env.KV.list({ prefix: `model-list:v1:user:${provider.user_id}:provider:${provider.id}:` })).keys).toHaveLength(2)
+  })
+
   it.each(['manifest', 'providers', 'models', 'provider:gateway', 'provider:lab'])('rejects materialization when the current %s shard is missing despite a previous generation', async shard => {
     const { ctx, request, createProvider } = await catalogApp()
     const provider = await createProvider()

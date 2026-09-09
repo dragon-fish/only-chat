@@ -51,7 +51,12 @@ async function save() {
     associationWarning.value = warning
     config.invalidateProviderModels(id)
     await config.load()
-    try { await config.refreshSelectedModels(id) }
+    try {
+      await Promise.all([
+        config.refreshSelectedModels(id),
+        config.pickerLoaded ? config.loadEnabledModelList() : Promise.resolve(),
+      ])
+    }
     catch { /* The next selected-model read retries stale metadata. */ }
     if (props.open && props.providerId === id) {
       reset()

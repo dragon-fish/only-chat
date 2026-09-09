@@ -1,17 +1,17 @@
 import type { CreateImageRunInput } from '@/shared/artifacts'
 import type { ModelRef } from '@/shared/model-ref'
-import type { ModelWithMetadata, ProviderWithInterfaces } from '@/shared/models'
+import type { ModelListItem, ProviderWithInterfaces } from '@/shared/models'
 
 const IMAGE_PROTOCOLS = new Set(['responses', 'chat-completions'])
 
-export function isStudioImageModel(provider: ProviderWithInterfaces, model: ModelWithMetadata): boolean {
+export function isStudioImageModel(provider: ProviderWithInterfaces, model: ModelListItem): boolean {
   if (!provider.enabled || !model.enabled || !model.metadata.modalities?.output.includes('image')) return false
   const interfaceId = model.interface_id ?? provider.default_interface_id
   const selected = provider.interfaces.find(endpoint => endpoint.id === interfaceId)
   return selected !== undefined && IMAGE_PROTOCOLS.has(selected.protocol)
 }
 
-export function isChatSelectableModel(model: ModelWithMetadata): boolean {
+export function isChatSelectableModel(model: ModelListItem): boolean {
   const output = model.metadata.modalities?.output
   return output === undefined || output.includes('text') || !output.includes('image')
 }

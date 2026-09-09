@@ -42,8 +42,8 @@ describe('authentication foundation', () => {
     await db.prepare("INSERT INTO attachments (id, user_id, sha256, mime, size, r2_key, origin, created_at) VALUES (14, 1, 'hash', 'text/plain', 1, 'key', 'upload', 123)").run()
     await applyD1Migrations(db, env.TEST_MIGRATIONS)
     expect((await db.prepare('SELECT * FROM users ORDER BY id').all()).results).toEqual([
-      { id: 1, name: 'Owner', settings: '{"plugins":{"ask_user":true}}', created_at: 123, email: 'legacy-user-1@invalid.local', email_verified: 0, image: null, role: 'user', banned: 0, ban_reason: null, ban_expires: null, updated_at: 123 },
-      { id: 7, name: 'Other', settings: '{"plugins":{}}', created_at: 456, email: 'legacy-user-7@invalid.local', email_verified: 0, image: null, role: 'user', banned: 0, ban_reason: null, ban_expires: null, updated_at: 456 },
+      { id: 1, name: 'Owner', settings: '{"plugins":{"ask_user":true}}', enabled_models_revision: 1, created_at: 123, email: 'legacy-user-1@invalid.local', email_verified: 0, image: null, role: 'user', banned: 0, ban_reason: null, ban_expires: null, updated_at: 123 },
+      { id: 7, name: 'Other', settings: '{"plugins":{}}', enabled_models_revision: 1, created_at: 456, email: 'legacy-user-7@invalid.local', email_verified: 0, image: null, role: 'user', banned: 0, ban_reason: null, ban_expires: null, updated_at: 456 },
     ])
     for (const [table, id] of [['providers', 11], ['projects', 12], ['conversations', 13], ['attachments', 14]] as const) {
       expect(await db.prepare(`SELECT id, user_id FROM ${table}`).first()).toEqual({ id, user_id: 1 })

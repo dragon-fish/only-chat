@@ -39,7 +39,7 @@ async function provider(
     id: 1, user_id: 1, name: 'p',
     api_key: key ? await encryptSecret(env.KEY_ENCRYPTION_SECRET, key) : null, enabled: true, created_at: 0,
     credential_version: 1, default_interface_id: null, models_dev_provider_id: null, models_dev_provider_source: null,
-    default_image_model_id: null,
+    default_image_model_id: null, model_revision: 1,
   }
 }
 
