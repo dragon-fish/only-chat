@@ -18,6 +18,7 @@ const UPLOAD_OPTIONS = { openai: { purpose: 'user_data', expiresAfter: PROVIDER_
 
 export interface TransportDeps {
   db: DB
+  userId: number
   assets: Assets
   llm: Llm
 }
@@ -58,12 +59,12 @@ export async function resolveAttachmentInputs(
 
   for (const id of attachmentIds) {
     if (out.has(id)) continue
-    const attachment = await getAttachment(deps.db, id)
+    const attachment = await getAttachment(deps.db, id, deps.userId)
     if (!attachment) throw new Error(`attachment ${id} missing`)
 
     if (useFiles) {
       client ??= await deps.llm.createFiles(provider, providerInterface)
-      const pointer = await findReusableProviderFile(deps.db, { ...client, providerId: provider.id }, id, Date.now())
+      const pointer = await findReusableProviderFile(deps.db, { ...client, providerId: provider.id }, id, Date.now(), deps.userId)
       if (pointer) {
         out.set(id, { mime: attachment.mime, data: { type: 'reference', reference: toReference(pointer.provider_reference) } })
         continue
@@ -97,7 +98,7 @@ export async function resolveAttachmentInputs(
       expires_at: expiresAt,
       cleanup_after: expiresAt,
       created_at: createdAt,
-    })
+    }, deps.userId)
     out.set(id, { mime: attachment.mime, data: { type: 'reference', reference: result.providerReference } })
   }
 

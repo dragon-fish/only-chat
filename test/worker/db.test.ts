@@ -96,12 +96,12 @@ describe('D1 schema', () => {
       ...pointer,
       attachment_id: a!.id, provider_id: p1!.id, provider_reference: { openai: 'file-1' },
       expires_at: 1000, created_at: 0,
-    })
+    }, 1)
     await insertProviderFile(db, {
       ...pointer, file_family: 'anthropic',
       attachment_id: a!.id, provider_id: p2!.id, provider_reference: { anthropic: 'file-2' },
       expires_at: 1000, created_at: 0,
-    })
+    }, 1)
     const rows = await db.select().from(attachmentProviderFiles).where(eq(attachmentProviderFiles.attachment_id, a!.id))
     expect(rows).toHaveLength(2)
 
@@ -109,20 +109,20 @@ describe('D1 schema', () => {
       ...pointer,
       attachment_id: a!.id, provider_id: p1!.id, provider_reference: { openai: 'file-3' },
       expires_at: 2000, created_at: 0,
-    })
+    }, 1)
     expect(await db.select().from(attachmentProviderFiles).where(eq(attachmentProviderFiles.attachment_id, a!.id))).toHaveLength(3)
-    expect((await findReusableProviderFile(db, scope, a!.id, 500))!.provider_reference).toEqual({ openai: 'file-3' })
-    expect((await findReusableProviderFile(db, { ...scope, providerId: p2!.id, family: 'anthropic' }, a!.id, 500))!.provider_reference).toEqual({ anthropic: 'file-2' })
+    expect((await findReusableProviderFile(db, scope, a!.id, 500, 1))!.provider_reference).toEqual({ openai: 'file-3' })
+    expect((await findReusableProviderFile(db, { ...scope, providerId: p2!.id, family: 'anthropic' }, a!.id, 500, 1))!.provider_reference).toEqual({ anthropic: 'file-2' })
     for (const changedScope of [
       { ...scope, providerId: p2!.id },
       { ...scope, credentialVersion: 2 },
       { ...scope, family: 'anthropic' as const },
       { ...scope, baseURL: 'https://other.example.com' },
-    ]) expect(await findReusableProviderFile(db, changedScope, a!.id, 500)).toBeUndefined()
+    ]) expect(await findReusableProviderFile(db, changedScope, a!.id, 500, 1)).toBeUndefined()
     // A newer expired upload must not hide an older valid reference, including equal timestamps.
-    await insertProviderFile(db, { ...pointer, provider_reference: { openai: 'expired' }, expires_at: 500, created_at: 1 })
-    expect((await findReusableProviderFile(db, scope, a!.id, 500))!.provider_reference).toEqual({ openai: 'file-3' })
-    expect(await findReusableProviderFile(db, scope, a!.id, 2000)).toBeUndefined()
+    await insertProviderFile(db, { ...pointer, provider_reference: { openai: 'expired' }, expires_at: 500, created_at: 1 }, 1)
+    expect((await findReusableProviderFile(db, scope, a!.id, 500, 1))!.provider_reference).toEqual({ openai: 'file-3' })
+    expect(await findReusableProviderFile(db, scope, a!.id, 2000, 1)).toBeUndefined()
     expect(await db.select().from(attachmentProviderFiles).where(eq(attachmentProviderFiles.attachment_id, a!.id))).toHaveLength(4)
   })
 
@@ -136,7 +136,7 @@ describe('D1 schema', () => {
     const [attachment] = await db.insert(attachments).values({ user_id: 1, sha256: crypto.randomUUID(), mime: 'text/plain', size: 1, r2_key: crypto.randomUUID(), origin: 'upload', created_at: 0 }).returning()
     const [provider] = await db.insert(providers).values({ user_id: 1, name: 'canonical-files', created_at: 0 }).returning()
     const pointer = { attachment_id: attachment!.id, provider_id: provider!.id, credential_version: 1, file_family: family, base_url: original, expires_at: 1000, cleanup_after: 1000, created_at: 0 }
-    await insertProviderFile(db, { ...pointer, provider_reference: { [family]: 'uploaded' } })
+    await insertProviderFile(db, { ...pointer, provider_reference: { [family]: 'uploaded' } }, 1)
     const [uploaded] = await db.select().from(attachmentProviderFiles).where(eq(attachmentProviderFiles.provider_id, provider!.id))
     expect.soft(uploaded!.base_url).toBe(canonical)
     await db.insert(attachmentProviderFiles).values([
@@ -151,11 +151,11 @@ describe('D1 schema', () => {
       SELECT ?, ?, 1, ?, 'https://unrelated.test/scope-' || n, '{}', 1000, 1000, n + 10 FROM ids`)
       .bind(attachment!.id, provider!.id, family).run()
     const scope = { providerId: provider!.id, credentialVersion: 1, family, baseURL: canonical }
-    const reused = await findReusableProviderFile(db, scope, attachment!.id, 500)
+    const reused = await findReusableProviderFile(db, scope, attachment!.id, 500, 1)
     expect(reused).toMatchObject({ base_url: canonical, provider_reference: { [family]: 'latest-legacy' } })
     expect((await db.query.attachmentProviderFiles.findFirst({ where: eq(attachmentProviderFiles.id, reused!.id) }))!.base_url).toBe(canonical)
-    expect(await findReusableProviderFile(db, { ...scope, baseURL: original }, attachment!.id, 500)).toMatchObject({ provider_reference: { [family]: 'latest-legacy' } })
-    expect(await findReusableProviderFile(db, scope, attachment!.id, 1000)).toBeUndefined()
+    expect(await findReusableProviderFile(db, { ...scope, baseURL: original }, attachment!.id, 500, 1)).toMatchObject({ provider_reference: { [family]: 'latest-legacy' } })
+    expect(await findReusableProviderFile(db, scope, attachment!.id, 1000, 1)).toBeUndefined()
   })
 
   it('stores two interfaces and rejects duplicate protocols and dangling interface references', async () => {

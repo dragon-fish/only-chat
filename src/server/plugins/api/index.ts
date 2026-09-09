@@ -1,6 +1,6 @@
 import { Context } from 'cordis'
 import { Hono } from 'hono'
-import { DEFAULT_USER_ID } from '@/shared/constants'
+import { INTERNAL_USER_ID_HEADER, INTERNAL_AUTH_SESSION_ID_HEADER } from '../hub/identity'
 import { meRoutes } from './me'
 import { conversationRoutes } from './conversations'
 import { providerRoutes } from './providers'
@@ -9,7 +9,7 @@ import { attachmentRoutes } from './attachments'
 import { projectRoutes } from './projects'
 import { modelCatalogRoutes } from './model-catalog'
 import { CatalogUnavailableError } from '../model-catalog/storage'
-import { requireAuth, type ApiEnv } from './auth'
+import { authUserId, requireAuth, type ApiEnv } from './auth'
 import { adminSiteSettingsRoutes, publicSiteSettingsRoutes } from './site-settings'
 
 export type ApiApp = Hono<ApiEnv>
@@ -40,7 +40,11 @@ export const ApiPlugin = {
         }
         if (originHost !== requestHost) return c.json({ error: 'origin not allowed' }, 403)
       }
-      return c.env.USER_HUB.getByName(String(DEFAULT_USER_ID)).fetch(c.req.raw)
+      const userId = authUserId(c)
+      const headers = new Headers(c.req.raw.headers)
+      headers.set(INTERNAL_USER_ID_HEADER, String(userId))
+      headers.set(INTERNAL_AUTH_SESSION_ID_HEADER, c.get('authSession').session.id)
+      return c.env.USER_HUB.getByName(String(userId)).fetch(new Request(c.req.raw, { headers }))
     })
     app.route('/api', meRoutes(ctx))
     app.route('/api', conversationRoutes(ctx))

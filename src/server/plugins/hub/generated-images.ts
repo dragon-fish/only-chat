@@ -1,6 +1,5 @@
 import type { GeneratedFile } from 'ai'
 import { and, eq } from 'drizzle-orm'
-import { DEFAULT_USER_ID } from '@/shared/constants'
 import type { ImagePart } from '@/shared/parts'
 import type { DB } from '../../db/client'
 import { attachments } from '../../db/schema'
@@ -71,8 +70,8 @@ async function validate(file: GeneratedFile): Promise<ValidatedImage> {
   return { bytes, mime, sha256: hex(await crypto.subtle.digest('SHA-256', bytes)) }
 }
 
-function findBySha(db: DB, sha256: string) {
-  return db.query.attachments.findFirst({ where: and(eq(attachments.user_id, DEFAULT_USER_ID), eq(attachments.sha256, sha256)) })
+function findBySha(db: DB, userId: number, sha256: string) {
+  return db.query.attachments.findFirst({ where: and(eq(attachments.user_id, userId), eq(attachments.sha256, sha256)) })
 }
 
 /**
@@ -85,14 +84,14 @@ function findBySha(db: DB, sha256: string) {
  */
 export async function persistGeneratedImage(hub: Hub, file: GeneratedFile): Promise<ImagePart> {
   const { bytes, mime, sha256 } = await validate(file)
-  const existing = await findBySha(hub.db, sha256)
+  const existing = await findBySha(hub.db, hub.userId, sha256)
   if (existing) return { type: 'image', attachment_id: existing.id }
 
-  const key = r2Key(DEFAULT_USER_ID, sha256)
+  const key = r2Key(hub.userId, sha256)
   await hub.app.assets.put(key, bytes, mime)
   try {
     const [row] = await hub.db.insert(attachments).values({
-      user_id: DEFAULT_USER_ID, sha256, mime, size: bytes.byteLength, width: null, height: null,
+      user_id: hub.userId, sha256, mime, size: bytes.byteLength, width: null, height: null,
       r2_key: key, origin: 'generated', created_at: Date.now(),
     }).returning()
     if (!row) throw new Error('attachment insert returned no row')
@@ -100,7 +99,7 @@ export async function persistGeneratedImage(hub: Hub, file: GeneratedFile): Prom
   } catch (err) {
     // A concurrent generation of the same bytes may have taken the unique index in the meantime.
     // That row owns this key — identical digest, identical object — so the object stays.
-    const owner = await findBySha(hub.db, sha256).catch(() => undefined)
+    const owner = await findBySha(hub.db, hub.userId, sha256).catch(() => undefined)
     if (owner) return { type: 'image', attachment_id: owner.id }
     // Nothing owns what this call wrote; leaving it would be a half-written R2 pointer. Cleanup is
     // best effort because the insert failure is the one the caller needs to see.

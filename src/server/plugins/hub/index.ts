@@ -1,7 +1,7 @@
 import { Context, Service } from 'cordis'
 import { ZodError } from 'zod'
 import type { DB } from '../../db/client'
-import { DEFAULT_USER_ID, GENERATION_TIMEOUT_MS } from '@/shared/constants'
+import { GENERATION_TIMEOUT_MS } from '@/shared/constants'
 import type { Message, Project, Conversation, UserSettings } from '@/shared/models'
 import type { Part } from '@/shared/parts'
 import { encodeEvent, parseCommand, type WsCommand, type WsEvent } from '@/shared/ws'
@@ -11,6 +11,8 @@ import {
 import { createProject, deleteProject, getProject, listProjectConversations, updateProject, validateProjectIcon } from './projects'
 import { SeqAllocator } from './seq'
 import { runEdit, runRegenerate, runSend, runToolContinue, runToolRespond } from './generation'
+import { parseAuthUserId } from '../auth/user-id'
+import { AUTH_REVOKED_CLOSE_CODE, hasActiveAuthSession, type SocketAttachment } from './identity'
 
 export interface InflightJob {
   message: Message
@@ -42,15 +44,19 @@ export class Hub extends Service {
   readonly app: Context
   readonly state: DurableObjectState
   readonly db: DB
+  readonly userId: number
   readonly seq = new SeqAllocator()
   private readonly _inflight = new Map<number, InflightJob>()
   private readonly _settlers = new Map<number, () => void>()
+  private _revoked = false
+  private _accessEpoch = 0
 
-  constructor(ctx: Context) {
+  constructor(ctx: Context, config: { userId: number }) {
     super(ctx, 'hub')
     this.app = ctx
     this.state = ctx.doState
     this.db = ctx.db.orm
+    this.userId = parseAuthUserId(config.userId)
   }
 
   async [Service.init]() {
@@ -58,6 +64,9 @@ export class Hub extends Service {
   }
 
   // ---- sockets
+
+  /** A successful async session read must not outlive a concurrent revocation. */
+  get accessEpoch(): number { return this._accessEpoch }
 
   broadcast(event: WsEvent): void {
     const raw = encodeEvent(event)
@@ -71,10 +80,17 @@ export class Hub extends Service {
   }
 
   handleConnect(ws: WebSocket): void {
+    this._revoked = false
     ws.send(encodeEvent({ type: 'snapshot', inflight: this.inflight().map((j) => ({ ...j.message, parts: j.parts })) }))
   }
 
-  async handleCommand(raw: string): Promise<void> {
+  async handleCommand(ws: WebSocket, raw: string): Promise<void> {
+    const epoch = this._accessEpoch
+    const attachment = ws.deserializeAttachment() as Partial<SocketAttachment> | null
+    if (this._revoked || !(await hasActiveAuthSession(this.db, this.userId, attachment?.authSessionId)) || epoch !== this._accessEpoch) {
+      ws.close(AUTH_REVOKED_CLOSE_CODE, 'Authentication revoked')
+      return
+    }
     let cmd: WsCommand
     try {
       cmd = parseCommand(raw)
@@ -100,7 +116,9 @@ export class Hub extends Service {
       case 'send': return runSend(this, cmd)
       case 'regenerate': return runRegenerate(this, cmd)
       case 'edit': return runEdit(this, cmd)
-      case 'stop': return this.stop(cmd.conversation_id)
+      case 'stop':
+        if (!(await getConversation(this.db, cmd.conversation_id, this.userId))) throw new Error('conversation not found')
+        return this.stop(cmd.conversation_id)
       case 'switch_head': return this.switchHead(cmd.conversation_id, cmd.message_id)
       case 'conversation.update': return this.conversationUpdate(cmd)
       case 'conversation.delete': return this.conversationDelete(cmd.conversation_id)
@@ -128,6 +146,24 @@ export class Hub extends Service {
       job.controller.abort('user stopped')
       settled.push(job.settled)
     }
+    await this._awaitSettlement(settled)
+  }
+
+  async revokeAccess(): Promise<void> {
+    this._revoked = true
+    this._accessEpoch++
+    const settled: Promise<void>[] = []
+    for (const job of this._inflight.values()) {
+      job.controller.abort('authentication revoked')
+      settled.push(job.settled)
+    }
+    try { await this._awaitSettlement(settled) }
+    finally {
+      for (const ws of this.state.getWebSockets()) ws.close(AUTH_REVOKED_CLOSE_CODE, 'Authentication revoked')
+    }
+  }
+
+  private async _awaitSettlement(settled: Promise<void>[]): Promise<void> {
     if (settled.length === 0) return
     let timer: ReturnType<typeof setTimeout> | undefined
     try {
@@ -141,21 +177,21 @@ export class Hub extends Service {
   }
 
   async switchHead(conversationId: number, messageId: number): Promise<void> {
-    const m = await getMessage(this.db, messageId)
+    const m = await getMessage(this.db, messageId, this.userId)
     if (!m || m.conversation_id !== conversationId) throw new Error('message not in conversation')
-    const s = await updateConversation(this.db, conversationId, { head_message_id: messageId })
+    const s = await updateConversation(this.db, conversationId, this.userId, { head_message_id: messageId })
     this.broadcast({ type: 'head.changed', conversation_id: conversationId, message_id: messageId })
     this.emitConversationUpdated(s)
   }
 
   async conversationUpdate(cmd: Extract<WsCommand, { type: 'conversation.update' }>): Promise<void> {
     const { type: _t, request_id: _r, conversation_id, tools, ...patch } = cmd
-    if (!(await getConversation(this.db, conversation_id, DEFAULT_USER_ID))) throw new Error('conversation not found')
+    if (!(await getConversation(this.db, conversation_id, this.userId))) throw new Error('conversation not found')
     // Moving a conversation into a Project must never cross into another user's Project (spec §5.1).
-    if (patch.project_id != null && !(await getProject(this.db, patch.project_id, DEFAULT_USER_ID))) {
+    if (patch.project_id != null && !(await getProject(this.db, patch.project_id, this.userId))) {
       throw new Error('project not found')
     }
-    const s = await updateConversation(this.db, conversation_id, {
+    const s = await updateConversation(this.db, conversation_id, this.userId, {
       ...patch,
       ...(tools === undefined ? {} : { tools: this.app.tools.normalize(tools) }),
     })
@@ -163,8 +199,9 @@ export class Hub extends Service {
   }
 
   async conversationDelete(conversationId: number): Promise<void> {
+    if (!(await getConversation(this.db, conversationId, this.userId))) throw new Error('conversation not found')
     await this.stop(conversationId)
-    await deleteConversation(this.db, conversationId)
+    await deleteConversation(this.db, conversationId, this.userId)
     this.seq.forget(conversationId)
     this.broadcast({ type: 'conversation.deleted', conversation_id: conversationId })
     this.app.emit('conversation/deleted', conversationId)
@@ -172,33 +209,33 @@ export class Hub extends Service {
 
   async conversationFork(cmd: Extract<WsCommand, { type: 'conversation.fork' }>): Promise<void> {
     if (this._inflight.has(cmd.message_id)) throw new Error('cannot fork a streaming message')
-    const conversation = await forkConversation(this.db, cmd.conversation_id, DEFAULT_USER_ID, cmd.message_id)
+    const conversation = await forkConversation(this.db, cmd.conversation_id, this.userId, cmd.message_id)
     this.emitConversationCreated(conversation)
     this.broadcast({ type: 'conversation.forked', request_id: cmd.request_id, conversation_id: conversation.id })
   }
 
   async settingsUpdate(patch: { plugins?: Record<string, boolean> }): Promise<void> {
-    const user = await getUser(this.db, DEFAULT_USER_ID)
+    const user = await getUser(this.db, this.userId)
     if (!user) throw new Error('user missing')
     const settings: UserSettings = { plugins: { ...user.settings.plugins, ...(patch.plugins ?? {}) } }
-    const updated = await updateUserSettings(this.db, DEFAULT_USER_ID, settings)
+    const updated = await updateUserSettings(this.db, this.userId, settings)
     this.broadcast({ type: 'settings.updated', settings: updated.settings })
     // Built-in server registrations stay loaded; request-time resolution applies this enable map.
   }
 
   async projectCreate(cmd: Extract<WsCommand, { type: 'project.create' }>): Promise<void> {
     const { type: _t, request_id: _r, ...input } = cmd
-    await validateProjectIcon(this.db, DEFAULT_USER_ID, input.icon_attachment_id ?? null)
-    const p = await createProject(this.db, { user_id: DEFAULT_USER_ID, ...input })
+    await validateProjectIcon(this.db, this.userId, input.icon_attachment_id ?? null)
+    const p = await createProject(this.db, { user_id: this.userId, ...input })
     this.emitProjectCreated(p)
   }
 
   async projectUpdate(cmd: Extract<WsCommand, { type: 'project.update' }>): Promise<void> {
     const { type: _t, request_id: _r, project_id, ...patch } = cmd
-    const current = await getProject(this.db, project_id, DEFAULT_USER_ID)
+    const current = await getProject(this.db, project_id, this.userId)
     if (!current) throw new Error('project not found')
-    await validateProjectIcon(this.db, DEFAULT_USER_ID, patch.icon_attachment_id === undefined ? current.icon_attachment_id : patch.icon_attachment_id)
-    const p = await updateProject(this.db, project_id, DEFAULT_USER_ID, patch)
+    await validateProjectIcon(this.db, this.userId, patch.icon_attachment_id === undefined ? current.icon_attachment_id : patch.icon_attachment_id)
+    const p = await updateProject(this.db, project_id, this.userId, patch)
     this.emitProjectUpdated(p)
   }
 
@@ -207,8 +244,8 @@ export class Hub extends Service {
    * same delete statement, so the pre-delete read is the only way to know which conversations moved.
    */
   async projectDelete(projectId: number): Promise<void> {
-    const affected = await listProjectConversations(this.db, projectId, DEFAULT_USER_ID)
-    const deleted = await deleteProject(this.db, projectId, DEFAULT_USER_ID)
+    const affected = await listProjectConversations(this.db, projectId, this.userId)
+    const deleted = await deleteProject(this.db, projectId, this.userId)
     this.emitProjectDeleted(deleted.id)
     for (const row of affected) this.emitConversationUpdated({ ...row, project_id: null })
   }
@@ -246,6 +283,7 @@ export class Hub extends Service {
 
   /** Takes the job without its `settled` promise and assigns one in place (identity is preserved). */
   async trackInflight(job: Omit<InflightJob, 'settled'>): Promise<void> {
+    if (this._revoked) throw new Error('Authentication revoked')
     const tracked = job as InflightJob
     tracked.settled = new Promise<void>((resolve) => { this._settlers.set(tracked.message.id, resolve) })
     this._inflight.set(tracked.message.id, tracked)
@@ -294,7 +332,7 @@ export class Hub extends Service {
       // Best-effort per entry: a failed finalize must not brick the DO on every wake, so the key
       // goes away either way.
       try {
-        await finalizeMessage(this.db, job.message.id, { parts: job.parts, usage: null, status: 'aborted', error: 'interrupted' })
+        await finalizeMessage(this.db, job.message.id, this.userId, { parts: job.parts, usage: null, status: 'aborted', error: 'interrupted' })
       } catch (err) {
         console.error('inflight recovery failed for message', job.message.id, err)
       }
@@ -315,8 +353,8 @@ function safeRequestId(raw: string): string | undefined {
 
 export const HubPlugin = {
   name: 'hub',
-  async apply(ctx: Context) {
-    await ctx.plugin(Hub)
+  async apply(ctx: Context, config: { userId: number }) {
+    await ctx.plugin(Hub, config)
   },
 }
 

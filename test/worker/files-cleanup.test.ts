@@ -98,7 +98,7 @@ describe('remote file cleanup', () => {
     const migratedDb = createDb(legacy)
     const reused = []
     for (const entry of cases) {
-      reused.push(await findReusableProviderFile(migratedDb, { providerId: entry.id, credentialVersion: 1, family: entry.family, baseURL: entry.scope }, 2, 500))
+      reused.push(await findReusableProviderFile(migratedDb, { providerId: entry.id, credentialVersion: 1, family: entry.family, baseURL: entry.scope }, 2, 500, 1))
     }
     const ctx = await createApp({ env: { ...env, DB: legacy }, side: 'worker' })
     const requests: Request[] = []

@@ -1,4 +1,4 @@
-import { authenticatedFetch } from './auth-helper'
+import { workerFetch } from './auth-helper'
 import type { WsEvent } from '@/shared/ws'
 
 export interface WsHarness {
@@ -18,8 +18,8 @@ interface Waiter {
   resolve: (e: WsEvent) => void
 }
 
-export async function connect(): Promise<WsHarness> {
-  const res = await authenticatedFetch(new Request('https://x/ws', { headers: { Upgrade: 'websocket' } }))
+export async function connect({ cookie, headers = {} }: { cookie: string; headers?: Record<string, string> }): Promise<WsHarness> {
+  const res = await workerFetch('/ws', { headers: { Upgrade: 'websocket', cookie, ...headers } })
   if (res.status !== 101 || !res.webSocket) throw new Error(`upgrade failed: ${res.status}`)
   const ws = res.webSocket
   ws.accept()

@@ -13,6 +13,8 @@ import { buildModelMessages, buildProviderOptions } from '@/server/plugins/llm/m
 import type { Message } from '@/shared/models'
 import type { Part } from '@/shared/parts'
 import { deepseekReasoningItem, deepseekResponsesBody, deepseekResponsesStream } from '../fixtures/deepseek-responses-stream'
+import { ensureTestUser } from './auth-helper'
+import { connect } from './ws-helper'
 
 /** `LanguageModel` also admits a bare gateway model id; our factories never return one. */
 function built(m: LanguageModel): LanguageModelV4 {
@@ -44,8 +46,10 @@ function providerInterface(protocol: ProviderInterfaceRow['protocol'], base_url 
 }
 
 /** The hub-side cordis root only lives inside a UserHub DO, so run these assertions in one. */
-function inHub<R>(fn: (ctx: Context) => Promise<R>): Promise<R> {
-  return runInDurableObject(env.USER_HUB.getByName('llm-test'), (instance: UserHub) => fn(instance.app))
+async function inHub<R>(fn: (ctx: Context) => Promise<R>): Promise<R> {
+  const socket = await connect(await ensureTestUser())
+  try { return await runInDurableObject(env.USER_HUB.getByName('1'), (instance: UserHub) => fn(instance.app)) }
+  finally { socket.ws.close() }
 }
 
 /**

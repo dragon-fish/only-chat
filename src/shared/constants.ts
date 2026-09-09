@@ -1,4 +1,3 @@
-export const DEFAULT_USER_ID = 1
 export const MAX_IMAGE_EDGE = 2048
 export const GENERATION_TIMEOUT_MS = 10 * 60 * 1000
 export const INFLIGHT_FLUSH_INTERVAL_MS = 1000

@@ -66,7 +66,7 @@ describe('authenticated REST tenant isolation', () => {
     const bobProject = await createProject(ctx.db.orm, { user_id: bobId, name: 'Bob project' })
     const aliceConversation = await createConversation(ctx.db.orm, { user_id: aliceId, title: 'Alice private', provider_id: null, model_id: null, project_id: aliceProject.id })
     const bobConversation = await createConversation(ctx.db.orm, { user_id: bobId, title: 'Bob private', provider_id: null, model_id: null, project_id: bobProject.id })
-    const message = await insertMessage(ctx.db.orm, { conversation_id: aliceConversation.id, parent_id: null, seq: 1, role: 'user', parts: [{ type: 'text', text: 'secret' }], provider_id: null, model_id: null, usage: null, status: 'done', error: null, created_at: Date.now() })
+    const message = await insertMessage(ctx.db.orm, aliceId, { conversation_id: aliceConversation.id, parent_id: null, seq: 1, role: 'user', parts: [{ type: 'text', text: 'secret' }], provider_id: null, model_id: null, usage: null, status: 'done', error: null, created_at: Date.now() })
     expect.soft(await (await request('GET', '/projects')).json()).toMatchObject([{ id: aliceProject.id }])
     expect.soft(await (await bobRequest('GET', '/projects')).json()).toEqual([bobProject])
     expect.soft(await (await request('GET', '/conversations')).json()).toEqual([aliceConversation])

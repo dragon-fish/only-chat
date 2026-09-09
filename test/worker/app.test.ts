@@ -7,7 +7,6 @@ import { createDb } from '@/server/db/client'
 import { attachmentProviderFiles, attachments, providerInterfaces, providers, users } from '@/server/db/schema'
 import { encryptSecret } from '@/server/plugins/llm/crypto'
 import worker from '@/server/index'
-import { DEFAULT_USER_ID } from '@/shared/constants'
 import { seedTestUser } from './user-fixture'
 
 describe('createApp', () => {
@@ -65,16 +64,16 @@ describe('scheduled provider file cleanup', () => {
     await seedTestUser(db)
     await createApp({ env, side: 'worker' })
     const [p] = await db.insert(providers).values({
-      user_id: DEFAULT_USER_ID, name: 'cron',
+      user_id: 1, name: 'cron',
       api_key: await encryptSecret(env.KEY_ENCRYPTION_SECRET, 'cron-key'), enabled: true, created_at: 0,
     }).returning()
     await db.insert(providerInterfaces).values({ provider_id: p!.id, protocol: 'responses', base_url: 'https://files.test/v1', native_files: true, created_at: 0 })
     const [a] = await db.insert(attachments).values({
-      user_id: DEFAULT_USER_ID, sha256: 'c'.repeat(64), mime: 'image/png', size: 4, width: null, height: null,
+      user_id: 1, sha256: 'c'.repeat(64), mime: 'image/png', size: 4, width: null, height: null,
       r2_key: 'k/cron', origin: 'upload', created_at: 0,
     }).returning()
     const [q] = await db.insert(providers).values({
-      user_id: DEFAULT_USER_ID, name: 'cron-2', api_key: null, enabled: true, created_at: 0,
+      user_id: 1, name: 'cron-2', api_key: null, enabled: true, created_at: 0,
     }).returning()
     const now = Date.now()
     await db.insert(attachmentProviderFiles).values([

@@ -12,7 +12,7 @@ describe('UserHub DO', () => {
   it('sends a snapshot on connect and rejects non-upgrade requests', async () => {
     const plain = await authenticatedFetch(new Request('https://x/ws'))
     expect(plain.status).toBe(426)
-    const { next } = await connect()
+    const { next } = await connect(await seedTestUser())
     const snap = await next('snapshot')
     expect(snap).toEqual({ type: 'snapshot', inflight: [] })
   })
@@ -32,8 +32,8 @@ describe('UserHub DO', () => {
     const db = createDb(env.DB)
     await seedTestUser(db)
     const s = await createConversation(db, { user_id: 1, title: 'old', provider_id: null, model_id: null })
-    const a = await connect()
-    const b = await connect()
+    const a = await connect(await seedTestUser())
+    const b = await connect(await seedTestUser())
     a.ws.send(JSON.stringify({ type: 'conversation.update', conversation_id: s.id, title: 'new', system_prompt: 'sys' }))
     const ea = await a.next('conversation.updated')
     const eb = await b.next('conversation.updated')
@@ -44,7 +44,7 @@ describe('UserHub DO', () => {
   })
 
   it('answers invalid commands with an error event carrying request_id', async () => {
-    const { ws, next, nextAfter } = await connect()
+    const { ws, next, nextAfter } = await connect(await seedTestUser())
     ws.send(JSON.stringify({ type: 'conversation.update', request_id: 'r9' }))
     const err = await next('error')
     expect(err).toMatchObject({ type: 'error', request_id: 'r9', message: 'invalid command' })
@@ -53,7 +53,7 @@ describe('UserHub DO', () => {
   })
 
   it('auto-answers the ping keepalive without waking handleCommand', async () => {
-    const { ws, raw, events } = await connect()
+    const { ws, raw, events } = await connect(await seedTestUser())
     ws.send('ping')
     const deadline = Date.now() + 2000
     while (raw.length === 0 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 10))
@@ -62,7 +62,8 @@ describe('UserHub DO', () => {
   })
 
   it('stop() only resolves once the aborted job untracks itself', async () => {
-    await runInDurableObject(env.USER_HUB.getByName('stop-test'), async (instance: UserHub) => {
+    await connect(await seedTestUser())
+    await runInDurableObject(env.USER_HUB.getByName('1'), async (instance: UserHub) => {
       const hub = instance.app.hub
       const message: Message = {
         id: 4242, conversation_id: 99, parent_id: null, seq: 1, role: 'assistant', parts: [],
@@ -85,7 +86,7 @@ describe('UserHub DO', () => {
   })
 
   it('updates settings and broadcasts them', async () => {
-    const { ws, next } = await connect()
+    const { ws, next } = await connect(await seedTestUser())
     ws.send(JSON.stringify({ type: 'settings.update', settings: { plugins: { demo: true } } }))
     expect(await next('settings.updated')).toEqual({ type: 'settings.updated', settings: { plugins: { demo: true } } })
   })

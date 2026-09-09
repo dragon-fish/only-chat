@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, isNotNull, isNull, sql } from 'drizzle-orm'
+import { and, desc, eq, gt, inArray, isNotNull, isNull, sql } from 'drizzle-orm'
 import type { ScopedFilesClient } from '../llm/files/types'
 import { normalizeFilesBaseURL } from '../llm/files/shared'
 import type { DB } from '../../db/client'
@@ -58,10 +58,11 @@ export async function createConversation(db: DB, input: {
 export async function updateConversation(
   db: DB,
   id: number,
+  userId: number,
   patch: Partial<Pick<ConversationRow, 'title' | 'project_id' | 'provider_id' | 'model_id' | 'system_prompt' | 'params' | 'tools' | 'head_message_id'>>,
 ): Promise<ConversationRow> {
-  const [row] = await db.update(conversations).set({ ...patch, updated_at: Date.now() }).where(eq(conversations.id, id)).returning()
-  if (!row) throw new Error(`conversation ${id} not found`)
+  const [row] = await db.update(conversations).set({ ...patch, updated_at: Date.now() }).where(and(eq(conversations.id, id), eq(conversations.user_id, userId))).returning()
+  if (!row) throw new Error('conversation not found')
   return row
 }
 
@@ -69,19 +70,21 @@ export async function updateConversation(
 export async function compareAndSwapConversationHead(
   db: DB,
   id: number,
+  userId: number,
   expectedHead: number | null,
   nextHead: number,
 ): Promise<ConversationRow | undefined> {
   const expected = expectedHead === null ? isNull(conversations.head_message_id) : eq(conversations.head_message_id, expectedHead)
   const [row] = await db.update(conversations)
     .set({ head_message_id: nextHead, updated_at: Date.now() })
-    .where(and(eq(conversations.id, id), expected))
+    .where(and(eq(conversations.id, id), eq(conversations.user_id, userId), expected))
     .returning()
   return row
 }
 
-export async function deleteConversation(db: DB, id: number): Promise<void> {
-  await db.delete(conversations).where(eq(conversations.id, id)) // messages cascade
+export async function deleteConversation(db: DB, id: number, userId: number): Promise<void> {
+  const [row] = await db.delete(conversations).where(and(eq(conversations.id, id), eq(conversations.user_id, userId))).returning({ id: conversations.id })
+  if (!row) throw new Error('conversation not found')
 }
 
 export async function forkConversation(db: DB, sourceConversationId: number, userId: number, headMessageId: number): Promise<ConversationRow> {
@@ -109,12 +112,12 @@ export async function forkConversation(db: DB, sourceConversationId: number, use
     let parentId: number | null = null
     for (const [index, message] of path.entries()) {
       const { id: _id, conversation_id: _conversationId, parent_id: _parentId, seq: _seq, ...copy } = message
-      const inserted = await insertMessage(db, { ...copy, conversation_id: target.id, parent_id: parentId, seq: index + 1 })
+      const inserted = await insertMessage(db, userId, { ...copy, conversation_id: target.id, parent_id: parentId, seq: index + 1 })
       parentId = inserted.id
     }
-    return await updateConversation(db, target.id, { head_message_id: parentId })
+    return await updateConversation(db, target.id, userId, { head_message_id: parentId })
   } catch (error) {
-    await deleteConversation(db, target.id)
+    await deleteConversation(db, target.id, userId)
     throw error
   }
 }
@@ -126,12 +129,16 @@ export async function listMessages(db: DB, conversationId: number, userId: numbe
   return rows.map(row => row.message)
 }
 
-export async function getMessage(db: DB, id: number): Promise<MessageRow | undefined> {
-  return db.query.messages.findFirst({ where: eq(messages.id, id) })
+function ownedMessages(db: DB, userId: number) {
+  return inArray(messages.conversation_id, db.select({ id: conversations.id }).from(conversations).where(eq(conversations.user_id, userId)))
 }
 
-export async function listAssistantChildren(db: DB, parentId: number): Promise<MessageRow[]> {
-  return db.select().from(messages).where(and(eq(messages.parent_id, parentId), eq(messages.role, 'assistant'))).orderBy(messages.seq)
+export async function getMessage(db: DB, id: number, userId: number): Promise<MessageRow | undefined> {
+  return db.query.messages.findFirst({ where: and(eq(messages.id, id), ownedMessages(db, userId)) })
+}
+
+export async function listAssistantChildren(db: DB, parentId: number, userId: number): Promise<MessageRow[]> {
+  return db.select().from(messages).where(and(eq(messages.parent_id, parentId), eq(messages.role, 'assistant'), ownedMessages(db, userId))).orderBy(messages.seq)
 }
 
 /**
@@ -141,6 +148,7 @@ export async function listAssistantChildren(db: DB, parentId: number): Promise<M
 export async function appendToolResult(
   db: DB,
   messageId: number,
+  userId: number,
   conversationId: number,
   part: ToolResultPart,
 ): Promise<boolean> {
@@ -151,12 +159,13 @@ export async function appendToolResult(
        AND conversation_id = ?
        AND role = 'assistant'
        AND status = 'done'
+       AND EXISTS (SELECT 1 FROM conversations WHERE id = messages.conversation_id AND user_id = ?)
        AND NOT EXISTS (
          SELECT 1 FROM json_each(parts)
           WHERE json_extract(value, '$.type') = 'tool_result'
             AND json_extract(value, '$.call_id') = ?
        )
-  `).bind(JSON.stringify(part), messageId, conversationId, part.call_id).run()
+  `).bind(JSON.stringify(part), messageId, conversationId, userId, part.call_id).run()
   return result.meta.changes === 1
 }
 
@@ -167,6 +176,7 @@ export async function appendToolResult(
 export async function replaceMessagePartsIfCurrentHead(
   db: DB,
   expected: MessageRow,
+  userId: number,
   nextParts: Part[],
 ): Promise<boolean> {
   const updated = await db.$client.prepare(`
@@ -178,39 +188,50 @@ export async function replaceMessagePartsIfCurrentHead(
        AND status = 'done'
        AND json(parts) = json(?)
        AND EXISTS (
-         SELECT 1 FROM conversations WHERE id = ? AND head_message_id = ?
+         SELECT 1 FROM conversations WHERE id = ? AND head_message_id = ? AND user_id = ?
        )
     RETURNING id
   `).bind(
     JSON.stringify(nextParts), expected.id, expected.conversation_id, JSON.stringify(expected.parts),
-    expected.conversation_id, expected.id,
+    expected.conversation_id, expected.id, userId,
   ).first<{ id: number }>()
   return updated?.id === expected.id
 }
 
-export async function insertMessage(db: DB, row: Omit<MessageRow, 'id'>): Promise<MessageRow> {
-  const [inserted] = await db.insert(messages).values(row).returning()
-  return inserted!
+export async function insertMessage(db: DB, userId: number, row: Omit<MessageRow, 'id'>): Promise<MessageRow> {
+  const inserted = await db.$client.prepare(`
+    INSERT INTO messages (conversation_id, parent_id, seq, role, parts, provider_id, model_id, usage, status, error, created_at)
+    SELECT ?, ?, ?, ?, json(?), ?, ?, ?, ?, ?, ?
+     WHERE EXISTS (SELECT 1 FROM conversations WHERE id = ? AND user_id = ?)
+       AND (? IS NULL OR EXISTS (SELECT 1 FROM messages WHERE id = ? AND conversation_id = ?))
+    RETURNING id
+  `).bind(row.conversation_id, row.parent_id, row.seq, row.role, JSON.stringify(row.parts), row.provider_id, row.model_id,
+    row.usage === null ? null : JSON.stringify(row.usage), row.status, row.error, row.created_at,
+    row.conversation_id, userId, row.parent_id, row.parent_id, row.conversation_id).first<{ id: number }>()
+  if (!inserted) throw new Error('conversation or parent message not found')
+  return (await getMessage(db, inserted.id, userId))!
 }
 
-export async function deleteMessage(db: DB, id: number): Promise<void> {
-  await db.delete(messages).where(eq(messages.id, id))
+export async function deleteMessage(db: DB, id: number, userId: number): Promise<void> {
+  await db.delete(messages).where(and(eq(messages.id, id), ownedMessages(db, userId)))
 }
 
 /** Deletes an unannounced shell only while no Conversation head references it. */
-export async function deleteMessageIfUnreferenced(db: DB, id: number): Promise<boolean> {
+export async function deleteMessageIfUnreferenced(db: DB, id: number, userId: number): Promise<boolean> {
   const deleted = await db.$client.prepare(`
     DELETE FROM messages
      WHERE id = ?
+       AND EXISTS (SELECT 1 FROM conversations WHERE id = messages.conversation_id AND user_id = ?)
        AND NOT EXISTS (SELECT 1 FROM conversations WHERE head_message_id = ?)
     RETURNING id
-  `).bind(id, id).first<{ id: number }>()
+  `).bind(id, userId, id).first<{ id: number }>()
   return deleted?.id === id
 }
 
 /** Creates the sole assistant continuation for one tool-call parent with an atomic SQLite fence. */
 export async function insertAssistantChildIfAbsent(
   db: DB,
+  userId: number,
   row: Omit<MessageRow, 'id'> & { role: 'assistant'; parent_id: number },
 ): Promise<MessageRow | undefined> {
   const inserted = await db.$client.prepare(`
@@ -222,23 +243,24 @@ export async function insertAssistantChildIfAbsent(
        SELECT 1 FROM messages WHERE parent_id = ? AND role = 'assistant'
      )
        AND EXISTS (
-         SELECT 1 FROM conversations WHERE id = ? AND head_message_id = ?
+         SELECT 1 FROM conversations WHERE id = ? AND head_message_id = ? AND user_id = ?
        )
     RETURNING id
   `).bind(
     row.conversation_id, row.parent_id, row.seq, JSON.stringify(row.parts), row.provider_id, row.model_id,
     row.usage === null ? null : JSON.stringify(row.usage), row.status, row.error, row.created_at, row.parent_id,
-    row.conversation_id, row.parent_id,
+    row.conversation_id, row.parent_id, userId,
   ).first<{ id: number }>()
-  return inserted ? getMessage(db, inserted.id) : undefined
+  return inserted ? getMessage(db, inserted.id, userId) : undefined
 }
 
 export async function finalizeMessage(
   db: DB,
   id: number,
+  userId: number,
   patch: { parts: Part[]; usage: Usage | null; status: PersistedStatus; error: string | null },
 ): Promise<void> {
-  await db.update(messages).set(patch).where(eq(messages.id, id))
+  await db.update(messages).set(patch).where(and(eq(messages.id, id), ownedMessages(db, userId)))
 }
 
 /**
@@ -246,18 +268,18 @@ export async function finalizeMessage(
  * `conversations.provider_id` is now the user's explicit override rather than a sticky record of the
  * last generation, so the answer has to come from the messages themselves.
  */
-export async function lastGenerationModel(db: DB, conversationId: number): Promise<{ provider_id: number; model_id: string } | undefined> {
+export async function lastGenerationModel(db: DB, conversationId: number, userId: number): Promise<{ provider_id: number; model_id: string } | undefined> {
   const [row] = await db.select({ provider_id: messages.provider_id, model_id: messages.model_id })
     .from(messages)
-    .where(and(eq(messages.conversation_id, conversationId), isNotNull(messages.provider_id), isNotNull(messages.model_id)))
+    .where(and(eq(messages.conversation_id, conversationId), ownedMessages(db, userId), isNotNull(messages.provider_id), isNotNull(messages.model_id)))
     .orderBy(desc(messages.seq))
     .limit(1)
   if (!row || row.provider_id === null || row.model_id === null) return undefined
   return { provider_id: row.provider_id, model_id: row.model_id }
 }
 
-export async function maxSeq(db: DB, conversationId: number): Promise<number> {
-  const [row] = await db.select({ max: sql<number>`coalesce(max(${messages.seq}), 0)` }).from(messages).where(eq(messages.conversation_id, conversationId))
+export async function maxSeq(db: DB, conversationId: number, userId: number): Promise<number> {
+  const [row] = await db.select({ max: sql<number>`coalesce(max(${messages.seq}), 0)` }).from(messages).where(and(eq(messages.conversation_id, conversationId), ownedMessages(db, userId)))
   return row?.max ?? 0
 }
 
@@ -271,26 +293,28 @@ export async function updateUserSettings(db: DB, id: number, settings: UserSetti
   return row
 }
 
-export async function getProvider(db: DB, id: number): Promise<ProviderRow | undefined> {
-  return db.query.providers.findFirst({ where: eq(providers.id, id) })
+export async function getProvider(db: DB, id: number, userId: number): Promise<ProviderRow | undefined> {
+  return db.query.providers.findFirst({ where: and(eq(providers.id, id), eq(providers.user_id, userId)) })
 }
 
-export async function getModel(db: DB, providerId: number, modelId: string): Promise<ModelRow | undefined> {
-  return db.query.models.findFirst({ where: and(eq(models.provider_id, providerId), eq(models.model_id, modelId)) })
+export async function getModel(db: DB, providerId: number, modelId: string, userId: number): Promise<ModelRow | undefined> {
+  return db.query.models.findFirst({ where: and(eq(models.provider_id, providerId), eq(models.model_id, modelId),
+    inArray(models.provider_id, db.select({ id: providers.id }).from(providers).where(eq(providers.user_id, userId)))) })
 }
 
-export async function getProviderInterface(db: DB, id: number): Promise<ProviderInterfaceRow | undefined> {
-  return db.query.providerInterfaces.findFirst({ where: eq(providerInterfaces.id, id) })
+export async function getProviderInterface(db: DB, id: number, userId: number): Promise<ProviderInterfaceRow | undefined> {
+  return db.query.providerInterfaces.findFirst({ where: and(eq(providerInterfaces.id, id),
+    inArray(providerInterfaces.provider_id, db.select({ id: providers.id }).from(providers).where(eq(providers.user_id, userId)))) })
 }
 
-export async function getAttachment(db: DB, id: number): Promise<AttachmentRow | undefined> {
-  return db.query.attachments.findFirst({ where: eq(attachments.id, id) })
+export async function getAttachment(db: DB, id: number, userId: number): Promise<AttachmentRow | undefined> {
+  return db.query.attachments.findFirst({ where: and(eq(attachments.id, id), eq(attachments.user_id, userId)) })
 }
 
 export type ProviderFileScope = Pick<ScopedFilesClient, 'family' | 'baseURL' | 'credentialVersion'> & { providerId: number }
 
 /** Match the Files endpoint and credentials, retaining expired references for remote cleanup. */
-export async function findReusableProviderFile(db: DB, scope: ProviderFileScope, attachmentId: number, now: number): Promise<AttachmentProviderFileRow | undefined> {
+export async function findReusableProviderFile(db: DB, scope: ProviderFileScope, attachmentId: number, now: number, userId: number): Promise<AttachmentProviderFileRow | undefined> {
   const baseURL = normalizeFilesBaseURL(scope.baseURL, scope.family)
   const where = and(
     eq(attachmentProviderFiles.attachment_id, attachmentId),
@@ -298,6 +322,8 @@ export async function findReusableProviderFile(db: DB, scope: ProviderFileScope,
     eq(attachmentProviderFiles.credential_version, scope.credentialVersion),
     eq(attachmentProviderFiles.file_family, scope.family),
     gt(attachmentProviderFiles.expires_at, now),
+    inArray(attachmentProviderFiles.provider_id, db.select({ id: providers.id }).from(providers).where(eq(providers.user_id, userId))),
+    inArray(attachmentProviderFiles.attachment_id, db.select({ id: attachments.id }).from(attachments).where(eq(attachments.user_id, userId))),
   )
   // SQL migrations cannot parse URLs. Page within the reuse index's scope prefix so URL aliases
   // compete in upload order without loading unrelated attachments or accepting expired rows.
@@ -312,7 +338,7 @@ export async function findReusableProviderFile(db: DB, scope: ProviderFileScope,
       try { normalized = normalizeFilesBaseURL(row.base_url, row.file_family) } catch { continue }
       if (normalized !== baseURL) continue
       if (row.base_url !== normalized) {
-        await db.update(attachmentProviderFiles).set({ base_url: normalized }).where(eq(attachmentProviderFiles.id, row.id))
+        await db.update(attachmentProviderFiles).set({ base_url: normalized }).where(and(eq(attachmentProviderFiles.id, row.id), where))
       }
       return { ...row, base_url: normalized }
     }
@@ -321,6 +347,8 @@ export async function findReusableProviderFile(db: DB, scope: ProviderFileScope,
 }
 
 /** Append each upload so older remote references remain available for cleanup. */
-export async function insertProviderFile(db: DB, row: typeof attachmentProviderFiles.$inferInsert): Promise<void> {
+export async function insertProviderFile(db: DB, row: typeof attachmentProviderFiles.$inferInsert, userId: number): Promise<void> {
+  const [attachment, provider] = await Promise.all([getAttachment(db, row.attachment_id, userId), getProvider(db, row.provider_id, userId)])
+  if (!attachment || !provider) throw new Error('attachment or provider not found')
   await db.insert(attachmentProviderFiles).values({ ...row, base_url: normalizeFilesBaseURL(row.base_url, row.file_family) })
 }

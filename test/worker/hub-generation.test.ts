@@ -25,7 +25,6 @@ import {
 import { attachmentProviderFiles, attachments, models, projects, providerInterfaces, providers, users } from '@/server/db/schema'
 import type { ProviderInterfaceRow, ProviderRow } from '@/server/db/schema'
 import { sendCommandFor } from '@/client/stores/sync'
-import { DEFAULT_USER_ID } from '@/shared/constants'
 import type { Message, ConversationParams } from '@/shared/models'
 import type { ModelMetadata } from '@/shared/model-metadata'
 import type { Part } from '@/shared/parts'
@@ -97,7 +96,7 @@ async function seedProvider(name = 'mock', modelId = 'mock-1', nativeFiles = fal
   const db = createDb(env.DB)
   await seedTestUser(db)
   const [p] = await db.insert(providers).values({
-    user_id: DEFAULT_USER_ID, name,
+    user_id: 1, name,
     api_key: await encryptSecret(env.KEY_ENCRYPTION_SECRET, 'k'), enabled: true, created_at: 0,
   }).returning()
   const [selected] = await db.insert(providerInterfaces).values({ provider_id: p!.id, protocol: 'responses', base_url: 'https://mock.example/responses-api', native_files: nativeFiles, created_at: 0 }).returning()
@@ -126,7 +125,7 @@ function uniqueImageBytes(): Uint8Array<ArrayBuffer> {
 async function seedProject(input: Partial<typeof projects.$inferInsert> = {}): Promise<number> {
   const db = createDb(env.DB)
   const [row] = await db.insert(projects).values({
-    user_id: DEFAULT_USER_ID, name: 'P', system_prompt: null, provider_id: null, model_id: null,
+    user_id: 1, name: 'P', system_prompt: null, provider_id: null, model_id: null,
     params: null, created_at: 0, updated_at: 0, ...input,
   }).returning()
   return row!.id
@@ -134,7 +133,7 @@ async function seedProject(input: Partial<typeof projects.$inferInsert> = {}): P
 
 /** Whatever the DO would replay to a client that reconnects mid-generation. */
 async function inflightSnapshot(): Promise<string> {
-  const stub = env.USER_HUB.getByName(String(DEFAULT_USER_ID))
+  const stub = env.USER_HUB.getByName(String(1))
   return runInDurableObject(stub, async (_instance: UserHub, state) => {
     const stored = await state.storage.list({ prefix: 'inflight:' })
     return JSON.stringify([...stored.values()])
@@ -185,7 +184,8 @@ async function installMock(
   protocols = ['responses'],
 ): Promise<MockLanguageModelV4[]> {
   const created: MockLanguageModelV4[] = []
-  const stub = env.USER_HUB.getByName(String(DEFAULT_USER_ID))
+  await connect(await seedTestUser())
+  const stub = env.USER_HUB.getByName(String(1))
   await runInDurableObject(stub, async (instance: UserHub) => {
     await instance.app.plugin({
       name: 'mock-protocol',
@@ -208,18 +208,18 @@ describe('generation', () => {
   it('passes globally enabled conversation tools to the model and persists an unresolved call without executing it', async () => {
     const providerId = await seedProvider('tool-provider', 'tool-model', false, { tool_call: true })
     const db = createDb(env.DB)
-    await db.update(users).set({ settings: { plugins: { ask_user: true } } }).where(eq(users.id, DEFAULT_USER_ID))
+    await db.update(users).set({ settings: { plugins: { ask_user: true } } }).where(eq(users.id, 1))
     const created = await installMock(() => new MockLanguageModelV4({
       doStream: async () => ({ stream: simulateReadableStream({ chunks: TOOL_STREAM, chunkDelayInMs: null, initialDelayInMs: null }) }),
     }))
-    const c = await connect()
+    const c = await connect(await seedTestUser())
     c.ws.send(JSON.stringify({
       type: 'send', conversation_id: null, parent_id: null, parts: [{ type: 'text', text: 'ask me' }],
       provider_id: providerId, model_id: 'tool-model', tools: ['ask_user'],
     }))
     await c.next('message.done')
 
-    const rows = await listMessages(db, conversationIdOf(c), DEFAULT_USER_ID)
+    const rows = await listMessages(db, conversationIdOf(c), 1)
     expect(rows[1]!.parts).toEqual([{ type: 'tool_call', id: 'call-ask-1', name: 'ask_user', args: ASK_USER_INPUT }])
     expect(rows[1]!.parts.some(part => part.type === 'tool_result')).toBe(false)
     expect(created).toHaveLength(1)
@@ -229,7 +229,7 @@ describe('generation', () => {
   it('repairs invalid ask_user arguments before persisting the completed call', async () => {
     const providerId = await seedProvider('invalid-tool-provider', 'invalid-tool-model', false, { tool_call: true })
     const db = createDb(env.DB)
-    await db.update(users).set({ settings: { plugins: { ask_user: true } } }).where(eq(users.id, DEFAULT_USER_ID))
+    await db.update(users).set({ settings: { plugins: { ask_user: true } } }).where(eq(users.id, 1))
     const invalidStream: StreamPart[] = [
       { type: 'stream-start', warnings: [] },
       { type: 'tool-call', toolCallId: 'bad-call', toolName: 'ask_user', input: JSON.stringify({ questions: [] }) },
@@ -253,13 +253,13 @@ describe('generation', () => {
         warnings: [],
       },
     }))
-    const c = await connect()
+    const c = await connect(await seedTestUser())
     c.ws.send(JSON.stringify({
       type: 'send', conversation_id: null, parent_id: null, parts: [{ type: 'text', text: 'bad ask' }],
       provider_id: providerId, model_id: 'invalid-tool-model', tools: ['ask_user'],
     }))
     expect(await c.next('message.done')).toMatchObject({ status: 'done', error: null })
-    expect((await listMessages(db, conversationIdOf(c), DEFAULT_USER_ID))[1]).toMatchObject({
+    expect((await listMessages(db, conversationIdOf(c), 1))[1]).toMatchObject({
       status: 'done', error: null,
       parts: [{ type: 'tool_call', id: 'bad-call', name: 'ask_user', args: ASK_USER_INPUT }],
     })
@@ -270,11 +270,11 @@ describe('generation', () => {
   it('rejects enabled selected tools before generation when the model lacks tool-call support', async () => {
     const providerId = await seedProvider('no-tools-provider', 'no-tools-model', false, {})
     const db = createDb(env.DB)
-    await db.update(users).set({ settings: { plugins: { ask_user: true } } }).where(eq(users.id, DEFAULT_USER_ID))
+    await db.update(users).set({ settings: { plugins: { ask_user: true } } }).where(eq(users.id, 1))
     const created = await installMock(() => new MockLanguageModelV4({
       doStream: async () => ({ stream: simulateReadableStream({ chunks: STREAM, chunkDelayInMs: null, initialDelayInMs: null }) }),
     }))
-    const c = await connect()
+    const c = await connect(await seedTestUser())
     c.ws.send(JSON.stringify({
       type: 'send', request_id: 'no-tools', conversation_id: null, parent_id: null, parts: [{ type: 'text', text: 'hi' }],
       provider_id: providerId, model_id: 'no-tools-model', tools: ['ask_user'],
@@ -286,39 +286,39 @@ describe('generation', () => {
   it('suppresses globally disabled selected tools without deleting or blocking the conversation snapshot', async () => {
     const providerId = await seedProvider('disabled-tool-provider', 'disabled-tool-model', false, {})
     const db = createDb(env.DB)
-    await db.update(users).set({ settings: { plugins: { ask_user: false } } }).where(eq(users.id, DEFAULT_USER_ID))
+    await db.update(users).set({ settings: { plugins: { ask_user: false } } }).where(eq(users.id, 1))
     const created = await installMock(() => new MockLanguageModelV4({
       doStream: async () => ({ stream: simulateReadableStream({ chunks: STREAM, chunkDelayInMs: null, initialDelayInMs: null }) }),
     }))
-    const c = await connect()
+    const c = await connect(await seedTestUser())
     c.ws.send(JSON.stringify({
       type: 'send', conversation_id: null, parent_id: null, parts: [{ type: 'text', text: 'hi' }],
       provider_id: providerId, model_id: 'disabled-tool-model', tools: ['ask_user'],
     }))
     await c.next('message.done')
-    expect((await getConversation(db, conversationIdOf(c), DEFAULT_USER_ID))!.tools).toEqual(['ask_user'])
+    expect((await getConversation(db, conversationIdOf(c), 1))!.tools).toEqual(['ask_user'])
     expect(created[0]!.doStreamCalls[0]!.tools).toBeUndefined()
   })
 
   it('atomically stores an ask_user answer and continues from the tool-call message', async () => {
     const providerId = await seedProvider('answer-provider', 'answer-model', false, { tool_call: true })
     const db = createDb(env.DB)
-    await db.update(users).set({ settings: { plugins: { ask_user: true } } }).where(eq(users.id, DEFAULT_USER_ID))
+    await db.update(users).set({ settings: { plugins: { ask_user: true } } }).where(eq(users.id, 1))
     const streams = [TOOL_STREAM, STREAM]
     const created = await installMock(() => new MockLanguageModelV4({
       doStream: async () => ({ stream: simulateReadableStream({ chunks: streams.shift()!, chunkDelayInMs: null, initialDelayInMs: null }) }),
     }))
-    const c = await connect()
+    const c = await connect(await seedTestUser())
     c.ws.send(JSON.stringify({
       type: 'send', conversation_id: null, parent_id: null, parts: [{ type: 'text', text: 'ask me' }],
       provider_id: providerId, model_id: 'answer-model', tools: ['ask_user'],
     }))
     await c.next('message.done')
     const conversationId = conversationIdOf(c)
-    const firstAssistant = (await listMessages(db, conversationId, DEFAULT_USER_ID))[1]!
+    const firstAssistant = (await listMessages(db, conversationId, 1))[1]!
     // Pending historical calls remain answerable after global disablement; only the next request's
     // actual tool set is filtered.
-    await db.update(users).set({ settings: { plugins: { ask_user: false } } }).where(eq(users.id, DEFAULT_USER_ID))
+    await db.update(users).set({ settings: { plugins: { ask_user: false } } }).where(eq(users.id, 1))
     c.events.length = 0
     c.ws.send(JSON.stringify({
       type: 'tool.respond', request_id: 'answer-1', message_id: firstAssistant.id, call_id: 'call-ask-1',
@@ -330,7 +330,7 @@ describe('generation', () => {
       part: { type: 'tool_result', call_id: 'call-ask-1', name: 'ask_user', content: { status: 'answered' } },
     })
     await c.next('message.done')
-    const rows = await listMessages(db, conversationId, DEFAULT_USER_ID)
+    const rows = await listMessages(db, conversationId, 1)
     expect(rows.map(row => [row.role, row.parent_id])).toEqual([
       ['user', null], ['assistant', rows[0]!.id], ['assistant', firstAssistant.id],
     ])
@@ -347,25 +347,25 @@ describe('generation', () => {
   it('persists cancellation without starting another generation', async () => {
     const providerId = await seedProvider('cancel-provider', 'cancel-model', false, { tool_call: true })
     const db = createDb(env.DB)
-    await db.update(users).set({ settings: { plugins: { ask_user: true } } }).where(eq(users.id, DEFAULT_USER_ID))
+    await db.update(users).set({ settings: { plugins: { ask_user: true } } }).where(eq(users.id, 1))
     const created = await installMock(() => new MockLanguageModelV4({
       doStream: async () => ({ stream: simulateReadableStream({ chunks: TOOL_STREAM, chunkDelayInMs: null, initialDelayInMs: null }) }),
     }))
-    const c = await connect()
+    const c = await connect(await seedTestUser())
     c.ws.send(JSON.stringify({
       type: 'send', conversation_id: null, parent_id: null, parts: [{ type: 'text', text: 'ask me' }],
       provider_id: providerId, model_id: 'cancel-model', tools: ['ask_user'],
     }))
     await c.next('message.done')
     const conversationId = conversationIdOf(c)
-    const firstAssistant = (await listMessages(db, conversationId, DEFAULT_USER_ID))[1]!
+    const firstAssistant = (await listMessages(db, conversationId, 1))[1]!
     c.events.length = 0
     c.ws.send(JSON.stringify({
       type: 'tool.respond', request_id: 'cancel-1', message_id: firstAssistant.id, call_id: 'call-ask-1',
       result: { status: 'cancelled', message: '用户选择了取消回答' },
     }))
     await c.next('message.part')
-    const rows = await listMessages(db, conversationId, DEFAULT_USER_ID)
+    const rows = await listMessages(db, conversationId, 1)
     expect(rows).toHaveLength(2)
     expect(rows[1]!.parts.at(-1)).toMatchObject({ type: 'tool_result', content: { status: 'cancelled' } })
     expect(created).toHaveLength(1)
@@ -374,18 +374,18 @@ describe('generation', () => {
   it('continues generation when every optional question is explicitly skipped', async () => {
     const providerId = await seedProvider('skip-all-provider', 'skip-all-model', false, { tool_call: true })
     const db = createDb(env.DB)
-    await db.update(users).set({ settings: { plugins: { ask_user: true } } }).where(eq(users.id, DEFAULT_USER_ID))
+    await db.update(users).set({ settings: { plugins: { ask_user: true } } }).where(eq(users.id, 1))
     const streams = [TOOL_STREAM, STREAM]
     const created = await installMock(() => new MockLanguageModelV4({
       doStream: async () => ({ stream: simulateReadableStream({ chunks: streams.shift()!, chunkDelayInMs: null, initialDelayInMs: null }) }),
     }))
-    const c = await connect()
+    const c = await connect(await seedTestUser())
     c.ws.send(JSON.stringify({
       type: 'send', conversation_id: null, parent_id: null, parts: [{ type: 'text', text: 'ask me' }],
       provider_id: providerId, model_id: 'skip-all-model', tools: ['ask_user'],
     }))
     await c.next('message.done')
-    const assistant = (await listMessages(db, conversationIdOf(c), DEFAULT_USER_ID))[1]!
+    const assistant = (await listMessages(db, conversationIdOf(c), 1))[1]!
     c.events.length = 0
     c.ws.send(JSON.stringify({
       type: 'tool.respond', request_id: 'skip-all', message_id: assistant.id, call_id: 'call-ask-1',
@@ -402,18 +402,18 @@ describe('generation', () => {
   it('accepts identical response retries but rejects a conflicting second result', async () => {
     const providerId = await seedProvider('retry-provider', 'retry-model', false, { tool_call: true })
     const db = createDb(env.DB)
-    await db.update(users).set({ settings: { plugins: { ask_user: true } } }).where(eq(users.id, DEFAULT_USER_ID))
+    await db.update(users).set({ settings: { plugins: { ask_user: true } } }).where(eq(users.id, 1))
     await installMock(() => new MockLanguageModelV4({
       doStream: async () => ({ stream: simulateReadableStream({ chunks: TOOL_STREAM, chunkDelayInMs: null, initialDelayInMs: null }) }),
     }))
-    const c = await connect()
+    const c = await connect(await seedTestUser())
     c.ws.send(JSON.stringify({
       type: 'send', conversation_id: null, parent_id: null, parts: [{ type: 'text', text: 'ask me' }],
       provider_id: providerId, model_id: 'retry-model', tools: ['ask_user'],
     }))
     await c.next('message.done')
     const conversationId = conversationIdOf(c)
-    const assistant = (await listMessages(db, conversationId, DEFAULT_USER_ID))[1]!
+    const assistant = (await listMessages(db, conversationId, 1))[1]!
     const cancelled = { status: 'cancelled', message: '用户选择了取消回答' }
     c.events.length = 0
     c.ws.send(JSON.stringify({ type: 'tool.respond', request_id: 'r1', message_id: assistant.id, call_id: 'call-ask-1', result: cancelled }))
@@ -425,25 +425,25 @@ describe('generation', () => {
       result: { status: 'answered', answers: [{ id: 'framework', value: 'Vue' }] },
     }))
     expect(await c.next('error')).toMatchObject({ request_id: 'r3', message: expect.stringMatching(/conflict/i) })
-    const stored = (await listMessages(db, conversationId, DEFAULT_USER_ID))[1]!
+    const stored = (await listMessages(db, conversationId, 1))[1]!
     expect(stored.parts.filter(part => part.type === 'tool_result')).toHaveLength(1)
   })
 
   it('rejects unknown calls and answer values with the wrong shape for the persisted question', async () => {
     const providerId = await seedProvider('invalid-answer-provider', 'invalid-answer-model', false, { tool_call: true })
     const db = createDb(env.DB)
-    await db.update(users).set({ settings: { plugins: { ask_user: true } } }).where(eq(users.id, DEFAULT_USER_ID))
+    await db.update(users).set({ settings: { plugins: { ask_user: true } } }).where(eq(users.id, 1))
     await installMock(() => new MockLanguageModelV4({
       doStream: async () => ({ stream: simulateReadableStream({ chunks: TOOL_STREAM, chunkDelayInMs: null, initialDelayInMs: null }) }),
     }))
-    const c = await connect()
+    const c = await connect(await seedTestUser())
     c.ws.send(JSON.stringify({
       type: 'send', conversation_id: null, parent_id: null, parts: [{ type: 'text', text: 'ask me' }],
       provider_id: providerId, model_id: 'invalid-answer-model', tools: ['ask_user'],
     }))
     await c.next('message.done')
     const conversationId = conversationIdOf(c)
-    const assistant = (await listMessages(db, conversationId, DEFAULT_USER_ID))[1]!
+    const assistant = (await listMessages(db, conversationId, 1))[1]!
     c.events.length = 0
     c.ws.send(JSON.stringify({
       type: 'tool.respond', request_id: 'unknown-call', message_id: assistant.id, call_id: 'missing',
@@ -455,7 +455,7 @@ describe('generation', () => {
       result: { status: 'answered', answers: [{ id: 'framework', value: ['Svelte'] }] },
     }))
     expect(await c.nextAfter('error', 2)).toMatchObject({ request_id: 'bad-shape' })
-    expect((await listMessages(db, conversationId, DEFAULT_USER_ID))[1]!.parts.filter(part => part.type === 'tool_result')).toEqual([])
+    expect((await listMessages(db, conversationId, 1))[1]!.parts.filter(part => part.type === 'tool_result')).toEqual([])
   })
 
   it('rejects a tool response for another user conversation without mutating it', async () => {
@@ -465,45 +465,45 @@ describe('generation', () => {
     const conversation = await createConversation(db, {
       user_id: other!.id, title: 'private', provider_id: null, model_id: null,
     })
-    const message = await insertMessage(db, {
+    const message = await insertMessage(db, other!.id, {
       conversation_id: conversation.id, parent_id: null, seq: 1, role: 'assistant', status: 'done', error: null,
       provider_id: null, model_id: null, usage: null, created_at: 0,
       parts: [{ type: 'tool_call', id: 'private-call', name: 'ask_user', args: ASK_USER_INPUT }],
     })
-    const c = await connect()
+    const c = await connect(await seedTestUser())
     c.ws.send(JSON.stringify({
       type: 'tool.respond', request_id: 'foreign', message_id: message.id, call_id: 'private-call',
       result: { status: 'cancelled', message: '用户选择了取消回答' },
     }))
     expect(await c.next('error')).toMatchObject({ request_id: 'foreign', message: 'tool-call message not found' })
-    expect((await getMessage(db, message.id))!.parts).toHaveLength(1)
+    expect((await getMessage(db, message.id, other!.id))!.parts).toHaveLength(1)
   })
 
   it('waits for every tool call before continuing', async () => {
     const providerId = await seedProvider('multi-answer-provider', 'multi-answer-model', false, { tool_call: true })
     const db = createDb(env.DB)
-    await db.update(users).set({ settings: { plugins: { ask_user: true } } }).where(eq(users.id, DEFAULT_USER_ID))
+    await db.update(users).set({ settings: { plugins: { ask_user: true } } }).where(eq(users.id, 1))
     const streams = [MULTI_TOOL_STREAM, STREAM]
     const created = await installMock(() => new MockLanguageModelV4({
       doStream: async () => ({ stream: simulateReadableStream({ chunks: streams.shift()!, chunkDelayInMs: null, initialDelayInMs: null }) }),
     }))
-    const c = await connect()
+    const c = await connect(await seedTestUser())
     c.ws.send(JSON.stringify({
       type: 'send', conversation_id: null, parent_id: null, parts: [{ type: 'text', text: 'ask twice' }],
       provider_id: providerId, model_id: 'multi-answer-model', tools: ['ask_user'],
     }))
     await c.next('message.done')
     const conversationId = conversationIdOf(c)
-    const assistant = (await listMessages(db, conversationId, DEFAULT_USER_ID))[1]!
+    const assistant = (await listMessages(db, conversationId, 1))[1]!
 
-    await runInDurableObject(env.USER_HUB.getByName(String(DEFAULT_USER_ID)), async (instance: UserHub) => {
-      await instance.app.hub.handleCommand(JSON.stringify({
+    await runInDurableObject(env.USER_HUB.getByName(String(1)), async (instance: UserHub) => {
+      await instance.app.hub.handleCommand(instance.app.hub.state.getWebSockets()[0]!, JSON.stringify({
         type: 'tool.respond', request_id: 'first', message_id: assistant.id, call_id: 'call-ask-1',
         result: { status: 'answered', answers: [{ id: 'framework', value: 'Vue' }] },
       }))
     })
     expect(created).toHaveLength(1)
-    expect(await listMessages(db, conversationId, DEFAULT_USER_ID)).toHaveLength(2)
+    expect(await listMessages(db, conversationId, 1)).toHaveLength(2)
 
     c.events.length = 0
     c.ws.send(JSON.stringify({
@@ -512,38 +512,38 @@ describe('generation', () => {
     }))
     await c.next('message.done')
     expect(created).toHaveLength(2)
-    expect(await listMessages(db, conversationId, DEFAULT_USER_ID)).toHaveLength(3)
+    expect(await listMessages(db, conversationId, 1)).toHaveLength(3)
   })
 
   it('recovers continuation when an identical answered retry follows a stored result without a child shell', async () => {
     const providerId = await seedProvider('recover-provider', 'recover-model', false, { tool_call: true })
     const db = createDb(env.DB)
-    await db.update(users).set({ settings: { plugins: { ask_user: true } } }).where(eq(users.id, DEFAULT_USER_ID))
+    await db.update(users).set({ settings: { plugins: { ask_user: true } } }).where(eq(users.id, 1))
     const streams = [TOOL_STREAM, STREAM]
     const created = await installMock(() => new MockLanguageModelV4({
       doStream: async () => ({ stream: simulateReadableStream({ chunks: streams.shift()!, chunkDelayInMs: null, initialDelayInMs: null }) }),
     }))
-    const c = await connect()
+    const c = await connect(await seedTestUser())
     c.ws.send(JSON.stringify({
       type: 'send', conversation_id: null, parent_id: null, parts: [{ type: 'text', text: 'ask me' }],
       provider_id: providerId, model_id: 'recover-model', tools: ['ask_user'],
     }))
     await c.next('message.done')
     const conversationId = conversationIdOf(c)
-    const assistant = (await listMessages(db, conversationId, DEFAULT_USER_ID))[1]!
-    expect(await appendToolResult(db, assistant.id, conversationId, {
+    const assistant = (await listMessages(db, conversationId, 1))[1]!
+    expect(await appendToolResult(db, assistant.id, 1, conversationId, {
       type: 'tool_result', call_id: 'call-ask-1', name: 'ask_user',
       content: { status: 'answered', answers: [{ id: 'framework', value: 'Vue' }] },
     })).toBe(true)
 
-    await runInDurableObject(env.USER_HUB.getByName(String(DEFAULT_USER_ID)), async (instance: UserHub) => {
-      await instance.app.hub.handleCommand(JSON.stringify({
+    await runInDurableObject(env.USER_HUB.getByName(String(1)), async (instance: UserHub) => {
+      await instance.app.hub.handleCommand(instance.app.hub.state.getWebSockets()[0]!, JSON.stringify({
         type: 'tool.respond', request_id: 'recover', message_id: assistant.id, call_id: 'call-ask-1',
         result: { status: 'answered', answers: [{ id: 'framework', value: 'Vue' }] },
       }))
     })
     expect(created).toHaveLength(2)
-    const rows = await listMessages(db, conversationId, DEFAULT_USER_ID)
+    const rows = await listMessages(db, conversationId, 1)
     expect(rows).toHaveLength(3)
     expect(rows[2]!.parent_id).toBe(assistant.id)
   })
@@ -552,9 +552,9 @@ describe('generation', () => {
     const db = createDb(env.DB)
     await seedTestUser(db)
     const conversation = await createConversation(db, {
-      user_id: DEFAULT_USER_ID, title: 'repair head', provider_id: null, model_id: null,
+      user_id: 1, title: 'repair head', provider_id: null, model_id: null,
     })
-    const toolMessage = await insertMessage(db, {
+    const toolMessage = await insertMessage(db, 1, {
       conversation_id: conversation.id, parent_id: null, seq: 1, role: 'assistant', status: 'done', error: null,
       provider_id: null, model_id: null, usage: null, created_at: 0,
       parts: [
@@ -565,21 +565,21 @@ describe('generation', () => {
         },
       ],
     })
-    const child = await insertMessage(db, {
+    const child = await insertMessage(db, 1, {
       conversation_id: conversation.id, parent_id: toolMessage.id, seq: 2, role: 'assistant', status: 'done', error: null,
       provider_id: null, model_id: null, usage: null, created_at: 1, parts: [{ type: 'text', text: 'continued' }],
     })
-    await updateConversation(db, conversation.id, { head_message_id: toolMessage.id })
-    const c = await connect()
+    await updateConversation(db, conversation.id, 1, { head_message_id: toolMessage.id })
+    const c = await connect(await seedTestUser())
     c.events.length = 0
 
-    await runInDurableObject(env.USER_HUB.getByName(String(DEFAULT_USER_ID)), async (instance: UserHub) => {
-      await instance.app.hub.handleCommand(JSON.stringify({
+    await runInDurableObject(env.USER_HUB.getByName(String(1)), async (instance: UserHub) => {
+      await instance.app.hub.handleCommand(instance.app.hub.state.getWebSockets()[0]!, JSON.stringify({
         type: 'tool.continue', request_id: 'repair-head', message_id: toolMessage.id,
       }))
     })
 
-    expect((await getConversation(db, conversation.id, DEFAULT_USER_ID))!.head_message_id).toBe(child.id)
+    expect((await getConversation(db, conversation.id, 1))!.head_message_id).toBe(child.id)
     expect(await c.next('head.changed')).toMatchObject({ conversation_id: conversation.id, message_id: child.id })
   })
 
@@ -587,9 +587,9 @@ describe('generation', () => {
     const db = createDb(env.DB)
     await seedTestUser(db)
     const conversation = await createConversation(db, {
-      user_id: DEFAULT_USER_ID, title: 'keep newer head', provider_id: null, model_id: null,
+      user_id: 1, title: 'keep newer head', provider_id: null, model_id: null,
     })
-    const toolMessage = await insertMessage(db, {
+    const toolMessage = await insertMessage(db, 1, {
       conversation_id: conversation.id, parent_id: null, seq: 1, role: 'assistant', status: 'done', error: null,
       provider_id: null, model_id: null, usage: null, created_at: 0,
       parts: [
@@ -600,26 +600,26 @@ describe('generation', () => {
         },
       ],
     })
-    const child = await insertMessage(db, {
+    const child = await insertMessage(db, 1, {
       conversation_id: conversation.id, parent_id: toolMessage.id, seq: 2, role: 'assistant', status: 'done', error: null,
       provider_id: null, model_id: null, usage: null, created_at: 1, parts: [{ type: 'text', text: 'continued' }],
     })
-    const newer = await insertMessage(db, {
+    const newer = await insertMessage(db, 1, {
       conversation_id: conversation.id, parent_id: child.id, seq: 3, role: 'user', status: 'done', error: null,
       provider_id: null, model_id: null, usage: null, created_at: 2, parts: [{ type: 'text', text: 'later' }],
     })
-    await updateConversation(db, conversation.id, { head_message_id: newer.id })
-    const c = await connect()
+    await updateConversation(db, conversation.id, 1, { head_message_id: newer.id })
+    const c = await connect(await seedTestUser())
     c.events.length = 0
 
-    await runInDurableObject(env.USER_HUB.getByName(String(DEFAULT_USER_ID)), async (instance: UserHub) => {
-      await instance.app.hub.handleCommand(JSON.stringify({
+    await runInDurableObject(env.USER_HUB.getByName(String(1)), async (instance: UserHub) => {
+      await instance.app.hub.handleCommand(instance.app.hub.state.getWebSockets()[0]!, JSON.stringify({
         type: 'tool.respond', request_id: 'old-retry', message_id: toolMessage.id, call_id: 'old-call',
         result: { status: 'answered', answers: [{ id: 'framework', value: 'Vue' }] },
       }))
     })
 
-    expect((await getConversation(db, conversation.id, DEFAULT_USER_ID))!.head_message_id).toBe(newer.id)
+    expect((await getConversation(db, conversation.id, 1))!.head_message_id).toBe(newer.id)
     expect(c.events.some(event => event.type === 'head.changed')).toBe(false)
     expect(c.events.some(event => event.type === 'error')).toBe(false)
     expect(c.events.some(event => event.type === 'conversation.updated')).toBe(false)
@@ -629,33 +629,33 @@ describe('generation', () => {
     const db = createDb(env.DB)
     await seedTestUser(db)
     const conversation = await createConversation(db, {
-      user_id: DEFAULT_USER_ID, title: 'delayed answer', provider_id: null, model_id: null,
+      user_id: 1, title: 'delayed answer', provider_id: null, model_id: null,
     })
-    const toolMessage = await insertMessage(db, {
+    const toolMessage = await insertMessage(db, 1, {
       conversation_id: conversation.id, parent_id: null, seq: 1, role: 'assistant', status: 'done', error: null,
       provider_id: null, model_id: null, usage: null, created_at: 0,
       parts: [{ type: 'tool_call', id: 'delayed-call', name: 'ask_user', args: ASK_USER_INPUT }],
     })
-    const newer = await insertMessage(db, {
+    const newer = await insertMessage(db, 1, {
       conversation_id: conversation.id, parent_id: toolMessage.id, seq: 2, role: 'user', status: 'done', error: null,
       provider_id: null, model_id: null, usage: null, created_at: 1, parts: [{ type: 'text', text: 'moved on' }],
     })
-    await updateConversation(db, conversation.id, { head_message_id: newer.id })
-    const c = await connect()
+    await updateConversation(db, conversation.id, 1, { head_message_id: newer.id })
+    const c = await connect(await seedTestUser())
     c.events.length = 0
 
-    await runInDurableObject(env.USER_HUB.getByName(String(DEFAULT_USER_ID)), async (instance: UserHub) => {
-      await instance.app.hub.handleCommand(JSON.stringify({
+    await runInDurableObject(env.USER_HUB.getByName(String(1)), async (instance: UserHub) => {
+      await instance.app.hub.handleCommand(instance.app.hub.state.getWebSockets()[0]!, JSON.stringify({
         type: 'tool.respond', request_id: 'delayed', message_id: toolMessage.id, call_id: 'delayed-call',
         result: { status: 'answered', answers: [{ id: 'framework', value: 'Vue' }] },
       }))
     })
 
-    expect((await getMessage(db, toolMessage.id))!.parts.at(-1)).toMatchObject({
+    expect((await getMessage(db, toolMessage.id, 1))!.parts.at(-1)).toMatchObject({
       type: 'tool_result', call_id: 'delayed-call', content: { status: 'answered' },
     })
-    expect(await listMessages(db, conversation.id, DEFAULT_USER_ID)).toHaveLength(2)
-    expect((await getConversation(db, conversation.id, DEFAULT_USER_ID))!.head_message_id).toBe(newer.id)
+    expect(await listMessages(db, conversation.id, 1)).toHaveLength(2)
+    expect((await getConversation(db, conversation.id, 1))!.head_message_id).toBe(newer.id)
     expect(c.events.some(event => event.type === 'head.changed')).toBe(false)
     expect(c.events.some(event => event.type === 'error')).toBe(false)
   })
@@ -664,18 +664,18 @@ describe('generation', () => {
     const providerId = await seedProvider('stale-send-provider', 'stale-send-model', false, { tool_call: true })
     const db = createDb(env.DB)
     const conversation = await createConversation(db, {
-      user_id: DEFAULT_USER_ID, title: 'waiting', provider_id: providerId, model_id: 'stale-send-model',
+      user_id: 1, title: 'waiting', provider_id: providerId, model_id: 'stale-send-model',
     })
-    const waiting = await insertMessage(db, {
+    const waiting = await insertMessage(db, 1, {
       conversation_id: conversation.id, parent_id: null, seq: 1, role: 'assistant', status: 'done', error: null,
       provider_id: providerId, model_id: 'stale-send-model', usage: null, created_at: 0,
       parts: [{ type: 'tool_call', id: 'still-waiting', name: 'ask_user', args: ASK_USER_INPUT }],
     })
-    await updateConversation(db, conversation.id, { head_message_id: waiting.id })
+    await updateConversation(db, conversation.id, 1, { head_message_id: waiting.id })
     const created = await installMock(() => new MockLanguageModelV4({
       doStream: async () => ({ stream: simulateReadableStream({ chunks: STREAM, chunkDelayInMs: null, initialDelayInMs: null }) }),
     }))
-    const c = await connect()
+    const c = await connect(await seedTestUser())
     c.ws.send(JSON.stringify({
       type: 'send', request_id: 'stale-send', conversation_id: conversation.id, parent_id: waiting.id,
       parts: [{ type: 'text', text: 'bypass pending tool' }], provider_id: providerId, model_id: 'stale-send-model',
@@ -689,7 +689,7 @@ describe('generation', () => {
       },
     })
     expect(await c.next('message.done')).toMatchObject({ status: 'done' })
-    expect(await listMessages(db, conversation.id, DEFAULT_USER_ID)).toHaveLength(3)
+    expect(await listMessages(db, conversation.id, 1)).toHaveLength(3)
     expect(created).toHaveLength(1)
   })
 
@@ -697,9 +697,9 @@ describe('generation', () => {
     const providerId = await seedProvider('multi-skip-provider', 'multi-skip-model', false, { tool_call: true })
     const db = createDb(env.DB)
     const conversation = await createConversation(db, {
-      user_id: DEFAULT_USER_ID, title: 'multi waiting', provider_id: providerId, model_id: 'multi-skip-model',
+      user_id: 1, title: 'multi waiting', provider_id: providerId, model_id: 'multi-skip-model',
     })
-    const waiting = await insertMessage(db, {
+    const waiting = await insertMessage(db, 1, {
       conversation_id: conversation.id, parent_id: null, seq: 1, role: 'assistant', status: 'done', error: null,
       provider_id: providerId, model_id: 'multi-skip-model', usage: null, created_at: 0,
       parts: [
@@ -710,11 +710,11 @@ describe('generation', () => {
         },
       ],
     })
-    await updateConversation(db, conversation.id, { head_message_id: waiting.id })
+    await updateConversation(db, conversation.id, 1, { head_message_id: waiting.id })
     await installMock(() => new MockLanguageModelV4({
       doStream: async () => ({ stream: simulateReadableStream({ chunks: STREAM, chunkDelayInMs: null, initialDelayInMs: null }) }),
     }))
-    const c = await connect()
+    const c = await connect(await seedTestUser())
     c.ws.send(JSON.stringify({
       type: 'send', conversation_id: conversation.id, parent_id: waiting.id,
       parts: [{ type: 'text', text: 'skip both' }], provider_id: providerId, model_id: 'multi-skip-model',
@@ -724,61 +724,61 @@ describe('generation', () => {
     expect([first, second].map(event => event.type === 'message.part' && event.part.type === 'tool_result' ? event.part.call_id : null))
       .toEqual(['skip-one', 'skip-two'])
     await c.next('message.done')
-    const stored = (await getMessage(db, waiting.id))!
+    const stored = (await getMessage(db, waiting.id, 1))!
     expect(stored.parts.filter(part => part.type === 'tool_result')).toHaveLength(2)
   })
 
   it('answer-wins CAS leaves the answered result intact and rejects the stale skip snapshot', async () => {
     const db = createDb(env.DB)
     await seedTestUser(db)
-    const conversation = await createConversation(db, { user_id: DEFAULT_USER_ID, title: 'answer wins', provider_id: null, model_id: null })
-    const waiting = await insertMessage(db, {
+    const conversation = await createConversation(db, { user_id: 1, title: 'answer wins', provider_id: null, model_id: null })
+    const waiting = await insertMessage(db, 1, {
       conversation_id: conversation.id, parent_id: null, seq: 1, role: 'assistant', status: 'done', error: null,
       provider_id: null, model_id: null, usage: null, created_at: 0,
       parts: [{ type: 'tool_call', id: 'race-call', name: 'ask_user', args: ASK_USER_INPUT }],
     })
-    await updateConversation(db, conversation.id, { head_message_id: waiting.id })
+    await updateConversation(db, conversation.id, 1, { head_message_id: waiting.id })
     const skipped = [...waiting.parts, {
       type: 'tool_result' as const, call_id: 'race-call', name: 'ask_user',
       content: { status: 'cancelled', message: '用户跳过了问题并继续回复' },
     }]
-    expect(await appendToolResult(db, waiting.id, conversation.id, {
+    expect(await appendToolResult(db, waiting.id, 1, conversation.id, {
       type: 'tool_result', call_id: 'race-call', name: 'ask_user',
       content: { status: 'answered', answers: [{ id: 'framework', value: 'Vue' }] },
     })).toBe(true)
-    expect(await replaceMessagePartsIfCurrentHead(db, waiting, skipped)).toBe(false)
-    expect((await getMessage(db, waiting.id))!.parts.at(-1)).toMatchObject({ content: { status: 'answered' } })
+    expect(await replaceMessagePartsIfCurrentHead(db, waiting, 1, skipped)).toBe(false)
+    expect((await getMessage(db, waiting.id, 1))!.parts.at(-1)).toMatchObject({ content: { status: 'answered' } })
   })
 
   it('skip-wins CAS makes a late tool response lose the existing call-id fence', async () => {
     const db = createDb(env.DB)
     await seedTestUser(db)
-    const conversation = await createConversation(db, { user_id: DEFAULT_USER_ID, title: 'skip wins', provider_id: null, model_id: null })
-    const waiting = await insertMessage(db, {
+    const conversation = await createConversation(db, { user_id: 1, title: 'skip wins', provider_id: null, model_id: null })
+    const waiting = await insertMessage(db, 1, {
       conversation_id: conversation.id, parent_id: null, seq: 1, role: 'assistant', status: 'done', error: null,
       provider_id: null, model_id: null, usage: null, created_at: 0,
       parts: [{ type: 'tool_call', id: 'race-call', name: 'ask_user', args: ASK_USER_INPUT }],
     })
-    await updateConversation(db, conversation.id, { head_message_id: waiting.id })
+    await updateConversation(db, conversation.id, 1, { head_message_id: waiting.id })
     const skipped = [...waiting.parts, {
       type: 'tool_result' as const, call_id: 'race-call', name: 'ask_user',
       content: { status: 'cancelled', message: '用户跳过了问题并继续回复' },
     }]
-    expect(await replaceMessagePartsIfCurrentHead(db, waiting, skipped)).toBe(true)
-    expect(await appendToolResult(db, waiting.id, conversation.id, {
+    expect(await replaceMessagePartsIfCurrentHead(db, waiting, 1, skipped)).toBe(true)
+    expect(await appendToolResult(db, waiting.id, 1, conversation.id, {
       type: 'tool_result', call_id: 'race-call', name: 'ask_user',
       content: { status: 'answered', answers: [{ id: 'framework', value: 'Vue' }] },
     })).toBe(false)
-    expect((await getMessage(db, waiting.id))!.parts.at(-1)).toMatchObject({ content: { status: 'cancelled' } })
+    expect((await getMessage(db, waiting.id, 1))!.parts.at(-1)).toMatchObject({ content: { status: 'cancelled' } })
   })
 
   it('allows an ordinary send after every parent tool call has a terminal result', async () => {
     const providerId = await seedProvider('resolved-send-provider', 'resolved-send-model', false, { tool_call: true })
     const db = createDb(env.DB)
     const conversation = await createConversation(db, {
-      user_id: DEFAULT_USER_ID, title: 'resolved', provider_id: providerId, model_id: 'resolved-send-model',
+      user_id: 1, title: 'resolved', provider_id: providerId, model_id: 'resolved-send-model',
     })
-    const resolved = await insertMessage(db, {
+    const resolved = await insertMessage(db, 1, {
       conversation_id: conversation.id, parent_id: null, seq: 1, role: 'assistant', status: 'done', error: null,
       provider_id: providerId, model_id: 'resolved-send-model', usage: null, created_at: 0,
       parts: [
@@ -789,11 +789,11 @@ describe('generation', () => {
         },
       ],
     })
-    await updateConversation(db, conversation.id, { head_message_id: resolved.id })
+    await updateConversation(db, conversation.id, 1, { head_message_id: resolved.id })
     const created = await installMock(() => new MockLanguageModelV4({
       doStream: async () => ({ stream: simulateReadableStream({ chunks: STREAM, chunkDelayInMs: null, initialDelayInMs: null }) }),
     }))
-    const c = await connect()
+    const c = await connect(await seedTestUser())
     c.ws.send(JSON.stringify({
       type: 'send', conversation_id: conversation.id, parent_id: resolved.id,
       parts: [{ type: 'text', text: 'continue after cancel' }], provider_id: providerId, model_id: 'resolved-send-model',
@@ -806,28 +806,28 @@ describe('generation', () => {
     const providerId = await seedProvider('stale-resolved-provider', 'stale-resolved-model', false, { tool_call: true })
     const db = createDb(env.DB)
     const conversation = await createConversation(db, {
-      user_id: DEFAULT_USER_ID, title: 'advanced', provider_id: providerId, model_id: 'stale-resolved-model',
+      user_id: 1, title: 'advanced', provider_id: providerId, model_id: 'stale-resolved-model',
     })
-    const oldParent = await insertMessage(db, {
+    const oldParent = await insertMessage(db, 1, {
       conversation_id: conversation.id, parent_id: null, seq: 1, role: 'assistant', status: 'done', error: null,
       provider_id: providerId, model_id: 'stale-resolved-model', usage: null, created_at: 0,
       parts: [{ type: 'text', text: 'old' }],
     })
-    const newer = await insertMessage(db, {
+    const newer = await insertMessage(db, 1, {
       conversation_id: conversation.id, parent_id: oldParent.id, seq: 2, role: 'user', status: 'done', error: null,
       provider_id: null, model_id: null, usage: null, created_at: 1, parts: [{ type: 'text', text: 'newer' }],
     })
-    await updateConversation(db, conversation.id, { head_message_id: newer.id })
+    await updateConversation(db, conversation.id, 1, { head_message_id: newer.id })
     const created = await installMock(() => new MockLanguageModelV4({
       doStream: async () => ({ stream: simulateReadableStream({ chunks: STREAM, chunkDelayInMs: null, initialDelayInMs: null }) }),
     }))
-    const c = await connect()
+    const c = await connect(await seedTestUser())
     c.ws.send(JSON.stringify({
       type: 'send', request_id: 'stale-resolved', conversation_id: conversation.id, parent_id: oldParent.id,
       parts: [{ type: 'text', text: 'stale reply' }], provider_id: providerId, model_id: 'stale-resolved-model',
     }))
     expect(await c.next('error')).toMatchObject({ request_id: 'stale-resolved', message: expect.stringMatching(/head|resync/i) })
-    expect(await listMessages(db, conversation.id, DEFAULT_USER_ID)).toHaveLength(2)
+    expect(await listMessages(db, conversation.id, 1)).toHaveLength(2)
     expect(created).toHaveLength(0)
   })
 
@@ -835,9 +835,9 @@ describe('generation', () => {
     const providerId = await seedProvider('child-cas-provider', 'child-cas-model', false, { tool_call: true })
     const db = createDb(env.DB)
     const conversation = await createConversation(db, {
-      user_id: DEFAULT_USER_ID, title: 'child race', provider_id: providerId, model_id: 'child-cas-model',
+      user_id: 1, title: 'child race', provider_id: providerId, model_id: 'child-cas-model',
     })
-    const toolMessage = await insertMessage(db, {
+    const toolMessage = await insertMessage(db, 1, {
       conversation_id: conversation.id, parent_id: null, seq: 1, role: 'assistant', status: 'done', error: null,
       provider_id: providerId, model_id: 'child-cas-model', usage: null, created_at: 0,
       parts: [
@@ -848,11 +848,11 @@ describe('generation', () => {
         },
       ],
     })
-    const newer = await insertMessage(db, {
+    const newer = await insertMessage(db, 1, {
       conversation_id: conversation.id, parent_id: toolMessage.id, seq: 2, role: 'user', status: 'done', error: null,
       provider_id: null, model_id: null, usage: null, created_at: 1, parts: [{ type: 'text', text: 'new head' }],
     })
-    await updateConversation(db, conversation.id, { head_message_id: toolMessage.id })
+    await updateConversation(db, conversation.id, 1, { head_message_id: toolMessage.id })
     await db.$client.prepare(`
       CREATE TRIGGER continuation_head_race AFTER INSERT ON messages
       WHEN NEW.parent_id = ${toolMessage.id} AND NEW.role = 'assistant'
@@ -863,19 +863,19 @@ describe('generation', () => {
     const created = await installMock(() => new MockLanguageModelV4({
       doStream: async () => ({ stream: simulateReadableStream({ chunks: STREAM, chunkDelayInMs: null, initialDelayInMs: null }) }),
     }))
-    const c = await connect()
+    const c = await connect(await seedTestUser())
     c.events.length = 0
     try {
-      await runInDurableObject(env.USER_HUB.getByName(String(DEFAULT_USER_ID)), async (instance: UserHub) => {
-        await instance.app.hub.handleCommand(JSON.stringify({
+      await runInDurableObject(env.USER_HUB.getByName(String(1)), async (instance: UserHub) => {
+        await instance.app.hub.handleCommand(instance.app.hub.state.getWebSockets()[0]!, JSON.stringify({
           type: 'tool.continue', request_id: 'child-race', message_id: toolMessage.id,
         }))
       })
     } finally {
       await db.$client.exec('DROP TRIGGER continuation_head_race')
     }
-    expect((await getConversation(db, conversation.id, DEFAULT_USER_ID))!.head_message_id).toBe(newer.id)
-    expect(await listMessages(db, conversation.id, DEFAULT_USER_ID)).toHaveLength(2)
+    expect((await getConversation(db, conversation.id, 1))!.head_message_id).toBe(newer.id)
+    expect(await listMessages(db, conversation.id, 1)).toHaveLength(2)
     expect(created).toHaveLength(0)
     expect(c.events.some(event => event.type === 'message.created' || event.type === 'head.changed')).toBe(false)
   })
@@ -884,9 +884,9 @@ describe('generation', () => {
     const providerId = await seedProvider('child-recovered-provider', 'child-recovered-model', false, { tool_call: true })
     const db = createDb(env.DB)
     const conversation = await createConversation(db, {
-      user_id: DEFAULT_USER_ID, title: 'child recovered', provider_id: providerId, model_id: 'child-recovered-model',
+      user_id: 1, title: 'child recovered', provider_id: providerId, model_id: 'child-recovered-model',
     })
-    const toolMessage = await insertMessage(db, {
+    const toolMessage = await insertMessage(db, 1, {
       conversation_id: conversation.id, parent_id: null, seq: 1, role: 'assistant', status: 'done', error: null,
       provider_id: providerId, model_id: 'child-recovered-model', usage: null, created_at: 0,
       parts: [
@@ -897,7 +897,7 @@ describe('generation', () => {
         },
       ],
     })
-    await updateConversation(db, conversation.id, { head_message_id: toolMessage.id })
+    await updateConversation(db, conversation.id, 1, { head_message_id: toolMessage.id })
     await db.$client.prepare(`
       CREATE TRIGGER continuation_recovered_race AFTER INSERT ON messages
       WHEN NEW.parent_id = ${toolMessage.id} AND NEW.role = 'assistant'
@@ -908,20 +908,20 @@ describe('generation', () => {
     const created = await installMock(() => new MockLanguageModelV4({
       doStream: async () => ({ stream: simulateReadableStream({ chunks: STREAM, chunkDelayInMs: null, initialDelayInMs: null }) }),
     }))
-    const c = await connect()
+    const c = await connect(await seedTestUser())
     c.events.length = 0
     try {
-      await runInDurableObject(env.USER_HUB.getByName(String(DEFAULT_USER_ID)), async (instance: UserHub) => {
-        await instance.app.hub.handleCommand(JSON.stringify({
+      await runInDurableObject(env.USER_HUB.getByName(String(1)), async (instance: UserHub) => {
+        await instance.app.hub.handleCommand(instance.app.hub.state.getWebSockets()[0]!, JSON.stringify({
           type: 'tool.continue', request_id: 'recovered-race', message_id: toolMessage.id,
         }))
       })
     } finally {
       await db.$client.exec('DROP TRIGGER continuation_recovered_race')
     }
-    const rows = await listMessages(db, conversation.id, DEFAULT_USER_ID)
+    const rows = await listMessages(db, conversation.id, 1)
     expect(rows).toHaveLength(2)
-    expect((await getConversation(db, conversation.id, DEFAULT_USER_ID))!.head_message_id).toBe(rows[1]!.id)
+    expect((await getConversation(db, conversation.id, 1))!.head_message_id).toBe(rows[1]!.id)
     expect(rows[1]).toMatchObject({ parent_id: toolMessage.id, status: 'done' })
     expect(created).toHaveLength(1)
     expect(c.events.some(event => event.type === 'message.created')).toBe(true)
@@ -932,28 +932,28 @@ describe('generation', () => {
     const db = createDb(env.DB)
     await seedTestUser(db)
     const conversation = await createConversation(db, {
-      user_id: DEFAULT_USER_ID, title: 'cleanup race', provider_id: null, model_id: null,
+      user_id: 1, title: 'cleanup race', provider_id: null, model_id: null,
     })
-    const parent = await insertMessage(db, {
+    const parent = await insertMessage(db, 1, {
       conversation_id: conversation.id, parent_id: null, seq: 1, role: 'assistant', status: 'done', error: null,
       provider_id: null, model_id: null, usage: null, created_at: 0, parts: [{ type: 'text', text: 'parent' }],
     })
-    const child = await insertMessage(db, {
+    const child = await insertMessage(db, 1, {
       conversation_id: conversation.id, parent_id: parent.id, seq: 2, role: 'assistant', status: 'error', error: 'interrupted',
       provider_id: null, model_id: null, usage: null, created_at: 1, parts: [],
     })
-    await updateConversation(db, conversation.id, { head_message_id: child.id })
+    await updateConversation(db, conversation.id, 1, { head_message_id: child.id })
 
-    expect(await deleteMessageIfUnreferenced(db, child.id)).toBe(false)
-    expect(await getMessage(db, child.id)).toBeDefined()
-    expect((await getConversation(db, conversation.id, DEFAULT_USER_ID))!.head_message_id).toBe(child.id)
+    expect(await deleteMessageIfUnreferenced(db, child.id, 1)).toBe(false)
+    expect(await getMessage(db, child.id, 1)).toBeDefined()
+    expect((await getConversation(db, conversation.id, 1))!.head_message_id).toBe(child.id)
   })
 
   it('publishes the reserved user head when assistant shell creation fails', async () => {
     const providerId = await seedProvider('shell-failure-provider', 'shell-failure-model', false, {})
     const db = createDb(env.DB)
     const conversation = await createConversation(db, {
-      user_id: DEFAULT_USER_ID, title: 'shell failure', provider_id: providerId, model_id: 'shell-failure-model',
+      user_id: 1, title: 'shell failure', provider_id: providerId, model_id: 'shell-failure-model',
     })
     await db.$client.prepare(`
       CREATE TRIGGER fail_assistant_shell BEFORE INSERT ON messages
@@ -962,7 +962,7 @@ describe('generation', () => {
         SELECT RAISE(ABORT, 'assistant shell failed');
       END
     `).run()
-    const c = await connect()
+    const c = await connect(await seedTestUser())
     c.events.length = 0
     try {
       c.ws.send(JSON.stringify({
@@ -973,10 +973,10 @@ describe('generation', () => {
     } finally {
       await db.$client.exec('DROP TRIGGER fail_assistant_shell')
     }
-    const rows = await listMessages(db, conversation.id, DEFAULT_USER_ID)
+    const rows = await listMessages(db, conversation.id, 1)
     expect(rows).toHaveLength(1)
     expect(rows[0]).toMatchObject({ role: 'user', parts: [{ type: 'text', text: 'persist me' }] })
-    expect((await getConversation(db, conversation.id, DEFAULT_USER_ID))!.head_message_id).toBe(rows[0]!.id)
+    expect((await getConversation(db, conversation.id, 1))!.head_message_id).toBe(rows[0]!.id)
     expect(c.events.find(event => event.type === 'head.changed')).toMatchObject({ message_id: rows[0]!.id })
     expect(c.events.find(event => event.type === 'conversation.updated')).toMatchObject({ conversation: { head_message_id: rows[0]!.id } })
   })
@@ -985,18 +985,18 @@ describe('generation', () => {
     const providerId = await seedProvider('skip-head-race-provider', 'skip-head-race-model', false, { tool_call: true })
     const db = createDb(env.DB)
     const conversation = await createConversation(db, {
-      user_id: DEFAULT_USER_ID, title: 'skip race', provider_id: providerId, model_id: 'skip-head-race-model',
+      user_id: 1, title: 'skip race', provider_id: providerId, model_id: 'skip-head-race-model',
     })
-    const waiting = await insertMessage(db, {
+    const waiting = await insertMessage(db, 1, {
       conversation_id: conversation.id, parent_id: null, seq: 1, role: 'assistant', status: 'done', error: null,
       provider_id: providerId, model_id: 'skip-head-race-model', usage: null, created_at: 0,
       parts: [{ type: 'tool_call', id: 'skip-race', name: 'ask_user', args: ASK_USER_INPUT }],
     })
-    const newer = await insertMessage(db, {
+    const newer = await insertMessage(db, 1, {
       conversation_id: conversation.id, parent_id: waiting.id, seq: 2, role: 'user', status: 'done', error: null,
       provider_id: null, model_id: null, usage: null, created_at: 1, parts: [{ type: 'text', text: 'won race' }],
     })
-    await updateConversation(db, conversation.id, { head_message_id: waiting.id })
+    await updateConversation(db, conversation.id, 1, { head_message_id: waiting.id })
     await db.$client.prepare(`
       CREATE TRIGGER skip_head_race AFTER UPDATE OF parts ON messages
       WHEN NEW.id = ${waiting.id}
@@ -1007,7 +1007,7 @@ describe('generation', () => {
     const created = await installMock(() => new MockLanguageModelV4({
       doStream: async () => ({ stream: simulateReadableStream({ chunks: STREAM, chunkDelayInMs: null, initialDelayInMs: null }) }),
     }))
-    const c = await connect()
+    const c = await connect(await seedTestUser())
     try {
       c.ws.send(JSON.stringify({
         type: 'send', request_id: 'skip-head-race', conversation_id: conversation.id, parent_id: waiting.id,
@@ -1018,8 +1018,8 @@ describe('generation', () => {
     } finally {
       await db.$client.exec('DROP TRIGGER skip_head_race')
     }
-    expect((await getConversation(db, conversation.id, DEFAULT_USER_ID))!.head_message_id).toBe(newer.id)
-    expect(await listMessages(db, conversation.id, DEFAULT_USER_ID)).toHaveLength(2)
+    expect((await getConversation(db, conversation.id, 1))!.head_message_id).toBe(newer.id)
+    expect(await listMessages(db, conversation.id, 1)).toHaveLength(2)
     expect(created).toHaveLength(0)
   })
 
@@ -1028,8 +1028,8 @@ describe('generation', () => {
     const created = await installMock(() => new MockLanguageModelV4({
       doStream: async () => ({ stream: simulateReadableStream({ chunks: [...STREAM], chunkDelayInMs: null, initialDelayInMs: null }) }),
     }))
-    const a = await connect()
-    const b = await connect()
+    const a = await connect(await seedTestUser())
+    const b = await connect(await seedTestUser())
     a.ws.send(JSON.stringify({ type: 'send', request_id: 'r1', conversation_id: null, parent_id: null, parts: [{ type: 'text', text: 'hi there' }], provider_id: providerId, model_id: 'mock-1' }))
     const done = await a.next('message.done')
     expect(done).toMatchObject({ type: 'message.done', status: 'done', usage: { prompt: 10, completion: 5, cached: 2, reasoning: 2 }, error: null })
@@ -1046,7 +1046,7 @@ describe('generation', () => {
     const created1 = a.events.find((e) => e.type === 'conversation.created')!
     const conversationId = (created1 as { conversation: { id: number; title: string } }).conversation.id
     expect((created1 as { conversation: { title: string } }).conversation.title).toBe('hi there')
-    const rows = await listMessages(createDb(env.DB), conversationId, DEFAULT_USER_ID)
+    const rows = await listMessages(createDb(env.DB), conversationId, 1)
     expect(rows.map((r) => r.role)).toEqual(['user', 'assistant'])
     expect(rows[1]!.parts).toEqual([
       { type: 'reasoning', text: 'think', providerOptions: { anthropic: { signature: 'SIG' } } },
@@ -1061,7 +1061,7 @@ describe('generation', () => {
     await installMock(() => new MockLanguageModelV4({
       doStream: async () => ({ stream: simulateReadableStream({ chunks: [...STREAM], chunkDelayInMs: null, initialDelayInMs: null }) }),
     }))
-    const c = await connect()
+    const c = await connect(await seedTestUser())
     c.ws.send(JSON.stringify({ type: 'send', conversation_id: null, parent_id: null, parts: [{ type: 'text', text: 'q' }], provider_id: providerId, model_id: 'mock-1' }))
     await c.next('message.done')
     const firstAssistant = (c.events.filter((e) => e.type === 'message.created')[1] as { message: { id: number; conversation_id: number; parent_id: number } }).message
@@ -1086,7 +1086,7 @@ describe('generation', () => {
     await installMock(() => new MockLanguageModelV4({
       doStream: async () => ({ stream: simulateReadableStream({ chunks: [...STREAM], chunkDelayInMs: 200, initialDelayInMs: null }) }),
     }))
-    const c = await connect()
+    const c = await connect(await seedTestUser())
     c.ws.send(JSON.stringify({ type: 'send', conversation_id: null, parent_id: null, parts: [{ type: 'text', text: 'slow' }], provider_id: providerId, model_id: 'mock-1' }))
     await c.next('message.delta')
     const conversationId = (c.events.find((e) => e.type === 'conversation.created') as { conversation: { id: number } }).conversation.id
@@ -1094,7 +1094,7 @@ describe('generation', () => {
     const done = await c.next('message.done')
     // An aborted stream never emits `finish`, so usage is genuinely unknown rather than zero.
     expect(done).toMatchObject({ status: 'aborted', usage: null })
-    const rows = await listMessages(createDb(env.DB), conversationId, DEFAULT_USER_ID)
+    const rows = await listMessages(createDb(env.DB), conversationId, 1)
     expect(rows[1]!.status).toBe('aborted')
     // The delta we waited for is already accumulated, so the partial content must survive the abort.
     expect(rows[1]!.parts.length).toBeGreaterThan(0)
@@ -1103,7 +1103,7 @@ describe('generation', () => {
   it('reports provider errors as status error', async () => {
     const providerId = await seedProvider()
     await installMock(() => new MockLanguageModelV4({ doStream: async () => { throw new Error('boom 401') } }))
-    const c = await connect()
+    const c = await connect(await seedTestUser())
     c.ws.send(JSON.stringify({ type: 'send', conversation_id: null, parent_id: null, parts: [{ type: 'text', text: 'x' }], provider_id: providerId, model_id: 'mock-1' }))
     const done = await c.next('message.done')
     expect(done).toMatchObject({ status: 'error', error: expect.stringContaining('boom 401') })
@@ -1124,7 +1124,7 @@ describe('project inheritance', () => {
       params: { temperature: 0.5, max_tokens: 64, reasoning_effort: 'high' },
     })
     const created = await installMock(streamingMock)
-    const c = await connect()
+    const c = await connect(await seedTestUser())
     c.ws.send(JSON.stringify({
       type: 'send', conversation_id: null, parent_id: null, parts: [{ type: 'text', text: 'hi' }],
       // The command's model is the last fallback; the Project default must win over it.
@@ -1139,7 +1139,7 @@ describe('project inheritance', () => {
     expect(call).toMatchObject({ temperature: 0, topP: 0.25, maxOutputTokens: 64 })
 
     const conversationId = (c.events.find((e) => e.type === 'conversation.created') as { conversation: { id: number } }).conversation.id
-    const row = (await getConversation(createDb(env.DB), conversationId, DEFAULT_USER_ID))!
+    const row = (await getConversation(createDb(env.DB), conversationId, 1))!
     expect(row.project_id).toBe(projectId)
     expect(row.system_prompt).toBe('CONVERSATION')
     expect(row.params).toEqual({ top_p: 0.25, temperature: 0 })
@@ -1147,7 +1147,7 @@ describe('project inheritance', () => {
     expect(row.provider_id).toBeNull()
     expect(row.model_id).toBeNull()
 
-    const rows = await listMessages(createDb(env.DB), conversationId, DEFAULT_USER_ID)
+    const rows = await listMessages(createDb(env.DB), conversationId, 1)
     expect(rows[1]).toMatchObject({ provider_id: projectProvider, model_id: 'model-a' })
   })
 
@@ -1156,7 +1156,7 @@ describe('project inheritance', () => {
     const conversationProvider = await seedProvider('conversation-provider', 'model-b')
     const projectId = await seedProject({ provider_id: projectProvider, model_id: 'model-a' })
     await installMock(streamingMock)
-    const c = await connect()
+    const c = await connect(await seedTestUser())
     c.ws.send(JSON.stringify({
       type: 'send', conversation_id: null, parent_id: null, parts: [{ type: 'text', text: 'hi' }],
       provider_id: projectProvider, model_id: 'model-a',
@@ -1165,9 +1165,9 @@ describe('project inheritance', () => {
     await c.next('message.done')
 
     const conversationId = (c.events.find((e) => e.type === 'conversation.created') as { conversation: { id: number } }).conversation.id
-    const row = (await getConversation(createDb(env.DB), conversationId, DEFAULT_USER_ID))!
+    const row = (await getConversation(createDb(env.DB), conversationId, 1))!
     expect(row).toMatchObject({ provider_id: conversationProvider, model_id: 'model-b' })
-    const rows = await listMessages(createDb(env.DB), conversationId, DEFAULT_USER_ID)
+    const rows = await listMessages(createDb(env.DB), conversationId, 1)
     expect(rows[1]).toMatchObject({ provider_id: conversationProvider, model_id: 'model-b' })
   })
 
@@ -1175,7 +1175,7 @@ describe('project inheritance', () => {
     const providerId = await seedProvider()
     const projectId = await seedProject({ system_prompt: 'FIRST' })
     const created = await installMock(streamingMock)
-    const c = await connect()
+    const c = await connect(await seedTestUser())
     c.ws.send(JSON.stringify({
       type: 'send', conversation_id: null, parent_id: null, parts: [{ type: 'text', text: 'a' }],
       provider_id: providerId, model_id: 'mock-1', project_id: projectId,
@@ -1199,7 +1199,7 @@ describe('project inheritance', () => {
     const pickedProvider = await seedProvider('picked-provider', 'model-c')
     const projectId = await seedProject({ system_prompt: 'PROJECT', provider_id: projectProvider, model_id: 'model-a', params: { temperature: 0.4 } })
     const created = await installMock(streamingMock)
-    const c = await connect()
+    const c = await connect(await seedTestUser())
     c.ws.send(JSON.stringify({
       type: 'send', conversation_id: null, parent_id: null, parts: [{ type: 'text', text: 'hi' }],
       provider_id: projectProvider, model_id: 'model-a',
@@ -1211,12 +1211,12 @@ describe('project inheritance', () => {
     c.ws.send(JSON.stringify({ type: 'regenerate', message_id: first.id, provider_id: pickedProvider, model_id: 'model-c' }))
     await c.nextAfter('message.done', 2)
 
-    const rows = await listMessages(createDb(env.DB), first.conversation_id, DEFAULT_USER_ID)
+    const rows = await listMessages(createDb(env.DB), first.conversation_id, 1)
     expect(rows[1]).toMatchObject({ provider_id: conversationProvider, model_id: 'model-b' })
     // The one-shot choice wins outright — it is not the lowest fallback layer.
     expect(rows[2]).toMatchObject({ provider_id: pickedProvider, model_id: 'model-c' })
     // ...and it is never persisted onto the conversation, which keeps its own override.
-    expect(await getConversation(createDb(env.DB), first.conversation_id, DEFAULT_USER_ID)).toMatchObject({ provider_id: conversationProvider, model_id: 'model-b' })
+    expect(await getConversation(createDb(env.DB), first.conversation_id, 1)).toMatchObject({ provider_id: conversationProvider, model_id: 'model-b' })
     // Prompt and params still inherit from the Project on the regenerated turn.
     expect(created[1]!.doStreamCalls[0]!.prompt[0]).toMatchObject({ role: 'system', content: 'PROJECT' })
     expect(created[1]!.doStreamCalls[0]).toMatchObject({ temperature: 0.4 })
@@ -1230,7 +1230,7 @@ describe('project inheritance', () => {
     await db.update(models).set({ enabled: false }).where(eq(models.provider_id, projectProvider))
     await installMock(streamingMock)
 
-    const c = await connect()
+    const c = await connect(await seedTestUser())
     c.ws.send(JSON.stringify({
       type: 'send', request_id: 'p1', conversation_id: null, parent_id: null, parts: [{ type: 'text', text: 'hi' }],
       provider_id: commandProvider, model_id: 'model-b', project_id: projectId,
@@ -1253,7 +1253,7 @@ describe('project inheritance', () => {
     const [other] = await db.insert(users).values({ name: 'other', settings: { plugins: {} }, createdAt: new Date(0), updatedAt: new Date(0), email: crypto.randomUUID() + '@example.com' }).returning()
     const projectId = await seedProject({ user_id: other!.id })
     await installMock(streamingMock)
-    const c = await connect()
+    const c = await connect(await seedTestUser())
     c.ws.send(JSON.stringify({
       type: 'send', request_id: 'x1', conversation_id: null, parent_id: null, parts: [{ type: 'text', text: 'hi' }],
       provider_id: providerId, model_id: 'mock-1', project_id: projectId,
@@ -1265,7 +1265,7 @@ describe('project inheritance', () => {
   it('rejects conversation-init fields sent alongside an existing conversation_id', async () => {
     const providerId = await seedProvider()
     await installMock(streamingMock)
-    const c = await connect()
+    const c = await connect(await seedTestUser())
     c.ws.send(JSON.stringify({
       type: 'send', conversation_id: null, parent_id: null, parts: [{ type: 'text', text: 'hi' }],
       provider_id: providerId, model_id: 'mock-1',
@@ -1281,7 +1281,7 @@ describe('project inheritance', () => {
     expect(err).toMatchObject({ request_id: 'i1' })
     expect((err as { message: string }).message).toContain('conversation init fields')
     // The rejected command must not have persisted anything.
-    expect(await listMessages(createDb(env.DB), conversationId, DEFAULT_USER_ID)).toHaveLength(2)
+    expect(await listMessages(createDb(env.DB), conversationId, 1)).toHaveLength(2)
   })
 
   it('accepts the Composer’s own payloads: the draft creates the conversation, the follow-up omits every init field', async () => {
@@ -1290,7 +1290,7 @@ describe('project inheritance', () => {
     const providerId = await seedProvider()
     const projectId = await seedProject({ system_prompt: 'PROJECT' })
     const created = await installMock(streamingMock)
-    const c = await connect()
+    const c = await connect(await seedTestUser())
     const model = { provider_id: providerId, model_id: 'mock-1' }
     c.ws.send(JSON.stringify(sendCommandFor({
       conversationId: null, parentId: null, parts: [{ type: 'text', text: 'first' }], model,
@@ -1299,7 +1299,7 @@ describe('project inheritance', () => {
     expect(await c.next('message.done')).toMatchObject({ status: 'done' })
 
     const conversationId = (c.events.find((e) => e.type === 'conversation.created') as { conversation: { id: number } }).conversation.id
-    const row = (await getConversation(createDb(env.DB), conversationId, DEFAULT_USER_ID))!
+    const row = (await getConversation(createDb(env.DB), conversationId, 1))!
     expect(row).toMatchObject({ project_id: projectId, system_prompt: 'DRAFT', provider_id: null, model_id: null })
     // Explicit Auto survives the round trip as `null`, not as an absent (inherited) key.
     expect(row.params).toEqual({ reasoning_enabled: true, reasoning_effort: null })
@@ -1311,7 +1311,7 @@ describe('project inheritance', () => {
     })))
     expect(await c.nextAfter('message.done', 2)).toMatchObject({ status: 'done' })
     expect(c.events.some((e) => e.type === 'error')).toBe(false)
-    expect(await listMessages(createDb(env.DB), conversationId, DEFAULT_USER_ID)).toHaveLength(4)
+    expect(await listMessages(createDb(env.DB), conversationId, 1)).toHaveLength(4)
   })
 })
 
@@ -1326,7 +1326,7 @@ describe('effective model interface', () => {
       doStream: async () => ({ stream: simulateReadableStream({ chunks: [...STREAM], chunkDelayInMs: null, initialDelayInMs: null }) }),
     }))
     const selected: ProviderInterfaceRow[] = []
-    await runInDurableObject(env.USER_HUB.getByName(String(DEFAULT_USER_ID)), async (instance: UserHub) => {
+    await runInDurableObject(env.USER_HUB.getByName(String(1)), async (instance: UserHub) => {
       instance.app.llm.register('anthropic', {
         createModel(_provider, providerInterface) {
           selected.push(providerInterface)
@@ -1336,7 +1336,7 @@ describe('effective model interface', () => {
         },
       })
     })
-    const c = await connect()
+    const c = await connect(await seedTestUser())
     c.ws.send(JSON.stringify({ type: 'send', conversation_id: null, parent_id: null, parts: [{ type: 'text', text: 'first' }], provider_id: providerId, model_id: 'mock-1', params: { reasoning_effort: 'high' } }))
     expect(await c.next('message.done')).toMatchObject({ status: 'done' })
     expect(created[0]!.doStreamCalls[0]!.providerOptions).toEqual({ responses: { reasoningEffort: 'high' } })
@@ -1351,7 +1351,7 @@ describe('effective model interface', () => {
   it('rejects a missing effective interface before persisting a conversation or messages', async () => {
     const providerId = await seedProvider('no-default')
     await createDb(env.DB).update(providers).set({ default_interface_id: null }).where(eq(providers.id, providerId))
-    const c = await connect()
+    const c = await connect(await seedTestUser())
     c.ws.send(JSON.stringify({ type: 'send', request_id: 'missing-interface', conversation_id: null, parent_id: null, parts: [{ type: 'text', text: 'first' }], provider_id: providerId, model_id: 'mock-1' }))
     expect(await Promise.race([c.next('error'), c.next('message.done')])).toMatchObject({ request_id: 'missing-interface', message: expect.stringMatching(/interface/) })
     expect(c.events.some(event => event.type === 'conversation.created' || event.type === 'message.created')).toBe(false)
@@ -1370,7 +1370,7 @@ describe('DeepSeek Responses reasoning lifecycle', () => {
       reasoning: true, reasoning_options: [{ type: 'effort', values: ['none', 'high'] }],
     })
     const requests: Array<{ url: string; body: { input: unknown[]; reasoning?: unknown } }> = []
-    await runInDurableObject(env.USER_HUB.getByName(String(DEFAULT_USER_ID)), async (instance: UserHub) => {
+    await runInDurableObject(env.USER_HUB.getByName(String(1)), async (instance: UserHub) => {
       instance.app.llm.register('responses', {
         createModel(_provider, selected, model, apiKey) {
           return createOpenResponses({
@@ -1384,11 +1384,11 @@ describe('DeepSeek Responses reasoning lifecycle', () => {
         },
       })
     })
-    const c = await connect()
+    const c = await connect(await seedTestUser())
     c.ws.send(JSON.stringify({ type: 'send', conversation_id: null, parent_id: null, parts: [{ type: 'text', text: 'first' }], provider_id: providerId, model_id: 'deepseek-fixture', params: { reasoning_effort: 'high' } }))
     expect(await c.next('message.done')).toMatchObject({ status: 'done', usage: { prompt: 11, completion: 9, cached: 3, reasoning: 6 } })
     const conversationId = conversationIdOf(c)
-    const saved = (await listMessages(db, conversationId, DEFAULT_USER_ID))[1]!
+    const saved = (await listMessages(db, conversationId, 1))[1]!
     expect(saved.parts.map(part => part.type)).toEqual(['reasoning', 'tool_call', 'text'])
     expect(saved.parts[0]).toEqual({
       type: 'reasoning', text: 'complete reasoning', providerOptions: { responses: {
@@ -1407,9 +1407,9 @@ describe('DeepSeek Responses reasoning lifecycle', () => {
     }
     expect(live).toEqual(saved.parts)
     // Tool execution is external to this fixture; complete its persisted result before the next turn.
-    await finalizeMessage(db, saved.id, { parts: [...saved.parts, { type: 'tool_result', call_id: 'call_fixture', name: 'lookup', content: { found: true } }], usage: saved.usage, status: 'done', error: null })
+    await finalizeMessage(db, saved.id, 1, { parts: [...saved.parts, { type: 'tool_result', call_id: 'call_fixture', name: 'lookup', content: { found: true } }], usage: saved.usage, status: 'done', error: null })
     if (!metadataPresent) await db.update(models).set({ metadata_resolved: {} }).where(eq(models.provider_id, providerId))
-    await updateConversation(db, conversationId, { params: { reasoning_enabled: false, reasoning_effort: 'high' } })
+    await updateConversation(db, conversationId, 1, { params: { reasoning_enabled: false, reasoning_effort: 'high' } })
     c.ws.send(JSON.stringify({ type: 'send', conversation_id: conversationId, parent_id: null, parts: [{ type: 'text', text: 'next' }], provider_id: providerId, model_id: 'deepseek-fixture' }))
     expect(await c.nextAfter('message.done', 2)).toMatchObject({ status: 'done' })
     expect(requests.map(request => request.body.reasoning)).toEqual([{ effort: 'high' }, metadataPresent ? { effort: 'none' } : undefined])
@@ -1421,7 +1421,7 @@ describe('DeepSeek Responses reasoning lifecycle', () => {
       { type: 'function_call_output', call_id: 'call_fixture', output: '{"found":true}' },
       { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'next' }] },
     ])
-    expect((await listMessages(db, conversationId, DEFAULT_USER_ID))[3]!.parts).toEqual(saved.parts)
+    expect((await listMessages(db, conversationId, 1))[3]!.parts).toEqual(saved.parts)
   })
 })
 
@@ -1444,7 +1444,7 @@ describe('provider metadata round trip', () => {
     const created = await installMock(() => new MockLanguageModelV4({
       doStream: async () => ({ stream: simulateReadableStream({ chunks: [...META_STREAM], chunkDelayInMs: null, initialDelayInMs: null }) }),
     }))
-    const c = await connect()
+    const c = await connect(await seedTestUser())
     c.ws.send(JSON.stringify({ type: 'send', conversation_id: null, parent_id: null, parts: [{ type: 'text', text: 'hi' }], provider_id: providerId, model_id: 'mock-1' }))
     await c.next('message.done')
     const conversationId = (c.events.find((e) => e.type === 'conversation.created') as { conversation: { id: number } }).conversation.id
@@ -1454,7 +1454,7 @@ describe('provider metadata round trip', () => {
       { type: 'text', text: 'Hello', providerOptions: { google: { thoughtSignature: 'TS_TEXT' } } },
     ]
     // An empty summary is not an absent round trip: the encrypted item still has to reach D1.
-    expect((await listMessages(createDb(env.DB), conversationId, DEFAULT_USER_ID))[1]!.parts).toEqual(stored)
+    expect((await listMessages(createDb(env.DB), conversationId, 1))[1]!.parts).toEqual(stored)
 
     c.ws.send(JSON.stringify({ type: 'send', conversation_id: conversationId, parent_id: null, parts: [{ type: 'text', text: 'more' }], provider_id: providerId, model_id: 'mock-1' }))
     await c.nextAfter('message.done', 2)
@@ -1468,7 +1468,7 @@ describe('provider metadata round trip', () => {
   it('rebuilds identical model messages from memory and from D1 JSON', async () => {
     const db = createDb(env.DB)
     await seedTestUser(db)
-    const conversation = await createConversation(db, { user_id: DEFAULT_USER_ID, title: 't', provider_id: null, model_id: null })
+    const conversation = await createConversation(db, { user_id: 1, title: 't', provider_id: null, model_id: null })
     const userParts: Part[] = [{ type: 'text', text: 'q' }]
     const assistantParts: Part[] = [
       { type: 'reasoning', text: 'hmm', providerOptions: { anthropic: { signature: 'SIG', redactedData: 'RED' } } },
@@ -1477,12 +1477,12 @@ describe('provider metadata round trip', () => {
       { type: 'tool_result', call_id: 'call_1', name: 'lookup', content: { ok: true } },
     ]
     const base = { conversation_id: conversation.id, provider_id: null, model_id: null, usage: null, status: 'done' as const, error: null, created_at: 0 }
-    const user = await insertMessage(db, { ...base, parent_id: null, seq: 0, role: 'user', parts: userParts })
-    const assistant = await insertMessage(db, { ...base, parent_id: user.id, seq: 1, role: 'assistant', parts: assistantParts })
+    const user = await insertMessage(db, 1, { ...base, parent_id: null, seq: 0, role: 'user', parts: userParts })
+    const assistant = await insertMessage(db, 1, { ...base, parent_id: user.id, seq: 1, role: 'assistant', parts: assistantParts })
 
     // The literals never left memory; the rows came back out of the D1 JSON column.
     const inMemory: Message[] = [{ ...toMessage(user), parts: userParts }, { ...toMessage(assistant), parts: assistantParts }]
-    const fromD1 = (await listMessages(db, conversation.id, DEFAULT_USER_ID)).map((r) => toMessage(r))
+    const fromD1 = (await listMessages(db, conversation.id, 1)).map((r) => toMessage(r))
     expect(fromD1).toEqual(inMemory)
     for (const protocol of ['chat-completions', 'responses', 'anthropic', 'vertex-compatible'] as const) {
       const args = { protocol, systemPrompt: null, attachments: new Map() }
@@ -1504,10 +1504,10 @@ describe('provider file transport', () => {
     const digest = String(++attachmentSeq).padStart(64, 'a')
     const db = createDb(env.DB)
     await seedTestUser(db)
-    const key = `${DEFAULT_USER_ID}/${digest.slice(0, 2)}/${digest}`
+    const key = `${1}/${digest.slice(0, 2)}/${digest}`
     await env.BUCKET.put(key, PNG, { httpMetadata: { contentType: 'image/png' } })
     const [row] = await db.insert(attachments).values({
-      user_id: DEFAULT_USER_ID, sha256: digest, mime: 'image/png', size: PNG.byteLength,
+      user_id: 1, sha256: digest, mime: 'image/png', size: PNG.byteLength,
       width: 1, height: 1, r2_key: key, origin: 'upload', created_at: 0,
     }).returning()
     return row!.id
@@ -1527,7 +1527,7 @@ describe('provider file transport', () => {
     const files = recordingFiles(uploads)
     const factory = vi.fn((provider: ProviderRow, _selected: ProviderInterfaceRow) => files(provider))
     const created = await installMock(streamingMock, factory, ['responses', 'chat-completions'])
-    const c = await connect()
+    const c = await connect(await seedTestUser())
     c.ws.send(send({ parts: [{ type: 'image', attachment_id: attachmentId }, { type: 'image', attachment_id: attachmentId }], provider_id: providerId, model_id: 'responses-model' }))
     expect(await c.next('message.done')).toMatchObject({ status: 'done' })
     await db.update(attachmentProviderFiles).set({ base_url: 'https://MOCK.example:443/old/../responses-api///' }).where(eq(attachmentProviderFiles.attachment_id, attachmentId))
@@ -1545,7 +1545,7 @@ describe('provider file transport', () => {
     const attachmentId = await seedAttachment()
     const uploads: Upload[] = []
     const created = await installMock(streamingMock, recordingFiles(uploads), ['responses', 'anthropic'])
-    const c = await connect()
+    const c = await connect(await seedTestUser())
     c.ws.send(send({ parts: [{ type: 'image', attachment_id: attachmentId }], provider_id: providerId, model_id: 'model-a' }))
     expect(await c.next('message.done')).toMatchObject({ status: 'done' })
     const original = (await pointersOf(attachmentId))[0]!
@@ -1569,7 +1569,7 @@ describe('provider file transport', () => {
     const providerId = await seedProvider('no-files-api', 'model-a', true)
     const attachmentId = await seedAttachment()
     const created = await installMock(streamingMock)
-    const c = await connect()
+    const c = await connect(await seedTestUser())
     c.ws.send(send({ parts: [{ type: 'image', attachment_id: attachmentId }], provider_id: providerId, model_id: 'model-a' }))
     expect(await c.next('message.done')).toMatchObject({ status: 'done' })
     expect(filePartsOf(created[0]!)).toEqual([{ type: 'file', mediaType: 'image/png', data: { type: 'data', data: PNG } }])
@@ -1583,7 +1583,7 @@ describe('provider file transport', () => {
     const uploads: Upload[] = []
     const created = await installMock(streamingMock, recordingFiles(uploads))
 
-    const c = await connect()
+    const c = await connect(await seedTestUser())
     c.ws.send(send({ parts: [{ type: 'text', text: 'look' }, { type: 'image', attachment_id: attachmentId }], provider_id: a, model_id: 'model-a' }))
     await c.next('message.done')
     const conversationId = (c.events.find((e) => e.type === 'conversation.created') as { conversation: { id: number } }).conversation.id
@@ -1620,7 +1620,7 @@ describe('provider file transport', () => {
     const uploads: Upload[] = []
     const created = await installMock(streamingMock, recordingFiles(uploads))
 
-    const c = await connect()
+    const c = await connect(await seedTestUser())
     c.ws.send(send({ parts: [{ type: 'text', text: 'look' }, { type: 'image', attachment_id: attachmentId }], provider_id: a, model_id: 'model-a' }))
     await c.next('message.done')
     const conversationId = (c.events.find((e) => e.type === 'conversation.created') as { conversation: { id: number } }).conversation.id
@@ -1655,7 +1655,7 @@ describe('provider file transport', () => {
     const attachmentId = await seedAttachment()
     await installMock(streamingMock, (provider) => recordingFiles([], provider.id === a ? reported : undefined)(provider))
 
-    const c = await connect()
+    const c = await connect(await seedTestUser())
     c.ws.send(send({ parts: [{ type: 'text', text: 'look' }, { type: 'image', attachment_id: attachmentId }], provider_id: a, model_id: 'model-a' }))
     await c.next('message.done')
     const conversationId = (c.events.find((e) => e.type === 'conversation.created') as { conversation: { id: number } }).conversation.id
@@ -1678,7 +1678,7 @@ describe('provider file transport', () => {
     const createFiles = vi.fn(recordingFiles([]))
     const created = await installMock(streamingMock, createFiles)
 
-    const c = await connect()
+    const c = await connect(await seedTestUser())
     c.ws.send(send({ parts: [{ type: 'text', text: 'look' }, { type: 'image', attachment_id: attachmentId }], provider_id: a, model_id: 'model-a' }))
     expect(await c.next('message.done')).toMatchObject({ status: 'done' })
 
@@ -1697,7 +1697,7 @@ describe('provider file transport', () => {
         uploadFile: async () => { throw new Error(message) },
       }))
 
-      const c = await connect()
+      const c = await connect(await seedTestUser())
       c.ws.send(send({ parts: [{ type: 'text', text: 'look' }, { type: 'image', attachment_id: attachmentId }], provider_id: a, model_id: 'model-a' }))
       expect(await c.next('message.done')).toMatchObject({ status: 'error', error: expect.stringContaining(message) })
       // A failed upload is a failed turn: nothing was silently downgraded into inline bytes.
@@ -1743,8 +1743,8 @@ describe('generated image output', () => {
     const providerId = await seedProvider('img-inline', 'img-1', false, { modalities: { input: [], output: ['image'] } })
     await installMock(imageMock(textThenFiles([inlineChunk(bytes)])))
 
-    const a = await connect()
-    const b = await connect()
+    const a = await connect(await seedTestUser())
+    const b = await connect(await seedTestUser())
     a.ws.send(send(providerId, 'img-1'))
     expect(await a.next('message.done')).toMatchObject({ status: 'done' })
     await b.next('message.done')
@@ -1763,7 +1763,7 @@ describe('generated image output', () => {
     expect(object).not.toBeNull()
     expect(new Uint8Array(await object!.arrayBuffer())).toEqual(bytes)
 
-    const rows = await listMessages(createDb(env.DB), conversationIdOf(a), DEFAULT_USER_ID)
+    const rows = await listMessages(createDb(env.DB), conversationIdOf(a), 1)
     expect(rows[1]!.parts).toEqual([
       { type: 'text', text: 'here it is' },
       { type: 'image', attachment_id: attachmentId },
@@ -1777,7 +1777,7 @@ describe('generated image output', () => {
     const providerId = await seedProvider('img-b64', 'img-1', false, { modalities: { input: [], output: ['image'] } })
     await installMock(imageMock(textThenFiles([base64Chunk(bytes)])))
 
-    const c = await connect()
+    const c = await connect(await seedTestUser())
     c.ws.send(send(providerId, 'img-1'))
     expect(await c.next('message.done')).toMatchObject({ status: 'done' })
 
@@ -1797,7 +1797,7 @@ describe('generated image output', () => {
     vi.stubGlobal('fetch', async () => new Response(bytes, { headers: { 'content-type': 'image/png' } }))
 
     try {
-      const c = await connect()
+      const c = await connect(await seedTestUser())
       c.ws.send(send(providerId, 'img-1'))
       expect(await c.next('message.done')).toMatchObject({ status: 'done' })
 
@@ -1806,7 +1806,7 @@ describe('generated image output', () => {
       expect(imageEventsOf(c).map((e) => e.part.attachment_id)).toEqual([saved.id])
       // The provider's temporary URL reaches neither the socket nor D1.
       expect(JSON.stringify(c.events)).not.toContain('provider.example')
-      const rows = await listMessages(createDb(env.DB), conversationIdOf(c), DEFAULT_USER_ID)
+      const rows = await listMessages(createDb(env.DB), conversationIdOf(c), 1)
       expect(rows[1]!.parts).toEqual([
         { type: 'text', text: 'here it is' },
         { type: 'image', attachment_id: saved.id },
@@ -1822,7 +1822,7 @@ describe('generated image output', () => {
     const providerId = await seedProvider('img-dupe', 'img-1', false, { modalities: { input: [], output: ['image'] } })
     await installMock(imageMock(textThenFiles([inlineChunk(bytes), inlineChunk(bytes)])))
 
-    const c = await connect()
+    const c = await connect(await seedTestUser())
     c.ws.send(send(providerId, 'img-1'))
     expect(await c.next('message.done')).toMatchObject({ status: 'done' })
 
@@ -1842,17 +1842,17 @@ describe('generated image output', () => {
     const providerId = await seedProvider('img-bad-mime', 'img-1', false, { modalities: { input: [], output: ['image'] } })
     await installMock(imageMock(textThenFiles([inlineChunk(bytes, 'image/svg+xml')])))
 
-    const c = await connect()
+    const c = await connect(await seedTestUser())
     c.ws.send(send(providerId, 'img-1'))
     expect(await c.next('message.done')).toMatchObject({ status: 'error', error: expect.stringContaining('image/svg+xml') })
 
     expect(imageEventsOf(c)).toHaveLength(0)
-    const rows = await listMessages(createDb(env.DB), conversationIdOf(c), DEFAULT_USER_ID)
+    const rows = await listMessages(createDb(env.DB), conversationIdOf(c), 1)
     expect(rows[1]!.status).toBe('error')
     // Spec §9: the text already received survives, and no trace of the file is written anywhere.
     expect(rows[1]!.parts).toEqual([{ type: 'text', text: 'here it is' }])
     expect(await attachmentBySha(digest)).toBeUndefined()
-    expect(await env.BUCKET.head(r2Key(DEFAULT_USER_ID, digest))).toBeNull()
+    expect(await env.BUCKET.head(r2Key(1, digest))).toBeNull()
   })
 
   it('does not resolve a generated image on any later turn', async () => {
@@ -1868,7 +1868,7 @@ describe('generated image output', () => {
       }),
     }))
 
-    const c = await connect()
+    const c = await connect(await seedTestUser())
     c.ws.send(send(providerId, 'img-1'))
     expect(await c.next('message.done')).toMatchObject({ status: 'done' })
     const conversationId = conversationIdOf(c)
@@ -1900,7 +1900,7 @@ describe('generated image output', () => {
     ]
     await installMock(imageMock(textThenFiles([inlineChunk(bytes)], trailing), 100))
 
-    const c = await connect()
+    const c = await connect(await seedTestUser())
     c.ws.send(send(providerId, 'img-1'))
     // Wait for the persisted image part, not an earlier text or reasoning metadata frame.
     await nextImagePart(c)
@@ -1919,14 +1919,14 @@ describe('persistGeneratedImage', () => {
 
   async function hubLike(overrides: { db?: DB; assets?: Assets } = {}): Promise<Hub> {
     const ctx = await app()
-    return { db: overrides.db ?? ctx.db.orm, app: { assets: overrides.assets ?? ctx.assets } } as unknown as Hub
+    return { userId: 1, db: overrides.db ?? ctx.db.orm, app: { assets: overrides.assets ?? ctx.assets } } as unknown as Hub
   }
 
   const png = (bytes: Uint8Array<ArrayBuffer>, mediaType = 'image/png') => new DefaultGeneratedFile({ data: bytes, mediaType })
 
   /** Scoped to the one key those bytes would ever occupy: other test files share this bucket. */
   const storedObject = async (bytes: Uint8Array<ArrayBuffer>) =>
-    env.BUCKET.head(r2Key(DEFAULT_USER_ID, await sha256(bytes)))
+    env.BUCKET.head(r2Key(1, await sha256(bytes)))
 
   /**
    * A DB whose only altered behaviour is that `insert(...).values(...).returning()` runs `onInsert`
@@ -2025,18 +2025,18 @@ describe('persistGeneratedImage', () => {
     await expect(persistGeneratedImage(await hubLike({ db }), png(bytes))).rejects.toThrow('d1 insert failed')
     // No orphaned row, and no half-written R2 pointer either.
     expect(await attachmentBySha(digest)).toBeUndefined()
-    expect(await env.BUCKET.head(r2Key(DEFAULT_USER_ID, digest))).toBeNull()
+    expect(await env.BUCKET.head(r2Key(1, digest))).toBeNull()
   })
 
   it('keeps the R2 object when a concurrent insert already claimed the same digest', async () => {
     const bytes = uniqueImageBytes()
     const digest = await sha256(bytes)
-    const key = r2Key(DEFAULT_USER_ID, digest)
+    const key = r2Key(1, digest)
     const ctx = await app()
     // Another writer wins the unique index while this insert is in flight: that row owns the key.
     const db = withFailingInsert(ctx.db.orm, async () => {
       await ctx.db.orm.insert(attachments).values({
-        user_id: DEFAULT_USER_ID, sha256: digest, mime: 'image/png', size: bytes.byteLength,
+        user_id: 1, sha256: digest, mime: 'image/png', size: bytes.byteLength,
         width: null, height: null, r2_key: key, origin: 'generated', created_at: 0,
       })
       throw new Error('UNIQUE constraint failed: attachments.sha256')
@@ -2098,10 +2098,10 @@ describe('cross-feature integration', () => {
     const db = createDb(env.DB)
     await seedTestUser(db)
     const digest = await sha256(bytes)
-    const key = r2Key(DEFAULT_USER_ID, digest)
+    const key = r2Key(1, digest)
     await env.BUCKET.put(key, bytes, { httpMetadata: { contentType: 'image/png' } })
     const [row] = await db.insert(attachments).values({
-      user_id: DEFAULT_USER_ID, sha256: digest, mime: 'image/png', size: bytes.byteLength,
+      user_id: 1, sha256: digest, mime: 'image/png', size: bytes.byteLength,
       width: 1, height: 1, r2_key: key, origin: 'upload', created_at: 0,
     }).returning()
     return row!.id
@@ -2149,7 +2149,7 @@ describe('cross-feature integration', () => {
     vi.stubGlobal('fetch', async () => new Response(generatedBytes, { headers: { 'content-type': 'image/png' } }))
     try {
       // ---- turn 1: the draft creates the conversation, the Project supplies prompt, model and params
-      const c = await connect()
+      const c = await connect(await seedTestUser())
       c.ws.send(JSON.stringify(sendCommandFor({
         conversationId: null, parentId: null,
         parts: [{ type: 'text', text: 'draw from this' }, { type: 'image', attachment_id: uploadId }],
@@ -2163,7 +2163,7 @@ describe('cross-feature integration', () => {
       expect((imageEvent as { part: unknown }).part).toEqual({ type: 'image', attachment_id: generatedId })
 
       // A device joining mid-generation is handed the same reduced part, never the provider's link.
-      const rejoin = await connect()
+      const rejoin = await connect(await seedTestUser())
       const snapshot = await rejoin.next('snapshot')
       const inflight = (snapshot as { inflight: Array<{ parts: Part[] }> }).inflight
       const live = inflight.find((m) => m.parts.some((p) => p.type === 'image' && p.attachment_id === generatedId))
@@ -2180,7 +2180,7 @@ describe('cross-feature integration', () => {
       expect(await c.next('message.done')).toMatchObject({ status: 'done' })
       const conversationId = conversationIdOf(c)
 
-      const conversation = (await getConversation(db, conversationId, DEFAULT_USER_ID))!
+      const conversation = (await getConversation(db, conversationId, 1))!
       expect(conversation).toMatchObject({ project_id: projectId, system_prompt: 'CONVERSATION', provider_id: null, model_id: null })
       // Explicit Auto is a present key holding `null`, not an absent (inherited) one — through D1.
       expect(conversation.params).toEqual({ reasoning_enabled: true, reasoning_effort: null })
@@ -2193,7 +2193,7 @@ describe('cross-feature integration', () => {
         ({ type: 'file', mediaType: 'image/png', data: { type: 'reference', reference: { mock: `file-${providerId}-${n}` } } })
       expect(filePartsOf(created[0]!)).toEqual([reference(providerA, 1)])
 
-      const turn1 = await listMessages(db, conversationId, DEFAULT_USER_ID)
+      const turn1 = await listMessages(db, conversationId, 1)
       // The Project default won over the command model, and was recorded on the reply.
       expect(turn1[1]).toMatchObject({ provider_id: providerA, model_id: 'int-a-1' })
       expect(turn1[1]!.parts).toEqual([
@@ -2246,7 +2246,7 @@ describe('cross-feature integration', () => {
       expect(pointers[0]).not.toHaveProperty('api_key')
 
       // Nothing in this chat's persisted history is bytes, base64 or a provider URL.
-      const history = await listMessages(db, conversationId, DEFAULT_USER_ID)
+      const history = await listMessages(db, conversationId, 1)
       const json = JSON.stringify(history.map((r) => r.parts))
       expect(json).not.toContain('provider.example')
       expect(json).not.toContain('base64')
@@ -2259,11 +2259,11 @@ describe('cross-feature integration', () => {
       expect(await c.next('project.deleted')).toEqual({ type: 'project.deleted', project_id: projectId })
       expect(await c.next('conversation.updated')).toMatchObject({ conversation: { id: conversationId, project_id: null } })
 
-      const released = (await getConversation(db, conversationId, DEFAULT_USER_ID))!
+      const released = (await getConversation(db, conversationId, 1))!
       expect(released.project_id).toBeNull()
       // Its own override, its history and its media all outlive the Project that framed them.
       expect(released).toMatchObject({ provider_id: providerA, model_id: 'int-a-1', system_prompt: 'CONVERSATION' })
-      expect(await listMessages(db, conversationId, DEFAULT_USER_ID)).toHaveLength(history.length)
+      expect(await listMessages(db, conversationId, 1)).toHaveLength(history.length)
       expect(await env.BUCKET.head(generated.r2_key)).not.toBeNull()
       expect(await db.query.attachments.findFirst({ where: eq(attachments.id, generatedId) })).toBeDefined()
     } finally {
@@ -2275,7 +2275,7 @@ describe('cross-feature integration', () => {
     const db = createDb(env.DB)
     await seedTestUser(db)
     const projectId = await seedProject({ params: { reasoning_enabled: true, reasoning_effort: 'medium' } })
-    const project = (await getProject(db, projectId, DEFAULT_USER_ID))!
+    const project = (await getProject(db, projectId, 1))!
 
     // Absent means inherit, `null` means explicit Auto, a string means an explicit strength. The
     // distinction lives in a JSON column, so only a real write and read back can prove it survives.
@@ -2286,9 +2286,9 @@ describe('cross-feature integration', () => {
     ]
     for (const { params, key, effort } of cases) {
       const created = await createConversation(db, {
-        user_id: DEFAULT_USER_ID, title: 'r', project_id: projectId, provider_id: null, model_id: null, params,
+        user_id: 1, title: 'r', project_id: projectId, provider_id: null, model_id: null, params,
       })
-      const stored = (await getConversation(db, created.id, DEFAULT_USER_ID))!
+      const stored = (await getConversation(db, created.id, 1))!
       expect('reasoning_effort' in (stored.params ?? {})).toBe(key)
       expect(resolveEffectiveConfig({ conversation: stored, project }).params.reasoning_effort).toBe(effort)
     }
