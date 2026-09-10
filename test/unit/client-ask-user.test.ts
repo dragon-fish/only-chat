@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { createApp, h, nextTick, ref } from 'vue'
+import { computed, createApp, defineComponent, h, nextTick, ref } from 'vue'
 import { createPinia } from 'pinia'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import AskUserCard from '@/plugins/ask-user/client/ask-user-card.vue'
@@ -8,6 +8,7 @@ import ToolPartRenderer from '@/client/components/tool-part-renderer.vue'
 import { buildAnsweredResult, initialAnswers } from '@/plugins/ask-user/client/answers'
 import type { AskUserInput } from '@/plugins/ask-user/shared'
 import { canContinueToolMessage, hasPendingToolCalls, pendingAskUserCalls } from '@/client/components/tool-part-renderer'
+import { useSyncStore } from '@/client/stores/sync'
 import type { Message } from '@/shared/models'
 import { TooltipProvider } from '@/client/ui/tooltip'
 
@@ -311,6 +312,48 @@ describe('ask_user answer serialization', () => {
     await nextTick()
     expect(root.textContent).toContain('正在生成问答')
     expect(root.textContent).not.toContain('工具调用已完成')
+    app.unmount()
+    root.remove()
+  })
+
+  it('re-enables the card when the pending call moves to the next parallel tool call', async () => {
+    // A model may emit several ask_user calls in one turn. The Composer shows them one at a time and
+    // swaps in the next call in the same update that records the answer, so the renderer instance is
+    // reused. Its in-flight flag belongs to the call that was answered; it must not disable the next.
+    const stub = defineComponent({
+      props: { call: { type: Object, required: true }, busy: Boolean },
+      emits: ['respond', 'continue'],
+      setup: (props, { emit }) => () => h('button', {
+        disabled: props.busy,
+        onClick: () => emit('respond', { status: 'cancelled', message: 'x' }),
+      }, props.call.id),
+    })
+    const first = { type: 'tool_call' as const, id: 'call-1', name: 'ask_user', args: input }
+    const second = { type: 'tool_call' as const, id: 'call-2', name: 'ask_user', args: input }
+    const root = document.createElement('div')
+    document.body.append(root)
+    const pinia = createPinia()
+    const sync = useSyncStore(pinia)
+    sync.status = 'open'
+    vi.spyOn(sync, 'send').mockReturnValue(true)
+    // Mirrors chat.vue: the pending call is derived from the store, so answering one reveals the next.
+    const pending = computed(() => sync.optimisticToolCallIds(20).has('call-1') ? second : first)
+    const app = createApp({ render: () => h(ToolPartRenderer, {
+      messageId: 20, call: pending.value, result: null, canContinue: false, placement: 'composer',
+    }) })
+    app.use(pinia)
+    app.provide('clientPluginHost', { ensureToolRenderer: async () => stub })
+    app.mount(root)
+    await vi.waitFor(() => expect(root.querySelector('button')).not.toBeNull())
+
+    const button = () => root.querySelector('button')!
+    expect(button().textContent).toBe('call-1')
+    button().click()
+    await nextTick()
+    await nextTick()
+
+    expect(button().textContent).toBe('call-2')
+    expect(button().disabled).toBe(false)
     app.unmount()
     root.remove()
   })

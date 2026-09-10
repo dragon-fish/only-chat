@@ -46,6 +46,10 @@ watch(() => props.call.name, async (name) => {
   catch { renderer.value = null }
   finally { loading.value = false }
 }, { immediate: true })
+// A model can emit several ask_user calls in one turn; the Composer renders them one at a time and
+// reuses this instance. The in-flight flag belongs to the call that was answered — carried over, it
+// would disable the next call's card with nothing left to clear it.
+watch(() => props.call.id, () => { busy.value = false })
 watch(effectiveResult, result => { if (result) busy.value = false })
 watch(() => sync.lastError, error => { if (error) busy.value = false })
 
