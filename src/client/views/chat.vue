@@ -432,6 +432,7 @@ function onToolsChange(tools: string[]) {
     CollectionState(:loaded="visiblePath.length > 0 || sid === null || (sync.conversationsLoaded && sync.loadedMessageConversations.has(sid))" :error="messageLoadError || (sid !== null ? sync.conversationsError : null)" :retry="retryChat")
       MessageList(
         v-if="visiblePath.length" :key="sid ?? 'draft'" :messages="visiblePath" :project="project"
+        :effective-model="effective"
         :optimistic-id="optimisticMessage?.id")
       Empty(v-else class="h-full")
         EmptyHeader

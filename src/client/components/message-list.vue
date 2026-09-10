@@ -11,12 +11,14 @@ import {
   MessageScrollerViewport,
 } from '@/client/ui/message-scroller'
 import type { Message, Project } from '@/shared/models'
+import type { EffectiveModel } from '@/client/stores/sync'
 import { projectPresentation } from '@/client/lib/ui-models'
 
 const props = defineProps<{
   messages: Message[]
   project?: Project
   optimisticId?: number | null
+  effectiveModel?: EffectiveModel
 }>()
 const config = useConfigStore()
 const streaming = computed(() => props.messages.some(message => message.status === 'streaming'))
@@ -50,6 +52,7 @@ MessageScrollerProvider(:auto-scroll="true" default-scroll-position="last-anchor
           :scroll-anchor="row.message.role === 'user'")
           MessageItem(
             :message="row.message" :project="project" :assistant-name="row.assistantName"
+            :effective-model="effectiveModel"
             :optimistic="row.optimistic"
             :assistant-model-name="row.assistantModelName" :assistant-provider-name="row.assistantProviderName"
             :assistant-lab-id="row.assistantLabId" :assistant-model-family="row.assistantModelFamily")

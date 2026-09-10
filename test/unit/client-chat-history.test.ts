@@ -47,7 +47,7 @@ async function mountChat(historyLoaded: boolean, rememberedModel = false, lastMo
   app.mount('#test-host')
   cleanup = () => app.unmount()
   await nextTick()
-  return { sid }
+  return { sid, sync }
 }
 
 it('retains a remembered model while its off-page lookup is pending', async () => {
@@ -102,4 +102,15 @@ it('initializes the next cached history at its latest turn instead of carrying p
   await nextTick()
   await vi.waitFor(() => expect(document.querySelector('[role="log"]')?.textContent).toContain('Chat 2 message 0'))
   await vi.waitFor(() => expect(viewport().scrollTop).toBe(800))
+})
+
+it('regenerates with the model the picker shows, not the one that produced the reply', async () => {
+  vi.stubGlobal('localStorage', new Storage())
+  const { sync } = await mountChat(true, true, { provider_id: 1, model_id: 'conversation-model' })
+  const send = vi.spyOn(sync, 'send').mockImplementation(() => true)
+  await vi.waitFor(() => expect(document.querySelector('[aria-label="重新生成"]')).not.toBeNull())
+  document.querySelector<HTMLElement>('[aria-label="重新生成"]')!.click()
+  expect(send).toHaveBeenCalledWith({
+    type: 'regenerate', message_id: 109, provider_id: 1, model_id: 'conversation-model',
+  })
 })

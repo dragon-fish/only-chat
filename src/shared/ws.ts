@@ -143,6 +143,7 @@ export const WsCommandSchema = z.discriminatedUnion('type', [
 ])
 export type WsCommand = z.infer<typeof WsCommandSchema>
 export type SendCommand = z.infer<typeof SendCommandSchema>
+export type RegenerateCommand = z.infer<typeof RegenerateCommandSchema>
 
 export const WsEventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('snapshot'), inflight: z.array(MessageSchema) }),

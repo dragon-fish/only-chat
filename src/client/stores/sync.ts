@@ -7,7 +7,7 @@ import type { ModelRef } from '@/shared/api'
 import type { Message, Project, Conversation, ConversationParams, UserSettings } from '@/shared/models'
 import type { ModelMetadata } from '@/shared/model-metadata'
 import type { Part, ToolResultPart } from '@/shared/parts'
-import type { SendCommand, WsCommand, WsEvent } from '@/shared/ws'
+import type { RegenerateCommand, SendCommand, WsCommand, WsEvent } from '@/shared/ws'
 
 /**
  * The reasoning slider's stops, weakest first (spec §3.3). `off` and `auto` are states rather than
@@ -461,6 +461,18 @@ export function sendCommandFor({ conversationId, parentId, parts, model, draft }
     conversation_model_id: draft.model?.model_id ?? null,
     tools: [...new Set(draft.tools ?? [])].sort(),
   }
+}
+
+/**
+ * The model a `regenerate` carries. Only a command-layer selection travels: the hub's own command
+ * layer for `regenerate` is the model of the reply being replaced, so a fresh pick made after that
+ * reply would be silently ignored. A conversation- or Project-layer model stays implicit — the hub
+ * resolves the same value and keeps naming that layer when the model turns out to be unavailable.
+ */
+export function regenerateCommandFor(messageId: number, effective: EffectiveModel): RegenerateCommand {
+  const command: RegenerateCommand = { type: 'regenerate', message_id: messageId }
+  if (effective.source !== 'command' || !effective.model) return command
+  return { ...command, provider_id: effective.model.provider_id, model_id: effective.model.model_id }
 }
 
 /**
