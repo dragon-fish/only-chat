@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
-import { CircleHelpIcon, CircleXIcon } from '@lucide/vue'
+import { CircleHelpIcon, CircleXIcon, XIcon } from '@lucide/vue'
 import { Alert, AlertDescription, AlertTitle } from '@/client/ui/alert'
 import { Button } from '@/client/ui/button'
-import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/client/ui/card'
+import { Card, CardAction, CardContent, CardFooter, CardHeader, CardTitle } from '@/client/ui/card'
 import {
   Questionnaire,
   QuestionnaireActions,
@@ -117,6 +117,12 @@ function cancel() {
   emit('respond', { status: 'cancelled', message: '用户选择了取消回答' })
 }
 
+/** Scoped to the card, not the window: Esc elsewhere on the page must not discard the questions. */
+function cancelOnEscape(event: KeyboardEvent) {
+  if (event.isComposing || props.busy) return
+  cancel()
+}
+
 function answerLabel(questionId: string): string {
   if (terminal.value?.status !== 'answered') return ''
   const value = terminal.value.answers.find(answer => answer.id === questionId)?.value
@@ -134,7 +140,7 @@ Alert(v-else-if="result && !parsedResult?.success" variant="destructive")
   CircleXIcon
   AlertTitle 无法显示工具结果
   AlertDescription 已保存的工具结果格式不正确。
-Card(v-else-if="terminal" class="my-2 w-full")
+Card(v-else-if="terminal" size="sm" class="my-2 w-full")
   CardHeader
     CardTitle.flex.items-center.gap-2.text-sm
       CircleHelpIcon
@@ -146,11 +152,16 @@ Card(v-else-if="terminal" class="my-2 w-full")
   CardContent(v-else class="text-sm text-muted-foreground") 用户取消了回答。
   CardFooter(v-if="terminal.status === 'answered' && canContinue" class="justify-end")
     Button(size="sm" :disabled="busy" @click="emit('continue')") 继续
-Card(v-else class="my-2 w-full")
+Card(v-else size="sm" class="my-2 w-full" @keydown.escape="cancelOnEscape")
   CardHeader
     CardTitle.flex.items-center.gap-2.text-sm
       CircleHelpIcon
       span 需要你的回答
+    CardAction
+      Button(
+        variant="ghost" size="icon-xs" class="size-10 md:size-6" :disabled="busy"
+        title="取消回答（Esc）" aria-label="取消回答" @click="cancel")
+        XIcon
   CardContent
     Questionnaire(
       ref="questionnaire" v-model:item="activeQuestionId"
@@ -160,7 +171,7 @@ Card(v-else class="my-2 w-full")
         :multiple="question.type === 'multiple'" :required="question.required")
         QuestionnaireTitle {{ question.question }}
         QuestionnaireDescription(v-if="question.description") {{ question.description }}
-        QuestionnaireChoices(v-if="question.type !== 'text'" class="mt-4")
+        QuestionnaireChoices(v-if="question.type !== 'text'" class="mt-3")
           QuestionnaireChoice(
             v-for="option in question.options ?? []" :key="option.label" :value="option.label"
             :checked="choiceChecked(question.id, option.label)"
@@ -172,9 +183,9 @@ Card(v-else class="my-2 w-full")
             @update:model-value="setOtherAnswer(question.id, $event, question.type === 'multiple')")
         QuestionnaireInput(
           v-else :model-value="textAnswer(question.id)" :placeholder="question.placeholder"
-          class="mt-4" @update:model-value="setTextAnswer(question.id, $event)")
+          class="mt-3" @update:model-value="setTextAnswer(question.id, $event)")
         QuestionnaireError 请填写当前问题。
-      QuestionnaireActions(class="mt-4")
+      QuestionnaireActions(class="mt-3")
         .flex.items-center.gap-2
           QuestionnairePrevious(size="sm") 上一步
           QuestionnaireProgress
@@ -182,6 +193,4 @@ Card(v-else class="my-2 w-full")
         QuestionnaireSkip(size="sm" @click="skipCurrentQuestion") 跳过
         QuestionnaireNext(size="sm") 下一步
         QuestionnaireSubmit(size="sm" :disabled="busy") 提交
-  CardFooter(class="justify-end")
-    Button(variant="ghost" size="sm" :disabled="busy" @click="cancel") 取消回答
 </template>
