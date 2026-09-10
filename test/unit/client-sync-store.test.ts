@@ -475,6 +475,31 @@ describe('composer model precedence', () => {
   })
 })
 
+describe('branch leaf resolution', () => {
+  beforeEach(() => setActivePinia(createPinia()))
+
+  it('follows the newest child to the deepest descendant', () => {
+    const store = useSyncStore()
+    // 1 ─ 2 ─ 4 ─ 6      the newest child at every fork
+    //   └ 3 ─ 5
+    store.ingestMessages(1, [
+      msg(1, null, 'user'), msg(2, 1, 'assistant'), msg(3, 1, 'assistant'),
+      msg(4, 2, 'user'), msg(5, 3, 'user'), msg(6, 4, 'assistant'),
+    ])
+    expect(store.leafOf(1, 2)).toBe(6)
+    expect(store.leafOf(1, 3)).toBe(5)
+    // A leaf resolves to itself, and an unknown id is returned untouched.
+    expect(store.leafOf(1, 6)).toBe(6)
+    expect(store.leafOf(1, 99)).toBe(99)
+  })
+
+  it('prefers the highest seq when a node has several children', () => {
+    const store = useSyncStore()
+    store.ingestMessages(1, [msg(1, null, 'user'), msg(2, 1, 'assistant'), msg(7, 1, 'assistant'), msg(3, 1, 'assistant')])
+    expect(store.leafOf(1, 1)).toBe(7)
+  })
+})
+
 describe('regenerate and edit payload', () => {
   const picked: ModelRef = { provider_id: 9, model_id: 'picked' }
   const parts: Part[] = [{ type: 'text', text: 'redo' }]

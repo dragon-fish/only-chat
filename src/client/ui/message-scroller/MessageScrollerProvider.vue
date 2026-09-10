@@ -4,7 +4,9 @@ import { provideMessageScroller } from './useMessageScroller'
 
 const props = defineProps<MessageScrollerProviderProps>()
 
-provideMessageScroller(props)
+const engine = provideMessageScroller(props)
+
+defineExpose({ scrollToMessage: engine.context.scrollToMessage })
 </script>
 
 <template>

@@ -813,6 +813,23 @@ export const useSyncStore = defineStore('sync', () => {
     return [...b.values()].filter((x) => x.parent_id === m.parent_id).sort((a, c) => a.seq - c.seq)
   }
 
+  /**
+   * The message a branch shows when it is selected: its deepest descendant along newest children.
+   *
+   * Shared so that clicking a node on the conversation map and pressing the branch arrows under a
+   * message are one action — switching to a sibling must not truncate whatever followed it.
+   */
+  function leafOf(conversationId: number, messageId: number): number {
+    const branch = messages.get(conversationId)
+    let current = branch?.get(messageId)
+    if (!branch || !current) return messageId
+    for (;;) {
+      const child = [...branch.values()].filter(candidate => candidate.parent_id === current!.id).sort((a, b) => b.seq - a.seq)[0]
+      if (!child) return current.id
+      current = child
+    }
+  }
+
   function isStreaming(conversationId: number): boolean {
     return pathFor(conversationId).some((m) => streamingIds.has(m.id))
   }
@@ -893,7 +910,7 @@ export const useSyncStore = defineStore('sync', () => {
     status, snapshotSeq, conversations, projects, messages, streamingIds, forkResult, settings, lastError, projectsLoaded, conversationsLoaded, settingsLoaded,
     optimisticMutations,
     conversationsError, projectsError, settingsError, loadedMessageConversations, conversationList, imageConversationList, projectList,
-    applyEvent, ingestConversations, ingestMessages, conversationsInProject, pathFor, siblingsOf, isStreaming, loadConversations, loadProjects, loadSettings, loadMessages, connect, reset, send,
+    applyEvent, ingestConversations, ingestMessages, conversationsInProject, pathFor, siblingsOf, leafOf, isStreaming, loadConversations, loadProjects, loadSettings, loadMessages, connect, reset, send,
     beginOptimistic, confirmOptimistic, rejectOptimistic, abandonOptimistic, optimisticToolResult, optimisticToolCallIds,
   }
 })

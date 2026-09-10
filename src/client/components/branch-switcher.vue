@@ -12,20 +12,12 @@ const index = computed(() => siblings.value.findIndex((m) => m.id === props.mess
 
 function go(delta: number) {
   const target = siblings.value[index.value + delta]
-  if (target) sync.send({ type: 'switch_head', conversation_id: props.message.conversation_id, message_id: leafOf(target) })
-}
-
-/** Switching to a sibling shows that sibling's deepest descendant along newest children. */
-function leafOf(m: Message): number {
-  const b = sync.messages.get(m.conversation_id)
-  if (!b) return m.id
-  let cur = m
-  for (;;) {
-    const child = [...b.values()].filter((x) => x.parent_id === cur.id).sort((a, c) => c.seq - a.seq)[0]
-    if (!child) break
-    cur = child
-  }
-  return cur.id
+  if (!target) return
+  sync.send({
+    type: 'switch_head',
+    conversation_id: props.message.conversation_id,
+    message_id: sync.leafOf(target.conversation_id, target.id),
+  })
 }
 </script>
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import MessageItem from '@/client/components/message-item.vue'
 import { useConfigStore } from '@/client/stores/config'
 import {
@@ -21,6 +21,10 @@ const props = defineProps<{
   effectiveModel?: EffectiveModel
 }>()
 const config = useConfigStore()
+const scroller = ref<{ scrollToMessage: (messageId: string) => boolean } | null>(null)
+
+/** Lets the conversation map jump to a message: the scroller API lives inside this subtree. */
+defineExpose({ scrollToMessage: (messageId: number) => scroller.value?.scrollToMessage(String(messageId)) ?? false })
 const streaming = computed(() => props.messages.some(message => message.status === 'streaming'))
 
 const rows = computed(() => props.messages.map((message) => {
@@ -43,7 +47,7 @@ const rows = computed(() => props.messages.map((message) => {
 </script>
 
 <template lang="pug">
-MessageScrollerProvider(:auto-scroll="true" default-scroll-position="last-anchor")
+MessageScrollerProvider(ref="scroller" :auto-scroll="true" default-scroll-position="last-anchor")
   MessageScroller
     MessageScrollerViewport(class="oc-scroll")
       MessageScrollerContent(:aria-busy="streaming" class="mx-auto w-full max-w-3xl gap-6 px-4 py-5")

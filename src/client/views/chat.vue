@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, reactive, ref, watch, watchEffect } from 'vue'
+import { computed, nextTick, onBeforeUnmount, reactive, ref, watch, watchEffect } from 'vue'
 import { useMediaQuery } from '@vueuse/core'
 import { RouterLink, useRouter } from 'vue-router'
 import { ArrowLeftIcon, RotateCcwIcon } from '@lucide/vue'
@@ -9,6 +9,7 @@ import ModelPicker from '@/client/components/model-picker.vue'
 import ProjectAvatar from '@/client/components/project-avatar.vue'
 import ReasoningControl from '@/client/components/reasoning-control.vue'
 import ConversationSettings from '@/client/components/conversation-settings.vue'
+import ConversationMapDialog from '@/client/components/conversation-map-dialog.vue'
 import CollectionState from '@/client/components/collection-state.vue'
 import ContextUsageIndicator from '@/client/components/context-usage-indicator.vue'
 import ToolSelector from '@/client/components/tool-selector.vue'
@@ -42,6 +43,7 @@ const conversation = computed(() => (sid.value === null ? undefined : sync.conve
 const path = computed(() => (sid.value === null ? [] : sync.pathFor(sid.value)))
 const streaming = computed(() => sid.value !== null && sync.isStreaming(sid.value))
 const composer = ref<InstanceType<typeof Composer> | null>(null)
+const messageList = ref<{ scrollToMessage: (messageId: number) => boolean } | null>(null)
 const draftTools = ref<string[] | null>(null)
 const outstanding = ref<OutstandingSend>('idle')
 const optimisticRequestId = ref<string | null>(null)
@@ -397,6 +399,11 @@ function onReasoningChange(choice: ReasoningChoice) {
   commitSettings()
 }
 
+/** The map hands back a message id after closing; the scroller lives inside MessageList. */
+function onLocateMessage(messageId: number) {
+  void nextTick(() => messageList.value?.scrollToMessage(messageId))
+}
+
 function onToolsChange(tools: string[]) {
   if (sid.value === null) {
     draftTools.value = tools
@@ -424,14 +431,15 @@ function onToolsChange(tools: string[]) {
         class="min-h-10 min-w-10 md:min-h-6 md:min-w-6"
         title="恢复继承模型" aria-label="恢复继承模型" @click="setOverride(null)")
         RotateCcwIcon
-      .ml-auto.shrink-0
+      .ml-auto.flex.shrink-0.items-center.gap-1
+        ConversationMapDialog(:conversation-id="sid" @locate="onLocateMessage")
         ConversationSettings(
           :form="form" :sources="sources" :project="project" :has-conversation="sid !== null"
           @commit="commitSettings")
   .min-h-0.flex-1
     CollectionState(:loaded="visiblePath.length > 0 || sid === null || (sync.conversationsLoaded && sync.loadedMessageConversations.has(sid))" :error="messageLoadError || (sid !== null ? sync.conversationsError : null)" :retry="retryChat")
       MessageList(
-        v-if="visiblePath.length" :key="sid ?? 'draft'" :messages="visiblePath" :project="project"
+        v-if="visiblePath.length" ref="messageList" :key="sid ?? 'draft'" :messages="visiblePath" :project="project"
         :effective-model="effective"
         :optimistic-id="optimisticMessage?.id")
       Empty(v-else class="h-full")
