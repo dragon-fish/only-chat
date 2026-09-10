@@ -1,9 +1,7 @@
-import { execFile } from 'node:child_process'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
-import { promisify } from 'node:util'
+import { join } from 'node:path'
+import { d1Args, escapeSqlLiteral, readResults, runWrangler, type WranglerRunner } from './d1.ts'
 
 export interface ResetTarget {
   userId: number
@@ -17,8 +15,6 @@ interface ResetInput extends ResetTarget {
   accountId: string
   now: number
 }
-
-export type WranglerRunner = (args: string[], options?: { signal?: AbortSignal }) => Promise<string>
 
 export function parseResetArgs(rawArgs: string[]): ResetTarget {
   const args = rawArgs[0] === '--' ? rawArgs.slice(1) : rawArgs
@@ -45,11 +41,6 @@ export function parseResetArgs(rawArgs: string[]): ResetTarget {
   return { userId, environment }
 }
 
-export function escapeSqlLiteral(value: string): string {
-  if (value.includes('\0')) throw new Error('SQL text cannot contain NUL characters.')
-  return `'${value.replaceAll("'", "''")}'`
-}
-
 export function buildResetSql(input: ResetInput): string {
   if (!Number.isSafeInteger(input.userId) || input.userId <= 0 || !Number.isSafeInteger(input.now) || input.now < 0) {
     throw new Error('Invalid user ID or timestamp.')
@@ -68,40 +59,8 @@ FROM users WHERE id = ${userId} AND email = ${email};
 `
 }
 
-const executeFile = promisify(execFile)
-const require = createRequire(import.meta.url)
-const wranglerBin = join(dirname(require.resolve('wrangler/package.json')), 'bin/wrangler.js')
-
-export const runWrangler: WranglerRunner = async (args, options = {}) => {
-  const execution = executeFile(process.execPath, [wranglerBin, ...args], { maxBuffer: 4 * 1024 * 1024, signal: options.signal })
-  const closed = new Promise<void>(resolve => execution.child.once('close', () => resolve()))
-  try {
-    // Invoke the installed CLI with Node so Windows does not need a shell for pnpm.cmd.
-    const { stdout } = await execution
-    return stdout
-  } catch {
-    // Abort rejects before process exit; wait for Wrangler's signal forwarding and stdio closure.
-    await closed
-    options.signal?.throwIfAborted()
-    // Subprocess errors can embed SQL/output. Keep them out of operator logs.
-    throw new Error('Wrangler D1 execution failed. Check database configuration, access, and email uniqueness.')
-  }
-}
-
-function commandArgs(target: ResetTarget): string[] {
-  return ['d1', 'execute', 'DB', `--${target.environment}`, '--json', '--yes']
-}
-
-function readResults(output: string): Record<string, unknown>[] {
-  const response: unknown = JSON.parse(output)
-  if (!Array.isArray(response) || response.length !== 1 || response[0]?.success !== true || !Array.isArray(response[0].results)) {
-    throw new Error('Wrangler returned an unsuccessful or invalid query result.')
-  }
-  return response[0].results
-}
-
 export async function getResetUser(target: ResetTarget, run: WranglerRunner = runWrangler) {
-  const rows = readResults(await run([...commandArgs(target), '--command', `SELECT id, name, email FROM users WHERE id = ${target.userId};`]))
+  const rows = readResults(await run([...d1Args(target.environment), '--command', `SELECT id, name, email FROM users WHERE id = ${target.userId};`]))
   const user = rows[0]
   if (rows.length !== 1 || !user || user.id !== target.userId || typeof user.name !== 'string' || typeof user.email !== 'string') {
     throw new Error('Target user not found.')
@@ -129,14 +88,14 @@ export async function resetUserCredentials(input: ResetInput, run: WranglerRunne
     const file = join(directory, 'reset.sql')
     await writeFile(file, sql, { mode: 0o600, flag: 'wx', signal: controller.signal })
     controller.signal.throwIfAborted()
-    await run([...commandArgs(input), '--file', file], { signal: controller.signal })
+    await run([...d1Args(input.environment), '--file', file], { signal: controller.signal })
     controller.signal.throwIfAborted()
     const query = `SELECT u.id, u.name, u.email, u.email_verified,
       (SELECT COUNT(*) FROM auth_sessions WHERE user_id = u.id) AS session_count,
       (SELECT COUNT(*) FROM auth_accounts WHERE user_id = u.id) AS account_count,
       (SELECT COUNT(*) FROM auth_accounts WHERE user_id = u.id AND id = ${escapeSqlLiteral(input.accountId)} AND provider_id = 'credential' AND account_id = CAST(u.id AS TEXT) AND password IS NOT NULL) AS credential_count
       FROM users u WHERE u.id = ${input.userId};`
-    const rows = readResults(await run([...commandArgs(input), '--command', query], { signal: controller.signal }))
+    const rows = readResults(await run([...d1Args(input.environment), '--command', query], { signal: controller.signal }))
     controller.signal.throwIfAborted()
     const user = rows[0]
     if (rows.length !== 1 || !user || user.id !== input.userId || user.name !== input.name || user.email !== input.email || user.email_verified !== 0 || user.session_count !== 0 || user.account_count !== 1 || user.credential_count !== 1) {

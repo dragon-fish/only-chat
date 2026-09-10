@@ -99,5 +99,11 @@ export const LlmPlugin = {
     await ctx.plugin(responsesProtocol)
     await ctx.plugin(anthropicProtocol)
     await ctx.plugin(vertexCompatibleProtocol)
+    // Wraps the registrations above, so it must come last. Gated here rather than inside the plugin
+    // so production builds drop the module entirely.
+    if (import.meta.env.DEV) {
+      const { MockProviderPlugin } = await import('../mock-provider/index')
+      await ctx.plugin(MockProviderPlugin)
+    }
   },
 }

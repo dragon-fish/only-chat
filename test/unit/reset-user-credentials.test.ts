@@ -5,7 +5,8 @@ import { readFile, readdir, rm, stat } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { hashPassword, verifyPassword } from 'better-auth/crypto'
-import { buildResetSql, escapeSqlLiteral, getResetUser, parseResetArgs, resetUserCredentials, type WranglerRunner } from '../../scripts/lib/reset-user-credentials'
+import { buildResetSql, getResetUser, parseResetArgs, resetUserCredentials } from '../../scripts/lib/reset-user-credentials'
+import { escapeSqlLiteral, type WranglerRunner } from '../../scripts/lib/d1'
 
 const target = { userId: 1, environment: 'local' as const }
 const replacement = { ...target, name: "O'Brien\n; DELETE FROM users; --", email: 'recovered@example.com', passwordHash: 'hashed-value', accountId: 'replacement-account', now: 1234 }
