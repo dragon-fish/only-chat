@@ -99,3 +99,5 @@ VueFlow 的节点是绝对定位的 DOM 元素，只有边走 SVG，因此节点
 `leafOf` 提取到 store 后补单测：沿最新子节点走到最深叶。
 
 VueFlow 依赖 `ResizeObserver` 与 `getBoundingClientRect`，在 happy-dom 下未必可用。组件级测试待实现时确认——若可行，补一条「单击节点发出正确 `switch_head`」的接线测试。
+
+手工验证的样本用本地 mock 供应商造，不花钱也不依赖真实模型：`/parallel` 造分叉，`/error` 造失败节点，`/slow` 造仍在流式中的节点，`/reasoning` 造带思考过程的节点。地图要区分的四种状态由此都能凑齐。
