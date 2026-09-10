@@ -24,6 +24,7 @@ import {
   reasoningStopsFor,
   sendCommandFor,
   regenerateCommandFor,
+  editCommandFor,
   conversationFormFrom,
   conversationSettingSources,
   type OutstandingSend,
@@ -474,13 +475,17 @@ describe('composer model precedence', () => {
   })
 })
 
-describe('regenerate payload', () => {
+describe('regenerate and edit payload', () => {
   const picked: ModelRef = { provider_id: 9, model_id: 'picked' }
+  const parts: Part[] = [{ type: 'text', text: 'redo' }]
 
   it('carries a command-layer pick, which the hub would otherwise ignore', () => {
-    const cmd = regenerateCommandFor(12, { model: picked, source: 'command' })
-    expect(cmd).toEqual({ type: 'regenerate', message_id: 12, provider_id: 9, model_id: 'picked' })
-    expect(parseCommand(JSON.stringify(cmd))).toEqual(cmd)
+    const regen = regenerateCommandFor(12, { model: picked, source: 'command' })
+    expect(regen).toEqual({ type: 'regenerate', message_id: 12, provider_id: 9, model_id: 'picked' })
+    expect(parseCommand(JSON.stringify(regen))).toEqual(regen)
+    const edit = editCommandFor(12, parts, { model: picked, source: 'command' })
+    expect(edit).toEqual({ type: 'edit', message_id: 12, parts, provider_id: 9, model_id: 'picked' })
+    expect(parseCommand(JSON.stringify(edit))).toEqual(edit)
   })
 
   it('leaves an inherited model implicit so the hub keeps naming its layer', () => {
@@ -488,6 +493,8 @@ describe('regenerate payload', () => {
     expect(regenerateCommandFor(12, { model: picked, source: 'conversation' })).toEqual(bare)
     expect(regenerateCommandFor(12, { model: picked, source: 'project' })).toEqual(bare)
     expect(regenerateCommandFor(12, { model: null, source: null })).toEqual(bare)
+    expect(editCommandFor(12, parts, { model: picked, source: 'project' }))
+      .toEqual({ type: 'edit', message_id: 12, parts })
   })
 })
 

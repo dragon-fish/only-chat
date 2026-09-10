@@ -59,8 +59,8 @@ interface ResolveArgs {
   /** The client's current selection — the last layer of the precedence chain. */
   fallbackModel?: { provider_id: number; model_id: string }
   /**
-   * A deliberate one-shot choice for this generation alone (`regenerate` with a model). It beats
-   * both inheritance layers, and is never persisted onto the conversation.
+   * A deliberate one-shot choice for this generation alone (`regenerate` or `edit` with a model).
+   * It beats both inheritance layers, and is never persisted onto the conversation.
    */
   explicitModel?: { provider_id: number; model_id: string }
   /** Parts of the first user message, used to title a conversation created here. */
@@ -419,14 +419,21 @@ export async function runSend(hub: Hub, cmd: SendCommand): Promise<void> {
   await generate(hub, target, shell, user.id)
 }
 
+/**
+ * "Redo this with model X" is an explicit one-shot choice, so it outranks inheritance. A client that
+ * sends none falls back to a past generation's model, which is stale the moment the model is switched.
+ */
+function commandModel(cmd: { provider_id?: number; model_id?: string }): { provider_id: number; model_id: string } | undefined {
+  return cmd.provider_id !== undefined && cmd.model_id !== undefined
+    ? { provider_id: cmd.provider_id, model_id: cmd.model_id }
+    : undefined
+}
+
 export async function runRegenerate(hub: Hub, cmd: Extract<WsCommand, { type: 'regenerate' }>): Promise<void> {
   const old = await getMessage(hub.db, cmd.message_id, hub.userId)
   if (!old || old.role !== 'assistant' || old.parent_id === null) throw new Error('not an assistant message')
-  // "Redo this reply with model X" is an explicit one-shot choice, so it outranks inheritance.
+  const explicitModel = commandModel(cmd)
   // Without one, regenerate reuses the model that produced the reply being replaced.
-  const explicitModel = cmd.provider_id !== undefined && cmd.model_id !== undefined
-    ? { provider_id: cmd.provider_id, model_id: cmd.model_id }
-    : undefined
   const fallbackModel = old.provider_id !== null && old.model_id !== null
     ? { provider_id: old.provider_id, model_id: old.model_id }
     : undefined
@@ -438,9 +445,10 @@ export async function runRegenerate(hub: Hub, cmd: Extract<WsCommand, { type: 'r
 export async function runEdit(hub: Hub, cmd: Extract<WsCommand, { type: 'edit' }>): Promise<void> {
   const old = await getMessage(hub.db, cmd.message_id, hub.userId)
   if (!old || old.role !== 'user') throw new Error('not a user message')
-  // `edit` carries no model, so the conversation's last generation stands in as the command layer.
+  const explicitModel = commandModel(cmd)
+  // Without one, the conversation's last generation stands in as the command layer.
   const fallbackModel = await lastGenerationModel(hub.db, old.conversation_id, hub.userId)
-  const target = await resolveTarget(hub, { conversationId: old.conversation_id, fallbackModel, firstParts: cmd.parts })
+  const target = await resolveTarget(hub, { conversationId: old.conversation_id, explicitModel, fallbackModel, firstParts: cmd.parts })
   const user = await persistUserMessage(hub, target.conversation, old.parent_id, cmd.parts)
   const shell = await openAssistantShell(hub, target, user.id)
   await generate(hub, target, shell, user.id)

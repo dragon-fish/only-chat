@@ -114,3 +114,18 @@ it('regenerates with the model the picker shows, not the one that produced the r
     type: 'regenerate', message_id: 109, provider_id: 1, model_id: 'conversation-model',
   })
 })
+
+it('edits with the model the picker shows, not the one that produced the reply', async () => {
+  vi.stubGlobal('localStorage', new Storage())
+  const { sync } = await mountChat(true, true, { provider_id: 1, model_id: 'conversation-model' })
+  const send = vi.spyOn(sync, 'send').mockImplementation(() => true)
+  const editButtons = document.querySelectorAll<HTMLElement>('[aria-label="编辑消息"]')
+  editButtons[editButtons.length - 1]!.click()
+  await nextTick()
+  const submit = [...document.querySelectorAll<HTMLElement>('button')].find(b => b.textContent?.trim() === '发送')!
+  submit.click()
+  expect(send).toHaveBeenCalledWith({
+    type: 'edit', message_id: 108, parts: [{ type: 'text', text: 'Chat 1 message 8' }],
+    provider_id: 1, model_id: 'conversation-model',
+  })
+})

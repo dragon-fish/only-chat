@@ -1222,6 +1222,31 @@ describe('project inheritance', () => {
     expect(created[1]!.doStreamCalls[0]).toMatchObject({ temperature: 0.4 })
   })
 
+  it('lets an explicit edit model outrank the conversation override', async () => {
+    const conversationProvider = await seedProvider('conversation-provider', 'model-b')
+    const pickedProvider = await seedProvider('picked-provider', 'model-c')
+    await installMock(streamingMock)
+    const c = await connect(await seedTestUser())
+    c.ws.send(JSON.stringify({
+      type: 'send', conversation_id: null, parent_id: null, parts: [{ type: 'text', text: 'hi' }],
+      provider_id: conversationProvider, model_id: 'model-b',
+      conversation_provider_id: conversationProvider, conversation_model_id: 'model-b',
+    }))
+    await c.next('message.done')
+    const first = (c.events.filter((e) => e.type === 'message.created')[0] as { message: { id: number; conversation_id: number } }).message
+
+    c.ws.send(JSON.stringify({
+      type: 'edit', message_id: first.id, parts: [{ type: 'text', text: 'hi again' }],
+      provider_id: pickedProvider, model_id: 'model-c',
+    }))
+    await c.nextAfter('message.done', 2)
+
+    const rows = await listMessages(createDb(env.DB), first.conversation_id, 1)
+    expect(rows[3]).toMatchObject({ role: 'assistant', provider_id: pickedProvider, model_id: 'model-c' })
+    // ...and it is never persisted onto the conversation, which keeps its own override.
+    expect(await getConversation(createDb(env.DB), first.conversation_id, 1)).toMatchObject({ provider_id: conversationProvider, model_id: 'model-b' })
+  })
+
   it('rejects an unavailable inherited model, naming the layer it came from', async () => {
     const db = createDb(env.DB)
     const projectProvider = await seedProvider('project-provider', 'model-a')

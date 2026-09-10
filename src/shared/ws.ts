@@ -34,6 +34,11 @@ export const SendCommandSchema = z.object({
   /** Selected tool snapshot, used only when creating the first Conversation row. */
   tools: z.array(z.string()).optional(),
 })
+/**
+ * `provider_id`/`model_id` on `regenerate` and `edit` are the client's current model selection,
+ * carried as a one-shot choice for this generation alone. Both commands need it: the hub's own
+ * command layer for them is a *past* generation's model, which a fresh pick has to outrank.
+ */
 export const RegenerateCommandSchema = z.object({
   type: z.literal('regenerate'),
   ...base,
@@ -46,6 +51,8 @@ export const EditCommandSchema = z.object({
   ...base,
   message_id: z.number().int(),
   parts: PartsSchema.min(1),
+  provider_id: z.number().int().optional(),
+  model_id: z.string().min(1).optional(),
 })
 export const StopCommandSchema = z.object({ type: z.literal('stop'), ...base, conversation_id: z.number().int() })
 export const SwitchHeadCommandSchema = z.object({
@@ -144,6 +151,7 @@ export const WsCommandSchema = z.discriminatedUnion('type', [
 export type WsCommand = z.infer<typeof WsCommandSchema>
 export type SendCommand = z.infer<typeof SendCommandSchema>
 export type RegenerateCommand = z.infer<typeof RegenerateCommandSchema>
+export type EditCommand = z.infer<typeof EditCommandSchema>
 
 export const WsEventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('snapshot'), inflight: z.array(MessageSchema) }),

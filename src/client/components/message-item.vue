@@ -11,7 +11,7 @@ import { canContinueToolMessage } from '@/client/components/tool-part-renderer'
 import ProjectAvatar from '@/client/components/project-avatar.vue'
 import { api } from '@/client/lib/api'
 import { cn } from '@/client/lib/utils'
-import { assistantWaitState, regenerateCommandFor, useSyncStore, type EffectiveModel } from '@/client/stores/sync'
+import { assistantWaitState, editCommandFor, regenerateCommandFor, useSyncStore, type EffectiveModel } from '@/client/stores/sync'
 import { Alert, AlertDescription, AlertTitle } from '@/client/ui/alert'
 import { Badge } from '@/client/ui/badge'
 import { Bubble, BubbleContent } from '@/client/ui/bubble'
@@ -33,7 +33,7 @@ const props = defineProps<{
   assistantLabId?: string | null
   assistantModelFamily?: string
   optimistic?: boolean
-  /** The model the chat would generate with right now; a fresh pick has to reach `regenerate`. */
+  /** The model the chat would generate with right now; a fresh pick has to reach the hub. */
   effectiveModel?: EffectiveModel
 }>()
 const sync = useSyncStore()
@@ -70,13 +70,14 @@ function startEdit() {
   draft.value = textParts.value.map((p) => p.text).join('\n')
   editing.value = true
 }
+const NO_MODEL: EffectiveModel = { model: null, source: null }
 function submitEdit() {
   const parts = [...images.value, { type: 'text' as const, text: draft.value }]
-  sync.send({ type: 'edit', message_id: props.message.id, parts })
+  sync.send(editCommandFor(props.message.id, parts, props.effectiveModel ?? NO_MODEL))
   editing.value = false
 }
 function regenerate() {
-  sync.send(regenerateCommandFor(props.message.id, props.effectiveModel ?? { model: null, source: null }))
+  sync.send(regenerateCommandFor(props.message.id, props.effectiveModel ?? NO_MODEL))
 }
 </script>
 
