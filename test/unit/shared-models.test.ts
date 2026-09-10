@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  InterfaceProtocolSchema, MessageSchema, ModelPageSchema, ModelQuerySchema,
+  InterfaceProtocolSchema, MessageSchema, ModelQuerySchema,
   ProjectSchema, ProviderInterfaceSchema, ProviderWithInterfacesSchema,
   ConversationParamsSchema, ConversationSchema, UsageSchema, UserSettingsSchema,
 } from '@/shared/models'
@@ -122,10 +122,9 @@ describe('models schemas', () => {
     }).success).toBe(false)
   })
 
-  it('parses indexed model query filters and a cursor page', () => {
-    expect(ModelQuerySchema.parse({ vision: true, min_context: 262144, limit: 50 }))
-      .toMatchObject({ vision: true, min_context: 262144, limit: 50 })
-    expect(ModelPageSchema.parse({ models: [], next_cursor: null })).toEqual({ models: [], next_cursor: null })
+  it('parses the local model filter state', () => {
+    expect(ModelQuerySchema.parse({ vision: true, min_context: 262144 }))
+      .toMatchObject({ vision: true, min_context: 262144 })
   })
 
   it('treats explicit null reasoning_effort as Auto, independent of reasoning_enabled', () => {

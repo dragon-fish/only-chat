@@ -176,7 +176,7 @@ describe('D1 schema', () => {
     expect(await env.DB.prepare('SELECT count(*) AS n FROM provider_interfaces WHERE provider_id = ?').bind(p!.id).first('n')).toBe(0)
   })
 
-  it('installs indexed filter paths and an FTS5 substring search kept current on writes', async () => {
+  it('installs indexed filter paths and round-trips model metadata', async () => {
     const names = await env.DB.prepare("SELECT name FROM sqlite_schema WHERE type = 'index' AND tbl_name = 'models'").all<{ name: string }>()
     expect(names.results.map(row => row.name)).toEqual(expect.arrayContaining([
       'models_provider_enabled_sort_idx', 'models_enabled_image_idx', 'models_enabled_reasoning_idx', 'models_enabled_context_idx',
@@ -193,18 +193,13 @@ describe('D1 schema', () => {
     const db = createDb(env.DB)
     await db.insert(users).values({ id: 1, name: 'owner', settings: { plugins: {} }, createdAt: new Date(0), updatedAt: new Date(0), email: crypto.randomUUID() + '@example.com' }).onConflictDoNothing()
     const [p] = await db.insert(providers).values({ user_id: 1, name: 'fts', created_at: 0 }).returning()
-    const inserted = await env.DB.prepare("INSERT INTO models (provider_id, model_id, search_name, metadata_resolved, metadata_override) VALUES (?, 'search-model', 'claude opus', ?, ?)")
+    const inserted = await env.DB.prepare("INSERT INTO models (provider_id, model_id, metadata_resolved, metadata_override) VALUES (?, 'search-model', ?, ?)")
       .bind(p!.id, JSON.stringify({ reasoning: false, cost: { input: 0 } }), JSON.stringify({ cost: null })).run()
     const modelId = inserted.meta.last_row_id
-    expect(await env.DB.prepare("SELECT rowid FROM models_fts WHERE models_fts MATCH 'laud'").first('rowid')).toBe(modelId)
     const metadata = await env.DB.prepare('SELECT metadata_resolved, metadata_override FROM models WHERE id = ?').bind(modelId).first<{ metadata_resolved: string; metadata_override: string }>()
     expect(JSON.parse(metadata!.metadata_resolved)).toEqual({ reasoning: false, cost: { input: 0 } })
     expect(JSON.parse(metadata!.metadata_override)).toEqual({ cost: null })
-    await env.DB.prepare("UPDATE models SET search_name = 'gemini flash' WHERE id = ?").bind(modelId).run()
-    expect(await env.DB.prepare("SELECT rowid FROM models_fts WHERE models_fts MATCH 'laud'").first()).toBeNull()
-    expect(await env.DB.prepare("SELECT rowid FROM models_fts WHERE models_fts MATCH 'emin'").first('rowid')).toBe(modelId)
     await db.delete(providers).where(eq(providers.id, p!.id))
-    expect(await env.DB.prepare("SELECT rowid FROM models_fts WHERE models_fts MATCH 'emin'").first()).toBeNull()
   })
 
   it('migrates legacy data without losing credentials, false/zero metadata or native Vertex records', async () => {
@@ -218,7 +213,7 @@ describe('D1 schema', () => {
     await legacy.prepare("INSERT INTO attachment_provider_files (attachment_id, provider_id, provider_reference, expires_at, created_at) VALUES (1, 1, '{}', 1000, 0), (1, 2, '{}', 2000, 0)").run()
     await applyD1Migrations(legacy, env.TEST_MIGRATIONS.slice(0, 3))
     await legacy.prepare("INSERT INTO attachment_provider_files (id, attachment_id, provider_id, credential_version, file_family, base_url, provider_reference, expires_at, cleanup_after, cleanup_attempts, last_cleanup_error, created_at) VALUES (3, 1, 1, 2, 'openai', 'https://api.openai.com/v1', '{\"openai\":\"pending-old-upload\"}', 2000, 5000, 4, 'Provider file deletion failed (HTTP 503)', 1000)").run()
-    await legacy.prepare("UPDATE models SET metadata_override = '{\"cost\":null,\"reasoning\":false}', metadata_resolved = '{\"cost\":null,\"reasoning\":false}', search_name = 'vertex preserved', enabled = 1 WHERE id = 2").run()
+    await legacy.prepare("UPDATE models SET metadata_override = '{\"cost\":null,\"reasoning\":false}', metadata_resolved = '{\"cost\":null,\"reasoning\":false}', enabled = 1 WHERE id = 2").run()
     await applyD1Migrations(legacy, env.TEST_MIGRATIONS)
     const db = createDb(legacy)
     const migrated = await db.select().from(providers).where(eq(providers.id, 1))
@@ -237,10 +232,8 @@ describe('D1 schema', () => {
     expect(JSON.parse(model!.metadata_resolved)).toEqual(JSON.parse(model!.metadata_override))
     expect(model).toMatchObject({ supports_image_input: 0, supports_image_output: 1, supports_reasoning: 0, supports_tools: 1 })
     expect(await legacy.prepare("SELECT metadata_override, metadata_resolved, enabled, interface_id FROM models WHERE id = 2").first()).toEqual({ metadata_override: '{"cost":null,"reasoning":false}', metadata_resolved: '{"cost":null,"reasoning":false}', enabled: 1, interface_id: null })
-    expect(await legacy.prepare("SELECT rowid FROM models_fts WHERE models_fts MATCH 'ustom'").first('rowid')).toBe(1)
     expect(await legacy.prepare('SELECT file_family, base_url, cleanup_after, credential_version FROM attachment_provider_files WHERE id = 1').first()).toEqual({ file_family: 'openai', base_url: 'https://api.openai.com/v1', cleanup_after: 1000, credential_version: 1 })
     expect(await legacy.prepare('SELECT credential_version, provider_reference, expires_at, cleanup_after, cleanup_attempts, last_cleanup_error FROM attachment_provider_files WHERE id = 3').first()).toEqual({ credential_version: 2, provider_reference: '{"openai":"pending-old-upload"}', expires_at: 2000, cleanup_after: 5000, cleanup_attempts: 4, last_cleanup_error: 'Provider file deletion failed (HTTP 503)' })
-    expect(await legacy.prepare("SELECT rowid FROM models_fts WHERE models_fts MATCH 'reserved'").first('rowid')).toBe(2)
     expect(await legacy.prepare('SELECT id FROM attachment_provider_files WHERE provider_id = 2').first()).toBeNull()
     const providerColumns = (await legacy.prepare('PRAGMA table_info(providers)').all<{ name: string }>()).results.map(row => row.name)
     for (const column of ['protocol', 'base_url', 'extra', 'native_files']) expect(providerColumns).not.toContain(column)

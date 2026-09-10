@@ -241,7 +241,6 @@ describe('materializeModelMetadata', () => {
       modalities: { input: ['text', 'image'], output: ['image'] },
       limit: { context: 0, output: 0 },
     }, 'Vendor/Model', 'Deep Seek')).toEqual({
-      search_name: 'vision pro vendor/model deep seek',
       supports_image_input: true,
       supports_image_output: true,
       supports_reasoning: true,

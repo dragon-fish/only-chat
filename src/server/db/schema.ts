@@ -114,7 +114,6 @@ export const models = sqliteTable('models', {
   metadata_resolved: text({ mode: 'json' }).$type<ModelMetadata>().notNull().default({}),
   catalog_matches: text({ mode: 'json' }).$type<CatalogMatches>().notNull().default({ operator: null, lab: null, global: null }),
   provider_metadata: text({ mode: 'json' }).$type<Record<string, unknown>>().notNull().default({}),
-  search_name: text().notNull().default(''),
   lab_id: text(),
   supports_image_input: integer({ mode: 'boolean' }).notNull().default(false),
   supports_reasoning: integer({ mode: 'boolean' }).notNull().default(false),

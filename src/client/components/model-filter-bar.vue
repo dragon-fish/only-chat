@@ -24,7 +24,6 @@ function update(key: keyof ModelQuery, value: unknown) {
   const query = { ...props.modelValue }
   if (value === undefined || value === '') delete query[key]
   else Object.assign(query, { [key]: value })
-  delete query.cursor
   emit('update:modelValue', query)
 }
 function capabilities(value: unknown) {
@@ -34,7 +33,6 @@ function capabilities(value: unknown) {
     if (value.includes(filter.key)) query[filter.key] = true
     else delete query[filter.key]
   }
-  delete query.cursor
   emit('update:modelValue', query)
 }
 </script>

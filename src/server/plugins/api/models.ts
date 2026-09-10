@@ -4,10 +4,8 @@ import { and, eq, isNull } from 'drizzle-orm'
 import type { BatchItem } from 'drizzle-orm/batch'
 import { authUserId, type ApiEnv } from './auth'
 import { BulkModelStateInputSchema, ModelWriteInputSchema } from '@/shared/api'
-import { ModelQuerySchema } from '@/shared/models'
 import { models, providerInterfaces, providers } from '../../db/schema'
 import { parseId } from './params'
-import { ModelQueryError, queryModels } from './model-query'
 import { providerModelMetadata } from '../llm/list-models'
 import { catalogForModels, changedModelFields, ModelSourceConflict, modelSourceColumns, modelSourceFence, modelSourceMatches, providerSourceFence, resolveModelFields, retryModelSource, toModelDto } from './model-write'
 import { bumpModelListRevisions, enabledModelList, providerModelList } from './model-list-cache'
@@ -35,31 +33,6 @@ export function modelRoutes(ctx: Context) {
     if (pid === null) return c.json({ error: 'not found' }, 404)
     const result = await providerModelList(ctx, authUserId(c), pid)
     return result ? c.json(result) : c.json({ error: 'not found' }, 404)
-  })
-
-  async function modelPage(c: HonoContext<ApiEnv>, userId: number, providerId?: number) {
-    const raw: Record<string, unknown> = { ...c.req.query(), ...(providerId === undefined ? {} : { provider_id: providerId }) }
-    for (const name of ['provider_id', 'interface_id', 'min_context', 'limit']) if (raw[name] !== undefined) raw[name] = Number(raw[name])
-    for (const name of ['enabled', 'vision', 'reasoning', 'tools', 'image_output']) {
-      if (raw[name] === 'true') raw[name] = true
-      else if (raw[name] === 'false') raw[name] = false
-    }
-    const parsed = ModelQuerySchema.safeParse(raw)
-    if (!parsed.success) return c.json({ error: 'invalid query', issues: parsed.error.issues }, 400)
-    try { return c.json(await queryModels(ctx.env.DB, parsed.data, userId)) }
-    catch (error) {
-      if (error instanceof ModelQueryError) return c.json({ error: error.message }, 400)
-      throw error
-    }
-  }
-
-  r.get('/models', c => modelPage(c, authUserId(c)))
-
-  r.get('/providers/:id/models', async c => {
-    const userId = authUserId(c)
-    const pid = parseId(c.req.param('id'))
-    if (pid === null || !await ownedProvider(pid, userId)) return c.json({ error: 'not found' }, 404)
-    return modelPage(c, userId, pid)
   })
 
   r.post('/providers/:id/models', async c => {

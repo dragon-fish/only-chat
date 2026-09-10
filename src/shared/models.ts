@@ -185,7 +185,11 @@ export type ModelListItem = z.infer<typeof ModelListItemSchema>
 export const ModelListSnapshotSchema = z.strictObject({ models: z.array(ModelListItemSchema) })
 export type ModelListSnapshot = z.infer<typeof ModelListSnapshotSchema>
 
-/** Filters map directly to indexed model columns; cursor values remain opaque to callers. */
+/**
+ * The browser's local filter state. Model lists arrive whole via `/api/models/summary`, so filtering
+ * happens client-side; nothing here reaches a server query. The paged `/api/models` endpoint this
+ * once described is gone.
+ */
 export const ModelQuerySchema = z.strictObject({
   provider_id: z.number().int().optional(),
   enabled: z.boolean().optional(),
@@ -197,16 +201,8 @@ export const ModelQuerySchema = z.strictObject({
   image_output: z.boolean().optional(),
   min_context: z.number().int().nonnegative().optional(),
   search: z.string().min(1).optional(),
-  cursor: z.string().min(1).optional(),
-  limit: z.number().int().min(1).max(100).default(50),
 })
 export type ModelQuery = z.infer<typeof ModelQuerySchema>
-
-export const ModelPageSchema = z.strictObject({
-  models: z.array(ModelWithMetadataSchema),
-  next_cursor: z.string().nullable(),
-})
-export type ModelPage = z.infer<typeof ModelPageSchema>
 
 export const AttachmentSchema = z.object({
   id: z.number().int(),

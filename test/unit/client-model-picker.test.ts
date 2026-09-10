@@ -45,9 +45,8 @@ async function mountPicker(compact: boolean, isDesktop: boolean, summary: typeof
 }
 
 describe('model picker modality', () => {
-  it('filters the complete cached summary locally without issuing model queries', async () => {
+  it('filters the complete cached summary locally', async () => {
     const remote = { ...modelRecords[1]!, enabled: true, metadata: { name: 'Remote reasoning model', reasoning: true } }
-    const query = vi.spyOn(api, 'queryModels')
     const host = await mountPicker(false, true, [selectedRecord, remote])
     host.querySelector<HTMLButtonElement>('button')!.click()
     await vi.waitFor(() => expect(document.querySelector('[role="option"]')).not.toBeNull())
@@ -59,7 +58,6 @@ describe('model picker modality', () => {
     await vi.waitFor(() => expect(document.querySelector('[aria-label="推理"]')).not.toBeNull())
     document.querySelector<HTMLButtonElement>('[aria-label="推理"]')!.click()
     await vi.waitFor(() => expect(document.querySelector('[role="option"]')?.textContent).toContain('Remote reasoning model'))
-    expect(query).not.toHaveBeenCalled()
     expect(host.textContent).toContain('Test model')
   })
 

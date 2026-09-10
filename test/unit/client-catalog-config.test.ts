@@ -7,10 +7,9 @@ import { modelRecords, provider } from './provider-fixtures'
 afterEach(() => vi.restoreAllMocks())
 
 describe('catalog config cache', () => {
-  it('loads complete cached summaries without issuing paginated model queries', async () => {
+  it('loads complete cached summaries', async () => {
     const active = vi.spyOn(api, 'enabledModelSummary').mockResolvedValue({ models: modelRecords })
     const providerModels = vi.spyOn(api, 'providerModelSummary').mockResolvedValue({ models: modelRecords })
-    const paginated = vi.spyOn(api, 'queryModels')
     const config = useConfigStore(createPinia())
     config.providerRecords = [provider]
 
@@ -19,7 +18,6 @@ describe('catalog config cache', () => {
     expect(config.enabledModels().map(entry => entry.model.model_id)).toEqual(['first-model'])
     expect(await config.loadProviderModelList(1)).toEqual(modelRecords)
     expect(providerModels).toHaveBeenCalledWith(1, undefined)
-    expect(paginated).not.toHaveBeenCalled()
   })
 
   it('does not retain a provider summary superseded by cache invalidation', async () => {
@@ -160,12 +158,6 @@ describe('catalog config cache', () => {
     expect(config.isAvailable(model)).toBe(false)
   })
 
-  it('serializes false, zero, raw Lab IDs, and interface filters into the server query', async () => {
-    const fetcher = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ models: [], next_cursor: null })))
-    await api.queryModels({ vision: false, reasoning: true, tools: true, image_output: true, interface_id: 10, lab_id: 'lab/name', min_context: 0, search: 'human name' })
-    const url = new URL(String(fetcher.mock.calls[0]![0]), 'https://only.chat')
-    expect(Object.fromEntries(url.searchParams)).toEqual({ vision: 'false', reasoning: 'true', tools: 'true', image_output: 'true', interface_id: '10', lab_id: 'lab/name', min_context: '0', search: 'human name' })
-  })
   it('does not resurrect a forgotten model from an earlier selected-reference request', async () => {
     const config = useConfigStore(createPinia())
     config.providerRecords = [provider]

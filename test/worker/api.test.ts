@@ -280,7 +280,7 @@ describe('REST api', () => {
 
     const m = await json('POST', `/api/providers/${p.id}/models`, { model_id: 'claude-x', metadata_override: { name: 'Claude X', modalities: { input: ['text', 'image'] } } })
     expect(m.status).toBe(201)
-    const list = await (await json('GET', `/api/providers/${p.id}/models`)).json() as { models: Array<{ model_id: string }> }
+    const list = await (await json('GET', `/api/providers/${p.id}/models/summary`)).json() as { models: Array<{ model_id: string }> }
     expect(list.models.map((x) => x.model_id)).toEqual(['claude-x'])
 
     const upd = await json('PUT', `/api/providers/${p.id}`, { ...input, name: 'B', api_key: undefined })
@@ -359,7 +359,7 @@ describe('REST api', () => {
     const dup = await json('POST', `/api/providers/${p.id}/models`, { model_id: 'dup-model', metadata_override: { name: 'Should not apply' } })
     expect(dup.status).toBe(200)
     expect(await dup.json()).toMatchObject({ model_id: 'dup-model', enabled: false, manual_pinned: true, metadata_override: { name: 'Dup' } })
-    const list = await (await json('GET', `/api/providers/${p.id}/models`)).json() as { models: Array<{ model_id: string; enabled: boolean; manual_pinned: boolean }> }
+    const list = await (await json('GET', `/api/providers/${p.id}/models/summary`)).json() as { models: Array<{ model_id: string; enabled: boolean; manual_pinned: boolean }> }
     expect(list.models.find((x) => x.model_id === 'dup-model')).toMatchObject({ enabled: false, manual_pinned: true })
   })
 

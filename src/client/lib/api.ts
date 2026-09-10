@@ -1,5 +1,5 @@
 import type { AttachmentCheckResponse, AttachmentUploadResponse, BulkModelStateInput, BulkModelStateResponse, CatalogProviderSummary, CatalogRefreshJobStatus, CatalogRefreshStartResponse, CatalogStatus, FetchModelsResponse, ModelRef, ModelWriteInput, ProviderWriteInput } from '@/shared/api'
-import type { Message, ModelListSnapshot, ModelPage, ModelQuery, ModelWithMetadata, Project, ProviderWithInterfaces, Conversation, User } from '@/shared/models'
+import type { Message, ModelListSnapshot, ModelWithMetadata, Project, ProviderWithInterfaces, Conversation, User } from '@/shared/models'
 import type { PresetProvider } from '@/server/plugins/llm/presets'
 import type { AdminSiteSettings, AdminSiteSettingsUpdate, PublicSiteSettings } from '@/shared/auth'
 import { useAuthStore } from '@/client/stores/auth'
@@ -67,8 +67,6 @@ export const api = {
   updateProvider: (id: number, input: ProviderWriteInput, onWarning?: (warning: string) => void) => request<ProviderWithInterfaces>('PUT', `/api/providers/${id}`, input, {}, onWarning),
   deleteProvider: (id: number) => request<void>('DELETE', `/api/providers/${id}`),
   fetchModels: (providerId: number) => request<FetchModelsResponse>('POST', `/api/providers/${providerId}/fetch-models`),
-  models: (providerId: number, query: Partial<ModelQuery> = {}, signal?: AbortSignal) => request<ModelPage>('GET', `/api/providers/${providerId}/models${queryString(query)}`, undefined, { signal }),
-  queryModels: (query: Partial<ModelQuery> = {}, signal?: AbortSignal) => request<ModelPage>('GET', `/api/models${queryString(query)}`, undefined, { signal }),
   enabledModelSummary: (signal?: AbortSignal) => request<ModelListSnapshot>('GET', '/api/models/summary', undefined, { signal }),
   providerModelSummary: (providerId: number, signal?: AbortSignal) => request<ModelListSnapshot>('GET', `/api/providers/${providerId}/models/summary`, undefined, { signal }),
   modelByRef: (ref: ModelRef, signal?: AbortSignal) => request<ModelWithMetadata>('GET', `/api/providers/${ref.provider_id}/models/by-ref${queryString({ model_id: ref.model_id })}`, undefined, { signal }),

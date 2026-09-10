@@ -47,7 +47,6 @@ export interface ResolvedModelMetadata {
 }
 
 export interface MaterializedModelMetadata {
-  search_name: string
   supports_image_input: boolean
   supports_image_output: boolean
   supports_reasoning: boolean
@@ -165,21 +164,12 @@ export function resolveModelMetadata({
   }
 }
 
-function normalizeSearchPart(value: string): string {
-  return value.trim().replace(/\s+/gu, ' ')
-}
-
 export function materializeModelMetadata(
   metadata: ModelMetadata,
   modelId: string,
   labName: string | null,
 ): MaterializedModelMetadata {
   return {
-    search_name: [metadata.name, modelId, labName]
-      .filter((value): value is string => value !== null && value !== undefined && normalizeSearchPart(value) !== '')
-      .map(normalizeSearchPart)
-      .join(' ')
-      .toLowerCase(),
     supports_image_input: metadata.modalities?.input.includes('image') ?? false,
     supports_image_output: metadata.modalities?.output.includes('image') ?? false,
     supports_reasoning: metadata.reasoning === true,

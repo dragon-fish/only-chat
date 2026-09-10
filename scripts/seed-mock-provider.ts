@@ -104,13 +104,11 @@ async function main() {
 
   for (const [index, model] of MODELS.entries()) {
     const resolved = metadata(model)
-    // Same derivation the catalog uses, so search behaves identically for mock and real models —
-    // `search_name` must carry the model id and lab, not just the display name.
+    // Same derivation the catalog uses, so mock rows carry the same capability columns as real ones.
     const derived = materializeModelMetadata(resolved, model.id, 'Mock')
     const modelId = escapeSqlLiteral(model.id)
     const json = escapeSqlLiteral(JSON.stringify(resolved))
-    const searchName = escapeSqlLiteral(derived.search_name)
-    const columns = `interface_id = ${interfaceId}, metadata_resolved = ${json}, search_name = ${searchName},`
+    const columns = `interface_id = ${interfaceId}, metadata_resolved = ${json},`
       + ` supports_reasoning = ${derived.supports_reasoning ? 1 : 0}, supports_tools = ${derived.supports_tools ? 1 : 0},`
       + ` supports_image_input = ${derived.supports_image_input ? 1 : 0}, supports_image_output = ${derived.supports_image_output ? 1 : 0},`
       + ` context_limit = ${derived.context_limit ?? 'NULL'}, output_limit = ${derived.output_limit ?? 'NULL'},`

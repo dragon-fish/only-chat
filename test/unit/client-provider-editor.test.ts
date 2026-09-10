@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import ProviderEditor from '@/client/views/settings-provider-edit.vue'
 import { api } from '@/client/lib/api'
 import { useConfigStore } from '@/client/stores/config'
-import type { ModelPage, ModelWithMetadata, ProviderWithInterfaces } from '@/shared/models'
+import type { ModelWithMetadata, ProviderWithInterfaces } from '@/shared/models'
 import { catalogStatus, modelRecords, provider } from './provider-fixtures'
 
 const desktop = ref(true)
@@ -24,15 +24,20 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 
+type ModelSource = (providerId: number) => Promise<{ models: ModelWithMetadata[] }>
+/** Set by mountEditor; tests swap the data behind providerModelSummary without replacing its mock. */
+let setModelSource: (next: ModelSource) => void = () => {}
+
 async function mountEditor(sourceModels: ModelWithMetadata[] = models) {
   desktop.value = true
   const summaries = new Map<number, ModelWithMetadata[]>()
   vi.spyOn(api, 'providers').mockResolvedValue([provider])
-  vi.spyOn(api, 'queryModels').mockImplementation(async query => ({ models: structuredClone(sourceModels).filter(model => !query?.search || `${model.model_id} ${model.metadata.name}`.toLowerCase().includes(query.search.toLowerCase())), next_cursor: null }))
+  let modelSource: ModelSource = async () => ({ models: structuredClone(sourceModels) })
+  setModelSource = (next: ModelSource) => { modelSource = next }
   vi.spyOn(api, 'providerModelSummary').mockImplementation(async providerId => {
-    const page = await api.queryModels({ provider_id: providerId })
-    summaries.set(providerId, structuredClone(page.models))
-    return { models: page.models }
+    const snapshot = await modelSource(providerId)
+    summaries.set(providerId, structuredClone(snapshot.models))
+    return snapshot
   })
   vi.spyOn(api, 'modelByRef').mockImplementation(async reference => structuredClone(
     summaries.get(reference.provider_id)?.find(model => model.model_id === reference.model_id)
@@ -82,7 +87,7 @@ function delayModelSave() {
   const persisted = structuredClone(models)
   let acknowledge!: () => void
   let reject!: (error: Error) => void
-  vi.mocked(api.queryModels).mockImplementation(async query => ({ models: structuredClone(persisted).filter(model => !query?.search || `${model.model_id} ${model.metadata.name}`.toLowerCase().includes(query.search.toLowerCase())), next_cursor: null }))
+  setModelSource(async () => ({ models: structuredClone(persisted) }))
   const write = vi.spyOn(api, 'updateModel').mockImplementation(async (_providerId, modelId, patch) => {
     await new Promise<void>((resolve, fail) => { acknowledge = resolve; reject = fail })
     const model = persisted.find(model => model.id === modelId)!
@@ -110,10 +115,7 @@ async function pendingAcknowledgementAcrossAssociation() {
   let persistedProvider = provider
   let persisted = models.map(model => ({ ...model, metadata: { ...model.metadata, description: 'Association A', limit: { context: 1000 } } }))
   vi.mocked(api.providers).mockImplementation(async () => [persistedProvider, secondProvider])
-  vi.mocked(api.queryModels).mockImplementation(async query => ({
-    models: query?.provider_id === 2 ? [secondModel] : structuredClone(persisted).filter(model => !query?.search || `${model.model_id} ${model.metadata.name}`.toLowerCase().includes(query.search.toLowerCase())),
-    next_cursor: null,
-  }))
+  setModelSource(async providerId => ({ models: providerId === 2 ? [secondModel] : structuredClone(persisted) }))
   vi.spyOn(api, 'modelByRef').mockImplementation(async reference => {
     if (reference.provider_id === 2 && reference.model_id === secondModel.model_id) return structuredClone(secondModel)
     const model = persisted.find(model => model.provider_id === reference.provider_id && model.model_id === reference.model_id)
@@ -283,7 +285,7 @@ describe('provider model editor', () => {
     await type(document.querySelector<HTMLInputElement>('[aria-label="搜索模型"]')!, 'first')
     await vi.waitFor(() => expect(document.querySelector('[aria-label="编辑 Second model"]')).toBeNull())
     let persisted = structuredClone(models)
-    vi.mocked(api.queryModels).mockImplementation(async query => ({ models: structuredClone(persisted).filter(model => !query?.search || model.model_id.includes(query.search)), next_cursor: null }))
+    setModelSource(async () => ({ models: structuredClone(persisted) }))
     vi.spyOn(api, 'modelByRef').mockImplementation(async reference => reference.provider_id === 2
       ? { ...foreign, metadata: { name: 'Foreign metadata must not be refreshed by this save' } }
       : structuredClone(persisted.find(model => model.model_id === reference.model_id)!))
@@ -323,14 +325,18 @@ describe('provider model editor', () => {
     config.providerRecords.push(secondProvider)
     vi.mocked(api.providers).mockResolvedValue([provider, secondProvider])
     vi.spyOn(api, 'updateProvider').mockResolvedValue(provider)
-    let finishPage!: (page: ModelPage) => void
-    vi.mocked(api.queryModels).mockImplementationOnce(() => new Promise(resolve => { finishPage = resolve }))
-      .mockResolvedValue({ models: [currentModel], next_cursor: null })
+    let finishPage!: (page: { models: ModelWithMetadata[] }) => void
+    let pending = true
+    setModelSource(async () => {
+      if (!pending) return { models: [currentModel] }
+      pending = false
+      return new Promise<{ models: ModelWithMetadata[] }>(resolve => { finishPage = resolve })
+    })
     document.querySelector('#provider-name')!.closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
     await vi.waitFor(() => expect(finishPage).toBeTypeOf('function'))
     await router.push('/settings/providers/2')
     await vi.waitFor(() => expect(document.querySelector('[aria-label="编辑 Current model"]')).not.toBeNull())
-    finishPage({ models: structuredClone(models), next_cursor: 'stale-cursor' })
+    finishPage({ models: structuredClone(models) })
     await nextTick()
     await new Promise(resolve => setTimeout(resolve, 0))
     expect(document.querySelector('[aria-label="编辑 Current model"]')).not.toBeNull()
@@ -349,9 +355,9 @@ describe('provider model editor', () => {
       .mockImplementationOnce(() => new Promise(resolve => { finishSelection = resolve }))
     const oldSelection = config.refreshSelectedModels()
     let finishPicker!: (page: { models: ModelWithMetadata[] }) => void
-    let finishPage!: (page: ModelPage) => void
+    let finishPage!: (page: { models: ModelWithMetadata[] }) => void
     vi.spyOn(api, 'enabledModelSummary').mockImplementationOnce(() => new Promise(resolve => { finishPicker = resolve }))
-    vi.mocked(api.queryModels).mockImplementationOnce(() => new Promise(resolve => { finishPage = resolve }))
+    vi.mocked(api.providerModelSummary).mockImplementationOnce(() => new Promise(resolve => { finishPage = resolve }))
     const oldPicker = config.loadEnabledModelList()
     vi.spyOn(api, 'updateProvider').mockResolvedValue(provider)
     document.querySelector('#provider-name')!.closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
@@ -363,22 +369,22 @@ describe('provider model editor', () => {
     expect(config.modelsByRef['1:second-model']?.metadata.name).not.toBe('Stale selection')
     expect(config.modelsByRef['1:uncached-stale-model']).toBeUndefined()
     finishSelection({ ...models[1]!, metadata: { name: 'Fresh selection' } })
-    finishPage({ models: [{ ...models[0]!, metadata: { name: 'Fresh page' } }, { ...models[1]!, metadata: { name: 'Fresh selection' } }], next_cursor: null })
+    finishPage({ models: [{ ...models[0]!, metadata: { name: 'Fresh page' } }, { ...models[1]!, metadata: { name: 'Fresh selection' } }] })
     await vi.waitFor(() => expect(config.modelsByRef['1:second-model']?.metadata.name).toBe('Fresh selection'))
     await vi.waitFor(() => expect(document.querySelector('[aria-label="编辑 Fresh page"]')).not.toBeNull())
   })
 
   it('keeps retained rows editable while a provider save is refreshing their metadata', async () => {
     const { config } = await mountEditor()
-    let finishPage!: (page: ModelPage) => void
-    vi.mocked(api.queryModels).mockImplementationOnce(() => new Promise(resolve => { finishPage = resolve }))
+    let finishPage!: (page: { models: ModelWithMetadata[] }) => void
+    vi.mocked(api.providerModelSummary).mockImplementationOnce(() => new Promise(resolve => { finishPage = resolve }))
     vi.spyOn(api, 'updateProvider').mockResolvedValue(provider)
     document.querySelector('#provider-name')!.closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
     await vi.waitFor(() => expect(finishPage).toBeTypeOf('function'))
     document.querySelector<HTMLButtonElement>('[aria-label="编辑 First model"]')!.click()
     await vi.waitFor(() => expect(document.querySelector('#model-1-2-name')).not.toBeNull())
     await type(document.querySelector<HTMLInputElement>('#model-1-2-name')!, 'Draft during refresh')
-    finishPage({ models: [models[0]!], next_cursor: null })
+    finishPage({ models: [models[0]!] })
     await vi.waitFor(() => expect(document.querySelector('[aria-label="正在更新模型列表"]')).toBeNull())
     expect(document.querySelector<HTMLInputElement>('#model-1-2-name')?.value).toBe('Draft during refresh')
     vi.spyOn(api, 'modelByRef').mockResolvedValue({ ...models[1]!, metadata: { name: 'Freshly selected off-page model' } })
@@ -392,9 +398,13 @@ describe('provider model editor', () => {
     const secondModel = { ...models[0]!, id: 20, provider_id: 2, metadata: { name: 'Second provider model' } }
     config.providerRecords.push(secondProvider)
     vi.mocked(api.providers).mockResolvedValue([provider, secondProvider])
-    let finishOldPage!: (page: ModelPage) => void
-    vi.mocked(api.queryModels).mockImplementationOnce(() => new Promise(resolve => { finishOldPage = resolve }))
-      .mockResolvedValue({ models: [secondModel], next_cursor: null })
+    let finishOldPage!: (page: { models: ModelWithMetadata[] }) => void
+    let pendingOld = true
+    setModelSource(async () => {
+      if (!pendingOld) return { models: [secondModel] }
+      pendingOld = false
+      return new Promise<{ models: ModelWithMetadata[] }>(resolve => { finishOldPage = resolve })
+    })
     const oldPage = config.loadProviderModelList(1)
     let finishDelete!: () => void
     vi.spyOn(api, 'deleteModel').mockImplementation(async (providerId, modelId) => {
@@ -416,7 +426,7 @@ describe('provider model editor', () => {
     await vi.waitFor(() => expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain('Second provider model'))
     finishDelete()
     await vi.waitFor(() => expect(config.modelsByRef['1:first-model']).toBeUndefined())
-    finishOldPage({ models: structuredClone(models), next_cursor: null })
+    finishOldPage({ models: structuredClone(models) })
     await oldPage
     expect(config.modelsByRef['1:first-model']).toBeUndefined()
     expect(config.modelListByRef['2:first-model']?.id).toBe(20)
@@ -627,12 +637,12 @@ describe('provider model editor', () => {
   it('searches short model IDs locally without issuing another server query', async () => {
     await mountEditor()
     const search = document.querySelector<HTMLInputElement>('[aria-label="搜索模型"]')!
-    const calls = vi.mocked(api.queryModels).mock.calls.length
+    const calls = vi.mocked(api.providerModelSummary).mock.calls.length
     await type(search, 'ab')
     await new Promise(resolve => setTimeout(resolve, 170))
     expect(document.querySelector('[aria-label="正在更新模型列表"]')).toBeNull()
     expect(document.body.textContent).not.toContain('搜索模型至少需要 3 个字符')
-    expect(vi.mocked(api.queryModels)).toHaveBeenCalledTimes(calls)
+    expect(vi.mocked(api.providerModelSummary)).toHaveBeenCalledTimes(calls)
   })
 
   it('keeps its saved heading stable while editing interfaces and refreshes catalog metadata without clearing the draft', async () => {
@@ -784,7 +794,7 @@ describe('provider model editor', () => {
     const secondModel = { ...models[0]!, id: 20, provider_id: 2, metadata: { name: 'Second provider model' } }
     config.providerRecords.push(secondProvider)
     vi.mocked(api.providers).mockResolvedValue([provider, secondProvider])
-    vi.mocked(api.queryModels).mockImplementation(async query => ({ models: query?.provider_id === 1 ? structuredClone(models) : [secondModel], next_cursor: null }))
+    setModelSource(async providerId => ({ models: providerId === 1 ? structuredClone(models) : [secondModel] }))
     let finishWrite!: (value: ModelWithMetadata) => void
     const write = vi.spyOn(api, 'updateModel').mockImplementation(() => new Promise(resolve => { finishWrite = resolve }))
     document.querySelector<HTMLButtonElement>('[aria-label="启用 First model"]')!.click()
@@ -800,18 +810,18 @@ describe('provider model editor', () => {
   it('switches from cached provider data without a skeleton and ignores the previous model request', async () => {
     const { router, config } = await mountEditor()
     config.providerRecords.push({ ...provider, id: 2, name: 'Second provider' }, { ...provider, id: 3, name: 'Third provider' })
-    let resolveSecond!: (value: ModelPage) => void
-    let resolveThird!: (value: ModelPage) => void
-    const second = new Promise<ModelPage>(resolve => { resolveSecond = resolve })
-    const third = new Promise<ModelPage>(resolve => { resolveThird = resolve })
-    vi.mocked(api.queryModels).mockImplementation(query => query?.provider_id === 2 ? second : third)
+    let resolveSecond!: (value: { models: ModelWithMetadata[] }) => void
+    let resolveThird!: (value: { models: ModelWithMetadata[] }) => void
+    const second = new Promise<{ models: ModelWithMetadata[] }>(resolve => { resolveSecond = resolve })
+    const third = new Promise<{ models: ModelWithMetadata[] }>(resolve => { resolveThird = resolve })
+    setModelSource(providerId => providerId === 2 ? second : third)
     await router.push('/settings/providers/2')
     expect(document.querySelector('[aria-label="正在加载供应商"]')).toBeNull()
     expect(document.querySelector<HTMLInputElement>('#provider-name')?.value).toBe('Second provider')
     await router.push('/settings/providers/3')
-    resolveThird({ models: [{ ...models[0]!, id: 30, provider_id: 3, metadata: { name: 'Current model' } }], next_cursor: null })
+    resolveThird({ models: [{ ...models[0]!, id: 30, provider_id: 3, metadata: { name: 'Current model' } }] })
     await vi.waitFor(() => expect(document.querySelector('[aria-label="编辑 Current model"]')).not.toBeNull())
-    resolveSecond({ models: [{ ...models[0]!, id: 20, provider_id: 2, metadata: { name: 'Stale model' } }], next_cursor: null })
+    resolveSecond({ models: [{ ...models[0]!, id: 20, provider_id: 2, metadata: { name: 'Stale model' } }] })
     await nextTick()
     expect(document.querySelector<HTMLInputElement>('#provider-name')!.value).toBe('Third provider')
     expect(document.querySelector('[aria-label="编辑 Stale model"]')).toBeNull()

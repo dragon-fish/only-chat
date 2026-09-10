@@ -305,7 +305,7 @@ describe('model catalog', () => {
     await ctx.modelCatalog.refresh('manual')
     const rows = await ctx.db.orm.select().from(models).where(eq(models.provider_id, provider!.id))
     expect(rows).toHaveLength(1)
-    expect(rows[0]).toMatchObject({ enabled: false, metadata_override: { name: 'My name', reasoning: false }, metadata_resolved: { name: 'My name', reasoning: false, tool_call: true }, supports_image_input: true, supports_reasoning: false, supports_tools: true, context_limit: 1000, output_limit: 100, lab_id: 'acme', search_name: 'my name acme/model acme', catalog_matches: { operator: { provider_id: 'acme', model_id: 'acme/model', kind: 'exact' } } })
+    expect(rows[0]).toMatchObject({ enabled: false, metadata_override: { name: 'My name', reasoning: false }, metadata_resolved: { name: 'My name', reasoning: false, tool_call: true }, supports_image_input: true, supports_reasoning: false, supports_tools: true, context_limit: 1000, output_limit: 100, lab_id: 'acme', catalog_matches: { operator: { provider_id: 'acme', model_id: 'acme/model', kind: 'exact' } } })
     expect((await ctx.db.orm.select().from(providers).where(eq(providers.id, provider!.id)))[0]).toMatchObject({ models_dev_provider_id: 'acme', models_dev_provider_source: 'endpoint' })
   })
 
