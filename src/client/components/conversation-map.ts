@@ -31,8 +31,13 @@ export interface MapNode {
 
 export interface MapEdge {
   id: string
+  /** Orthogonal segments read better than curves on a tree of stacked ranks. */
+  type: 'smoothstep'
   source: string
   target: string
+  /** Vue Flow's built-in marching-ants animation, reserved for the branch being read. */
+  animated: boolean
+  class: string
   data: { active: boolean }
 }
 
@@ -76,11 +81,15 @@ export function buildConversationGraph(
     const source = String(message.parent_id)
     const target = String(message.id)
     graph.setEdge(source, target)
+    const onActivePath = active.has(message.parent_id) && active.has(message.id)
     edges.push({
       id: `${source}->${target}`,
+      type: 'smoothstep',
       source,
       target,
-      data: { active: active.has(message.parent_id) && active.has(message.id) },
+      animated: onActivePath,
+      class: onActivePath ? 'oc-map-edge-active' : 'oc-map-edge-idle',
+      data: { active: onActivePath },
     })
   }
 

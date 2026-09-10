@@ -39,10 +39,10 @@ watch(
  * mostly empty and hides where the branches are.
  */
 function focusActiveEnd() {
-  const path = activePath.value
-  void fitView(path.length === 0
+  const head = sync.conversations.get(props.conversationId)?.head_message_id
+  void fitView(head === null || head === undefined
     ? { padding: 0.15, maxZoom: 1 }
-    : { nodes: path.map(String), padding: 0.2, maxZoom: 1 })
+    : { nodes: [String(head)], padding: 2.5, maxZoom: 1 })
 }
 
 function onNodeClick({ node }: { node: { data: MapNodeData } }) {
@@ -85,5 +85,24 @@ VueFlow(
 /* The canvas paints its own ground; without this the host page shows through the grid. */
 .vue-flow__pane {
   background-color: var(--color-background);
+}
+
+/* The branch being read is solid and marching; the rest are dashed and still. */
+.oc-map-edge-active .vue-flow__edge-path {
+  stroke: var(--color-sky-400);
+  stroke-width: 2;
+}
+
+.oc-map-edge-idle .vue-flow__edge-path {
+  stroke: var(--color-muted-foreground);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 4;
+  opacity: 0.4;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .oc-map-edge-active.animated .vue-flow__edge-path {
+    animation: none;
+  }
 }
 </style>
