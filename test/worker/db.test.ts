@@ -166,7 +166,6 @@ describe('D1 schema', () => {
     const response = await insert('responses')
     await insert('chat-completions')
     await expect(insert('responses')).rejects.toThrow()
-    await expect(insert('vertex')).rejects.toThrow()
     await expect(env.DB.prepare("INSERT INTO provider_interfaces (provider_id, protocol, base_url, native_files, created_at) VALUES (?, 'vertex-compatible', 'https://example.com', 1, 0)").bind(p!.id).run()).rejects.toThrow()
     await env.DB.prepare('UPDATE providers SET default_interface_id = ? WHERE id = ?').bind(response.meta.last_row_id, p!.id).run()
     await expect(env.DB.prepare('UPDATE providers SET default_interface_id = -1 WHERE id = ?').bind(p!.id).run()).rejects.toThrow()

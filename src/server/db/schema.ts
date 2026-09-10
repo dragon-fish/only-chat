@@ -101,7 +101,6 @@ export const providerInterfaces = sqliteTable('provider_interfaces', {
   created_at: integer().notNull(),
 }, (t) => [
   uniqueIndex('provider_interfaces_provider_protocol_uq').on(t.provider_id, t.protocol),
-  check('provider_interfaces_protocol_check', sql`${t.protocol} IN ('responses', 'chat-completions', 'anthropic', 'vertex-compatible')`),
   check('provider_interfaces_native_files_check', sql`${t.protocol} != 'vertex-compatible' OR ${t.native_files} = 0`),
 ])
 

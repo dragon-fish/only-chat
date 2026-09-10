@@ -78,6 +78,13 @@
       "when": 1788970617303,
       "tag": "0010_model-list-cache",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1789028281983,
+      "tag": "0011_drop-protocol-check",
+      "breakpoints": true
     }
   ]
 }
