@@ -1,5 +1,9 @@
-import { d1Args, escapeSqlLiteral, readResults, runWrangler } from './lib/d1.ts'
-import { MOCK_BASE_URL } from '../src/server/plugins/mock-provider/constants.ts'
+import { loadEnvFile } from 'node:process'
+import { d1Args, escapeSqlLiteral, readResults, runWrangler } from './lib/d1'
+import { encryptSecret } from '../src/server/plugins/llm/crypto'
+import { materializeModelMetadata } from '../src/server/plugins/model-catalog/resolve'
+import { MOCK_BASE_URL } from '../src/server/plugins/mock-provider/constants'
+import type { ModelMetadata } from '../src/shared/model-metadata'
 
 /**
  * Creates the local mock Provider so the app can be driven end to end without spending money.
@@ -8,6 +12,22 @@ import { MOCK_BASE_URL } from '../src/server/plugins/mock-provider/constants.ts'
  * Provider in a deployed database would resolve to an unreachable `.invalid` host.
  */
 const PROVIDER_NAME = 'Mock (local)'
+
+/**
+ * The mock never reads a key, but `Llm.createModel` refuses a Provider without one before any
+ * adapter is consulted, so the row carries an encrypted placeholder rather than NULL.
+ */
+const PLACEHOLDER_KEY = 'mock-provider-key-unused'
+
+function encryptionSecret(): string {
+  if (!process.env.KEY_ENCRYPTION_SECRET) {
+    try { loadEnvFile('.dev.vars') }
+    catch { /* reported below */ }
+  }
+  const secret = process.env.KEY_ENCRYPTION_SECRET
+  if (!secret) throw new Error('KEY_ENCRYPTION_SECRET is not set. Add it to .dev.vars.')
+  return secret
+}
 
 interface MockModel {
   id: string
@@ -39,15 +59,15 @@ async function execute(sql: string): Promise<void> {
   await runWrangler([...d1Args('local'), '--command', sql])
 }
 
-function metadata(model: MockModel): string {
-  return JSON.stringify({
+function metadata(model: MockModel): ModelMetadata {
+  return {
     name: model.name,
     description: 'Local mock provider. Send /tool_call, /parallel, /reasoning, /error or /slow to shape the reply.',
     tool_call: model.tools,
     reasoning: model.reasoning,
     temperature: true,
     limit: { context: 128_000, output: 8_192 },
-  })
+  }
 }
 
 async function main() {
@@ -58,9 +78,12 @@ async function main() {
   const user = await queryOne(`SELECT id FROM users WHERE id = ${userId};`)
   if (!user) throw new Error(`No user ${userId} in the local database.`)
 
+  const apiKey = escapeSqlLiteral(await encryptSecret(encryptionSecret(), PLACEHOLDER_KEY))
   const existing = await queryOne(`SELECT id FROM providers WHERE user_id = ${userId} AND name = ${name};`)
-  if (!existing) {
-    await execute(`INSERT INTO providers (user_id, name, api_key, enabled, created_at) VALUES (${userId}, ${name}, NULL, 1, ${now});`)
+  if (existing) {
+    await execute(`UPDATE providers SET api_key = ${apiKey}, enabled = 1 WHERE id = ${Number(existing.id)};`)
+  } else {
+    await execute(`INSERT INTO providers (user_id, name, api_key, enabled, created_at) VALUES (${userId}, ${name}, ${apiKey}, 1, ${now});`)
   }
   const provider = await queryOne(`SELECT id FROM providers WHERE user_id = ${userId} AND name = ${name};`)
   const providerId = Number(provider?.id)
@@ -80,20 +103,30 @@ async function main() {
   await execute(`UPDATE providers SET default_interface_id = ${interfaceId} WHERE id = ${providerId};`)
 
   for (const [index, model] of MODELS.entries()) {
+    const resolved = metadata(model)
+    // Same derivation the catalog uses, so search behaves identically for mock and real models —
+    // `search_name` must carry the model id and lab, not just the display name.
+    const derived = materializeModelMetadata(resolved, model.id, 'Mock')
     const modelId = escapeSqlLiteral(model.id)
-    const resolved = escapeSqlLiteral(metadata(model))
-    const searchName = escapeSqlLiteral(model.name.toLowerCase())
+    const json = escapeSqlLiteral(JSON.stringify(resolved))
+    const searchName = escapeSqlLiteral(derived.search_name)
+    const columns = `interface_id = ${interfaceId}, metadata_resolved = ${json}, search_name = ${searchName},`
+      + ` supports_reasoning = ${derived.supports_reasoning ? 1 : 0}, supports_tools = ${derived.supports_tools ? 1 : 0},`
+      + ` supports_image_input = ${derived.supports_image_input ? 1 : 0}, supports_image_output = ${derived.supports_image_output ? 1 : 0},`
+      + ` context_limit = ${derived.context_limit ?? 'NULL'}, output_limit = ${derived.output_limit ?? 'NULL'},`
+      + ` enabled = 1, upstream_available = 1`
     await execute(
-      `INSERT INTO models (provider_id, model_id, interface_id, metadata_resolved, search_name,`
-      + ` supports_reasoning, supports_tools, enabled, manual_pinned, upstream_available, sort)`
-      + ` VALUES (${providerId}, ${modelId}, ${interfaceId}, ${resolved}, ${searchName},`
-      + ` ${model.reasoning ? 1 : 0}, ${model.tools ? 1 : 0}, 1, 1, 1, ${index})`
-      + ` ON CONFLICT (provider_id, model_id) DO UPDATE SET`
-      + ` interface_id = ${interfaceId}, metadata_resolved = ${resolved}, search_name = ${searchName},`
-      + ` supports_reasoning = ${model.reasoning ? 1 : 0}, supports_tools = ${model.tools ? 1 : 0},`
-      + ` enabled = 1, upstream_available = 1;`,
+      `INSERT INTO models (provider_id, model_id, sort) VALUES (${providerId}, ${modelId}, ${index})`
+      + ` ON CONFLICT (provider_id, model_id) DO NOTHING;`,
     )
+    await execute(`UPDATE models SET ${columns}, sort = ${index} WHERE provider_id = ${providerId} AND model_id = ${modelId};`)
   }
+
+  // Model lists are cached in KV under a key containing these revisions. Writing rows straight into
+  // D1 bypasses the API paths that bump them, so without this the new models stay invisible until
+  // some unrelated model edit invalidates the cache.
+  await execute(`UPDATE providers SET model_revision = model_revision + 1 WHERE id = ${providerId};`)
+  await execute(`UPDATE users SET enabled_models_revision = enabled_models_revision + 1 WHERE id = ${userId};`)
 
   console.log(`Seeded provider ${providerId} (${PROVIDER_NAME}) for user ${userId} with ${MODELS.length} models.`)
   console.log(`Interface ${interfaceId} → ${MOCK_BASE_URL} (protocol: responses)`)

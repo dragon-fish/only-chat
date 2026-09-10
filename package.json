@@ -4,8 +4,8 @@
   "type": "module",
   "packageManager": "pnpm@11.25.0",
   "scripts": {
-    "auth:reset-user": "node scripts/reset-user-credentials.ts",
-    "seed:mock": "node scripts/seed-mock-provider.ts",
+    "auth:reset-user": "tsx scripts/reset-user-credentials.ts",
+    "seed:mock": "tsx scripts/seed-mock-provider.ts",
     "dev": "vite dev",
     "build": "vite build",
     "preview": "vite preview",
@@ -66,6 +66,7 @@
     "happy-dom": "^20.14.0",
     "pug": "^3.0.4",
     "sass-embedded": "^1.104.0",
+    "tsx": "^4.23.13",
     "typescript": "~6.0.2",
     "vite": "^8.2.2",
     "vitest": "4.1.11",

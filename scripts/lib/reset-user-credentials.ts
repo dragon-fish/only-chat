@@ -1,7 +1,7 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { d1Args, escapeSqlLiteral, readResults, runWrangler, type WranglerRunner } from './d1.ts'
+import { d1Args, escapeSqlLiteral, readResults, runWrangler, type WranglerRunner } from './d1'
 
 export interface ResetTarget {
   userId: number

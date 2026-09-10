@@ -120,7 +120,7 @@ describe('Wrangler execution boundary', () => {
     } finally { db.close() }
   })
   it.skipIf(process.platform === 'win32').each(['SIGINT', 'SIGTERM'] as const)('cancels the runner and removes temporary SQL on %s, including repeated signals', async signal => {
-    const child = fork(new URL('../fixtures/reset-user-credentials-interruption.mjs', import.meta.url), { silent: true, execArgv: [], timeout: 5000, killSignal: 'SIGKILL' })
+    const child = fork(new URL('../fixtures/reset-user-credentials-interruption.mjs', import.meta.url), { silent: true, execArgv: ['--import', 'tsx'], timeout: 5000, killSignal: 'SIGKILL' })
     const closed = once(child, 'close')
     const events: string[] = []
     child.on('message', message => events.push((message as { event: string }).event))

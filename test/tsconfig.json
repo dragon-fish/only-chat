@@ -2,8 +2,6 @@
   "extends": "../tsconfig.worker.json",
   "compilerOptions": {
     "paths": { "@/*": ["../src/*"] },
-    // scripts/ is run by Node directly, so its relative imports carry .ts extensions.
-    "allowImportingTsExtensions": true,
     "types": ["@cloudflare/vitest-plugin/types", "./env.d.ts", "../worker-configuration.d.ts"]
   },
   "include": ["./**/*.ts", "../src/server/**/*.ts", "../src/shared/**/*.ts", "../worker-configuration.d.ts"],

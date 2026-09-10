@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { confirm, input, password } from '@inquirer/prompts'
 import { hashPassword } from 'better-auth/crypto'
 import { z } from 'zod'
-import { getResetUser, parseResetArgs, resetUserCredentials } from './lib/reset-user-credentials.ts'
+import { getResetUser, parseResetArgs, resetUserCredentials } from './lib/reset-user-credentials'
 
 async function main() {
   const target = parseResetArgs(process.argv.slice(2))
