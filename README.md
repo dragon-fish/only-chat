@@ -213,11 +213,18 @@ A plugin owns three surfaces, and each has one place to live so two plugins can 
 
     /api/plugins/<plugin-id>/...         HTTP routes, behind the session guard
     /api/plugins/<plugin-id>/<seg>/...   routes registered as public, carrying their own credential
-    /plugins/<plugin-id>/...             reserved for client routes; nothing uses it yet
+    /settings/plugins/<plugin-id>        the plugin's configuration
+    /settings/plugins/<plugin-id>/data   the plugin's own page, for what a config form cannot be
 
 Plugin ids are already unique — the client host throws when two plugins claim one tool id — so
 namespacing by id makes a collision impossible rather than unlikely, and a URL says which plugin
 answers it. Core resources keep `/api` and are not up for grabs.
+
+A plugin page is declared in the manifest (`settingsEntry`) rather than derived from what the client
+plugin registered: navigation has to be answerable without loading every plugin, and a shortcut that
+appears only once its plugin happens to be loaded would come and go for reasons a reader cannot see.
+Disabling a plugin removes the shortcut, never the page — its data outlives the switch, and that
+data is exactly what someone reclaiming storage came for.
 
 Server routes are registered through `ctx.pluginApi`, not by reaching for the Hono app: `register`
 mounts a sub-app behind the session guard, `registerPublic` mounts one in front of it. Public is for

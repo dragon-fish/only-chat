@@ -3,6 +3,7 @@ import { createApp, h } from 'vue'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import ToolSelector from '@/client/components/tool-selector.vue'
 import { TooltipProvider } from '@/client/ui/tooltip'
+import { pluginSettingsEntries } from '@/shared/plugins'
 import {
   availableToolGroups,
   defaultToolsForSettings,
@@ -76,6 +77,16 @@ describe('conversation tool selection', () => {
     expect(conversationToolBlockReason({ draft: false, settingsLoaded: true, pending: true }))
       .toBe('请先回答或取消当前问题')
     expect(conversationToolBlockReason({ draft: false, settingsLoaded: true, pending: false })).toBeNull()
+  })
+
+
+  it('shortcuts a plugin page only while the plugin is enabled', () => {
+    const withPage = [{ ...manifests[1]!, settingsEntry: { label: '文件' } }]
+    expect(pluginSettingsEntries(withPage, { ask_user: true }))
+      .toEqual([{ id: 'ask_user', label: '文件', to: '/settings/plugins/ask_user/data' }])
+    // Disabled loses the shortcut, never the page: its data outlives the switch.
+    expect(pluginSettingsEntries(withPage, { ask_user: false })).toEqual([])
+    expect(pluginSettingsEntries(manifests, { ask_user: true, zeta: true })).toEqual([])
   })
 
   it('consumes lazy plugin load failures and reports them once', async () => {

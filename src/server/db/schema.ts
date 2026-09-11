@@ -389,3 +389,5 @@ export type AttachmentRow = typeof attachments.$inferSelect
 export type ArtifactRunRow = typeof artifactRuns.$inferSelect
 export type ArtifactRow = typeof artifacts.$inferSelect
 export type AttachmentProviderFileRow = typeof attachmentProviderFiles.$inferSelect
+export type WorkspaceFileRow = typeof workspaceFiles.$inferSelect
+export type WorkspaceFileVersionRow = typeof workspaceFileVersions.$inferSelect

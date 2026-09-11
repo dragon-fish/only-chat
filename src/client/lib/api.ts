@@ -11,6 +11,17 @@ import { WORKSPACE_FILES_PLUGIN_ID } from '@/shared/plugins'
 /** A plugin's HTTP surface lives under its own id, so two plugins can never claim the same path. */
 const WORKSPACE_FILES_API = `/api/plugins/${WORKSPACE_FILES_PLUGIN_ID}`
 
+/** A listing that spans scopes carries their names: a path alone does not say where it lives. */
+export interface WorkspaceScopeLabels {
+  projects: Record<string, string>
+  conversations: Record<string, string>
+}
+export interface WorkspaceFileListing<T extends FileRecord = FileRecord> {
+  files: T[]
+  scopes: WorkspaceScopeLabels
+}
+export interface PurgeResult { files: number, bytes: number }
+
 export class ApiError extends Error {
   constructor(readonly status: number, readonly detail: string, method: string, path: string) {
     super(`${method} ${path} failed: ${status}${detail ? ` ${detail}` : ''}`)
@@ -105,6 +116,11 @@ export const api = {
   // A link, not a fetch: the download is served as an attachment and the browser owns saving it.
   workspaceFileDownloadUrl: (id: number) => `${WORKSPACE_FILES_API}/files/${id}/download`,
   deleteWorkspaceFile: (id: number) => request<void>('DELETE', `${WORKSPACE_FILES_API}/files/${id}`),
+  workspaceFiles: () => request<WorkspaceFileListing>('GET', `${WORKSPACE_FILES_API}/files`),
+  workspaceTrash: () => request<WorkspaceFileListing<FileRecord & { deletedAt: number }>>('GET', `${WORKSPACE_FILES_API}/trash`),
+  restoreWorkspaceFile: (id: number) => request<FileRecord>('POST', `${WORKSPACE_FILES_API}/trash/${id}/restore`),
+  purgeWorkspaceFile: (id: number) => request<PurgeResult>('DELETE', `${WORKSPACE_FILES_API}/trash/${id}`),
+  emptyWorkspaceTrash: () => request<PurgeResult>('DELETE', `${WORKSPACE_FILES_API}/trash`),
   projectFilesArchiveUrl: (projectId: number) => `${WORKSPACE_FILES_API}/projects/${projectId}/files/archive`,
   conversationFilesArchiveUrl: (conversationId: number) => `${WORKSPACE_FILES_API}/conversations/${conversationId}/files/archive`,
 }

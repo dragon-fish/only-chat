@@ -31,6 +31,7 @@ async function fixture(): Promise<Fixture> {
   const objects = new Map<string, Uint8Array>()
   const storage: WorkspaceStorage = {
     put: async (key, bytes) => { objects.set(key, bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)) },
+    delete: async (key) => { objects.delete(key) },
     getBytes: async (key) => {
       const bytes = objects.get(key)
       return bytes ? { bytes } : null

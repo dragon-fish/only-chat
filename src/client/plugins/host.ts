@@ -4,6 +4,7 @@ import type { PluginManifest } from '@/shared/plugins'
 export type ToolRenderer = unknown
 export type ConfigRenderer = unknown
 export type MessageFooterRenderer = unknown
+export type SettingsPanelRenderer = unknown
 
 export interface ClientPluginContext {
   manifests: readonly PluginManifest[]
@@ -19,6 +20,12 @@ export interface ClientPluginContext {
    * what a per-tool-call card cannot do, because the point is the turn's outcome, not one call.
    */
   messageFooter: { register(component: MessageFooterRenderer): () => void }
+  /**
+   * Extra content on this plugin's own settings page, under `/settings/plugins/<id>`. The
+   * declaration-driven form stays; this is for what a form cannot be — a file manager, a log, a
+   * quota. Client surfaces are namespaced by plugin id the same way routes are.
+   */
+  settingsPanel: { register(component: SettingsPanelRenderer): () => void }
 }
 
 export type ClientPluginSetup = (ctx: ClientPluginContext) => void | (() => void)
@@ -38,6 +45,7 @@ export class ClientPluginHost {
   private readonly renderers = new Map<string, ToolRenderer>()
   private readonly configRenderers = new Map<string, ConfigRenderer>()
   private readonly messageFooters = new Map<string, MessageFooterRenderer>()
+  private readonly settingsPanels = new Map<string, SettingsPanelRenderer>()
   private readonly pending = new Map<string, Promise<void>>()
   private readonly disposers = new Map<string, () => void>()
 
@@ -63,6 +71,19 @@ export class ClientPluginHost {
 
   messageFooter(pluginId: string): MessageFooterRenderer | undefined {
     return this.messageFooters.get(pluginId)
+  }
+
+  settingsPanel(pluginId: string): SettingsPanelRenderer | undefined {
+    return this.settingsPanels.get(pluginId)
+  }
+
+  /** Historical settings pages use this path even when the plugin is now globally disabled. */
+  async ensureSettingsPanel(pluginId: string): Promise<SettingsPanelRenderer | undefined> {
+    const existing = this.settingsPanel(pluginId)
+    if (existing !== undefined) return existing
+    if (!this.loaders[pluginId]) return undefined
+    await this.ensurePlugin(pluginId)
+    return this.settingsPanel(pluginId)
   }
 
   /** Which plugin owns a tool, so a message can load exactly the plugins its own calls belong to. */
@@ -93,6 +114,17 @@ export class ClientPluginHost {
             this.renderers.set(toolId, renderer)
             const unregister = () => {
               if (this.renderers.get(toolId) === renderer) this.renderers.delete(toolId)
+            }
+            registrations.push(unregister)
+            return unregister
+          },
+        },
+        settingsPanel: {
+          register: (component) => {
+            if (this.settingsPanels.has(pluginId)) throw new Error(`settings panel already registered: ${pluginId}`)
+            this.settingsPanels.set(pluginId, component)
+            const unregister = () => {
+              if (this.settingsPanels.get(pluginId) === component) this.settingsPanels.delete(pluginId)
             }
             registrations.push(unregister)
             return unregister

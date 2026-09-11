@@ -63,6 +63,17 @@ export interface PluginConfigIntro {
   link?: { label: string; href: string }
 }
 
+/**
+ * A plugin's own page in settings, listed beside the built-in categories.
+ *
+ * Declared rather than derived from what the client plugin registered: navigation must be
+ * answerable without loading every plugin, and an entry that appears only once its plugin happens
+ * to be loaded would come and go for reasons a reader cannot see.
+ */
+export interface PluginSettingsEntry {
+  label: string
+}
+
 /** Metadata that can be discovered without loading a plugin's client implementation. */
 export interface PluginManifest {
   id: string
@@ -75,6 +86,8 @@ export interface PluginManifest {
    * claims becomes a row of its own, so a tool can never end up unselectable.
    */
   groups?: readonly PluginToolGroup[]
+  /** Declared when the plugin has something to manage that a config form cannot be. */
+  settingsEntry?: PluginSettingsEntry
   /**
    * The authority on this plugin's configuration. The server parses every read and write through
    * it; the client derives its form controls from it. `.refine()` rules and custom messages do not
@@ -105,6 +118,19 @@ export const PluginConfigStatusSchema = z.object({
   values: z.record(z.string(), z.unknown()),
   secrets: z.record(z.string(), z.boolean()),
 })
+
+/**
+ * Plugin pages a reader should see listed. A disabled plugin loses its shortcut but not its page —
+ * its files still exist and still cost storage, and `/settings/plugins` always lists every plugin.
+ */
+export function pluginSettingsEntries(
+  manifests: readonly PluginManifest[],
+  settings: Readonly<Record<string, boolean>>,
+): Array<{ id: string, label: string, to: string }> {
+  return manifests
+    .filter(manifest => manifest.settingsEntry !== undefined && settings[manifest.id] === true)
+    .map(manifest => ({ id: manifest.id, label: manifest.settingsEntry!.label, to: `/settings/plugins/${manifest.id}/data` }))
+}
 
 export function pluginToolIds(manifest: PluginManifest): string[] {
   return manifest.tools.map(tool => tool.id)

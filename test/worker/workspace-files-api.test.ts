@@ -3,8 +3,8 @@ import { unzipSync } from 'fflate'
 import { eq } from 'drizzle-orm'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createDb, type DB } from '@/server/db/client'
-import { conversations, pluginConfigs, projects, users, workspaceFileVersions, workspaceFiles } from '@/server/db/schema'
-import { WorkspaceFiles, type WorkspaceStorage } from '@/server/plugins/workspace-files/service'
+import { attachments, conversations, pluginConfigs, projects, users, workspaceFileVersions, workspaceFiles } from '@/server/db/schema'
+import { sweepTrash, TRASH_RETENTION_MS, WorkspaceFiles, type WorkspaceStorage } from '@/server/plugins/workspace-files/service'
 import { ensureTestUser, workerFetch, type AuthTestClient } from './auth-helper'
 
 /** Plugin routes live under the plugin's own id; core resources keep `/api`. */
@@ -25,6 +25,7 @@ interface Fixture {
  */
 const storage: WorkspaceStorage = {
   put: async (key, bytes, mime) => { await env.BUCKET.put(key, bytes, { httpMetadata: { contentType: mime } }) },
+  delete: async (key) => { await env.BUCKET.delete(key) },
   getBytes: async (key) => {
     const object = await env.BUCKET.get(key)
     return object ? { bytes: new Uint8Array(await object.arrayBuffer()) } : null
@@ -192,6 +193,59 @@ describe('workspace files REST', () => {
     // The ticket outlives the setting, so the setting is what each request asks — not the ticket.
     await f.db.delete(pluginConfigs)
     expect((await workerFetch(body.previewUrl)).headers.get('content-type')).toContain('text/plain')
+  })
+
+  it('keeps a deleted file recoverable, then destroys it for good', async () => {
+    const [version] = await f.db.select().from(workspaceFileVersions).where(eq(workspaceFileVersions.file_id, f.fileId))
+    const [attachment] = await f.db.select().from(attachments).where(eq(attachments.id, version!.attachment_id))
+    expect(await env.BUCKET.head(attachment!.r2_key)).not.toBeNull()
+
+    await f.client.request(`${API}/files/${f.fileId}`, { method: 'DELETE' })
+    const trashed = await (await f.client.request(`${API}/trash`, { method: 'GET' })).json() as { files: Array<{ id: number, relativePath: string }>, scopes: { projects: Record<string, string> } }
+    expect(trashed.files.map(file => file.relativePath)).toEqual(['report.md'])
+    // The list spans every scope, so it says which Project or conversation each file came from.
+    expect(trashed.scopes.projects[String(f.projectId)]).toBe('p')
+
+    expect((await f.client.request(`${API}/trash/${f.fileId}/restore`, { method: 'POST' })).status).toBe(200)
+    const listed = await (await f.client.request(`${API}/projects/${f.projectId}/files`, { method: 'GET' })).json() as { files: unknown[] }
+    expect(listed.files).toHaveLength(1)
+
+    await f.client.request(`${API}/files/${f.fileId}`, { method: 'DELETE' })
+    const purged = await (await f.client.request(`${API}/trash`, { method: 'DELETE' })).json() as { files: number, bytes: number }
+    expect(purged).toMatchObject({ files: 1, bytes: 13 })
+    // Purge is the one thing that reclaims bytes; nothing else in the app removes an R2 object.
+    expect(await env.BUCKET.head(attachment!.r2_key)).toBeNull()
+    expect(await f.db.select().from(workspaceFileVersions).where(eq(workspaceFileVersions.file_id, f.fileId))).toHaveLength(0)
+  })
+
+  it('refuses to restore onto a name that was taken meanwhile', async () => {
+    await f.client.request(`${API}/files/${f.fileId}`, { method: 'DELETE' })
+    const files = new WorkspaceFiles(f.db, storage, 1)
+    await files.write({ path: '/project/report.md', content: 'a different one', conversationId: f.conversationId, projectId: f.projectId })
+
+    const response = await f.client.request(`${API}/trash/${f.fileId}/restore`, { method: 'POST' })
+    expect(response.status).toBe(409)
+    expect(await response.json()).toMatchObject({ error: 'FILE_ALREADY_EXISTS' })
+  })
+
+  it('keeps bytes a live file still shares, and sweeps only what nobody came back for', async () => {
+    // Same content, so both versions address one attachment: purging one must not blind the other.
+    const files = new WorkspaceFiles(f.db, storage, 1)
+    await files.write({ path: '/project/copy.md', content: '# Report\nBody', conversationId: f.conversationId, projectId: f.projectId })
+    const [copy] = await f.db.select().from(workspaceFiles).where(eq(workspaceFiles.relative_path, 'copy.md'))
+    const [version] = await f.db.select().from(workspaceFileVersions).where(eq(workspaceFileVersions.file_id, copy!.id))
+    const [attachment] = await f.db.select().from(attachments).where(eq(attachments.id, version!.attachment_id))
+
+    await f.client.request(`${API}/files/${copy!.id}`, { method: 'DELETE' })
+    const purged = await (await f.client.request(`${API}/trash`, { method: 'DELETE' })).json() as { files: number, bytes: number }
+    expect(purged).toMatchObject({ files: 1, bytes: 0 })
+    expect(await env.BUCKET.head(attachment!.r2_key)).not.toBeNull()
+
+    // The sweep destroys what has sat in the trash past its retention, and nothing younger.
+    await f.client.request(`${API}/files/${f.fileId}`, { method: 'DELETE' })
+    expect(await sweepTrash(f.db, storage, Date.now())).toMatchObject({ files: 0 })
+    expect(await sweepTrash(f.db, storage, Date.now() + TRASH_RETENTION_MS + 1)).toMatchObject({ files: 1, bytes: 13 })
+    expect(await env.BUCKET.head(attachment!.r2_key)).toBeNull()
   })
 
   it('never reveals a file belonging to another tenant', async () => {

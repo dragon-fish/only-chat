@@ -30,6 +30,7 @@ const manifest = {
       description: '把某个历史版本还原为一个新文件，不会覆盖任何现有文件。',
     },
   ],
+  settingsEntry: { label: '工作区文件' },
   configSchema: WORKSPACE_FILES_CONFIG_SCHEMA,
   config: [
     {

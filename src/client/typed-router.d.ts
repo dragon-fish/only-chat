@@ -205,9 +205,16 @@ declare module 'vue-router/auto-routes' {
       Record<never, never>,
       | never
     >,
-    '/settings/plugins/[pluginId]': RouteRecordInfo<
-      '/settings/plugins/[pluginId]',
+    '/settings/plugins/[pluginId]/': RouteRecordInfo<
+      '/settings/plugins/[pluginId]/',
       '/settings/plugins/:pluginId',
+      { pluginId: ParamValue<true> },
+      { pluginId: ParamValue<false> },
+      | never
+    >,
+    '/settings/plugins/[pluginId]/data': RouteRecordInfo<
+      '/settings/plugins/[pluginId]/data',
+      '/settings/plugins/:pluginId/data',
       { pluginId: ParamValue<true> },
       { pluginId: ParamValue<false> },
       | never
@@ -440,13 +447,21 @@ declare module 'vue-router/auto-routes' {
       pathParamNames:
         | never
     }
-    'src/client/pages/settings/plugins/[pluginId].vue': {
+    'src/client/pages/settings/plugins/[pluginId]/index.vue': {
       routes:
-        | '/settings/plugins/[pluginId]'
+        | '/settings/plugins/[pluginId]/'
       views:
         | never
       pathParamNames:
-        | 'pluginId'
+        | never
+    }
+    'src/client/pages/settings/plugins/[pluginId]/data.vue': {
+      routes:
+        | '/settings/plugins/[pluginId]/data'
+      views:
+        | never
+      pathParamNames:
+        | never
     }
     'src/client/pages/settings/providers/index.vue': {
       routes:

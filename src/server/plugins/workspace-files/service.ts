@@ -1,7 +1,12 @@
 import type { FileRecord } from '@/shared/workspace-files'
-import { and, asc, eq, isNull, like, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, isNotNull, isNull, like, lt, or, sql } from 'drizzle-orm'
 import type { DB } from '../../db/client'
-import { attachments, workspaceFileVersions, workspaceFiles } from '../../db/schema'
+import type { SQLiteColumn } from 'drizzle-orm/sqlite-core'
+import {
+  artifactRunInputs, artifacts, attachments, conversations, messages, projects,
+  workspaceFileVersions, workspaceFiles,
+  type WorkspaceFileRow, type WorkspaceFileVersionRow,
+} from '../../db/schema'
 import { r2Key } from '../api/attachments'
 import { countLines, formatWorkspacePath, parseWorkspacePath, WORKSPACE_MOUNTS, type WorkspaceMount } from './path'
 
@@ -37,6 +42,8 @@ const MIME = 'text/markdown; charset=utf-8'
  */
 export interface WorkspaceStorage {
   put(key: string, bytes: Uint8Array | ArrayBuffer, mime: string): Promise<void>
+  /** Only `purge` calls this; every other path keeps bytes addressable. */
+  delete(key: string): Promise<void>
   getBytes(key: string): Promise<{ bytes: Uint8Array } | null>
 }
 
@@ -130,6 +137,25 @@ export interface ListResult {
  * Tools and HTTP routes go through this class rather than touching D1 or R2, so a future sandbox,
  * import or generator can publish a version without re-deriving any of it.
  */
+/** One stored row as the panel reads it. `version` is absent only for a row whose bytes are gone. */
+function recordOf(file: WorkspaceFileRow, version: WorkspaceFileVersionRow | null | undefined): FileRecord {
+  const mount: WorkspaceMount = file.project_id === null ? 'conversation' : 'project'
+  return {
+    id: file.id,
+    path: `/${mount}/${file.relative_path}`,
+    relativePath: file.relative_path,
+    projectId: file.project_id,
+    conversationId: file.conversation_id,
+    fileSize: version?.file_size ?? 0,
+    totalLines: version?.total_lines ?? 0,
+    version: file.current_version,
+    updatedAt: file.updated_at,
+    createdAt: file.created_at,
+    sourceConversationId: version?.source_conversation_id ?? null,
+    sourceMessageId: version?.source_message_id ?? null,
+  }
+}
+
 export class WorkspaceFiles {
   constructor(
     private readonly db: DB,
@@ -444,6 +470,126 @@ export class WorkspaceFiles {
     return succeed(out)
   }
 
+  /** Every live file the user owns, whichever Project or conversation holds it. */
+  async listAll(): Promise<FileRecord[]> {
+    const rows = await this.db.select({ file: workspaceFiles, version: workspaceFileVersions })
+      .from(workspaceFiles)
+      .leftJoin(workspaceFileVersions, and(
+        eq(workspaceFileVersions.file_id, workspaceFiles.id),
+        eq(workspaceFileVersions.version, workspaceFiles.current_version),
+      ))
+      .where(and(eq(workspaceFiles.user_id, this.userId), isNull(workspaceFiles.deleted_at)))
+      .orderBy(asc(workspaceFiles.relative_path))
+    return rows.map(row => recordOf(row.file, row.version))
+  }
+
+  /** What delete left behind. Soft deletion is only worth having if it is visible and reversible. */
+  async listTrash(): Promise<Array<FileRecord & { deletedAt: number }>> {
+    const rows = await this.db.select({ file: workspaceFiles, version: workspaceFileVersions })
+      .from(workspaceFiles)
+      .leftJoin(workspaceFileVersions, and(
+        eq(workspaceFileVersions.file_id, workspaceFiles.id),
+        eq(workspaceFileVersions.version, workspaceFiles.current_version),
+      ))
+      .where(and(eq(workspaceFiles.user_id, this.userId), isNotNull(workspaceFiles.deleted_at)))
+      .orderBy(desc(workspaceFiles.deleted_at))
+    return rows.map(row => ({ ...recordOf(row.file, row.version), deletedAt: row.file.deleted_at! }))
+  }
+
+  /**
+   * Puts a deleted file back. The path may have been taken in the meantime — the uniqueness index
+   * only covers live rows — and that is a real conflict rather than something to resolve silently.
+   */
+  async undelete(fileId: number): Promise<Result<FileRecord>> {
+    const [file] = await this.db.select().from(workspaceFiles).where(and(
+      eq(workspaceFiles.id, fileId),
+      eq(workspaceFiles.user_id, this.userId),
+      isNotNull(workspaceFiles.deleted_at),
+    )).limit(1)
+    if (!file) return fail('FILE_NOT_FOUND')
+
+    const [taken] = await this.db.select({ id: workspaceFiles.id }).from(workspaceFiles).where(and(
+      eq(workspaceFiles.user_id, this.userId),
+      this.whereScope({ projectId: file.project_id, conversationId: file.conversation_id }),
+      eq(workspaceFiles.relative_path, file.relative_path),
+      isNull(workspaceFiles.deleted_at),
+    )).limit(1)
+    if (taken) return fail('FILE_ALREADY_EXISTS')
+
+    await this.db.update(workspaceFiles).set({ deleted_at: null, updated_at: Date.now() })
+      .where(and(eq(workspaceFiles.id, fileId), eq(workspaceFiles.user_id, this.userId)))
+    const [version] = await this.db.select().from(workspaceFileVersions).where(and(
+      eq(workspaceFileVersions.file_id, fileId),
+      eq(workspaceFileVersions.version, file.current_version),
+    )).limit(1)
+    return succeed(recordOf({ ...file, deleted_at: null }, version))
+  }
+
+  /**
+   * Destroys deleted files for good: version rows, the pointer, and the stored bytes of any
+   * attachment nothing else still points at. This is the only thing in the app that removes an
+   * object from R2, which is why the reference check is exhaustive rather than optimistic.
+   */
+  async purge(fileIds: readonly number[]): Promise<{ files: number, bytes: number }> {
+    if (fileIds.length === 0) return { files: 0, bytes: 0 }
+    const files = await this.db.select().from(workspaceFiles).where(and(
+      eq(workspaceFiles.user_id, this.userId),
+      inArray(workspaceFiles.id, [...fileIds]),
+      isNotNull(workspaceFiles.deleted_at),
+    ))
+    if (files.length === 0) return { files: 0, bytes: 0 }
+
+    const ids = files.map(file => file.id)
+    const versions = await this.db.select().from(workspaceFileVersions).where(inArray(workspaceFileVersions.file_id, ids))
+    await this.db.delete(workspaceFileVersions).where(inArray(workspaceFileVersions.file_id, ids))
+    await this.db.delete(workspaceFiles).where(and(eq(workspaceFiles.user_id, this.userId), inArray(workspaceFiles.id, ids)))
+
+    let bytes = 0
+    for (const attachmentId of new Set(versions.map(version => version.attachment_id))) {
+      const [attachment] = await this.db.select().from(attachments).where(and(
+        eq(attachments.id, attachmentId),
+        eq(attachments.user_id, this.userId),
+      )).limit(1)
+      if (!attachment || await this.attachmentInUse(attachmentId)) continue
+      await this.db.delete(attachments).where(eq(attachments.id, attachmentId))
+      await this.storage.delete(attachment.r2_key)
+      bytes += attachment.size
+    }
+    return { files: files.length, bytes }
+  }
+
+  /**
+   * Whether anything still points at an attachment. Message parts carry `attachment_id` inside JSON
+   * rather than in a column, so that one is matched as text — imprecise matching here would delete
+   * bytes a message still renders.
+   */
+  private async attachmentInUse(attachmentId: number): Promise<boolean> {
+    const [version] = await this.db.select({ id: workspaceFileVersions.id }).from(workspaceFileVersions)
+      .where(eq(workspaceFileVersions.attachment_id, attachmentId)).limit(1)
+    if (version) return true
+    const [artifact] = await this.db.select({ id: artifacts.id }).from(artifacts)
+      .where(eq(artifacts.attachment_id, attachmentId)).limit(1)
+    if (artifact) return true
+    const [input] = await this.db.select({ runId: artifactRunInputs.run_id }).from(artifactRunInputs)
+      .where(eq(artifactRunInputs.attachment_id, attachmentId)).limit(1)
+    if (input) return true
+    const [icon] = await this.db.select({ id: projects.id }).from(projects)
+      .where(eq(projects.icon_attachment_id, attachmentId)).limit(1)
+    if (icon) return true
+
+    // `"attachment_id":12` must not match 120, and the key may be followed by either `,` or `}`.
+    const [message] = await this.db.select({ id: messages.id }).from(messages)
+      .innerJoin(conversations, eq(conversations.id, messages.conversation_id))
+      .where(and(
+        eq(conversations.user_id, this.userId),
+        or(
+          like(messages.parts as unknown as SQLiteColumn, `%"attachment_id":${attachmentId},%`),
+          like(messages.parts as unknown as SQLiteColumn, `%"attachment_id":${attachmentId}}%`),
+        ),
+      )).limit(1)
+    return message !== undefined
+  }
+
   /** Ownership is re-checked here rather than trusted from the route. */
   private async ownedFile(fileId: number) {
     const [row] = await this.db.select().from(workspaceFiles).where(and(
@@ -628,4 +774,36 @@ export class WorkspaceFiles {
       nextCursor: null,
     })
   }
+}
+
+/** How long a deleted file stays recoverable before the nightly sweep destroys it. */
+export const TRASH_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
+
+/**
+ * Destroys trashed files nobody came back for. Without it a workspace only ever grows: deleting is
+ * what a user does when a file is in the way, not a promise to come back and clear it out later.
+ */
+export async function sweepTrash(
+  db: DB,
+  storage: WorkspaceStorage,
+  now: number,
+  retentionMs = TRASH_RETENTION_MS,
+): Promise<{ files: number, bytes: number }> {
+  const cutoff = now - retentionMs
+  const expired = await db.select({ id: workspaceFiles.id, userId: workspaceFiles.user_id })
+    .from(workspaceFiles)
+    .where(and(isNotNull(workspaceFiles.deleted_at), lt(workspaceFiles.deleted_at, cutoff)))
+
+  const byUser = new Map<number, number[]>()
+  for (const row of expired) byUser.set(row.userId, [...(byUser.get(row.userId) ?? []), row.id])
+
+  let files = 0
+  let bytes = 0
+  for (const [userId, ids] of byUser) {
+    // Per user: reclaiming bytes means asking what else that user still points at.
+    const result = await new WorkspaceFiles(db, storage, userId).purge(ids)
+    files += result.files
+    bytes += result.bytes
+  }
+  return { files, bytes }
 }

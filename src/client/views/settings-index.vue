@@ -1,5 +1,9 @@
 <script setup lang="ts">
-import { ArrowLeftIcon, ChevronRightIcon, CircleUserRoundIcon, PaletteIcon, PlugIcon, ServerIcon, SettingsIcon, UsersIcon } from '@lucide/vue'
+import { computed } from 'vue'
+import { ArrowLeftIcon, ChevronRightIcon, CircleUserRoundIcon, FolderIcon, PaletteIcon, PlugIcon, ServerIcon, SettingsIcon, UsersIcon } from '@lucide/vue'
+import { pluginManifests } from '@/client/plugins/loaders'
+import { pluginSettingsEntries } from '@/shared/plugins'
+import { useSyncStore } from '@/client/stores/sync'
 import { RouterLink, useRouter } from 'vue-router'
 import { useSettingsReturn } from '@/client/composables/use-settings-return'
 import { useAuthStore } from '@/client/stores/auth'
@@ -10,6 +14,8 @@ import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemMedia, 
 const router = useRouter()
 const returnTo = useSettingsReturn()
 const auth = useAuthStore()
+const sync = useSyncStore()
+const pluginPages = computed(() => pluginSettingsEntries(pluginManifests, sync.settings.plugins))
 const categories = [
   { label: '账户', description: '管理个人信息与登录密码', to: '/settings/account', icon: CircleUserRoundIcon },
   { label: '模型服务', description: '连接供应商，管理模型与能力', to: '/settings/providers', icon: ServerIcon },
@@ -44,6 +50,18 @@ function backToChat() {
             ItemDescription {{ category.description }}
           ItemActions
             ChevronRightIcon
+    template(v-if="pluginPages.length")
+      h2.text-sm.font-medium.text-muted-foreground 插件高级配置
+      ItemGroup(class="gap-2")
+        Item(v-for="page in pluginPages" :key="page.to" as-child variant="outline")
+          RouterLink(:to="page.to")
+            ItemMedia(variant="icon")
+              FolderIcon
+            ItemContent
+              ItemTitle {{ page.label }}
+              ItemDescription 管理这个插件保存的数据
+            ItemActions
+              ChevronRightIcon
     template(v-if="isAuthAdmin(auth.authUser)")
       h2.text-sm.font-medium.text-muted-foreground 站点管理
       ItemGroup(class="gap-2")

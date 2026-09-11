@@ -1,7 +1,7 @@
 import type { Context } from 'cordis'
 import { Hono } from 'hono'
 import { zipSync } from 'fflate'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, inArray } from 'drizzle-orm'
 import { conversations, projects } from '@/server/db/schema'
 import { WORKSPACE_FILES_PLUGIN_ID } from '@/shared/plugins'
 import { PLUGIN_API_PREFIX } from '@/server/plugins/api'
@@ -136,6 +136,29 @@ export function workspacePreviewRoutes(ctx: Context) {
   return r
 }
 
+/**
+ * Names for the scopes a set of files came from. A path alone does not say which conversation wrote
+ * it, and in a list that spans every conversation that is the first thing a reader needs.
+ */
+async function scopeLabels(db: Context['db']['orm'], userId: number, files: readonly FileRecord[]) {
+  const projectIds = [...new Set(files.map(file => file.projectId).filter((id): id is number => id !== null))]
+  const conversationIds = [...new Set(files.map(file => file.conversationId).filter((id): id is number => id !== null))]
+  const [projectRows, conversationRows] = await Promise.all([
+    projectIds.length === 0
+      ? []
+      : db.select({ id: projects.id, name: projects.name }).from(projects)
+        .where(and(eq(projects.user_id, userId), inArray(projects.id, projectIds))),
+    conversationIds.length === 0
+      ? []
+      : db.select({ id: conversations.id, title: conversations.title }).from(conversations)
+        .where(and(eq(conversations.user_id, userId), inArray(conversations.id, conversationIds))),
+  ])
+  return {
+    projects: Object.fromEntries(projectRows.map(row => [row.id, row.name])),
+    conversations: Object.fromEntries(conversationRows.map(row => [row.id, row.title])),
+  }
+}
+
 export function workspaceFileRoutes(ctx: Context) {
   const r = new Hono<ApiEnv>()
   const db = ctx.db.orm
@@ -224,6 +247,45 @@ export function workspaceFileRoutes(ctx: Context) {
     const result = await filesFor(userId).readMount('conversation', { conversationId, projectId: conversation.project_id }, prefix)
     if (!result.ok) return c.json({ error: result.error }, STATUS[result.error])
     return zipResponse(result.value, archiveName(prefix, conversation.title || 'conversation'))
+  })
+
+  /**
+   * Every file the user owns, labelled with the Project or conversation holding it. The panel that
+   * manages a quota has to show all of it; the per-scope lists answer a different question.
+   */
+  r.get('/files', async (c) => {
+    const userId = authUserId(c)
+    const files = await filesFor(userId).listAll()
+    return c.json({ files, scopes: await scopeLabels(db, userId, files) })
+  })
+
+  r.get('/trash', async (c) => {
+    const userId = authUserId(c)
+    const files = await filesFor(userId).listTrash()
+    return c.json({ files, scopes: await scopeLabels(db, userId, files) })
+  })
+
+  r.post('/trash/:id/restore', async (c) => {
+    const userId = authUserId(c)
+    const fileId = parseId(c.req.param('id'))
+    if (fileId === null) return c.json({ error: 'invalid id' }, 400)
+    const result = await filesFor(userId).undelete(fileId)
+    if (!result.ok) return c.json({ error: result.error }, STATUS[result.error])
+    return c.json(result.value)
+  })
+
+  /** Permanent, and the only thing in the app that reclaims stored bytes. */
+  r.delete('/trash/:id', async (c) => {
+    const userId = authUserId(c)
+    const fileId = parseId(c.req.param('id'))
+    if (fileId === null) return c.json({ error: 'invalid id' }, 400)
+    return c.json(await filesFor(userId).purge([fileId]))
+  })
+
+  r.delete('/trash', async (c) => {
+    const userId = authUserId(c)
+    const files = filesFor(userId)
+    return c.json(await files.purge((await files.listTrash()).map(file => file.id)))
   })
 
   r.get('/files/:id', async (c) => {
