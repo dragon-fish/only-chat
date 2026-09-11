@@ -113,6 +113,24 @@ export interface ListEntry {
   version?: number
 }
 
+/**
+ * One file as the human file panel shows it. Addressed by row id rather than by path, because the
+ * panel acts on a file it is already looking at, and a path could have been reused since it loaded.
+ */
+export interface FileRecord {
+  id: number
+  path: string
+  relativePath: string
+  fileSize: number
+  totalLines: number
+  version: number
+  updatedAt: number
+  createdAt: number
+  /** Where the newest version came from, when it came from a conversation. */
+  sourceConversationId: number | null
+  sourceMessageId: number | null
+}
+
 export interface ListResult {
   path: string
   entries: ListEntry[]
@@ -343,6 +361,97 @@ export class WorkspaceFiles {
       totalLines: version.total_lines,
       updatedAt: now,
     })
+  }
+
+  /** Every live file in one mount, with the metadata the human panel displays. */
+  async listRecords(mount: WorkspaceMount, scope: WorkspaceScope): Promise<Result<FileRecord[]>> {
+    const target = this.scopeOf(mount, scope)
+    if (!target.ok) return target
+
+    const rows = await this.db.select({ file: workspaceFiles, version: workspaceFileVersions })
+      .from(workspaceFiles)
+      .leftJoin(workspaceFileVersions, and(
+        eq(workspaceFileVersions.file_id, workspaceFiles.id),
+        eq(workspaceFileVersions.version, workspaceFiles.current_version),
+      ))
+      .where(and(
+        eq(workspaceFiles.user_id, this.userId),
+        this.whereScope(target.value),
+        isNull(workspaceFiles.deleted_at),
+      ))
+      .orderBy(asc(workspaceFiles.relative_path))
+
+    return succeed(rows.map(({ file, version }) => ({
+      id: file.id,
+      path: `/${mount}/${file.relative_path}`,
+      relativePath: file.relative_path,
+      fileSize: version?.file_size ?? 0,
+      totalLines: version?.total_lines ?? 0,
+      version: file.current_version,
+      updatedAt: file.updated_at,
+      createdAt: file.created_at,
+      sourceConversationId: version?.source_conversation_id ?? null,
+      sourceMessageId: version?.source_message_id ?? null,
+    })))
+  }
+
+  /** Ownership is re-checked here rather than trusted from the route. */
+  private async ownedFile(fileId: number) {
+    const [row] = await this.db.select().from(workspaceFiles).where(and(
+      eq(workspaceFiles.id, fileId),
+      eq(workspaceFiles.user_id, this.userId),
+      isNull(workspaceFiles.deleted_at),
+    )).limit(1)
+    return row
+  }
+
+  /** The current bytes of one file, for preview and download. */
+  async readById(fileId: number): Promise<Result<{ record: FileRecord, content: string, mime: string }>> {
+    const file = await this.ownedFile(fileId)
+    if (!file) return fail('FILE_NOT_FOUND')
+
+    const [version] = await this.db.select().from(workspaceFileVersions).where(and(
+      eq(workspaceFileVersions.file_id, file.id),
+      eq(workspaceFileVersions.version, file.current_version),
+    )).limit(1)
+    if (!version) return fail('FILE_NOT_FOUND')
+
+    const [attachment] = await this.db.select().from(attachments).where(eq(attachments.id, version.attachment_id)).limit(1)
+    if (!attachment) return fail('FILE_NOT_FOUND')
+    const stored = await this.storage.getBytes(attachment.r2_key)
+    if (!stored) return fail('FILE_NOT_FOUND')
+
+    const mount: WorkspaceMount = file.project_id === null ? 'conversation' : 'project'
+    return succeed({
+      record: {
+        id: file.id,
+        path: `/${mount}/${file.relative_path}`,
+        relativePath: file.relative_path,
+        fileSize: version.file_size,
+        totalLines: version.total_lines,
+        version: file.current_version,
+        updatedAt: file.updated_at,
+        createdAt: file.created_at,
+        sourceConversationId: version.source_conversation_id,
+        sourceMessageId: version.source_message_id,
+      },
+      content: new TextDecoder().decode(stored.bytes),
+      mime: version.mime,
+    })
+  }
+
+  /**
+   * Hides a file without destroying it. Versions outlive the pointer so the bytes stay reclaimable
+   * by attachment cleanup rather than disappearing with a click, and the path becomes free again
+   * because the uniqueness index only covers live rows.
+   */
+  async softDelete(fileId: number): Promise<Result<{ id: number }>> {
+    const file = await this.ownedFile(fileId)
+    if (!file) return fail('FILE_NOT_FOUND')
+    await this.db.update(workspaceFiles)
+      .set({ deleted_at: Date.now() })
+      .where(and(eq(workspaceFiles.id, fileId), eq(workspaceFiles.user_id, this.userId)))
+    return succeed({ id: fileId })
   }
 
   async read(input: ReadInput): Promise<Result<ReadResult>> {
