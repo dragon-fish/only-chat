@@ -7,10 +7,11 @@ describe('runCurrentTime', () => {
   it('renders the same instant in whichever zone was asked for', () => {
     const shanghai = runCurrentTime({ timezone: 'Asia/Shanghai' }, instant)
     const london = runCurrentTime({ timezone: 'Europe/London' }, instant)
+    if ('error' in shanghai || 'error' in london) throw new Error('expected both zones to resolve')
     expect(shanghai).toMatchObject({ timezone: 'Asia/Shanghai', iso: instant.toISOString() })
     expect(london).toMatchObject({ timezone: 'Europe/London', iso: instant.toISOString() })
     // One batch of parallel calls must agree on the instant and differ only in the rendering.
-    expect('local' in shanghai && 'local' in london && shanghai.local).not.toBe(london.local)
+    expect(shanghai.local).not.toBe(london.local)
   })
 
   it('defaults to UTC when no zone is given or the field is blank', () => {
