@@ -86,3 +86,18 @@ pnpm test        # 单元测试与 Worker 测试
 - 登录方式只有邮箱加密码：没有邮箱验证、找回密码、OAuth 或 Passkey。账号丢失时用 `pnpm auth:reset-user` 恢复。
 - 上传用途由客户端声明：以项目图标的名义上传的图片可以被发进聊天，从而绕过聊天上传策略（仅限 20 MiB 以内的图片）。
 - Anthropic 的模型列表只读取第一页。
+
+## License / 许可
+
+| 部分 | 许可 |
+| --- | --- |
+| 核心代码 | [AGPL-3.0-only](LICENSE) 加[插件例外](PLUGIN-EXCEPTION.md)，另可购买[商业授权](COMMERCIAL-LICENSING.md) |
+| 官方插件（`src/plugins/`） | [MIT](src/plugins/LICENSE) |
+| 名称与 logo | 保留所有权利，见 [TRADEMARKS.md](TRADEMARKS.md) |
+| 第三方组件 | 各自的许可，见 [NOTICE.md](NOTICE.md) |
+
+- **自用、家人朋友、团队或公司内部部署**：随便改，自己写的插件可以闭源。改动核心只需提供给这个部署的用户，不必公开。
+- **提供公开服务**（面向公众或客户，收不收费都算）：要么把整套代码连同插件按 AGPL 提供给用户，要么购买商业授权。
+- **Fork 出去的版本**要换掉名称和 logo。
+
+贡献代码前请先读 [CONTRIBUTING.md](CONTRIBUTING.md)：提交 PR 即授予作者再许可你的贡献的权利，这是商业授权得以成立的前提。

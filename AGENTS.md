@@ -215,6 +215,13 @@ should explain user-visible behavior, note migrations or configuration changes, 
 issue, and include screenshots for UI changes. Report the targeted checks run. Never commit
 `.dev.vars`, API keys, or production secrets.
 
+## Licensing
+
+Core code is AGPL-3.0-only with the plugin exception (`PLUGIN-EXCEPTION.md`); `src/plugins/` is MIT
+(`src/plugins/LICENSE`); the name and the artwork in `public/logo/` are reserved (`TRADEMARKS.md`).
+Code ported from another project keeps its origin and copyright in the file and gets a row in
+`NOTICE.md` — a missing notice is a licence breach, not a style nit.
+
 ## Design notes
 
 `docs/superpowers/specs/` holds the design documents the code cites in comments as "spec §x.y".

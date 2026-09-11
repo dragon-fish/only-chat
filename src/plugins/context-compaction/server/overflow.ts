@@ -1,8 +1,9 @@
 /**
  * Whether a provider error means the request did not fit the model's context window (spec §3.3).
  *
- * The pattern table is ported from pi (badlogic/pi-mono, packages/ai/src/utils/overflow.ts, MIT),
- * which collects the wording each provider uses. Pi also detects silent overflow from usage; that
+ * The pattern table is ported from pi (badlogic/pi-mono, packages/ai/src/utils/overflow.ts),
+ * Copyright (c) 2025 Mario Zechner, MIT — the notice is kept in NOTICE.md; do not drop it. Pi
+ * collects the wording each provider uses and also detects silent overflow from usage; that
  * needs a successful response, which the core never hands to `isOverflow`, so only the error half
  * is ported.
  */
