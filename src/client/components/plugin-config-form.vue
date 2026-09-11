@@ -17,6 +17,15 @@ const emit = defineEmits<{ 'update:modelValue': [values: Record<string, unknown>
 function set(key: string, value: unknown) {
   emit('update:modelValue', { ...props.modelValue, [key]: value })
 }
+
+/**
+ * Narrowing belongs here, not in the template: Vue compiles template expressions as JavaScript, so
+ * a TypeScript `as` there is a runtime SyntaxError that takes the whole route component down.
+ */
+function inputValue(key: string): string | number {
+  const value = props.modelValue[key]
+  return typeof value === 'number' ? value : String(value ?? '')
+}
 </script>
 
 <template lang="pug">
@@ -39,7 +48,7 @@ function set(key: string, value: unknown) {
     Input(
       v-else :id="`plugin-config-${control.key}`"
       :type="control.type === 'secret' ? 'password' : control.type === 'number' ? 'number' : 'text'"
-      :model-value="modelValue[control.key] as string | number"
+      :model-value="inputValue(control.key)"
       :min="control.min" :max="control.max" :disabled="disabled"
       :autocomplete="control.type === 'secret' ? 'new-password' : undefined"
       :placeholder="control.type === 'secret' && control.configured ? '留空则保持不变' : control.placeholder"
