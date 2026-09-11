@@ -1,7 +1,8 @@
 import { z } from 'zod'
 
 export {
-  LIST_FILES_TOOL_ID, READ_FILE_TOOL_ID, RESTORE_FILE_TOOL_ID, WRITE_FILE_TOOL_ID, WORKSPACE_FILES_PLUGIN_ID,
+  DELETE_FILE_TOOL_ID, LIST_FILES_TOOL_ID, READ_FILE_TOOL_ID, RENAME_FILE_TOOL_ID, RESTORE_FILE_TOOL_ID,
+  WRITE_FILE_TOOL_ID, WORKSPACE_FILES_PLUGIN_ID,
 } from '@/shared/plugins'
 
 /**
@@ -46,6 +47,20 @@ export const RestoreFileInputSchema = z.strictObject({
   toPath: PathSchema.describe('Where to put it. Must not already exist.'),
 })
 export type RestoreFileInput = z.infer<typeof RestoreFileInputSchema>
+
+export const RenameFileInputSchema = z.strictObject({
+  path: PathSchema.describe('The file, or with recursive, the directory to move.'),
+  toPath: PathSchema.describe('Where it should end up. Must not already exist. May be in the other mount, which moves between the conversation and its project.'),
+  recursive: z.boolean().default(false)
+    .describe('Move everything under path instead of the file at it, keeping the layout inside.'),
+})
+export type RenameFileInput = z.infer<typeof RenameFileInputSchema>
+
+export const DeleteFileInputSchema = z.strictObject({
+  path: PathSchema.describe('The file, or with recursive, the directory to remove.'),
+  recursive: z.boolean().default(false).describe('Remove everything under path instead of the file at it.'),
+})
+export type DeleteFileInput = z.infer<typeof DeleteFileInputSchema>
 
 /** Shapes the tool cards render. Tool results are persisted, so these are part of the wire format. */
 export interface ListFilesOutput {
@@ -97,6 +112,20 @@ export interface RestoreFileOutput {
   version: number
   fileSize: number
   totalLines: number
+  message: string
+}
+
+export interface RenameFileOutput {
+  path: string
+  fromPath: string
+  /** Every path that moved: one call reports what ten separate ones would have. */
+  moved: string[]
+  message: string
+}
+
+export interface DeleteFileOutput {
+  path: string
+  deleted: string[]
   message: string
 }
 

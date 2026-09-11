@@ -3,12 +3,14 @@ import { tool } from 'ai'
 import { WorkspaceFiles, type Result, type WorkspaceError } from '@/server/plugins/workspace-files/service'
 import type { ToolContext } from '@/server/plugins/tools'
 import {
-  LIST_FILES_TOOL_ID, READ_FILE_TOOL_ID, RESTORE_FILE_TOOL_ID, WORKSPACE_FILES_PLUGIN_ID, WRITE_FILE_TOOL_ID,
+  DELETE_FILE_TOOL_ID, LIST_FILES_TOOL_ID, READ_FILE_TOOL_ID, RENAME_FILE_TOOL_ID,
+  RESTORE_FILE_TOOL_ID, WORKSPACE_FILES_PLUGIN_ID, WRITE_FILE_TOOL_ID,
 } from '@/shared/plugins'
 import {
-  ListFilesInputSchema, ReadFileInputSchema, RestoreFileInputSchema, WriteFileInputSchema,
-  type ListFilesOutput, type ReadFileOutput, type RestoreFileOutput, type WriteFileOutput,
-  type WorkspaceToolError,
+  DeleteFileInputSchema, ListFilesInputSchema, ReadFileInputSchema, RenameFileInputSchema,
+  RestoreFileInputSchema, WriteFileInputSchema,
+  type DeleteFileOutput, type ListFilesOutput, type ReadFileOutput, type RenameFileOutput,
+  type RestoreFileOutput, type WriteFileOutput, type WorkspaceToolError,
 } from '../shared'
 
 /** Each expected failure reads as a fact the model can act on, never as a malfunction. */
@@ -16,6 +18,7 @@ const MESSAGES: Record<WorkspaceError, string> = {
   INVALID_PATH: 'Not a valid workspace path. Paths are absolute and start with /project or /conversation, with no . or .. segments.',
   MOUNT_UNAVAILABLE: 'This conversation does not belong to a project, so /project has nowhere to store files. Use /conversation instead.',
   FILE_NOT_FOUND: 'No such file. Use list_files to see what exists.',
+  IS_DIRECTORY: 'That path holds other files rather than being one. Pass recursive: true to act on everything under it.',
   FILE_ALREADY_EXISTS: 'That name is taken. Restoring never overwrites, so choose a name nothing uses yet.',
   VERSION_CONFLICT: 'The file is not at the version you named, so someone else changed it. Read it again and decide whether to keep their work.',
   VERSION_NOT_FOUND: 'That version does not exist for this file. list_files and read_file report the current one.',
@@ -156,6 +159,66 @@ export const WorkspaceFilesServerPlugin = {
         return {
           path, sourcePath, restoredFrom, version, fileSize, totalLines,
           message: `Restored ${sourcePath} v${restoredFrom} to ${path}`,
+        }
+      },
+    }))
+
+    ctx.tools.register(WORKSPACE_FILES_PLUGIN_ID, RENAME_FILE_TOOL_ID, runtime => tool({
+      description: [
+        'Rename or move a file, keeping its history and costing no storage.',
+        'toPath must be free: renaming over a file would delete that file under another word.',
+        'The two paths may be in different mounts, which moves the file — /conversation to /project is how you share something you wrote for yourself with the rest of the Project.',
+        'Pass recursive: true to move a directory; everything under it keeps its relative layout, so a page keeps finding the files it references.',
+      ].join(' '),
+      inputSchema: RenameFileInputSchema,
+      async execute(input): Promise<RenameFileOutput | WorkspaceToolError> {
+        const { files, scope } = servicesFor(runtime)
+        const result = await files.rename({
+          path: input.path,
+          toPath: input.toPath,
+          recursive: input.recursive,
+          ...scope,
+        })
+        if (!result.ok) return unwrap(result) as WorkspaceToolError
+        const { path, fromPath, moved } = result.value
+        // What this turn read now lives at a new name; carrying it over keeps the next write's
+        // "you replaced a version you never saw" warning honest.
+        for (const to of moved) {
+          const from = `${fromPath}${to.slice(path.length)}`
+          const read = runtime.turn.get(readVersionKey(from))
+          if (read !== undefined) runtime.turn.set(readVersionKey(to), read)
+        }
+        return {
+          path,
+          fromPath,
+          moved,
+          message: moved.length === 1
+            ? `Moved ${fromPath} to ${path}`
+            : `Moved ${moved.length} files from ${fromPath} to ${path}`,
+        }
+      },
+    }))
+
+    ctx.tools.register(WORKSPACE_FILES_PLUGIN_ID, DELETE_FILE_TOOL_ID, runtime => tool({
+      description: [
+        'Remove a file from the workspace so later turns stop seeing it.',
+        'Reversible by the user rather than by you: it goes to their trash, where it stays restorable for 30 days. Nothing you can call brings it back, so delete what is genuinely finished with, not what you are unsure about.',
+        'The name becomes free again immediately.',
+        'Pass recursive: true to remove a directory and everything under it.',
+      ].join(' '),
+      inputSchema: DeleteFileInputSchema,
+      async execute(input): Promise<DeleteFileOutput | WorkspaceToolError> {
+        const { files, scope } = servicesFor(runtime)
+        const result = await files.deleteByPath({ path: input.path, recursive: input.recursive, ...scope })
+        if (!result.ok) return unwrap(result) as WorkspaceToolError
+        const { path, deleted } = result.value
+        for (const gone of deleted) runtime.turn.delete(readVersionKey(gone))
+        return {
+          path,
+          deleted,
+          message: deleted.length === 1
+            ? `Deleted ${path}. The user can restore it from their workspace settings for 30 days.`
+            : `Deleted ${deleted.length} files under ${path}. The user can restore them from their workspace settings for 30 days.`,
         }
       },
     }))

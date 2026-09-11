@@ -17,6 +17,7 @@ export type WorkspaceError =
   | 'INVALID_PATH'
   | 'MOUNT_UNAVAILABLE'
   | 'FILE_NOT_FOUND'
+  | 'IS_DIRECTORY'
   | 'FILE_ALREADY_EXISTS'
   | 'VERSION_CONFLICT'
   | 'VERSION_NOT_FOUND'
@@ -71,6 +72,26 @@ export interface WriteResult {
   /** The version this write displaced, or `null` when nothing was displaced. */
   replacedVersion: number | null
   updatedAt: number
+}
+
+export interface RenameInput extends WorkspaceScope {
+  path: string
+  toPath: string
+  /** Move everything under `path` instead of the file at it. Directories are prefixes, not rows. */
+  recursive?: boolean
+}
+
+export interface RenameResult {
+  path: string
+  fromPath: string
+  /** Every path that moved, so one call can report what ten would have. */
+  moved: string[]
+  updatedAt: number
+}
+
+export interface DeleteInput extends WorkspaceScope {
+  path: string
+  recursive?: boolean
 }
 
 export interface RestoreInput extends WorkspaceScope {
@@ -137,6 +158,11 @@ export interface ListResult {
  * Tools and HTTP routes go through this class rather than touching D1 or R2, so a future sandbox,
  * import or generator can publish a version without re-deriving any of it.
  */
+/** `_` and `%` are ordinary characters in a path, so a prefix pattern must spell them out. */
+function escapeLike(value: string): string {
+  return value.replaceAll('\\', '\\\\').replaceAll('%', '\\%').replaceAll('_', '\\_')
+}
+
 /** One stored row as the panel reads it. `version` is absent only for a row whose bytes are gone. */
 function recordOf(file: WorkspaceFileRow, version: WorkspaceFileVersionRow | null | undefined): FileRecord {
   const mount: WorkspaceMount = file.project_id === null ? 'conversation' : 'project'
@@ -309,6 +335,114 @@ export class WorkspaceFiles {
     const [, update] = await this.db.batch([statements[0], statements[1]])
     const changed = (update as { meta?: { changes?: number } }).meta?.changes
     return changed === undefined || changed > 0
+  }
+
+  /**
+   * Moves a file to a name that is free, keeping its history and its bytes where they are.
+   *
+   * Crossing mounts is a move, not an error: `/conversation/notes.md` to `/project/notes.md` is how
+   * a model promotes something it wrote for itself into what the whole Project can read. A taken
+   * name is refused rather than resolved — renaming over a file is deleting it under another word.
+   */
+  async rename(input: RenameInput): Promise<Result<RenameResult>> {
+    const from = parseWorkspacePath(input.path)
+    const to = parseWorkspacePath(input.toPath)
+    if (!from.ok || !to.ok) return fail('INVALID_PATH')
+    if (from.value.mount === null || from.value.relativePath === '') return fail('INVALID_PATH')
+    if (to.value.mount === null || to.value.relativePath === '') return fail('INVALID_PATH')
+
+    const fromScope = this.scopeOf(from.value.mount, input)
+    if (!fromScope.ok) return fromScope
+    const toScope = this.scopeOf(to.value.mount, input)
+    if (!toScope.ok) return toScope
+    if (from.value.mount === to.value.mount && from.value.relativePath === to.value.relativePath) {
+      return fail('FILE_ALREADY_EXISTS')
+    }
+    // Moving a folder into itself would rewrite the prefix it is still matching against.
+    if (input.recursive === true && from.value.mount === to.value.mount
+      && to.value.relativePath.startsWith(`${from.value.relativePath}/`)) {
+      return fail('INVALID_PATH')
+    }
+
+    const sources = await this.resolveTargets(fromScope.value, from.value.relativePath, input.recursive === true)
+    if (!sources.ok) return sources
+
+    const now = Date.now()
+    const moved: string[] = []
+    for (const source of sources.value) {
+      const suffix = source.relative_path.slice(from.value.relativePath.length)
+      const target = `${to.value.relativePath}${suffix}`
+      if (await this.findFile(toScope.value, target)) return fail('FILE_ALREADY_EXISTS')
+      await this.db.update(workspaceFiles).set({
+        project_id: toScope.value.projectId,
+        conversation_id: toScope.value.conversationId,
+        relative_path: target,
+        updated_at: now,
+      }).where(and(eq(workspaceFiles.id, source.id), eq(workspaceFiles.user_id, this.userId)))
+      moved.push(formatWorkspacePath({ mount: to.value.mount, relativePath: target }))
+    }
+
+    return succeed({
+      path: formatWorkspacePath(to.value),
+      fromPath: formatWorkspacePath(from.value),
+      moved,
+      updatedAt: now,
+    })
+  }
+
+  /**
+   * What a path names: the file at it, or — with `recursive` — everything under it. A directory is
+   * only ever a shared prefix here, so this is where that fiction is made explicit exactly once.
+   */
+  private async resolveTargets(
+    scope: { projectId: number | null, conversationId: number | null },
+    relativePath: string,
+    recursive: boolean,
+  ): Promise<Result<WorkspaceFileRow[]>> {
+    const file = await this.findFile(scope, relativePath)
+    if (!recursive) {
+      if (file) return succeed([file])
+      const [child] = await this.db.select({ id: workspaceFiles.id }).from(workspaceFiles).where(and(
+        eq(workspaceFiles.user_id, this.userId),
+        this.whereScope(scope),
+        isNull(workspaceFiles.deleted_at),
+        like(workspaceFiles.relative_path, `${escapeLike(relativePath)}/%`),
+      )).limit(1)
+      return fail(child ? 'IS_DIRECTORY' : 'FILE_NOT_FOUND')
+    }
+
+    const rows = await this.db.select().from(workspaceFiles).where(and(
+      eq(workspaceFiles.user_id, this.userId),
+      this.whereScope(scope),
+      isNull(workspaceFiles.deleted_at),
+      like(workspaceFiles.relative_path, `${escapeLike(relativePath)}/%`),
+    )).orderBy(asc(workspaceFiles.relative_path))
+    const targets = file ? [file, ...rows] : rows
+    return targets.length === 0 ? fail('FILE_NOT_FOUND') : succeed(targets)
+  }
+
+  /**
+   * Hides a file by path, the way the human panel hides one by id. Soft: the versions stay, the
+   * path becomes free again, and the user can put it back from settings until the sweep runs.
+   */
+  async deleteByPath(input: DeleteInput): Promise<Result<{ path: string, deleted: string[] }>> {
+    const parsed = parseWorkspacePath(input.path)
+    if (!parsed.ok || parsed.value.mount === null || parsed.value.relativePath === '') return fail('INVALID_PATH')
+    const scope = this.scopeOf(parsed.value.mount, input)
+    if (!scope.ok) return scope
+
+    const targets = await this.resolveTargets(scope.value, parsed.value.relativePath, input.recursive === true)
+    if (!targets.ok) return targets
+
+    const now = Date.now()
+    for (const file of targets.value) {
+      await this.db.update(workspaceFiles).set({ deleted_at: now })
+        .where(and(eq(workspaceFiles.id, file.id), eq(workspaceFiles.user_id, this.userId)))
+    }
+    return succeed({
+      path: formatWorkspacePath(parsed.value),
+      deleted: targets.value.map(file => formatWorkspacePath({ mount: parsed.value.mount, relativePath: file.relative_path })),
+    })
   }
 
   /**

@@ -1,6 +1,7 @@
 import type { PluginManifest } from '@/shared/plugins'
 import {
-  LIST_FILES_TOOL_ID, READ_FILE_TOOL_ID, RESTORE_FILE_TOOL_ID, WORKSPACE_FILES_PLUGIN_ID, WRITE_FILE_TOOL_ID,
+  DELETE_FILE_TOOL_ID, LIST_FILES_TOOL_ID, READ_FILE_TOOL_ID, RENAME_FILE_TOOL_ID,
+  RESTORE_FILE_TOOL_ID, WORKSPACE_FILES_PLUGIN_ID, WRITE_FILE_TOOL_ID,
 } from '@/shared/plugins'
 import { WORKSPACE_FILES_CONFIG_SCHEMA } from './shared'
 
@@ -28,6 +29,16 @@ const manifest = {
       id: RESTORE_FILE_TOOL_ID,
       name: '还原文件',
       description: '把某个历史版本还原为一个新文件，不会覆盖任何现有文件。',
+    },
+    {
+      id: RENAME_FILE_TOOL_ID,
+      name: '重命名文件',
+      description: '改名、移动，或整个目录一起搬，历史版本跟着走。',
+    },
+    {
+      id: DELETE_FILE_TOOL_ID,
+      name: '删除文件',
+      description: '把文件或整个目录移入回收站，30 天内你都可以在这里还原。',
     },
   ],
   settingsEntry: { label: '工作区文件' },

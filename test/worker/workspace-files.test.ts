@@ -217,4 +217,63 @@ describe('workspace files service', () => {
     const result = await f.files.read({ path: '/project/nope.md', ...scope(f) })
     expect(result).toMatchObject({ ok: false, error: 'FILE_NOT_FOUND' })
   })
+
+  it('renames a file, keeping its history and freeing the old name', async () => {
+    // Content unique to this test: attachments dedupe by hash and outlive one fixture's storage.
+    await f.files.write({ path: '/conversation/draft.md', content: 'draft one', ...scope(f) })
+    await f.files.write({ path: '/conversation/draft.md', content: 'draft two', ...scope(f) })
+
+    const renamed = await f.files.rename({ path: '/conversation/draft.md', toPath: '/conversation/final.md', ...scope(f) })
+    expect(renamed).toMatchObject({ ok: true })
+    if (renamed.ok) expect(renamed.value.moved).toEqual(['/conversation/final.md'])
+
+    const read = await f.files.read({ path: '/conversation/final.md', ...scope(f) })
+    expect(read.ok && read.value.version).toBe(2)
+    // The old name is free, and the history came along rather than being left behind.
+    const restored = await f.files.restore({ path: '/conversation/final.md', version: 1, toPath: '/conversation/draft.md', ...scope(f) })
+    expect(restored.ok && restored.value.path).toBe('/conversation/draft.md')
+  })
+
+  it('refuses a rename onto a name in use, and a move into itself', async () => {
+    await f.files.write({ path: '/conversation/a.md', content: 'a', ...scope(f) })
+    await f.files.write({ path: '/conversation/b.md', content: 'b', ...scope(f) })
+
+    expect(await f.files.rename({ path: '/conversation/a.md', toPath: '/conversation/b.md', ...scope(f) }))
+      .toMatchObject({ ok: false, error: 'FILE_ALREADY_EXISTS' })
+    expect(await f.files.rename({ path: '/conversation/site', toPath: '/conversation/site/inner', recursive: true, ...scope(f) }))
+      .toMatchObject({ ok: false, error: 'INVALID_PATH' })
+  })
+
+  it('moves a directory in one call, keeping the layout inside it', async () => {
+    await f.files.write({ path: '/conversation/site/index.html', content: '<link href="./css/x.css">', ...scope(f) })
+    await f.files.write({ path: '/conversation/site/css/x.css', content: 'body{}', ...scope(f) })
+    await f.files.write({ path: '/conversation/other.md', content: 'untouched', ...scope(f) })
+
+    // Without recursive the path names nothing, and saying so is better than a puzzling not-found.
+    expect(await f.files.rename({ path: '/conversation/site', toPath: '/project/site', ...scope(f) }))
+      .toMatchObject({ ok: false, error: 'IS_DIRECTORY' })
+
+    const moved = await f.files.rename({ path: '/conversation/site', toPath: '/project/site', recursive: true, ...scope(f) })
+    expect(moved.ok && moved.value.moved).toEqual(['/project/site/css/x.css', '/project/site/index.html'])
+    // A relative reference still resolves because the layout below the folder is unchanged.
+    expect((await f.files.read({ path: '/project/site/css/x.css', ...scope(f) })).ok).toBe(true)
+    expect((await f.files.read({ path: '/conversation/other.md', ...scope(f) })).ok).toBe(true)
+  })
+
+  it('deletes a file or a whole directory into the trash, freeing the names', async () => {
+    await f.files.write({ path: '/conversation/site/index.html', content: 'page', ...scope(f) })
+    await f.files.write({ path: '/conversation/site/app.js', content: 'js', ...scope(f) })
+    await f.files.write({ path: '/conversation/keep.md', content: 'keep', ...scope(f) })
+
+    expect(await f.files.deleteByPath({ path: '/conversation/site', ...scope(f) }))
+      .toMatchObject({ ok: false, error: 'IS_DIRECTORY' })
+    const removed = await f.files.deleteByPath({ path: '/conversation/site', recursive: true, ...scope(f) })
+    expect(removed.ok && removed.value.deleted).toEqual(['/conversation/site/app.js', '/conversation/site/index.html'])
+
+    expect(await f.files.read({ path: '/conversation/site/index.html', ...scope(f) })).toMatchObject({ ok: false, error: 'FILE_NOT_FOUND' })
+    expect((await f.files.read({ path: '/conversation/keep.md', ...scope(f) })).ok).toBe(true)
+    // The name is free again: deletion only hides the row, and the index only covers live ones.
+    expect(await f.files.write({ path: '/conversation/site/index.html', content: 'new page', ...scope(f) }))
+      .toMatchObject({ ok: true })
+  })
 })
