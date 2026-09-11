@@ -139,7 +139,7 @@ export class Hub extends Service {
         return this.stop(cmd.conversation_id)
       case 'switch_head': return this.switchHead(cmd.conversation_id, cmd.message_id)
       case 'conversation.update': return this.conversationUpdate(cmd)
-      case 'conversation.delete': return this.conversationDelete(cmd.conversation_id, cmd.delete_artifacts)
+      case 'conversation.delete': return this.conversationDelete(cmd.conversation_id)
       case 'conversation.fork': return this.conversationFork(cmd)
       case 'settings.update': return this.settingsUpdate(cmd.settings)
       case 'project.create': return this.projectCreate(cmd)
@@ -216,11 +216,11 @@ export class Hub extends Service {
     await this.emitConversationUpdated(s)
   }
 
-  async conversationDelete(conversationId: number, deleteArtifacts = false): Promise<void> {
+  async conversationDelete(conversationId: number): Promise<void> {
     if (!(await getConversation(this.db, conversationId, this.userId))) throw new Error('conversation not found')
     await this.stop(conversationId)
     await this.app.parallel('conversation/before-purge', { userId: this.userId, conversationId })
-    await deleteConversation(this.db, conversationId, this.userId, { deleteArtifacts })
+    await deleteConversation(this.db, conversationId, this.userId)
     this.seq.forget(conversationId)
     await this.broadcast({ type: 'conversation.deleted', conversation_id: conversationId })
     this.app.emit('conversation/deleted', conversationId)

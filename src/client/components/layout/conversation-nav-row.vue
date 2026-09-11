@@ -20,8 +20,6 @@ import {
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/client/ui/dialog'
 import { Input } from '@/client/ui/input'
 import { Button } from '@/client/ui/button'
-import { Checkbox } from '@/client/ui/checkbox'
-import { Label } from '@/client/ui/label'
 import type { Project, Conversation } from '@/shared/models'
 
 const props = defineProps<{
@@ -34,7 +32,6 @@ const emit = defineEmits<{ navigate: [] }>()
 const sync = useSyncStore()
 const { isMobile } = useSidebar()
 const deleteOpen = ref(false)
-const deleteArtifacts = ref(false)
 const action = ref<InstanceType<typeof SidebarMenuAction> | null>(null)
 const renameOpen = ref(false)
 const title = ref(props.conversation.title)
@@ -61,10 +58,7 @@ function move(projectId: number | null) {
 }
 
 function remove() {
-  send({
-    type: 'conversation.delete', conversation_id: props.conversation.id,
-    ...(deleteArtifacts.value ? { delete_artifacts: true } : {}),
-  })
+  send({ type: 'conversation.delete', conversation_id: props.conversation.id })
 }
 
 function rename() {
@@ -146,10 +140,11 @@ function send(command: Parameters<typeof sync.send>[0]): boolean {
         <AlertDialogHeader>
           <AlertDialogTitle>删除这个对话？</AlertDialogTitle>
           <AlertDialogDescription>“{{ conversation.title }}”及其所有消息将被永久删除。</AlertDialogDescription>
-          <div class="flex min-h-10 items-center gap-2 text-sm">
-            <Checkbox id="delete-conversation-artifacts" v-model="deleteArtifacts" />
-            <Label for="delete-conversation-artifacts">同时从 Gallery 删除仅属于此对话的生成图片</Label>
-          </div>
+          <!-- Says what survives, because both of these used to be destroyed silently. -->
+          <ul class="text-muted-foreground list-disc space-y-1 pl-4 text-xs">
+            <li>生成的图片会保留在 Gallery，要删请去那里删。</li>
+            <li>对话里的工作区文件会移入「悬空文件」，30 天后自动清除。</li>
+          </ul>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel class="min-h-10">取消</AlertDialogCancel>

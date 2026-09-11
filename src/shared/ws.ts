@@ -79,7 +79,6 @@ export const ConversationDeleteCommandSchema = z.object({
   type: z.literal('conversation.delete'),
   ...base,
   conversation_id: z.number().int(),
-  delete_artifacts: z.boolean().optional(),
 })
 export const ConversationForkCommandSchema = z.object({
   type: z.literal('conversation.fork'),

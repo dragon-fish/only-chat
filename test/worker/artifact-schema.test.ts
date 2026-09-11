@@ -92,8 +92,10 @@ describe('Artifact schema', () => {
     }).returning()
     await db.insert(artifactLinks).values({ artifact_id: artifact!.id, conversation_id: conversation!.id, message_id: message!.id, purpose: 'output' })
 
-    await deleteConversation(db, conversation!.id, user!.id, { deleteArtifacts: true })
+    await deleteConversation(db, conversation!.id, user!.id)
 
-    expect(await db.query.artifacts.findFirst({ where: eq(artifacts.id, artifact!.id) })).toMatchObject({ deleted_at: expect.any(Number) })
+    // An Artifact outlives the conversation that produced it: the Gallery is where images are
+    // kept and where they are deleted, and a conversation is not a folder they live in.
+    expect(await db.query.artifacts.findFirst({ where: eq(artifacts.id, artifact!.id) })).toMatchObject({ deleted_at: null })
   })
 })
