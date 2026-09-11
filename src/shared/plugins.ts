@@ -29,6 +29,19 @@ export interface PluginToolDescriptor {
   description: string
 }
 
+/**
+ * A set of tools that the selector offers as one switch. Companion tools — a search that is useless
+ * without its extractor — belong in one group; a plugin whose tools are genuinely independent
+ * declares them separately, or declares an empty `groups` to put every tool on its own row.
+ */
+export interface PluginToolGroup {
+  id: string
+  name: string
+  description: string
+  /** Tool ids from this manifest's own `tools`. */
+  tools: readonly string[]
+}
+
 export type PluginConfigFieldType = 'text' | 'secret' | 'number' | 'boolean' | 'select'
 
 /**
@@ -57,6 +70,11 @@ export interface PluginManifest {
   description: string
   /** Declaration order is the order the selector renders them in. */
   tools: readonly PluginToolDescriptor[]
+  /**
+   * Selection granularity. Omitted means the whole plugin is one group; a tool no declared group
+   * claims becomes a row of its own, so a tool can never end up unselectable.
+   */
+  groups?: readonly PluginToolGroup[]
   /**
    * The authority on this plugin's configuration. The server parses every read and write through
    * it; the client derives its form controls from it. `.refine()` rules and custom messages do not
@@ -90,6 +108,34 @@ export const PluginConfigStatusSchema = z.object({
 
 export function pluginToolIds(manifest: PluginManifest): string[] {
   return manifest.tools.map(tool => tool.id)
+}
+
+/** A group with its tools resolved, which is what anything rendering or toggling a group needs. */
+export interface ResolvedToolGroup {
+  id: string
+  name: string
+  description: string
+  tools: readonly PluginToolDescriptor[]
+}
+
+/** Every selectable group of one plugin, declared or implied. */
+export function pluginToolGroups(manifest: PluginManifest): ResolvedToolGroup[] {
+  if (manifest.groups === undefined) {
+    return [{ id: manifest.id, name: manifest.name, description: manifest.description, tools: manifest.tools }]
+  }
+  const claimed = new Set<string>()
+  const groups = manifest.groups.map((group) => {
+    const tools = manifest.tools.filter((tool) => {
+      if (!group.tools.includes(tool.id)) return false
+      claimed.add(tool.id)
+      return true
+    })
+    return { id: group.id, name: group.name, description: group.description, tools }
+  }).filter(group => group.tools.length > 0)
+
+  const loose = manifest.tools.filter(tool => !claimed.has(tool.id))
+    .map(tool => ({ id: tool.id, name: tool.name, description: tool.description, tools: [tool] }))
+  return [...groups, ...loose]
 }
 
 /**

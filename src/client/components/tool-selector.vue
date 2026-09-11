@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, ref, watchEffect } from 'vue'
+import { computed, inject, watchEffect } from 'vue'
 import { CircleHelpIcon, WrenchIcon } from '@lucide/vue'
 import type { ClientPluginHost } from '@/client/plugins/host'
 import { pluginManifests } from '@/client/plugins/loaders'
@@ -10,7 +10,7 @@ import { Item, ItemContent, ItemDescription, ItemGroup, ItemTitle } from '@/clie
 import { Popover, PopoverContent, PopoverDescription, PopoverHeader, PopoverTitle, PopoverTrigger } from '@/client/ui/popover'
 import { Switch } from '@/client/ui/switch'
 import type { PluginConfigStatusMap } from '@/shared/plugins'
-import { availablePluginRows, ensureSelectedPlugins, nextToolSelection } from './tool-selector'
+import { availableToolGroups, ensureSelectedPlugins, nextToolSelection } from './tool-selector'
 
 const props = defineProps<{
   modelValue: string[]
@@ -22,7 +22,7 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{ 'update:modelValue': [tools: string[]] }>()
 const host = inject<ClientPluginHost | null>('clientPluginHost', null)
-const rows = computed(() => availablePluginRows(pluginManifests, props.plugins, props.modelValue, props.pluginConfig))
+const rows = computed(() => availableToolGroups(pluginManifests, props.plugins, props.modelValue, props.pluginConfig))
 const selectedCount = computed(() => rows.value.filter(row => row.selected).length)
 const triggerHint = computed(() => (
   props.supported ? '选择工具' : '当前模型不支持工具调用，本次不会发送工具定义'
@@ -30,19 +30,8 @@ const triggerHint = computed(() => (
 
 watchEffect(() => {
   if (!host) return
-  void ensureSelectedPlugins(host, rows.value.filter(row => row.selected).map(row => row.id))
+  void ensureSelectedPlugins(host, rows.value.filter(row => row.selected).map(row => row.pluginId))
 })
-
-/**
- * Which rows show their description. A hover tooltip would be unreachable on a touch screen and
- * would cover the switch it sits next to, so the text opens in place instead.
- */
-const explained = ref(new Set<string>())
-function toggleHelp(pluginId: string) {
-  const next = new Set(explained.value)
-  if (!next.delete(pluginId)) next.add(pluginId)
-  explained.value = next
-}
 
 function toggle(toolIds: string[], on: boolean) {
   emit('update:modelValue', nextToolSelection(props.modelValue, toolIds, on))
@@ -71,17 +60,19 @@ component(:is="desktop ? Popover : Drawer")
           ItemContent
             ItemTitle
               span {{ row.name }}
-              button(
-                type="button" class="text-muted-foreground hover:text-foreground shrink-0"
-                :aria-label="`${row.name} 说明`" :aria-expanded="explained.has(row.id)"
-                @click="toggleHelp(row.id)")
-                CircleHelpIcon(class="size-3.5")
-            //- The whole text, not the clamped two lines the row shows by default.
-            ItemDescription(v-if="explained.has(row.id)" class="line-clamp-none") {{ row.description }}
+              //- On click, not on hover: a hover card is unreachable on a touch screen.
+              Popover
+                PopoverTrigger(as-child)
+                  button(
+                    type="button" class="text-muted-foreground hover:text-foreground shrink-0"
+                    :aria-label="`${row.name} 说明`")
+                    CircleHelpIcon(class="size-3.5")
+                PopoverContent(side="top" align="start" class="w-64 gap-1.5")
+                  p {{ row.description }}
+                  p(class="text-muted-foreground") 提供工具：{{ row.tools.map(tool => tool.name).join('、') }}
+                  p(class="text-muted-foreground") 来自插件：{{ row.pluginName }}
             ItemDescription(v-if="!row.enabled") 插件已停用；会话快照仍会保留。
             ItemDescription(v-else-if="!row.configured") 尚未配置，请先在插件设置中填写。
-            //- A single-tool plugin would only repeat its own title here.
-            ItemDescription(v-else-if="row.tools.length > 1") {{ row.tools.map(tool => tool.name).join(' · ') }}
           Switch(
             :model-value="row.selected" :disabled="!row.enabled || !row.configured"
             :aria-label="`启用 ${row.name}`" @update:model-value="toggle(row.toolIds, $event)")

@@ -1,14 +1,17 @@
 import type { PluginConfigStatusMap, PluginManifest, PluginToolDescriptor } from '@/shared/plugins'
+import { pluginToolGroups } from '@/shared/plugins'
 
 /**
- * One plugin as one switch. A plugin's tools are companions — `web_search` without `web_extract`,
- * or `read_file` without `write_file`, is a half-equipped model — so they are selected together and
- * the selector never offers them apart.
+ * One declared tool group as one switch. Which tools travel together is the plugin's own call, so
+ * this type only carries the decision out to the UI; it never regroups anything itself.
  */
-export interface PluginGroupRow {
+export interface ToolGroupRow {
+  /** Group ids are unique only inside a plugin, so a row is addressed by both. */
   id: string
   name: string
   description: string
+  pluginId: string
+  pluginName: string
   tools: readonly PluginToolDescriptor[]
   /** Every tool id this row writes into the Conversation snapshot. */
   toolIds: string[]
@@ -65,25 +68,27 @@ export function defaultToolsForSettings(
  * snapshot still names one of its tools: an offer nobody can accept is noise, but a tool this
  * conversation has been using has to stay visible and switchable off.
  */
-export function availablePluginRows(
+export function availableToolGroups(
   manifests: readonly PluginManifest[],
   settings: Readonly<Record<string, boolean>>,
   selected: readonly string[],
   status: PluginConfigStatusMap = {},
-): PluginGroupRow[] {
+): ToolGroupRow[] {
   const selectedIds = new Set(selected)
   return [...manifests]
     .sort((a, b) => a.id.localeCompare(b.id))
-    .map(manifest => ({
-      id: manifest.id,
-      name: manifest.name,
-      description: manifest.description,
-      tools: manifest.tools,
-      toolIds: manifest.tools.map(tool => tool.id),
+    .flatMap(manifest => pluginToolGroups(manifest).map(group => ({
+      id: `${manifest.id}:${group.id}`,
+      name: group.name,
+      description: group.description,
+      pluginId: manifest.id,
+      pluginName: manifest.name,
+      tools: group.tools,
+      toolIds: group.tools.map(tool => tool.id),
       enabled: settings[manifest.id] === true,
       configured: pluginConfigured(manifest, status),
-      selected: manifest.tools.some(tool => selectedIds.has(tool.id)),
-    }))
+      selected: group.tools.some(tool => selectedIds.has(tool.id)),
+    })))
     .filter(row => row.enabled || row.selected)
 }
 
