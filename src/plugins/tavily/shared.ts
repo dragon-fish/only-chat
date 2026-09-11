@@ -36,8 +36,14 @@ export const WebExtractOutputSchema = z.object({
   failed: z.array(z.object({ url: z.string(), error: z.string() })),
 })
 
-/** Both tools report a refusal this way rather than throwing: one bad call must not end the turn. */
+/** A real failure — the network, the API, a bad key. Something went wrong. */
 export const ToolErrorSchema = z.object({ error: z.string() })
+
+/**
+ * The per-turn budget stopping a call. Deliberately NOT an error: nothing went wrong, the tool is
+ * telling the model to stop searching and talk to the human. The UI must not dress it in red.
+ */
+export const ToolRefusalSchema = z.object({ refused: z.string() })
 
 export type WebSearchInput = z.infer<typeof WebSearchInputSchema>
 export type WebExtractInput = z.infer<typeof WebExtractInputSchema>
@@ -45,6 +51,7 @@ export type WebSearchResult = z.infer<typeof WebSearchResultSchema>
 export type WebSearchOutput = z.infer<typeof WebSearchOutputSchema>
 export type WebExtractOutput = z.infer<typeof WebExtractOutputSchema>
 export type ToolError = z.infer<typeof ToolErrorSchema>
+export type ToolRefusal = z.infer<typeof ToolRefusalSchema>
 
 /**
  * Backend-agnostic search interfaces. The runners depend only on these, which keeps them testable

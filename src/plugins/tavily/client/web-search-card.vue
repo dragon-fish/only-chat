@@ -6,7 +6,7 @@ import { Badge } from '@/client/ui/badge'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/client/ui/collapsible'
 import { Skeleton } from '@/client/ui/skeleton'
 import type { ToolCallPart, ToolResultPart } from '@/shared/parts'
-import { ToolErrorSchema, WebSearchInputSchema, WebSearchOutputSchema } from '../shared'
+import { ToolErrorSchema, ToolRefusalSchema, WebSearchInputSchema, WebSearchOutputSchema } from '../shared'
 import { hostOf } from './format'
 
 const props = defineProps<{ call: ToolCallPart; result: ToolResultPart | null }>()
@@ -14,13 +14,18 @@ const props = defineProps<{ call: ToolCallPart; result: ToolResultPart | null }>
 const query = computed(() => WebSearchInputSchema.safeParse(props.call.args).data?.query ?? null)
 const output = computed(() => WebSearchOutputSchema.safeParse(props.result?.content).data ?? null)
 const failure = computed(() => ToolErrorSchema.safeParse(props.result?.content).data?.error ?? null)
+// A spent budget is not a failure: the tool stopped on purpose, so it reads as a plain note.
+const refusal = computed(() => ToolRefusalSchema.safeParse(props.result?.content).data?.refused ?? null)
 // Neither shape matched a result that exists: show the raw payload rather than an empty card.
-const unreadable = computed(() => props.result !== null && !output.value && !failure.value)
+const unreadable = computed(() => props.result !== null && !output.value && !failure.value && !refusal.value)
 </script>
 
 <template lang="pug">
 .flex.w-full.flex-col.gap-2
-  Alert(v-if="failure" variant="destructive")
+  div(v-if="refusal" class="flex items-center gap-2 rounded-md bg-muted px-2 py-1.5 text-sm text-muted-foreground")
+    SearchIcon(class="size-4 shrink-0")
+    span {{ refusal }}
+  Alert(v-else-if="failure" variant="destructive")
     TriangleAlertIcon
     AlertTitle 联网搜索失败
     AlertDescription {{ failure }}

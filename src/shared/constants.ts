@@ -4,5 +4,9 @@ export const INFLIGHT_FLUSH_INTERVAL_MS = 1000
 /**
  * Ceiling on model steps in one generation. Tools that execute need more than the SDK's default of
  * one; this is a runaway guard, not a budget — a tool that should call itself less says so itself.
+ *
+ * Keep real headroom above the sum of every tool's per-turn budget. A turn that spends its whole
+ * search and extract allowance, has a couple of over-budget calls refused, and then answers already
+ * costs eight steps; sitting at that number truncates the answer the work was for.
  */
-export const TOOL_MAX_STEPS = 8
+export const TOOL_MAX_STEPS = 16

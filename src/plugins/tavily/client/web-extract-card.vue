@@ -6,7 +6,7 @@ import { Badge } from '@/client/ui/badge'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/client/ui/collapsible'
 import { Skeleton } from '@/client/ui/skeleton'
 import type { ToolCallPart, ToolResultPart } from '@/shared/parts'
-import { ToolErrorSchema, WebExtractInputSchema, WebExtractOutputSchema } from '../shared'
+import { ToolErrorSchema, ToolRefusalSchema, WebExtractInputSchema, WebExtractOutputSchema } from '../shared'
 import { hostOf } from './format'
 
 const props = defineProps<{ call: ToolCallPart; result: ToolResultPart | null }>()
@@ -14,7 +14,9 @@ const props = defineProps<{ call: ToolCallPart; result: ToolResultPart | null }>
 const urls = computed(() => WebExtractInputSchema.safeParse(props.call.args).data?.urls ?? [])
 const output = computed(() => WebExtractOutputSchema.safeParse(props.result?.content).data ?? null)
 const failure = computed(() => ToolErrorSchema.safeParse(props.result?.content).data?.error ?? null)
-const unreadable = computed(() => props.result !== null && !output.value && !failure.value)
+// A spent budget is not a failure: the tool stopped on purpose, so it reads as a plain note.
+const refusal = computed(() => ToolRefusalSchema.safeParse(props.result?.content).data?.refused ?? null)
+const unreadable = computed(() => props.result !== null && !output.value && !failure.value && !refusal.value)
 const summary = computed(() => {
   if (!output.value) return ''
   const ok = output.value.results.length
@@ -25,7 +27,10 @@ const summary = computed(() => {
 
 <template lang="pug">
 .flex.w-full.flex-col.gap-2
-  Alert(v-if="failure" variant="destructive")
+  div(v-if="refusal" class="flex items-center gap-2 rounded-md bg-muted px-2 py-1.5 text-sm text-muted-foreground")
+    FileTextIcon(class="size-4 shrink-0")
+    span {{ refusal }}
+  Alert(v-else-if="failure" variant="destructive")
     TriangleAlertIcon
     AlertTitle 网页抓取失败
     AlertDescription {{ failure }}

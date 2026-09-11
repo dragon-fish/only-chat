@@ -1,6 +1,6 @@
 import {
   DEFAULT_SEARCH_RESULTS, MAX_SEARCH_RESULTS,
-  type ToolError, type WebExtractClient, type WebExtractInput, type WebExtractOutput,
+  type ToolError, type ToolRefusal, type WebExtractClient, type WebExtractInput, type WebExtractOutput,
   type WebSearchClient, type WebSearchInput, type WebSearchOutput,
 } from '../shared'
 
@@ -32,9 +32,9 @@ export async function runWebSearch(
   client: WebSearchClient,
   turn: Map<string, unknown>,
   cap: number,
-): Promise<WebSearchOutput | ToolError> {
+): Promise<WebSearchOutput | ToolError | ToolRefusal> {
   if (spend(turn, SEARCH_CALLS, cap) === null) {
-    return { error: `web_search 本轮已调用 ${cap} 次，已达上限。` }
+    return { refused: `web_search 本轮已调用 ${cap} 次，已达上限。` }
   }
   const maxResults = Math.min(Math.max(input.max_results ?? DEFAULT_SEARCH_RESULTS, 1), MAX_SEARCH_RESULTS)
   try {
@@ -49,9 +49,9 @@ export async function runWebExtract(
   client: WebExtractClient,
   turn: Map<string, unknown>,
   cap: number,
-): Promise<WebExtractOutput | ToolError> {
+): Promise<WebExtractOutput | ToolError | ToolRefusal> {
   if (spend(turn, EXTRACT_CALLS, cap) === null) {
-    return { error: `web_extract 本轮已调用 ${cap} 次，已达上限。` }
+    return { refused: `web_extract 本轮已调用 ${cap} 次，已达上限。` }
   }
   try {
     return await client.extract(input.urls)

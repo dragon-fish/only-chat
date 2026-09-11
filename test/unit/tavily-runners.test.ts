@@ -21,7 +21,7 @@ describe('tavily runners', () => {
     expect(await runWebSearch({ query: 'q' }, client, turn, 2)).toMatchObject({ query: 'q' })
 
     const refusal = await runWebSearch({ query: 'q' }, client, turn, 2)
-    expect(refusal).toEqual({ error: 'web_search 本轮已调用 2 次，已达上限。' })
+    expect(refusal).toEqual({ refused: 'web_search 本轮已调用 2 次，已达上限。' })
     expect(client.search).toHaveBeenCalledTimes(2)
   })
 
@@ -30,7 +30,7 @@ describe('tavily runners', () => {
     const search = searchClient()
     const extract = extractClient()
     await runWebSearch({ query: 'q' }, search, turn, 1)
-    expect(await runWebSearch({ query: 'q' }, search, turn, 1)).toMatchObject({ error: expect.any(String) })
+    expect(await runWebSearch({ query: 'q' }, search, turn, 1)).toMatchObject({ refused: expect.any(String) })
     expect(await runWebExtract({ urls: ['https://a.test'] }, extract, turn, 1)).toMatchObject({
       results: [{ url: 'https://a.test' }],
     })
@@ -47,7 +47,7 @@ describe('tavily runners', () => {
     const failing: WebSearchClient = { search: vi.fn(async () => { throw new Error('boom') }) }
     await runWebSearch({ query: 'q' }, failing, turn, 1)
     expect(await runWebSearch({ query: 'q' }, failing, turn, 1)).toEqual({
-      error: 'web_search 本轮已调用 1 次，已达上限。',
+      refused: 'web_search 本轮已调用 1 次，已达上限。',
     })
     expect(failing.search).toHaveBeenCalledTimes(1)
   })
