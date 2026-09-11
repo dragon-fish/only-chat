@@ -339,8 +339,10 @@ available for anything else.
 
 Preview shows source, highlighted by the same renderer the chat uses. Markdown opens rendered
 instead — it is written to be read, and it goes through the chat's own `safe` HTML policy, so a
-script tag or event handler never survives it and nothing has to be opted into. Rendering a *page*
-is different, because a page runs: that is a plugin setting, and it starts off. When it is on, a file is served to a frame
+script tag or event handler never survives it and nothing has to be opted into. Rendering a *page* —
+HTML or SVG, both of which can carry script — is different, because a page runs: that is a plugin
+setting, and it starts off. With it off a file is still served as text, so looking at one in a tab
+of its own never needs permission; the setting decides only whether a page is served as a page. When it is on, a file is served to a frame
 sandboxed without `allow-same-origin`, under a short-lived ticket carried in the URL's directory
 prefix: the frame's opaque origin means its own subresource requests are cross-site and arrive
 without cookies, and the prefix is exactly what a relative `./style.css` keeps. Responses carry a

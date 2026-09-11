@@ -101,7 +101,7 @@ export const api = {
   projectFiles: (projectId: number) => request<{ files: FileRecord[] }>('GET', `${WORKSPACE_FILES_API}/projects/${projectId}/files`),
   conversationFiles: (conversationId: number) =>
     request<{ files: FileRecord[]; projectFiles: FileRecord[]; projectId: number | null }>('GET', `${WORKSPACE_FILES_API}/conversations/${conversationId}/files`),
-  workspaceFile: (id: number) => request<{ record: FileRecord; content: string; mime: string; previewUrl: string | null }>('GET', `${WORKSPACE_FILES_API}/files/${id}`),
+  workspaceFile: (id: number) => request<{ record: FileRecord; content: string; mime: string; previewUrl: string | null; canRenderPage: boolean }>('GET', `${WORKSPACE_FILES_API}/files/${id}`),
   // A link, not a fetch: the download is served as an attachment and the browser owns saving it.
   workspaceFileDownloadUrl: (id: number) => `${WORKSPACE_FILES_API}/files/${id}/download`,
   deleteWorkspaceFile: (id: number) => request<void>('DELETE', `${WORKSPACE_FILES_API}/files/${id}`),

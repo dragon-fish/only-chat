@@ -47,15 +47,18 @@ export function languageOf(relativePath: string): string {
  * What a file can be shown as besides its source.
  *
  * `markdown` renders through the same renderer and the same `safe` HTML policy the chat already
- * applies to every reply, so it executes nothing and needs no opt-in. `page` does execute, which is
- * why it stays behind the plugin's own setting.
+ * applies to every reply, so it executes nothing and needs no opt-in. A `page` — HTML or SVG alike —
+ * can execute, which is why it stays behind the plugin's own setting and inside a sandboxed frame.
  */
 export type PreviewKind = 'markdown' | 'page' | null
+
+/** SVG counts as a page: it can carry script and event handlers, so it belongs in the sandbox too. */
+const PAGE_EXTENSIONS = new Set(['html', 'htm', 'svg'])
 
 export function previewKind(relativePath: string): PreviewKind {
   const extension = extensionOf(relativePath)
   if (extension === 'md' || extension === 'markdown') return 'markdown'
-  return extension === 'html' || extension === 'htm' ? 'page' : null
+  return PAGE_EXTENSIONS.has(extension) ? 'page' : null
 }
 
 /** One line of the file list: a folder to fold, or a file to act on. */

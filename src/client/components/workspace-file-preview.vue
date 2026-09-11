@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { DownloadIcon, ExternalLinkIcon } from '@lucide/vue'
 import MarkdownRender from 'markstream-vue'
 import type { NodeRendererProps } from 'markstream-vue'
 import ResponsiveOverlay from '@/client/components/layout/responsive-overlay.vue'
@@ -27,11 +28,11 @@ const view = ref<'source' | 'rendered'>('source')
  * gate — nothing in it runs.
  */
 const frameSrc = ref<string | null>(null)
+const canRenderPage = ref(false)
 const kind = computed<'markdown' | 'page' | null>(() => {
   const value = record.value === null ? null : previewKind(record.value.relativePath)
-  return value === 'page' && frameSrc.value === null ? null : value
+  return value === 'page' && !(canRenderPage.value && frameSrc.value !== null) ? null : value
 })
-const renderLabel = computed(() => (kind.value === 'markdown' ? '预览' : '渲染'))
 const codeBlockProps: NonNullable<NodeRendererProps['codeBlockProps']> = {
   theme: { light: 'one-light', dark: 'one-dark-pro' },
 }
@@ -51,6 +52,7 @@ watch(() => props.fileId, async (fileId) => {
   record.value = null
   content.value = ''
   frameSrc.value = null
+  canRenderPage.value = false
   error.value = null
   view.value = 'source'
   if (fileId === null) return
@@ -62,6 +64,7 @@ watch(() => props.fileId, async (fileId) => {
     record.value = body.record
     content.value = body.content
     frameSrc.value = body.previewUrl
+    canRenderPage.value = body.canRenderPage
     // Markdown is written to be read, so it opens read. Source is one click away either way.
     if (previewKind(body.record.relativePath) === 'markdown') view.value = 'rendered'
   }
@@ -97,7 +100,7 @@ ResponsiveOverlay(
       Tabs(v-if="kind" :model-value="view" @update:model-value="selectView")
         TabsList
           TabsTrigger(value="source" class="min-h-10 md:min-h-7") 源码
-          TabsTrigger(value="rendered" class="min-h-10 md:min-h-7") {{ renderLabel }}
+          TabsTrigger(value="rendered" class="min-h-10 md:min-h-7") 预览
     //- Markdown renders with the chat's own `safe` policy: script tags and event handlers never
     //- survive it, so a file is no more dangerous to read than the reply that wrote it.
     MarkdownRender(
@@ -116,5 +119,15 @@ ResponsiveOverlay(
       v-else mode="chat" :content="markdown" :final="true" :smooth-streaming="false"
       :is-dark="resolvedTheme === 'dark'" :code-block-props="codeBlockProps")
   template(#footer)
-    Button(v-if="record" as="a" variant="outline" class="min-h-10" :href="api.workspaceFileDownloadUrl(record.id)") 下载
+    .flex.flex-wrap.items-center.justify-end.gap-2
+      //- The download route hands every file over as an attachment, so this is the only way to
+      //- just look at one; with the page setting off it arrives as text, which shows rather than runs.
+      Button(
+        v-if="frameSrc" as="a" variant="ghost" class="min-h-10"
+        :href="frameSrc" target="_blank" rel="noopener noreferrer")
+        ExternalLinkIcon(data-icon="inline-start")
+        | 新标签页打开
+      Button(v-if="record" as="a" variant="outline" class="min-h-10" :href="api.workspaceFileDownloadUrl(record.id)")
+        DownloadIcon(data-icon="inline-start")
+        | 下载
 </template>

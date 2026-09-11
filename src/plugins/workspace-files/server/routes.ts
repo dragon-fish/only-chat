@@ -53,8 +53,6 @@ interface PreviewTicket {
 }
 
 async function previewUrlFor(ctx: Context, userId: number, record: FileRecord): Promise<string | null> {
-  const config = await ctx.pluginConfig.read(userId, WORKSPACE_FILES_PLUGIN_ID)
-  if (config.html_preview !== true) return null
   const mount: WorkspaceMount = record.projectId !== null ? 'project' : 'conversation'
   const scopeId = record.projectId ?? record.conversationId
   if (scopeId === null) return null
@@ -102,9 +100,6 @@ export function workspacePreviewRoutes(ctx: Context) {
     if (!/^[0-9a-f]{32}$/.test(token)) return c.json({ error: 'not found' }, 404)
     const ticket = await ctx.env.KV.get<PreviewTicket>(`workspace-preview:${token}`, 'json')
     if (!ticket) return c.json({ error: 'not found' }, 404)
-    // The setting can have been turned off since the ticket was minted; it decides, not the ticket.
-    const config = await ctx.pluginConfig.read(ticket.userId, WORKSPACE_FILES_PLUGIN_ID)
-    if (config.html_preview !== true) return c.json({ error: 'not found' }, 404)
 
     const marker = `/${token}/`
     const tail = c.req.path.slice(c.req.path.indexOf(marker) + marker.length)
@@ -123,10 +118,14 @@ export function workspacePreviewRoutes(ctx: Context) {
     const result = await files.readBytes(ticket.mount, scope, parsed.value.relativePath)
     if (!result.ok) return c.json({ error: result.error }, STATUS[result.error])
 
+    // The setting decides one thing: whether a page is served as a page. Off, every file is text —
+    // which a browser shows rather than runs, so opening one in a tab is always safe.
+    const config = await ctx.pluginConfig.read(ticket.userId, WORKSPACE_FILES_PLUGIN_ID)
     const extension = parsed.value.relativePath.split('.').pop()?.toLowerCase() ?? ''
+    const type = config.html_preview === true ? PREVIEW_TYPES[extension] : undefined
     return new Response(result.value as unknown as BodyInit, {
       headers: {
-        'content-type': PREVIEW_TYPES[extension] ?? 'text/plain; charset=utf-8',
+        'content-type': type ?? 'text/plain; charset=utf-8',
         'content-security-policy': 'sandbox allow-scripts allow-forms allow-modals',
         'x-content-type-options': 'nosniff',
         'cache-control': 'no-store',
@@ -233,7 +232,12 @@ export function workspaceFileRoutes(ctx: Context) {
     if (fileId === null) return c.json({ error: 'invalid id' }, 400)
     const result = await filesFor(userId).readById(fileId)
     if (!result.ok) return c.json({ error: result.error }, STATUS[result.error])
-    return c.json({ ...result.value, previewUrl: await previewUrlFor(ctx, userId, result.value.record) })
+    const config = await ctx.pluginConfig.read(userId, WORKSPACE_FILES_PLUGIN_ID)
+    return c.json({
+      ...result.value,
+      previewUrl: await previewUrlFor(ctx, userId, result.value.record),
+      canRenderPage: config.html_preview === true,
+    })
   })
 
   r.get('/files/:id/download', async (c) => {

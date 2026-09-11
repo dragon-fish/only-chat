@@ -142,11 +142,19 @@ describe('workspace files REST', () => {
     expect((await workerFetch(`${API}/projects/${f.projectId}/files`)).status).toBe(401)
   })
 
-  it('offers no rendered preview until the plugin setting asks for one', async () => {
-    const body = await (await f.client.request(`${API}/files/${f.fileId}`, { method: 'GET' })).json() as { previewUrl: string | null }
-    expect(body.previewUrl).toBeNull()
+  it('serves a file as text until the plugin setting asks for a page', async () => {
+    const files = new WorkspaceFiles(f.db, storage, 1)
+    await files.write({ path: '/project/page.html', content: '<h1>hi</h1>', conversationId: f.conversationId, projectId: f.projectId })
+    const [row] = await f.db.select().from(workspaceFiles).where(eq(workspaceFiles.relative_path, 'page.html'))
+
+    const body = await (await f.client.request(`${API}/files/${row!.id}`, { method: 'GET' })).json() as { previewUrl: string, canRenderPage: boolean }
+    expect(body.canRenderPage).toBe(false)
+    // Looking at a file is always allowed; a browser shows text rather than running it.
+    const page = await workerFetch(body.previewUrl)
+    expect(page.status).toBe(200)
+    expect(page.headers.get('content-type')).toContain('text/plain')
     // Guessing a ticket is not a way in either.
-    expect((await f.client.request(`${API}/preview/${'0'.repeat(32)}/report.md`, { method: 'GET' })).status).toBe(404)
+    expect((await workerFetch(`${API}/preview/${'0'.repeat(32)}/report.md`)).status).toBe(404)
   })
 
   it('serves a page and the files it references under one ticket', async () => {
@@ -156,7 +164,8 @@ describe('workspace files REST', () => {
     await files.write({ path: '/project/site/style.css', content: 'body{}', conversationId: f.conversationId, projectId: f.projectId })
     const [row] = await f.db.select().from(workspaceFiles).where(eq(workspaceFiles.relative_path, 'site/index.html'))
 
-    const body = await (await f.client.request(`${API}/files/${row!.id}`, { method: 'GET' })).json() as { previewUrl: string }
+    const body = await (await f.client.request(`${API}/files/${row!.id}`, { method: 'GET' })).json() as { previewUrl: string, canRenderPage: boolean }
+    expect(body.canRenderPage).toBe(true)
     expect(body.previewUrl).toMatch(/^\/api\/plugins\/workspace_files\/preview\/[0-9a-f]{32}\/site\/index\.html$/)
 
     // No cookie: a sandboxed frame has an opaque origin and sends none. The ticket in the path is
@@ -172,11 +181,17 @@ describe('workspace files REST', () => {
     expect(await sibling.text()).toBe('body{}')
   })
 
-  it('stops serving a preview the moment the setting goes back off', async () => {
+  it('stops serving a page as a page the moment the setting goes back off', async () => {
     await enableHtmlPreview(f.db)
-    const body = await (await f.client.request(`${API}/files/${f.fileId}`, { method: 'GET' })).json() as { previewUrl: string }
+    const files = new WorkspaceFiles(f.db, storage, 1)
+    await files.write({ path: '/project/page.html', content: '<h1>hi</h1>', conversationId: f.conversationId, projectId: f.projectId })
+    const [row] = await f.db.select().from(workspaceFiles).where(eq(workspaceFiles.relative_path, 'page.html'))
+    const body = await (await f.client.request(`${API}/files/${row!.id}`, { method: 'GET' })).json() as { previewUrl: string }
+    expect((await workerFetch(body.previewUrl)).headers.get('content-type')).toContain('text/html')
+
+    // The ticket outlives the setting, so the setting is what each request asks — not the ticket.
     await f.db.delete(pluginConfigs)
-    expect((await workerFetch(body.previewUrl)).status).toBe(404)
+    expect((await workerFetch(body.previewUrl)).headers.get('content-type')).toContain('text/plain')
   })
 
   it('never reveals a file belonging to another tenant', async () => {
