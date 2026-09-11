@@ -7,6 +7,7 @@ import {
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from '@/client/ui/alert-dialog'
 import { Button } from '@/client/ui/button'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/client/ui/table'
 import { Tabs, TabsList, TabsTrigger } from '@/client/ui/tabs'
 import { Skeleton } from '@/client/ui/skeleton'
 import WorkspaceFilePreview from '@/client/components/workspace-file-preview.vue'
@@ -110,19 +111,28 @@ function selectTab(value: unknown) {
 
   template(v-else-if="tab === 'files'")
     p(v-if="!files.length" class="text-muted-foreground py-6 text-center text-sm") 还没有任何文件。
-    ul.flex.flex-col(v-else)
-      li.flex.min-h-9.items-center.gap-2.rounded-md.px-1(
-        v-for="file in sortedFiles" :key="file.id" class="hover:bg-muted/60")
-        span.shrink-0(class="[&>svg]:size-4" v-html="fileIcon(file.relativePath)")
-        button.min-w-0.flex-1.text-left(type="button" :title="file.path" @click="previewId = file.id")
-          span(class="block truncate font-mono text-sm") {{ file.relativePath }}
-          span(class="text-muted-foreground block truncate text-xs") {{ scopeLabel(file, scopes) }}
-        span(class="text-muted-foreground shrink-0 text-xs") {{ formatFileSize(file.fileSize) }}
-        Button(
-          type="button" variant="ghost" size="icon-xs" class="size-8 shrink-0"
-          :disabled="busyId === file.id" :aria-label="`删除 ${file.relativePath}`" title="移入回收站"
-          @click="remove(file)")
-          Trash2Icon(data-icon="inline-start")
+    Table(v-else)
+      TableHeader
+        TableRow
+          TableHead 文件
+          TableHead(class="hidden md:table-cell") 位置
+          TableHead(class="text-right") 大小
+          TableHead
+            span.sr-only 操作
+      TableBody
+        TableRow(v-for="file in sortedFiles" :key="file.id")
+          TableCell
+            button.flex.min-w-0.items-center.gap-2.text-left(type="button" :title="file.path" @click="previewId = file.id")
+              span.shrink-0(class="[&>svg]:size-4" v-html="fileIcon(file.relativePath)")
+              span(class="max-w-64 truncate font-mono text-sm") {{ file.relativePath }}
+          TableCell(class="text-muted-foreground hidden max-w-48 truncate text-xs md:table-cell") {{ scopeLabel(file, scopes) }}
+          TableCell(class="text-muted-foreground whitespace-nowrap text-right text-xs") {{ formatFileSize(file.fileSize) }}
+          TableCell(class="text-right")
+            Button(
+              type="button" variant="ghost" size="icon-xs" class="size-8"
+              :disabled="busyId === file.id" :aria-label="`删除 ${file.relativePath}`" title="移入回收站"
+              @click="remove(file)")
+              Trash2Icon(data-icon="inline-start")
 
   template(v-else)
     p(v-if="!trash.length" class="text-muted-foreground py-6 text-center text-sm") 回收站是空的。
@@ -140,33 +150,44 @@ function selectTab(value: unknown) {
             AlertDialogFooter
               AlertDialogCancel 取消
               AlertDialogAction(@click="emptyTrash") 彻底删除
-      ul.flex.flex-col
-        li.flex.min-h-9.items-center.gap-2.rounded-md.px-1(
-          v-for="file in trash" :key="file.id" class="hover:bg-muted/60")
-          span.shrink-0(class="opacity-60 [&>svg]:size-4" v-html="fileIcon(file.relativePath)")
-          .min-w-0.flex-1
-            span(class="block truncate font-mono text-sm") {{ file.relativePath }}
-            span(class="text-muted-foreground block truncate text-xs")
-              | {{ scopeLabel(file, trashScopes) }} · 删除于 {{ new Date(file.deletedAt).toLocaleString() }}
-          span(class="text-muted-foreground shrink-0 text-xs") {{ formatFileSize(file.fileSize) }}
-          Button(
-            type="button" variant="ghost" size="icon-xs" class="size-8 shrink-0"
-            :disabled="busyId === file.id" :aria-label="`还原 ${file.relativePath}`" title="还原"
-            @click="restore(file)")
-            RotateCcwIcon(data-icon="inline-start")
-          AlertDialog
-            AlertDialogTrigger(as-child)
-              Button(
-                type="button" variant="ghost" size="icon-xs" class="size-8 shrink-0"
-                :disabled="busyId === file.id" :aria-label="`彻底删除 ${file.relativePath}`" title="彻底删除")
-                Trash2Icon(data-icon="inline-start")
-            AlertDialogContent
-              AlertDialogHeader
-                AlertDialogTitle 彻底删除 {{ file.relativePath }}？
-                AlertDialogDescription 连同它的全部历史版本一起销毁，无法撤销。
-              AlertDialogFooter
-                AlertDialogCancel 取消
-                AlertDialogAction(@click="purge(file)") 彻底删除
+      Table
+        TableHeader
+          TableRow
+            TableHead 文件
+            TableHead(class="hidden md:table-cell") 位置
+            TableHead(class="hidden md:table-cell") 删除时间
+            TableHead(class="text-right") 大小
+            TableHead
+              span.sr-only 操作
+        TableBody
+          TableRow(v-for="file in trash" :key="file.id")
+            TableCell
+              .flex.min-w-0.items-center.gap-2
+                span.shrink-0(class="opacity-60 [&>svg]:size-4" v-html="fileIcon(file.relativePath)")
+                span(class="max-w-64 truncate font-mono text-sm") {{ file.relativePath }}
+            TableCell(class="text-muted-foreground hidden max-w-48 truncate text-xs md:table-cell") {{ scopeLabel(file, trashScopes) }}
+            TableCell(class="text-muted-foreground hidden whitespace-nowrap text-xs md:table-cell") {{ new Date(file.deletedAt).toLocaleString() }}
+            TableCell(class="text-muted-foreground whitespace-nowrap text-right text-xs") {{ formatFileSize(file.fileSize) }}
+            TableCell
+              .flex.items-center.justify-end
+                Button(
+                  type="button" variant="ghost" size="icon-xs" class="size-8"
+                  :disabled="busyId === file.id" :aria-label="`还原 ${file.relativePath}`" title="还原"
+                  @click="restore(file)")
+                  RotateCcwIcon(data-icon="inline-start")
+                AlertDialog
+                  AlertDialogTrigger(as-child)
+                    Button(
+                      type="button" variant="ghost" size="icon-xs" class="size-8"
+                      :disabled="busyId === file.id" :aria-label="`彻底删除 ${file.relativePath}`" title="彻底删除")
+                      Trash2Icon(data-icon="inline-start")
+                  AlertDialogContent
+                    AlertDialogHeader
+                      AlertDialogTitle 彻底删除 {{ file.relativePath }}？
+                      AlertDialogDescription 连同它的全部历史版本一起销毁，无法撤销。
+                    AlertDialogFooter
+                      AlertDialogCancel 取消
+                      AlertDialogAction(@click="purge(file)") 彻底删除
 
 WorkspaceFilePreview(:file-id="previewId" @update:file-id="previewId = $event")
 </template>
