@@ -1,8 +1,11 @@
+import type { FileRecord } from '@/shared/workspace-files'
 import { and, asc, eq, isNull, like, sql } from 'drizzle-orm'
 import type { DB } from '../../db/client'
 import { attachments, workspaceFileVersions, workspaceFiles } from '../../db/schema'
 import { r2Key } from '../api/attachments'
 import { countLines, formatWorkspacePath, parseWorkspacePath, WORKSPACE_MOUNTS, type WorkspaceMount } from './path'
+
+export type { FileRecord }
 
 /** Failures a model can correct on its own. Anything else throws and fails the tool call. */
 export type WorkspaceError =
@@ -111,24 +114,6 @@ export interface ListEntry {
   totalLines?: number
   updatedAt?: number
   version?: number
-}
-
-/**
- * One file as the human file panel shows it. Addressed by row id rather than by path, because the
- * panel acts on a file it is already looking at, and a path could have been reused since it loaded.
- */
-export interface FileRecord {
-  id: number
-  path: string
-  relativePath: string
-  fileSize: number
-  totalLines: number
-  version: number
-  updatedAt: number
-  createdAt: number
-  /** Where the newest version came from, when it came from a conversation. */
-  sourceConversationId: number | null
-  sourceMessageId: number | null
 }
 
 export interface ListResult {

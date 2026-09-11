@@ -29,6 +29,7 @@ import { Spinner } from '@/client/ui/spinner'
 import ModelPicker from '@/client/components/model-picker.vue'
 import ReasoningControls from '@/client/components/reasoning-controls.vue'
 import ProjectIconEditor from '@/client/components/project-icon-editor.vue'
+import WorkspaceFilePanel from '@/client/components/workspace-file-panel.vue'
 import { DISCONNECTED_MESSAGE, fieldLooksBlank, optionalNumber, projectFormFrom, projectUpdateCommand, reasoningStopsFor, REASONING_ORDER, useSyncStore, type ProjectFormState } from '@/client/stores/sync'
 import { useConfigStore } from '@/client/stores/config'
 import { projectPresentation } from '@/client/lib/ui-models'
@@ -42,6 +43,7 @@ const config = useConfigStore()
 const sections = [
   { key: 'basic', label: '基本' },
   { key: 'model', label: '模型与参数' },
+  { key: 'files', label: '文件' },
 ] as const
 type SectionKey = (typeof sections)[number]['key']
 
@@ -163,7 +165,7 @@ watch(connected, value => {
 })
 
 function selectSection(value: unknown) {
-  if (value === 'basic' || value === 'model') section.value = value
+  if (sections.some(item => item.key === value)) section.value = value as SectionKey
 }
 
 async function setOverlayOpen(next: boolean) {
@@ -282,6 +284,7 @@ ResponsiveOverlay(
             id="oc-project-prompt" v-model="form.system_prompt" class="min-h-40"
             placeholder="留空表示不附加项目提示词")
           FieldDescription 会话开始生成时，项目提示词在前、会话提示词在后，中间固定两个换行。
+    WorkspaceFilePanel(v-else-if="section === 'files' && projectId !== null" mount="project" :scope-id="projectId")
     FieldGroup(v-else)
         Field
           FieldLabel 默认模型

@@ -446,7 +446,7 @@ function onToolsEnabledChange(enabled: boolean) {
       .ml-auto.flex.shrink-0.items-center.gap-1
         ConversationMapDialog(:conversation-id="sid" @locate="onLocateMessage")
         ConversationSettings(
-          :form="form" :sources="sources" :project="project" :has-conversation="sid !== null"
+          :form="form" :sources="sources" :project="project" :has-conversation="sid !== null" :conversation-id="sid"
           @commit="commitSettings")
   .min-h-0.flex-1
     CollectionState(:loaded="visiblePath.length > 0 || sid === null || (sync.conversationsLoaded && sync.loadedMessageConversations.has(sid))" :error="messageLoadError || (sid !== null ? sync.conversationsError : null)" :retry="retryChat")
