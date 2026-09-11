@@ -99,6 +99,13 @@
       "when": 1789110516878,
       "tag": "0013_plugin-configs",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1789125813945,
+      "tag": "0014_workspace-files",
+      "breakpoints": true
     }
   ]
 }

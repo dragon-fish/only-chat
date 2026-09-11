@@ -206,6 +206,56 @@ export const attachments = sqliteTable('attachments', {
   created_at: integer().notNull(),
 }, (t) => [uniqueIndex('attachments_user_sha_uq').on(t.user_id, t.sha256)])
 
+/**
+ * A named, mutable pointer in the workspace filesystem. Writes never mutate a row's content: they
+ * append an immutable version and advance `current_version`.
+ *
+ * Exactly one of `project_id` and `conversation_id` is set — the WorkspaceFiles service enforces
+ * that, not a CHECK, so the scope model can change without rebuilding the table.
+ */
+export const workspaceFiles = sqliteTable('workspace_files', {
+  id: integer().primaryKey({ autoIncrement: true }),
+  user_id: integer().notNull().references(() => users.id, { onDelete: 'cascade' }),
+  project_id: integer().references(() => projects.id, { onDelete: 'cascade' }),
+  conversation_id: integer().references(() => conversations.id, { onDelete: 'cascade' }),
+  relative_path: text().notNull(),
+  current_version: integer().notNull().default(0),
+  created_at: integer().notNull(),
+  updated_at: integer().notNull(),
+  /** Logical deletion. Versions outlive it until attachment cleanup can reclaim the bytes. */
+  deleted_at: integer(),
+}, (t) => [
+  // Partial, because a deleted path must be reusable. This cannot move to the service: two
+  // concurrent creates would both pass an existence check and then both insert.
+  uniqueIndex('workspace_files_project_path_uq').on(t.project_id, t.relative_path).where(sql`${t.deleted_at} IS NULL AND ${t.project_id} IS NOT NULL`),
+  uniqueIndex('workspace_files_conversation_path_uq').on(t.conversation_id, t.relative_path).where(sql`${t.deleted_at} IS NULL AND ${t.conversation_id} IS NOT NULL`),
+  index('workspace_files_project_idx').on(t.project_id, t.deleted_at),
+  index('workspace_files_conversation_idx').on(t.conversation_id, t.deleted_at),
+])
+
+/** Immutable content versions. Bytes live in `attachments`/R2; this row is the pointer plus metadata. */
+export const workspaceFileVersions = sqliteTable('workspace_file_versions', {
+  id: integer().primaryKey({ autoIncrement: true }),
+  file_id: integer().notNull().references(() => workspaceFiles.id, { onDelete: 'cascade' }),
+  version: integer().notNull(),
+  // Restricted rather than cascading: losing the bytes out from under a version would leave a
+  // readable file that cannot be read.
+  attachment_id: integer().notNull().references(() => attachments.id, { onDelete: 'restrict' }),
+  mime: text().notNull(),
+  file_size: integer().notNull(),
+  /** `content.split('\n').length`, 0 for empty. Must match what read offsets can address. */
+  total_lines: integer().notNull(),
+  // Provenance is cleared, not cascaded: deleting the conversation that produced a Project file
+  // must not delete the file.
+  source_conversation_id: integer().references(() => conversations.id, { onDelete: 'set null' }),
+  source_message_id: integer().references(() => messages.id, { onDelete: 'set null' }),
+  tool_call_id: text(),
+  created_at: integer().notNull(),
+}, (t) => [
+  uniqueIndex('workspace_file_versions_file_version_uq').on(t.file_id, t.version),
+  index('workspace_file_versions_attachment_idx').on(t.attachment_id),
+])
+
 export const artifactRuns = sqliteTable('artifact_runs', {
   id: integer().primaryKey({ autoIncrement: true }),
   user_id: integer().notNull().references(() => users.id, { onDelete: 'cascade' }),
