@@ -4,7 +4,7 @@ import type { Assets } from './plugins/assets'
 import type { Llm } from './plugins/llm'
 import type { Hub } from './plugins/hub'
 import type { BeforeSendPayload } from './plugins/hub/generation'
-import type { ApiApp } from './plugins/api'
+import type { ApiApp, PluginApi } from './plugins/api'
 import type { ModelCatalog } from './plugins/model-catalog'
 import type { ToolRegistry } from './plugins/tools'
 import type { PluginConfig } from './plugins/plugin-config'
@@ -19,6 +19,7 @@ declare module 'cordis' {
     assets: Assets
     llm: Llm
     api: ApiApp
+    pluginApi: PluginApi
     modelCatalog: ModelCatalog
     tools: ToolRegistry
     pluginConfig: PluginConfig

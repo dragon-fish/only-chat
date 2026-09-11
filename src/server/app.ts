@@ -12,6 +12,7 @@ import { AskUserServerPlugin } from '@/plugins/ask-user/server'
 import { TavilyServerPlugin } from '@/plugins/tavily/server'
 import { DatetimeServerPlugin } from '@/plugins/datetime/server'
 import { WorkspaceFilesServerPlugin } from '@/plugins/workspace-files/server'
+import { WorkspaceFilesApiPlugin } from '@/plugins/workspace-files/server/api'
 
 export type Side = 'worker' | 'hub'
 
@@ -63,6 +64,8 @@ export async function createApp(options: AppOptions): Promise<Context> {
     if (!ctx.get('modelCatalog')) throw new Error('ModelCatalog loaded but ctx.modelCatalog is unavailable')
     await ctx.plugin(ApiPlugin)
     if (!ctx.get('api')) throw new Error('ApiPlugin loaded but ctx.api is unavailable')
+    // Plugin routes mount after the guard is in place, which is what puts them behind it.
+    await ctx.plugin(WorkspaceFilesApiPlugin)
   }
   return ctx
 }

@@ -14,10 +14,27 @@ import { adminEndpoints } from '../auth/access'
 import { AdminCreateUserSchema, AdminSetRoleSchema } from '@/shared/auth'
 import { adminSiteSettingsRoutes, publicSiteSettingsRoutes } from './site-settings'
 import { artifactRoutes } from './artifacts'
-import { workspaceFileRoutes, workspacePreviewRoutes } from './workspace-files'
 import { pluginConfigRoutes } from './plugin-config'
 
 export type ApiApp = Hono<ApiEnv>
+
+/**
+ * Where a plugin's HTTP surface lives. Every plugin route is under its own id, so two plugins can
+ * never claim the same path and a URL says which plugin answers it. Core resources stay on `/api`
+ * and are not up for grabs.
+ */
+export const PLUGIN_API_PREFIX = '/api/plugins'
+
+export interface PluginApi {
+  /** Mounts a plugin's routes behind the session guard, under `/api/plugins/<pluginId>`. */
+  register(pluginId: string, routes: ApiApp): void
+  /**
+   * Mounts routes that carry their own credential instead of the session cookie, under
+   * `/api/plugins/<pluginId>/<segment>`. Used only where a cookie cannot travel — a sandboxed frame
+   * has an opaque origin, so its own subresource requests are cross-site and arrive without one.
+   */
+  registerPublic(pluginId: string, segment: string, routes: ApiApp): void
+}
 
 export const ApiPlugin = {
   name: 'api',
@@ -37,10 +54,15 @@ export const ApiPlugin = {
     app.all('/api/auth/*', c => ctx.auth.instance.handler(c.req.raw))
     app.get('/api/health', (c) => c.json({ ok: true }))
     app.route('/api', publicSiteSettingsRoutes(ctx))
-    // Before the session guard: a sandboxed preview frame cannot send the cookie, so its own
-    // short-lived ticket in the path is what authorises it.
-    app.route('/api', workspacePreviewRoutes(ctx))
-    app.use('/api/*', requireAuth(ctx))
+    // Hono copies a sub-app's routes at `route()` time and plugins mount after this point, so the
+    // guard cannot be ordered around them. It asks instead, and a plugin path is exempt only while
+    // it is in this set — which only `registerPublic` can put it in.
+    const publicPluginPrefixes = new Set<string>()
+    const guard = requireAuth(ctx)
+    app.use('/api/*', async (c, next) => {
+      for (const prefix of publicPluginPrefixes) if (c.req.path.startsWith(prefix)) return next()
+      return guard(c, next)
+    })
     app.use('/ws', requireAuth(ctx))
     app.route('/api', adminSiteSettingsRoutes(ctx))
     app.get('/ws', (c) => {
@@ -72,13 +94,23 @@ export const ApiPlugin = {
     app.route('/api', projectRoutes(ctx))
     app.route('/api', modelCatalogRoutes(ctx))
     app.route('/api', artifactRoutes(ctx))
-    app.route('/api', workspaceFileRoutes(ctx))
     app.route('/api', pluginConfigRoutes(ctx))
     app.onError((err, c) => {
       if (err instanceof CatalogUnavailableError) return c.json({ error: err.message }, 503)
       console.error('api error', err)
       return c.json({ error: err.message }, 500)
     })
+    const pluginApi: PluginApi = {
+      register(pluginId, routes) {
+        app.route(`${PLUGIN_API_PREFIX}/${pluginId}`, routes)
+      },
+      registerPublic(pluginId, segment, routes) {
+        const prefix = `${PLUGIN_API_PREFIX}/${pluginId}/${segment}`
+        publicPluginPrefixes.add(`${prefix}/`)
+        app.route(prefix, routes)
+      },
+    }
     ctx.provide('api', app)
+    ctx.provide('pluginApi', pluginApi)
   },
 }

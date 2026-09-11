@@ -207,6 +207,29 @@ id and nothing else — never base64, never raw bytes, never the provider's temp
 bytes dedupe by SHA-256. If any step fails, the reply ends as an error with its text intact and no
 orphan row, no half-written R2 object and no file content anywhere.
 
+## Plugin namespaces
+
+A plugin owns three surfaces, and each has one place to live so two plugins can never collide:
+
+    /api/plugins/<plugin-id>/...         HTTP routes, behind the session guard
+    /api/plugins/<plugin-id>/<seg>/...   routes registered as public, carrying their own credential
+    /plugins/<plugin-id>/...             reserved for client routes; nothing uses it yet
+
+Plugin ids are already unique — the client host throws when two plugins claim one tool id — so
+namespacing by id makes a collision impossible rather than unlikely, and a URL says which plugin
+answers it. Core resources keep `/api` and are not up for grabs.
+
+Server routes are registered through `ctx.pluginApi`, not by reaching for the Hono app: `register`
+mounts a sub-app behind the session guard, `registerPublic` mounts one in front of it. Public is for
+routes a cookie cannot reach — a sandboxed frame has an opaque origin, so its own subresource
+requests are cross-site and arrive without one; such a route carries its own short-lived credential
+instead.
+
+A plugin's routes run on the Worker and its tools run inside the UserHub Durable Object, which are
+different cordis roots. One plugin object injecting both would sit PENDING forever on whichever
+service its side does not have, so the two halves are separate plugins — see
+`src/plugins/workspace-files/server/`.
+
 ## Layout
 
     src/server/       Worker entry, cordis app, plugins (database, assets, llm, hub, api)

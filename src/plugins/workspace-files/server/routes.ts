@@ -4,11 +4,12 @@ import { zipSync } from 'fflate'
 import { and, eq } from 'drizzle-orm'
 import { conversations, projects } from '@/server/db/schema'
 import { WORKSPACE_FILES_PLUGIN_ID } from '@/shared/plugins'
-import { parseWorkspacePath, type WorkspaceMount } from '../workspace-files/path'
-import { WorkspaceFiles, type WorkspaceError } from '../workspace-files/service'
+import { PLUGIN_API_PREFIX } from '@/server/plugins/api'
+import { parseWorkspacePath, type WorkspaceMount } from '@/server/plugins/workspace-files/path'
+import { WorkspaceFiles, type WorkspaceError } from '@/server/plugins/workspace-files/service'
 import type { FileRecord } from '@/shared/workspace-files'
-import { authUserId, type ApiEnv } from './auth'
-import { parseId } from './params'
+import { authUserId, type ApiEnv } from '@/server/plugins/api/auth'
+import { parseId } from '@/server/plugins/api/params'
 
 /** HTTP status for each expected failure. Everything else throws and becomes a 500. */
 const STATUS: Record<WorkspaceError, 400 | 404 | 409> = {
@@ -62,7 +63,7 @@ async function previewUrlFor(ctx: Context, userId: number, record: FileRecord): 
   const ticket: PreviewTicket = { userId, mount, scopeId }
   await ctx.env.KV.put(`workspace-preview:${token}`, JSON.stringify(ticket), { expirationTtl: PREVIEW_TICKET_TTL_SECONDS })
   const path = record.relativePath.split('/').map(encodeURIComponent).join('/')
-  return `/api/workspace-preview/${token}/${path}`
+  return `${PLUGIN_API_PREFIX}/${WORKSPACE_FILES_PLUGIN_ID}/${PREVIEW_SEGMENT}/${token}/${path}`
 }
 
 /**
@@ -90,10 +91,13 @@ function archiveName(prefix: string, fallback: string): string {
   return `${folder || fallback}.zip`
 }
 
+/** The one public sub-path: its ticket is the credential, because a sandboxed frame sends no cookie. */
+export const PREVIEW_SEGMENT = 'preview'
+
 export function workspacePreviewRoutes(ctx: Context) {
   const r = new Hono<ApiEnv>()
 
-  r.get('/workspace-preview/:token/*', async (c) => {
+  r.get('/:token/*', async (c) => {
     const token = c.req.param('token')
     if (!/^[0-9a-f]{32}$/.test(token)) return c.json({ error: 'not found' }, 404)
     const ticket = await ctx.env.KV.get<PreviewTicket>(`workspace-preview:${token}`, 'json')
@@ -102,7 +106,7 @@ export function workspacePreviewRoutes(ctx: Context) {
     const config = await ctx.pluginConfig.read(ticket.userId, WORKSPACE_FILES_PLUGIN_ID)
     if (config.html_preview !== true) return c.json({ error: 'not found' }, 404)
 
-    const marker = `/workspace-preview/${token}/`
+    const marker = `/${token}/`
     const tail = c.req.path.slice(c.req.path.indexOf(marker) + marker.length)
     let relativePath: string
     try { relativePath = decodeURIComponent(tail) }
@@ -223,7 +227,7 @@ export function workspaceFileRoutes(ctx: Context) {
     return zipResponse(result.value, archiveName(prefix, conversation.title || 'conversation'))
   })
 
-  r.get('/workspace-files/:id', async (c) => {
+  r.get('/files/:id', async (c) => {
     const userId = authUserId(c)
     const fileId = parseId(c.req.param('id'))
     if (fileId === null) return c.json({ error: 'invalid id' }, 400)
@@ -232,7 +236,7 @@ export function workspaceFileRoutes(ctx: Context) {
     return c.json({ ...result.value, previewUrl: await previewUrlFor(ctx, userId, result.value.record) })
   })
 
-  r.get('/workspace-files/:id/download', async (c) => {
+  r.get('/files/:id/download', async (c) => {
     const userId = authUserId(c)
     const fileId = parseId(c.req.param('id'))
     if (fileId === null) return c.json({ error: 'invalid id' }, 400)
@@ -250,7 +254,7 @@ export function workspaceFileRoutes(ctx: Context) {
     })
   })
 
-  r.delete('/workspace-files/:id', async (c) => {
+  r.delete('/files/:id', async (c) => {
     const userId = authUserId(c)
     const fileId = parseId(c.req.param('id'))
     if (fileId === null) return c.json({ error: 'invalid id' }, 400)

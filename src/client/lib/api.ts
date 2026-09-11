@@ -6,6 +6,10 @@ import { useAuthStore } from '@/client/stores/auth'
 import type { ArtifactDto, ArtifactPage, ArtifactRunDto, CreateImageRunInput, CreateImageRunResponse } from '@/shared/artifacts'
 import type { PluginConfigStatusMap } from '@/shared/plugins'
 import type { FileRecord } from '@/shared/workspace-files'
+import { WORKSPACE_FILES_PLUGIN_ID } from '@/shared/plugins'
+
+/** A plugin's HTTP surface lives under its own id, so two plugins can never claim the same path. */
+const WORKSPACE_FILES_API = `/api/plugins/${WORKSPACE_FILES_PLUGIN_ID}`
 
 export class ApiError extends Error {
   constructor(readonly status: number, readonly detail: string, method: string, path: string) {
@@ -94,13 +98,13 @@ export const api = {
   artifact: (id: number) => request<ArtifactDto>('GET', `/api/artifacts/${id}`),
   deleteArtifact: (id: number) => request<void>('DELETE', `/api/artifacts/${id}`),
   artifactContentUrl: (id: number, variant?: 'gallery' | 'preview') => `/api/artifacts/${id}/content${queryString({ variant })}`,
-  projectFiles: (projectId: number) => request<{ files: FileRecord[] }>('GET', `/api/projects/${projectId}/files`),
+  projectFiles: (projectId: number) => request<{ files: FileRecord[] }>('GET', `${WORKSPACE_FILES_API}/projects/${projectId}/files`),
   conversationFiles: (conversationId: number) =>
-    request<{ files: FileRecord[]; projectFiles: FileRecord[]; projectId: number | null }>('GET', `/api/conversations/${conversationId}/files`),
-  workspaceFile: (id: number) => request<{ record: FileRecord; content: string; mime: string; previewUrl: string | null }>('GET', `/api/workspace-files/${id}`),
+    request<{ files: FileRecord[]; projectFiles: FileRecord[]; projectId: number | null }>('GET', `${WORKSPACE_FILES_API}/conversations/${conversationId}/files`),
+  workspaceFile: (id: number) => request<{ record: FileRecord; content: string; mime: string; previewUrl: string | null }>('GET', `${WORKSPACE_FILES_API}/files/${id}`),
   // A link, not a fetch: the download is served as an attachment and the browser owns saving it.
-  workspaceFileDownloadUrl: (id: number) => `/api/workspace-files/${id}/download`,
-  deleteWorkspaceFile: (id: number) => request<void>('DELETE', `/api/workspace-files/${id}`),
-  projectFilesArchiveUrl: (projectId: number) => `/api/projects/${projectId}/files/archive`,
-  conversationFilesArchiveUrl: (conversationId: number) => `/api/conversations/${conversationId}/files/archive`,
+  workspaceFileDownloadUrl: (id: number) => `${WORKSPACE_FILES_API}/files/${id}/download`,
+  deleteWorkspaceFile: (id: number) => request<void>('DELETE', `${WORKSPACE_FILES_API}/files/${id}`),
+  projectFilesArchiveUrl: (projectId: number) => `${WORKSPACE_FILES_API}/projects/${projectId}/files/archive`,
+  conversationFilesArchiveUrl: (conversationId: number) => `${WORKSPACE_FILES_API}/conversations/${conversationId}/files/archive`,
 }
