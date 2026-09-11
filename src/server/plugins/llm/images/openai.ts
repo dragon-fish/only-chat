@@ -45,8 +45,32 @@ function appendOptions(body: FormData, request: ImageGenerationRequest): void {
   if (params.output_format) body.set('output_format', params.output_format)
 }
 
-async function readResponse(response: Response, request: ImageGenerationRequest): Promise<ImageGenerationResult> {
-  if (!response.ok) throw new Error(`Images API request failed: ${response.status}`)
+/**
+ * A provider's error `code` is a classification token; its `message` is free text that routinely
+ * quotes the request back, which is how a credential ends up in one. Only the token may travel into
+ * `artifact_runs.error`, where a user reads it — the same rule `fileCleanupError` follows.
+ */
+const UPSTREAM_CODE = /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/
+
+async function upstreamCode(response: Response): Promise<string | null> {
+  const body = await response.text().catch(() => '')
+  let parsed: unknown
+  try { parsed = JSON.parse(body) }
+  catch { return null }
+  const error = (parsed as { error?: unknown })?.error
+  const code = typeof error === 'object' && error !== null
+    ? (error as { code?: unknown }).code
+    : (parsed as { code?: unknown })?.code
+  return typeof code === 'string' && UPSTREAM_CODE.test(code) ? code : null
+}
+
+async function readResponse(response: Response, request: ImageGenerationRequest, path: string): Promise<ImageGenerationResult> {
+  if (!response.ok) {
+    // The path matters as much as the status: which of the two endpoints was called depends on
+    // whether the request carried a reference, and a 404 means different things for each.
+    const code = await upstreamCode(response)
+    throw new Error(`Images API request failed: ${response.status} at ${path}${code === null ? '' : ` (${code})`}`)
+  }
   const parsed = ResponseSchema.parse(await response.json())
   const images = await Promise.all(parsed.data.map(async (item) => {
     let bytes: Uint8Array<ArrayBuffer>
@@ -101,8 +125,10 @@ export function createOpenAIImagesClient(
           } : {}),
         })
       }
-      const endpoint = `${base}/images/${editing && options.referenceMode !== 'generation-json' ? 'edits' : 'generations'}`
-      return readResponse(await fetch(endpoint, { method: 'POST', headers, body, signal: request.signal }), request)
+      // Only the path we built travels into the error: a base URL can carry a key in its query.
+      const path = `/images/${editing && options.referenceMode !== 'generation-json' ? 'edits' : 'generations'}`
+      const response = await fetch(`${base}${path}`, { method: 'POST', headers, body, signal: request.signal })
+      return readResponse(response, request, path)
     },
   }
 }
