@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, inject, watchEffect } from 'vue'
-import { CircleHelpIcon, WrenchIcon } from '@lucide/vue'
+import { CircleHelpIcon, WrenchIcon, WrenchOffIcon } from '@lucide/vue'
 import type { ClientPluginHost } from '@/client/plugins/host'
 import { pluginManifests } from '@/client/plugins/loaders'
 import { Badge } from '@/client/ui/badge'
@@ -28,7 +28,11 @@ const rows = computed(() => availableToolGroups(pluginManifests, props.plugins, 
 const selectedCount = computed(() => rows.value.filter(row => row.selected).length)
 /** The trigger states what will actually happen this turn, not what is ticked below. */
 const active = computed(() => props.enabled && props.supported ? selectedCount.value : 0)
-const triggerLabel = computed(() => (active.value === 0 ? '未启用' : `启用 ${active.value} 个`))
+const triggerLabel = computed(() => {
+  if (!props.supported) return '不支持'
+  if (!props.enabled) return '已禁用'
+  return `启用 ${selectedCount.value} 个`
+})
 const headerHint = computed(() => (
   props.supported ? '为当前对话选择可调用的工具。' : '当前模型不支持工具调用，本次生成不会发送工具定义。'
 ))
@@ -50,7 +54,7 @@ component(:is="desktop ? Popover : Drawer")
     Button(
       variant="ghost" :size="desktop ? 'xs' : 'icon-sm'" aria-label="选择工具" :title="headerHint"
       :class="[desktop ? 'min-h-10 gap-1.5 md:min-h-6' : 'relative size-10', active ? '' : 'text-muted-foreground']")
-      WrenchIcon(data-icon="inline-start")
+      component(:is="enabled ? WrenchIcon : WrenchOffIcon" data-icon="inline-start")
       template(v-if="desktop") {{ triggerLabel }}
       Badge(v-else-if="active" variant="secondary" class="absolute -right-1 -top-1 min-w-4 justify-center px-1 text-[10px]") {{ active }}
   component(
