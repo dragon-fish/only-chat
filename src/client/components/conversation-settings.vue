@@ -2,7 +2,6 @@
 import { computed, reactive, ref } from 'vue'
 import { RotateCcw, Settings2 } from '@lucide/vue'
 import ResponsiveOverlay from '@/client/components/layout/responsive-overlay.vue'
-import WorkspaceFilePanel from '@/client/components/workspace-file-panel.vue'
 import { Badge } from '@/client/ui/badge'
 import { Button } from '@/client/ui/button'
 import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/client/ui/field'
@@ -30,8 +29,6 @@ const props = defineProps<{
   project: Project | undefined
   /** A draft has no title yet: the conversation does not exist until the first message is sent. */
   hasConversation: boolean
-  /** Null while this is still a draft, which is also why it has no files yet. */
-  conversationId: number | null
 }>()
 const emit = defineEmits<{ commit: [] }>()
 const open = ref(false)
@@ -220,10 +217,6 @@ ResponsiveOverlay(:open="open" title="会话设置" @update:open="setOpen")
             NumberFieldInput(class="text-sm" @input="onType('max_tokens', $event)" @blur="onSettle('max_tokens')")
             NumberFieldIncrement(:disabled="blank('max_tokens')")
         FieldDescription(class="text-xs") {{ inheritHint('max_tokens', inherited?.max_tokens) }}
-
-      Field(v-if="conversationId !== null")
-        FieldLabel(class="text-xs") 文件
-        WorkspaceFilePanel(mount="conversation" :scope-id="conversationId")
 
       Field(v-if="!hasConversation")
         FieldDescription(class="text-xs") 这些设置会随第一条消息一起创建会话。

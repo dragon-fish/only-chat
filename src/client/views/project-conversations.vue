@@ -8,6 +8,7 @@ import ConversationNavRow from '@/client/components/layout/conversation-nav-row.
 import CollectionState from '@/client/components/collection-state.vue'
 import { useSyncStore } from '@/client/stores/sync'
 import { Button } from '@/client/ui/button'
+import WorkspaceFilesDialog from '@/client/components/workspace-files-dialog.vue'
 import { Field, FieldGroup, FieldLabel } from '@/client/ui/field'
 import { Input } from '@/client/ui/input'
 import { ScrollArea } from '@/client/ui/scroll-area'
@@ -51,6 +52,7 @@ watch([() => sync.projectsLoaded, project], ([loaded, value]) => {
             Project 新对话
           </RouterLink>
         </Button>
+        <WorkspaceFilesDialog mount="project" :scope-id="project.id" label />
         <Button as-child variant="outline" class="min-h-10">
           <RouterLink :to="`/project/${project.id}/settings`">
             <SettingsIcon data-icon="inline-start" />

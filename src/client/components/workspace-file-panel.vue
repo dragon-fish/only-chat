@@ -93,9 +93,7 @@ function setPreviewOpen(open: boolean) {
 
 <template lang="pug">
 .flex.flex-col.gap-3
-  .flex.items-center.justify-between.gap-2
-    p(class="text-muted-foreground text-xs")
-      | {{ mount === 'project' ? '模型写入 /project 的文件，这个 Project 下的所有会话都能读到。' : '模型写入 /conversation 的文件，只有这次会话能读到。' }}
+  .flex.items-center.justify-end
     Button(type="button" variant="ghost" size="xs" class="min-h-10 md:min-h-6" :disabled="loading" @click="load")
       RefreshCwIcon(data-icon="inline-start")
       | 刷新

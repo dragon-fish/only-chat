@@ -13,6 +13,7 @@ import ConversationMapDialog from '@/client/components/conversation-map-dialog.v
 import CollectionState from '@/client/components/collection-state.vue'
 import ContextUsageIndicator from '@/client/components/context-usage-indicator.vue'
 import ToolSelector from '@/client/components/tool-selector.vue'
+import WorkspaceFilesDialog from '@/client/components/workspace-files-dialog.vue'
 import ToolPartRenderer from '@/client/components/tool-part-renderer.vue'
 import { defaultToolsForSettings, conversationToolBlockReason } from '@/client/components/tool-selector'
 import { pendingAskUserCalls } from '@/client/components/tool-part-renderer'
@@ -445,8 +446,9 @@ function onToolsEnabledChange(enabled: boolean) {
         RotateCcwIcon
       .ml-auto.flex.shrink-0.items-center.gap-1
         ConversationMapDialog(:conversation-id="sid" @locate="onLocateMessage")
+        WorkspaceFilesDialog(mount="conversation" :scope-id="sid")
         ConversationSettings(
-          :form="form" :sources="sources" :project="project" :has-conversation="sid !== null" :conversation-id="sid"
+          :form="form" :sources="sources" :project="project" :has-conversation="sid !== null"
           @commit="commitSettings")
   .min-h-0.flex-1
     CollectionState(:loaded="visiblePath.length > 0 || sid === null || (sync.conversationsLoaded && sync.loadedMessageConversations.has(sid))" :error="messageLoadError || (sid !== null ? sync.conversationsError : null)" :retry="retryChat")
