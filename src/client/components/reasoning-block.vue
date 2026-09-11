@@ -68,7 +68,7 @@ Collapsible(:open="open" @update:open="setOpen")
     span.shrink-0(v-if="timing" class="opacity-70") （{{ timing }}）
     //- The one-line peek is what makes a collapsed block worth leaving collapsed.
     span(v-if="!open" class="min-w-0 flex-1 truncate text-left opacity-60") {{ preview }}
-    ChevronRightIcon(class="size-3.5 shrink-0 transition-transform group-data-[state=open]:rotate-90")
+    ChevronRightIcon(class="ml-auto size-3.5 shrink-0 transition-transform group-data-[state=open]:rotate-90")
   CollapsibleContent
     .oc-scroll.mt-1.max-h-80.overflow-y-auto.border-l.pl-3(class="text-xs leading-relaxed text-muted-foreground")
       p.whitespace-pre-wrap {{ text }}

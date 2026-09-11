@@ -35,8 +35,12 @@ const seconds = (ms: number) => Math.max(0, Math.round(ms / 1000))
 /** Live ticking belongs to the individual block; the summary only reports a settled total. */
 const totalMs = computed(() => totalReasoningMs(props.segments))
 
+/**
+ * A group holds thinking and tool calls, so it is named for the whole rather than for one half.
+ * Calling it 「已思考」 put that label immediately above the identical label on each block inside.
+ */
 const label = computed(() => {
-  if (!live.value) return '已思考'
+  if (!live.value) return '执行过程'
   const active = props.segments.find(segment => segment.key === props.activeSegmentKey)
   return active?.kind === 'tool' ? `正在调用 ${active.call.name}` : '正在思考'
 })
@@ -45,7 +49,7 @@ const timing = computed(() => {
   if (live.value || totalMs.value === null || !Number.isFinite(totalMs.value)) return null
   // 「用时 0 秒」 is noise, and a tool that answers instantly produces a lot of it.
   const whole = seconds(totalMs.value)
-  return whole > 0 ? `用时 ${whole} 秒` : null
+  return whole > 0 ? `共 ${whole} 秒` : null
 })
 
 const steps = computed(() => props.segments.filter(segment => segment.kind === 'tool').length)
@@ -58,12 +62,11 @@ Collapsible(:open="open" @update:open="setOpen")
     BrainIcon(class="size-4 shrink-0")
     span.shrink-0 {{ label }}
     span.shrink-0(v-if="timing" class="opacity-70") （{{ timing }}）
-    span.shrink-0(v-if="!open && steps" class="opacity-70") · {{ steps }} 次工具调用
+    span.shrink-0(v-if="steps" class="opacity-70") · {{ steps }} 次工具调用
     ChevronRightIcon(class="ml-auto size-3.5 shrink-0 transition-transform group-data-[state=open]:rotate-90")
   CollapsibleContent
     .mt-2.border-l.pl-3
       TurnSegments(
-        inline-reasoning
         :segments="segments" :message-id="messageId" :streaming="streaming"
         :active-segment-key="activeSegmentKey" :can-continue-tools="canContinueTools"
         :is-conversation-head="isConversationHead" :is-dark="isDark"
