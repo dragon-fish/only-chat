@@ -66,7 +66,7 @@ async function save() {
 <template lang="pug">
 .h-full.min-h-0.overflow-hidden
   Teleport(to="#page-header" defer)
-    SettingsBackButton
+    SettingsBackButton(to="/settings/plugins" label="返回插件列表" always-visible)
     span.truncate.text-sm.font-medium {{ manifest?.name ?? '插件配置' }}
   UnsavedChangesGuard(:dirty="dirty")
   .oc-scroll.h-full.overflow-y-auto
