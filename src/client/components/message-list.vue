@@ -47,11 +47,13 @@ const rows = computed(() => props.messages.map((message) => {
 </script>
 
 <template lang="pug">
-//- peek 0: the new turn goes to the very top. A sliver of the previous reply left hanging there
-//- reads as a mis-scroll rather than as context.
+//- auto-scroll off: a reply must not drag the viewport along as it streams. peek 0: a new turn goes
+//- to the very top, since a sliver of the previous reply left hanging there reads as a mis-scroll.
+//- Opening a conversation lands at the end — "last-anchor" only made sense while auto-scroll was
+//- there to carry on past it, and on its own it stops at the last question, mid-reply.
 MessageScrollerProvider(
   ref="scroller" :auto-scroll="false" :scroll-previous-item-peek="0"
-  default-scroll-position="last-anchor")
+  default-scroll-position="end")
   MessageScroller
     MessageScrollerViewport(class="oc-scroll")
       MessageScrollerContent(:aria-busy="streaming" class="mx-auto w-full max-w-3xl gap-6 px-4 py-5")

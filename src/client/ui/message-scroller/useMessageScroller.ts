@@ -75,6 +75,11 @@ type Mode
     | 'free-scrolling'
     | 'anchored-to-message'
     | 'settling-jump'
+    // Opening a conversation lands at the end, but the end keeps moving while markdown,
+    // highlighting and tables finish laying out. Hold there until the reader scrolls. This is
+    // deliberately not 'following-bottom': it must survive autoScroll being off, and it must
+    // never follow a streaming reply.
+    | 'settling-end'
 
 interface PrependRestore {
   element: HTMLElement
@@ -451,6 +456,7 @@ function createEngine(props: MessageScrollerProviderProps) {
       autoScroll()
       && !next.end
       && mode !== 'settling-jump'
+      && mode !== 'settling-end'
       && mode !== 'anchored-to-message'
     ) {
       mode = 'following-bottom'
@@ -713,31 +719,42 @@ function createEngine(props: MessageScrollerProviderProps) {
       return false
     const position = defaultScrollPosition()
     let applied = false
+    let endedAtBottom = false
     if (position === 'last-anchor') {
       const lastAnchor = content && viewport
         ? findLastAnchor(getMessageChildren(content, spacer))
         : null
       if (!content || !viewport || !lastAnchor) {
         applied = scrollToEnd({ behavior: 'auto' })
+        endedAtBottom = applied
       }
       else {
         const anchorOffset = getElementOffsetTop(lastAnchor, viewport)
         const contentHeight = measureContentHeight({ content, spacer, viewport })
-        applied = contentHeight - anchorOffset <= viewport.clientHeight
+        const fits = contentHeight - anchorOffset <= viewport.clientHeight
+        applied = fits
           ? scrollToEnd({ behavior: 'auto' })
           : scrollToElement(lastAnchor, { align: 'start' }, { keepPreviousPeek: true })
+        endedAtBottom = fits && applied
       }
     }
+    else if (position === 'end') {
+      applied = scrollToEnd({ behavior: 'auto' })
+      endedAtBottom = applied
+    }
     else {
-      applied = position === 'end'
-        ? scrollToEnd({ behavior: 'auto' })
-        : scrollToStart({ behavior: 'auto' })
+      applied = scrollToStart({ behavior: 'auto' })
     }
     if (applied) {
       defaultScrollPositionApplied = true
       if (mode === 'anchored-to-message' && content?.getAttribute('aria-busy') !== 'true') {
         streamingTurn = null
         mode = 'free-scrolling'
+      }
+      // scrollToEnd left the mode at free-scrolling; claim it back so late layout cannot strand
+      // the reader halfway up the conversation they just opened.
+      else if (endedAtBottom) {
+        mode = 'settling-end'
       }
       return true
     }
@@ -795,8 +812,12 @@ function createEngine(props: MessageScrollerProviderProps) {
         return
       }
     }
-    if (mode === 'following-bottom' && autoScroll()) {
+    const settling = mode === 'settling-end'
+    if (settling || (mode === 'following-bottom' && autoScroll())) {
       scrollToEnd({ behavior: 'auto' })
+      // scrollToEnd resets the mode; a settle has not finished just because it moved once.
+      if (settling)
+        mode = 'settling-end'
     }
     else {
       commitScrollState()
@@ -821,8 +842,11 @@ function createEngine(props: MessageScrollerProviderProps) {
   }
 
   function handleResize() {
-    if (mode === 'following-bottom' && autoScroll()) {
+    const settling = mode === 'settling-end'
+    if (settling || (mode === 'following-bottom' && autoScroll())) {
       scrollToEnd({ behavior: 'auto' })
+      if (settling)
+        mode = 'settling-end'
       return
     }
     if (mode === 'anchored-to-message' && content?.getAttribute('aria-busy') !== 'true') {
@@ -932,6 +956,7 @@ function createEngine(props: MessageScrollerProviderProps) {
       mode === 'following-bottom'
       || mode === 'anchored-to-message'
       || mode === 'settling-jump'
+      || mode === 'settling-end'
     ) {
       streamingTurn = null
       mode = 'free-scrolling'
