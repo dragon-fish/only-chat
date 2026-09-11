@@ -17,13 +17,15 @@ function clientOf(config: TavilyConfig): TavilyClient {
   return new TavilyClient({ apiKey: config.api_key, searchDepth: config.search_depth })
 }
 
+const TURN_LIMIT_TIP = '本工具存在单轮调用次数限制，剩余次数见调用结果。'
+
 const SEARCH_DESCRIPTION = [
   '联网搜索，返回标题、URL 与摘要片段。',
   '何时调：时效信息（最近的新闻、价格、赛事、版本）、训练截止之后的事实、小众专业话题、用户明确要求搜索。',
   '何时别调：稳定的事实性常识、闲聊、上下文或对话历史已经能回答的问题。',
   '结果不对就换关键词重搜（加年份、换语言、换平台名）。用完本轮次数仍未找到，就告诉用户没查到，不要拆分 query 绕开限制。',
-  '本工具存在单轮调用次数限制，剩余次数见每次调用结果，据此安排，不要靠撞上限才发现用完。',
   '摘要不够时，挑 1-3 个最相关的 URL 一次性传给 web_extract，不要每个 URL 单独调。',
+  TURN_LIMIT_TIP,
 ].join('\n')
 
 const EXTRACT_DESCRIPTION = [
@@ -32,7 +34,7 @@ const EXTRACT_DESCRIPTION = [
   '何时调：搜索摘要缺少具体数字、步骤或完整说明，或用户明确要求读某篇文章。',
   '何时别调：摘要已经够回答、URL 来源不可信（既非搜索结果也非用户提供）。',
   '单个 URL 失败会被单独标注，不要因为一个失败就放弃整批。',
-  '本工具存在单轮调用次数限制，剩余次数见每次调用结果，据此安排，不要靠撞上限才发现用完。',
+  TURN_LIMIT_TIP,
 ].join('\n')
 
 export const TavilyServerPlugin = {

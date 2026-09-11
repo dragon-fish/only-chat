@@ -754,7 +754,7 @@ function createEngine(props: MessageScrollerProviderProps) {
           scrollToEnd({ behavior: 'auto' })
           return
         }
-        scrollToElement(anchor, { align: 'start' }, { keepPreviousPeek: true })
+        scrollToElement(anchor, { align: 'start', behavior: 'smooth' }, { keepPreviousPeek: true })
         handledScrollAnchors.add(anchor)
         return
       }
@@ -762,7 +762,9 @@ function createEngine(props: MessageScrollerProviderProps) {
     if (children.length === previousCount) {
       const anchor = findFirstUnhandledAnchor(children, handledScrollAnchors)
       if (anchor) {
-        scrollToElement(anchor, { align: 'start' }, { keepPreviousPeek: true })
+        // Placing a new turn is the one scroll the reader should see happen; re-anchoring under a
+        // growing reply stays instant, or the view would chase itself for the whole turn.
+        scrollToElement(anchor, { align: 'start', behavior: 'smooth' }, { keepPreviousPeek: true })
         handledScrollAnchors.add(anchor)
         return
       }

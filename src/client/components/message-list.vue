@@ -47,7 +47,11 @@ const rows = computed(() => props.messages.map((message) => {
 </script>
 
 <template lang="pug">
-MessageScrollerProvider(ref="scroller" :auto-scroll="false" default-scroll-position="last-anchor")
+//- peek 0: the new turn goes to the very top. A sliver of the previous reply left hanging there
+//- reads as a mis-scroll rather than as context.
+MessageScrollerProvider(
+  ref="scroller" :auto-scroll="false" :scroll-previous-item-peek="0"
+  default-scroll-position="last-anchor")
   MessageScroller
     MessageScrollerViewport(class="oc-scroll")
       MessageScrollerContent(:aria-busy="streaming" class="mx-auto w-full max-w-3xl gap-6 px-4 py-5")
