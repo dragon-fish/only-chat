@@ -2,7 +2,7 @@
 import type { CheckboxRootEmits, CheckboxRootProps } from 'reka-ui'
 
 import type { HTMLAttributes } from 'vue'
-import { CheckIcon } from '@lucide/vue'
+import { CheckIcon, MinusIcon } from '@lucide/vue'
 import { reactiveOmit } from '@vueuse/core'
 import { CheckboxIndicator, CheckboxRoot, useForwardPropsEmits } from 'reka-ui'
 import { cn } from '@/client/lib/utils'
@@ -27,7 +27,10 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits)
       class="[&>svg]:size-3.5 grid place-content-center text-current transition-none"
     >
       <slot v-bind="slotProps">
-        <CheckIcon />
+        <!-- A partial selection must not look like a complete one: the indicator renders for
+             `indeterminate` too, and a tick there would claim every row is selected. -->
+        <MinusIcon v-if="slotProps.state === 'indeterminate'" />
+        <CheckIcon v-else />
       </slot>
     </CheckboxIndicator>
   </CheckboxRoot>
