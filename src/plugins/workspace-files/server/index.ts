@@ -2,13 +2,11 @@ import type { Context } from 'cordis'
 import { tool } from 'ai'
 import { WorkspaceFiles, type Result, type WorkspaceError } from '@/server/plugins/workspace-files/service'
 import type { ToolContext } from '@/server/plugins/tools'
+import { LIST_FILES_TOOL_ID, READ_FILE_TOOL_ID, WORKSPACE_FILES_PLUGIN_ID, WRITE_FILE_TOOL_ID } from '@/shared/plugins'
 import {
-  ListFilesInputSchema, READ_FILE_TOOL_ID, ReadFileInputSchema, WRITE_FILE_TOOL_ID,
-  WriteFileInputSchema, LIST_FILES_TOOL_ID,
+  ListFilesInputSchema, ReadFileInputSchema, WriteFileInputSchema,
   type ListFilesOutput, type ReadFileOutput, type WriteFileOutput, type WorkspaceToolError,
 } from '../shared'
-
-export const WORKSPACE_FILES_PLUGIN_ID = 'workspace_files' as const
 
 /** Each expected failure reads as a fact the model can act on, never as a malfunction. */
 const MESSAGES: Record<WorkspaceError, string> = {

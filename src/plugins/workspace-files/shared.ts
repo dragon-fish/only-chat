@@ -1,8 +1,6 @@
 import { z } from 'zod'
 
-export const LIST_FILES_TOOL_ID = 'list_files' as const
-export const READ_FILE_TOOL_ID = 'read_file' as const
-export const WRITE_FILE_TOOL_ID = 'write_file' as const
+export { LIST_FILES_TOOL_ID, READ_FILE_TOOL_ID, WRITE_FILE_TOOL_ID, WORKSPACE_FILES_PLUGIN_ID } from '@/shared/plugins'
 
 /**
  * Paths are validated again by the service; this only keeps obvious nonsense out of the model's
