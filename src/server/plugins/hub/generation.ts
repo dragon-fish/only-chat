@@ -114,10 +114,11 @@ async function resolveTarget(hub: Hub, args: ResolveArgs): Promise<Target> {
 
   const user = await getUser(hub.db, hub.userId)
   if (!user) throw new Error('user missing')
-  const toolIds = hub.app.tools.usable(draft.tools, user.settings.plugins)
-  if (toolIds.length > 0 && model.metadata_resolved.tool_call !== true) {
-    throw new Error('当前模型不支持工具调用，请取消所选工具或更换模型')
-  }
+  // A model that cannot call tools simply generates without them. Refusing the turn would force the
+  // user to empty the Conversation's selection by hand and rebuild it afterwards.
+  const toolIds = model.metadata_resolved.tool_call === true
+    ? hub.app.tools.usable(draft.tools, user.settings.plugins)
+    : []
 
   // The persisted override is the draft's, never this generation's model: copying the latter down
   // would silently end the conversation's Project inheritance.

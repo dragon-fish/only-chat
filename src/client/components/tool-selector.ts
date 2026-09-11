@@ -1,12 +1,17 @@
-import type { PluginConfigStatusMap, PluginManifest } from '@/shared/plugins'
+import type { PluginConfigStatusMap, PluginManifest, PluginToolDescriptor } from '@/shared/plugins'
 
-export interface PluginToolRow {
+/**
+ * One plugin as one switch. A plugin's tools are companions — `web_search` without `web_extract`,
+ * or `read_file` without `write_file`, is a half-equipped model — so they are selected together and
+ * the selector never offers them apart.
+ */
+export interface PluginGroupRow {
   id: string
-  pluginId: string
-  pluginName: string
-  /** The tool's own label. Two tools under one plugin must not read as the same row. */
   name: string
   description: string
+  tools: readonly PluginToolDescriptor[]
+  /** Every tool id this row writes into the Conversation snapshot. */
+  toolIds: string[]
   enabled: boolean
   configured: boolean
   selected: boolean
@@ -55,50 +60,49 @@ export function defaultToolsForSettings(
   )))
 }
 
+/**
+ * What the selector lists. A plugin switched off globally is hidden unless this Conversation's
+ * snapshot still names one of its tools: an offer nobody can accept is noise, but a tool this
+ * conversation has been using has to stay visible and switchable off.
+ */
 export function availablePluginRows(
   manifests: readonly PluginManifest[],
   settings: Readonly<Record<string, boolean>>,
   selected: readonly string[],
   status: PluginConfigStatusMap = {},
-): PluginToolRow[] {
+): PluginGroupRow[] {
   const selectedIds = new Set(selected)
   return [...manifests]
     .sort((a, b) => a.id.localeCompare(b.id))
-    .flatMap(manifest => manifest.tools.map(tool => ({
-      id: tool.id,
-      pluginId: manifest.id,
-      pluginName: manifest.name,
-      name: tool.name,
-      description: tool.description,
+    .map(manifest => ({
+      id: manifest.id,
+      name: manifest.name,
+      description: manifest.description,
+      tools: manifest.tools,
+      toolIds: manifest.tools.map(tool => tool.id),
       enabled: settings[manifest.id] === true,
       configured: pluginConfigured(manifest, status),
-      selected: selectedIds.has(tool.id),
-    })))
+      selected: manifest.tools.some(tool => selectedIds.has(tool.id)),
+    }))
+    .filter(row => row.enabled || row.selected)
 }
 
-export function nextToolSelection(selected: readonly string[], toolId: string, on: boolean): string[] {
+/** Switching a group on adds every tool it owns, which also repairs a half-selected old snapshot. */
+export function nextToolSelection(selected: readonly string[], toolIds: readonly string[], on: boolean): string[] {
   const next = new Set(selected)
-  if (on) next.add(toolId)
-  else next.delete(toolId)
+  for (const toolId of toolIds) {
+    if (on) next.add(toolId)
+    else next.delete(toolId)
+  }
   return stableToolIds([...next])
-}
-
-export function toolSelectionSupported(
-  selected: readonly string[],
-  globallyAvailable: ReadonlySet<string>,
-  modelSupportsTools: boolean,
-): boolean {
-  return modelSupportsTools || !selected.some(toolId => globallyAvailable.has(toolId))
 }
 
 export function conversationToolBlockReason(state: {
   draft: boolean
   settingsLoaded: boolean
   pending: boolean
-  toolsSupported: boolean
 }): string | null {
   if (state.draft && !state.settingsLoaded) return '正在加载插件设置…'
   if (state.pending) return '请先回答或取消当前问题'
-  if (!state.toolsSupported) return '当前模型不支持工具调用，请更换模型或停用已选工具'
   return null
 }

@@ -279,7 +279,7 @@ describe('generation', () => {
     expect(created[0]!.doGenerateCalls[0]!.tools).toBeUndefined()
   })
 
-  it('rejects enabled selected tools before generation when the model lacks tool-call support', async () => {
+  it('generates without tools on a model that lacks tool-call support, keeping the snapshot', async () => {
     const providerId = await seedProvider('no-tools-provider', 'no-tools-model', false, {})
     const db = createDb(env.DB)
     await db.update(users).set({ settings: { plugins: { ask_user: true } } }).where(eq(users.id, 1))
@@ -291,8 +291,10 @@ describe('generation', () => {
       type: 'send', request_id: 'no-tools', conversation_id: null, parent_id: null, parts: [{ type: 'text', text: 'hi' }],
       provider_id: providerId, model_id: 'no-tools-model', tools: ['ask_user'],
     }))
-    expect(await c.next('error')).toMatchObject({ request_id: 'no-tools', message: expect.stringMatching(/工具/) })
-    expect(created).toHaveLength(0)
+    expect(await c.next('message.done')).toMatchObject({ status: 'done', error: null })
+    // Sending would otherwise mean emptying the selection by hand and rebuilding it afterwards.
+    expect((await getConversation(db, conversationIdOf(c), 1))!.tools).toEqual(['ask_user'])
+    expect(created[0]!.doStreamCalls[0]!.tools).toBeUndefined()
   })
 
   it('suppresses globally disabled selected tools without deleting or blocking the conversation snapshot', async () => {

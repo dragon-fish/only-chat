@@ -14,7 +14,7 @@ import CollectionState from '@/client/components/collection-state.vue'
 import ContextUsageIndicator from '@/client/components/context-usage-indicator.vue'
 import ToolSelector from '@/client/components/tool-selector.vue'
 import ToolPartRenderer from '@/client/components/tool-part-renderer.vue'
-import { defaultToolsForSettings, conversationToolBlockReason, toolSelectionSupported } from '@/client/components/tool-selector'
+import { defaultToolsForSettings, conversationToolBlockReason } from '@/client/components/tool-selector'
 import { pendingAskUserCalls } from '@/client/components/tool-part-renderer'
 import { pluginManifests } from '@/client/plugins/loaders'
 import { projectPresentation, conversationPath } from '@/client/lib/ui-models'
@@ -149,17 +149,17 @@ const pendingToolCall = computed(() => pendingAskUserCalls(
   conversation.value?.head_message_id,
   optimisticToolCallIds.value,
 )[0] ?? null)
-const globallyAvailableTools = computed(() => new Set(defaultToolsForSettings(pluginManifests, sync.settings.plugins, sync.pluginConfig)))
-const toolsSupported = computed(() => toolSelectionSupported(
-  selectedTools.value,
-  globallyAvailableTools.value,
-  entry.value?.model.metadata.tool_call === true,
-))
+/**
+ * A model without tool-call support does not block the send: the server drops the tool definitions
+ * for that turn and the Conversation keeps its selection, because clearing it by hand to send one
+ * message — and restoring it afterwards — is busywork.
+ */
+// An unresolved model proves nothing unsupported, so the selector stays lit until one is known.
+const toolsSupported = computed(() => entry.value === undefined || entry.value.model.metadata.tool_call === true)
 const toolBlockReason = computed(() => conversationToolBlockReason({
   draft: sid.value === null,
   settingsLoaded: sync.settingsLoaded,
   pending: pendingToolCall.value !== null,
-  toolsSupported: toolsSupported.value,
 }))
 const messageHistoryReady = computed(() => sid.value === null || sync.loadedMessageConversations.has(sid.value))
 const canSend = computed(() => (
@@ -460,6 +460,7 @@ function onToolsChange(tools: string[]) {
     template(#left-controls)
       ToolSelector(
         :model-value="selectedTools" :plugins="sync.settings.plugins" :plugin-config="sync.pluginConfig" :desktop="isDesktop"
+        :supported="toolsSupported"
         @update:model-value="onToolsChange")
     template(#controls)
       ContextUsageIndicator(v-if="contextUsage" :usage="contextUsage.usage" :limit="contextUsage.limit")
