@@ -260,6 +260,22 @@ export function workspaceFileRoutes(ctx: Context) {
     return c.json({ files, scopes: await scopeLabels(db, userId, files) })
   })
 
+  /**
+   * Files left over from deleted conversations. They carry no scope, so unlike the trash there is
+   * nothing to label them with — which is why they are a list of their own rather than rows the
+   * trash would have to render as "unknown".
+   */
+  r.get('/orphans', async (c) => {
+    const userId = authUserId(c)
+    return c.json({ files: await filesFor(userId).listOrphans() })
+  })
+
+  r.delete('/orphans', async (c) => {
+    const userId = authUserId(c)
+    const files = filesFor(userId)
+    return c.json(await files.purge((await files.listOrphans()).map(file => file.id)))
+  })
+
   r.get('/trash', async (c) => {
     const userId = authUserId(c)
     const files = await filesFor(userId).listTrash()

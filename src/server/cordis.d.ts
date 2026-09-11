@@ -38,6 +38,11 @@ declare module 'cordis' {
     'conversation/deleted'(conversationId: number): void
     /** Awaited through `ctx.parallel`, inside the fork's rollback: a listener that throws undoes it. */
     'conversation/forked'(payload: ConversationForked): Promise<void>
+    /**
+     * The conversation row is about to be destroyed for good. Awaited, so a listener owning rows
+     * that would otherwise be cascaded away can carry them somewhere the user can still reach.
+     */
+    'conversation/before-purge'(payload: { userId: number, conversationId: number }): Promise<void>
     'message/before-send'(payload: BeforeSendPayload): void
     'message/done'(message: Message): void
     'project/created'(project: Project): void

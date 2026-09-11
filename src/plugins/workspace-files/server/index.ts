@@ -54,6 +54,13 @@ export const WorkspaceFilesServerPlugin = {
   apply(ctx: Context) {
     // A fork inherits `project_id`, so `/project` needs nothing; `/conversation` is keyed on the
     // conversation itself and would otherwise be empty under messages that talk about its files.
+    // Without this the foreign key cascade would delete the rows outright, losing files the user
+    // never chose to delete and stranding their bytes in R2 where nothing can reclaim them.
+    ctx.on('conversation/before-purge', async ({ userId, conversationId }) => {
+      const files = new WorkspaceFiles(ctx.db.orm, ctx.assets, userId)
+      await files.detachConversationFiles(conversationId)
+    })
+
     ctx.on('conversation/forked', async (payload) => {
       const files = new WorkspaceFiles(ctx.db.orm, ctx.assets, payload.userId)
       await files.copyConversationFiles(payload.sourceConversationId, payload.conversation.id)

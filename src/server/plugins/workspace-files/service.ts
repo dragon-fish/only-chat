@@ -1,5 +1,5 @@
 import type { FileRecord } from '@/shared/workspace-files'
-import { and, asc, desc, eq, inArray, isNotNull, isNull, like, lt, or, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, isNotNull, isNull, like, lt, or, sql, type SQL } from 'drizzle-orm'
 import type { DB } from '../../db/client'
 import type { SQLiteColumn } from 'drizzle-orm/sqlite-core'
 import {
@@ -659,17 +659,61 @@ export class WorkspaceFiles {
     return rows.map(row => recordOf(row.file, row.version))
   }
 
-  /** What delete left behind. Soft deletion is only worth having if it is visible and reversible. */
+  /**
+   * What delete left behind, excluding orphans. Every row here still names the Project or
+   * conversation it came from, which is what makes "restore" a meaningful offer.
+   */
   async listTrash(): Promise<Array<FileRecord & { deletedAt: number }>> {
+    return this.listDeleted(and(
+      or(isNotNull(workspaceFiles.project_id), isNotNull(workspaceFiles.conversation_id))!,
+    )!)
+  }
+
+  /**
+   * Files whose conversation was deleted out from under them. They are trashed like anything else
+   * and expire on the same schedule; they are listed apart because they have no scope left to show
+   * and cannot be restored to one.
+   */
+  async listOrphans(): Promise<Array<FileRecord & { deletedAt: number }>> {
+    return this.listDeleted(and(
+      isNull(workspaceFiles.project_id),
+      isNull(workspaceFiles.conversation_id),
+    )!)
+  }
+
+  private async listDeleted(scope: SQL): Promise<Array<FileRecord & { deletedAt: number }>> {
     const rows = await this.db.select({ file: workspaceFiles, version: workspaceFileVersions })
       .from(workspaceFiles)
       .leftJoin(workspaceFileVersions, and(
         eq(workspaceFileVersions.file_id, workspaceFiles.id),
         eq(workspaceFileVersions.version, workspaceFiles.current_version),
       ))
-      .where(and(eq(workspaceFiles.user_id, this.userId), isNotNull(workspaceFiles.deleted_at)))
+      .where(and(eq(workspaceFiles.user_id, this.userId), isNotNull(workspaceFiles.deleted_at), scope))
       .orderBy(desc(workspaceFiles.deleted_at))
     return rows.map(row => ({ ...recordOf(row.file, row.version), deletedAt: row.file.deleted_at! }))
+  }
+
+  /**
+   * Cuts a conversation's live files loose just before the conversation row is destroyed.
+   *
+   * Detaching rather than letting the foreign key cascade is the whole point: a cascade deletes the
+   * rows outright, which both loses content the user never chose to delete and strands the bytes in
+   * R2 forever, because `purge` can only reach a file that still has a row. Trashed and scopeless,
+   * they stay listable, stay reclaimable, and expire on the ordinary schedule.
+   *
+   * Files already in the trash keep the conversation they came from until the cascade takes it;
+   * only live files are worth carrying over.
+   */
+  async detachConversationFiles(conversationId: number): Promise<{ files: number }> {
+    const rows = await this.db.update(workspaceFiles)
+      .set({ conversation_id: null, deleted_at: Date.now() })
+      .where(and(
+        eq(workspaceFiles.user_id, this.userId),
+        eq(workspaceFiles.conversation_id, conversationId),
+        isNull(workspaceFiles.deleted_at),
+      ))
+      .returning({ id: workspaceFiles.id })
+    return { files: rows.length }
   }
 
   /**
@@ -683,6 +727,9 @@ export class WorkspaceFiles {
       isNotNull(workspaceFiles.deleted_at),
     )).limit(1)
     if (!file) return fail('FILE_NOT_FOUND')
+    // An orphan's conversation is gone, so there is no mount to restore it into. Saying so beats
+    // reviving a row that every scoped listing would then fail to show.
+    if (file.project_id === null && file.conversation_id === null) return fail('MOUNT_UNAVAILABLE')
 
     const [taken] = await this.db.select({ id: workspaceFiles.id }).from(workspaceFiles).where(and(
       eq(workspaceFiles.user_id, this.userId),

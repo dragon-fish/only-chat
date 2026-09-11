@@ -219,6 +219,7 @@ export class Hub extends Service {
   async conversationDelete(conversationId: number, deleteArtifacts = false): Promise<void> {
     if (!(await getConversation(this.db, conversationId, this.userId))) throw new Error('conversation not found')
     await this.stop(conversationId)
+    await this.app.parallel('conversation/before-purge', { userId: this.userId, conversationId })
     await deleteConversation(this.db, conversationId, this.userId, { deleteArtifacts })
     this.seq.forget(conversationId)
     await this.broadcast({ type: 'conversation.deleted', conversation_id: conversationId })

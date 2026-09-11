@@ -212,8 +212,10 @@ export const attachments = sqliteTable('attachments', {
  * A named, mutable pointer in the workspace filesystem. Writes never mutate a row's content: they
  * append an immutable version and advance `current_version`.
  *
- * Exactly one of `project_id` and `conversation_id` is set — the WorkspaceFiles service enforces
- * that, not a CHECK, so the scope model can change without rebuilding the table.
+ * A live row has exactly one of `project_id` and `conversation_id` set. A trashed row may have
+ * neither: deleting a conversation detaches its files instead of cascading them away, and those
+ * orphans are listed and reclaimed on their own. The service enforces this, not a CHECK, so the
+ * scope model can change without rebuilding the table.
  */
 export const workspaceFiles = sqliteTable('workspace_files', {
   id: integer().primaryKey({ autoIncrement: true }),
