@@ -4,7 +4,7 @@ import { FileTextIcon, TriangleAlertIcon } from '@lucide/vue'
 import { Alert, AlertDescription, AlertTitle } from '@/client/ui/alert'
 import { Badge } from '@/client/ui/badge'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/client/ui/collapsible'
-import { Skeleton } from '@/client/ui/skeleton'
+import { Spinner } from '@/client/ui/spinner'
 import type { ToolCallPart, ToolResultPart } from '@/shared/parts'
 import { ToolErrorSchema, ToolRefusalSchema, WebExtractInputSchema, WebExtractOutputSchema } from '../shared'
 import { hostOf } from './format'
@@ -36,9 +36,8 @@ const summary = computed(() => {
     AlertDescription {{ failure }}
   template(v-else-if="!result")
     .oc-turn-row.text-sm.text-muted-foreground
-      FileTextIcon(class="size-4 shrink-0")
-      span 正在抓取 {{ urls.length || '' }} 个网页…
-    Skeleton(class="h-16 w-full")
+      Spinner(class="size-4 shrink-0")
+      span 正在抓取 {{ urls.length || '' }} 个网页
   Collapsible(v-else-if="output")
     CollapsibleTrigger(class="oc-turn-row text-sm hover:bg-accent")
       FileTextIcon(class="size-4 shrink-0 text-muted-foreground")

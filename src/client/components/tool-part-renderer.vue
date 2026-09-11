@@ -5,7 +5,7 @@ import type { Component } from 'vue'
 import type { ClientPluginHost } from '@/client/plugins/host'
 import { DISCONNECTED_MESSAGE, useSyncStore } from '@/client/stores/sync'
 import { Alert, AlertDescription, AlertTitle } from '@/client/ui/alert'
-import { Skeleton } from '@/client/ui/skeleton'
+import { Spinner } from '@/client/ui/spinner'
 import type { ToolCallPart, ToolResultPart } from '@/shared/parts'
 import type { AskUserResult } from '@/plugins/ask-user/shared'
 import { AskUserInputSchema } from '@/plugins/ask-user/shared'
@@ -80,18 +80,20 @@ function continueGeneration() {
 </script>
 
 <template lang="pug">
-.flex.flex-col.gap-2(v-if="inputPending")
-  .flex.items-center.gap-2.text-sm.text-muted-foreground
-    CircleHelpIcon(class="size-4")
-    span {{ inputPendingLabel }}
-  Skeleton(class="h-20 w-full")
+//- Every in-flight tool reads the same: a spinner and one line, exactly one row tall. The row is
+//- the SHORTEST a tool card ever gets, never the tallest — the turn is anchored above, so growth
+//- below is invisible while a shrink yanks the reply upward. Tall skeletons collapsing to a single
+//- line is what made a run of tool calls jitter. On completion the spinner becomes the tool's icon.
+.oc-turn-row.text-sm.text-muted-foreground(v-if="inputPending")
+  Spinner(class="size-4 shrink-0")
+  span {{ inputPendingLabel }}
 Alert(v-else-if="compactPending")
   CircleHelpIcon
   AlertTitle 正在等待你的回答
   AlertDescription 请在下方回答问题后继续。
-.flex.flex-col.gap-2(v-else-if="loading")
-  Skeleton(class="h-5 w-36")
-  Skeleton(class="h-20 w-full")
+.oc-turn-row.text-sm.text-muted-foreground(v-else-if="loading")
+  Spinner(class="size-4 shrink-0")
+  span 正在调用 {{ call.name }}
 .w-full(
   v-else-if="renderer" :data-optimistic="optimisticResult ? '' : undefined"
   :class="optimisticResult ? 'opacity-70' : undefined")

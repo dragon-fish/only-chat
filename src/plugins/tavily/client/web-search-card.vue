@@ -4,7 +4,7 @@ import { GlobeIcon, SearchIcon, TriangleAlertIcon } from '@lucide/vue'
 import { Alert, AlertDescription, AlertTitle } from '@/client/ui/alert'
 import { Badge } from '@/client/ui/badge'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/client/ui/collapsible'
-import { Skeleton } from '@/client/ui/skeleton'
+import { Spinner } from '@/client/ui/spinner'
 import type { ToolCallPart, ToolResultPart } from '@/shared/parts'
 import { ToolErrorSchema, ToolRefusalSchema, WebSearchInputSchema, WebSearchOutputSchema } from '../shared'
 import { hostOf } from './format'
@@ -31,9 +31,8 @@ const unreadable = computed(() => props.result !== null && !output.value && !fai
     AlertDescription {{ failure }}
   template(v-else-if="!result")
     .oc-turn-row.text-sm.text-muted-foreground
-      SearchIcon(class="size-4 shrink-0")
-      span 正在搜索{{ query ? ` “${query}”` : '' }}…
-    Skeleton(class="h-16 w-full")
+      Spinner(class="size-4 shrink-0")
+      span 正在搜索{{ query ? ` “${query}”` : '' }}
   Collapsible(v-else-if="output")
     CollapsibleTrigger(class="oc-turn-row text-sm hover:bg-accent")
       SearchIcon(class="size-4 shrink-0 text-muted-foreground")

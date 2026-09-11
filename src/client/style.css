@@ -184,6 +184,12 @@
  * they must share an icon edge with each other and a text edge with the reply below them. The
  * negative inline margin cancels the padding, letting the hover background bleed outward without
  * pushing the content right.
+ *
+ * The convention a tool card follows: in flight it is a spinner plus one line, exactly one row;
+ * on completion the spinner becomes that tool's icon and any detail goes BELOW the row. Never
+ * render a placeholder taller than the settled state — a turn is anchored at its top, so growth
+ * below the fold is invisible while a shrink yanks the reply upward, which is what a tall skeleton
+ * collapsing into a single line did on every tool call.
  */
 .oc-turn-row {
   display: flex;
