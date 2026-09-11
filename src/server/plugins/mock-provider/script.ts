@@ -89,10 +89,23 @@ function splitHead(body: string): [string, string] {
   return boundary === -1 ? [trimmed, ''] : [trimmed.slice(0, boundary), trimmed.slice(boundary + 1).trim()]
 }
 
-export function buildMockScript(prompt: string): MockScript {
+export interface MockScriptOptions {
+  /**
+   * Set once this turn has a tool result. A tool directive then answers in prose instead of calling
+   * again, which is what a real model does and what keeps the hub's tool loop from running to its
+   * step cap.
+   */
+  toolsAlreadyRan?: boolean
+}
+
+export function buildMockScript(prompt: string, options: MockScriptOptions = {}): MockScript {
   const text = prompt.trim()
   if (!text.startsWith('/')) return proseScript()
   const [directive, body] = splitHead(text.slice(1))
+
+  if (directive === 'tool_call' || directive === 'parallel') {
+    if (options.toolsAlreadyRan) return proseScript(18)
+  }
 
   if (directive === 'tool_call') {
     const [name, input] = splitHead(body)

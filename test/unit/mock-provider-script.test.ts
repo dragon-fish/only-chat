@@ -51,6 +51,17 @@ describe('mock provider script', () => {
     expect(buildMockScript('/slow 250').delayMs).toBe(250)
   })
 
+  it('answers in prose once the turn already ran its tools', () => {
+    // The hub loops while the model emits tool calls. Without this the same directive would be
+    // replayed on every step, up to the step cap.
+    const directive = '/tool_call ask_user {\'questions\':[]}'.replace(/\'/g, String.fromCharCode(34))
+    expect(toolCalls(directive)).toHaveLength(1)
+    const after = buildMockScript(directive, { toolsAlreadyRan: true })
+    expect(after.parts.some(part => part.type === 'tool-call')).toBe(false)
+    expect(after.parts.map(part => part.type)).toContain('text-delta')
+    expect(after.parts.at(-1)).toMatchObject({ type: 'finish', finishReason: { unified: 'stop' } })
+  })
+
   it('falls back to prose when a directive is malformed rather than throwing', () => {
     expect(() => buildMockScript('/tool_call ask_user {not json}')).not.toThrow()
     expect(types('/tool_call ask_user {not json}')).toContain('text-delta')

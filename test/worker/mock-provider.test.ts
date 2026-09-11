@@ -29,11 +29,13 @@ async function seedMockProvider(metadata: Record<string, unknown> = { tool_call:
   return provider!.id
 }
 
-async function send(providerId: number, text: string) {
+async function send(providerId: number, text: string, conversationId?: number) {
   const c = await connect(await seedTestUser())
   c.ws.send(JSON.stringify({
-    type: 'send', conversation_id: null, parent_id: null, parts: [{ type: 'text', text }],
-    provider_id: providerId, model_id: 'mock-tools', tools: ['ask_user'],
+    type: 'send', conversation_id: conversationId ?? null, parent_id: null, parts: [{ type: 'text', text }],
+    provider_id: providerId, model_id: 'mock-tools',
+    // Conversation-init fields are only accepted while creating one.
+    ...(conversationId === undefined ? { tools: ['ask_user'] } : {}),
   }))
   await c.next('message.done')
   const assistant = (c.events.filter(e => e.type === 'message.created')[1] as { message: { id: number, conversation_id: number } }).message
@@ -54,6 +56,18 @@ describe('mock provider', () => {
     const calls = rows[1]!.parts.filter(part => part.type === 'tool_call')
     expect(calls).toHaveLength(1)
     expect(calls[0]).toMatchObject({ name: 'ask_user' })
+  })
+
+  it('still calls tools on a later turn of the same conversation', async () => {
+    const providerId = await seedMockProvider()
+    const args = '{"questions":[{"id":"q","header":"H","question":"选哪个","type":"single","options":[{"label":"A"},{"label":"B"}]}]}'
+    const first = await send(providerId, `/tool_call ask_user ${args}`)
+    expect(first[1]!.parts.filter(part => part.type === 'tool_call')).toHaveLength(1)
+
+    // The mock stops calling once THIS turn has a result; an earlier turn must not silence it.
+    const conversationId = first[1]!.conversation_id
+    const second = await send(providerId, `/tool_call ask_user ${args}`, conversationId)
+    expect(second.at(-1)!.parts.filter(part => part.type === 'tool_call')).toHaveLength(1)
   })
 
   it('reproduces the parallel tool calls that a real model can emit', async () => {

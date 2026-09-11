@@ -8,6 +8,24 @@ import { vertexCompatibleAdapter } from '../llm/protocols/vertex-compatible'
 import { isMockBaseUrl } from './constants'
 import { buildMockScript, type MockScript } from './script'
 
+/**
+ * Whether this turn already ran a tool.
+ *
+ * The hub loops while the model keeps emitting tool calls, and the mock has no memory of its own: a
+ * directive that produced a tool call would produce the same one on every step, up to the step cap.
+ * Seeing a tool result in the prompt is how it knows the work is already done.
+ */
+export function hasToolResult(prompt: LanguageModelV4Prompt): boolean {
+  // Only this turn counts. Scanning the whole prompt would see tool results from earlier turns and
+  // refuse to call anything for the rest of the conversation.
+  let start = 0
+  for (let index = prompt.length - 1; index >= 0; index--) {
+    if (prompt[index]!.role === 'user') { start = index + 1; break }
+  }
+  return prompt.slice(start).some(message => message.role === 'tool'
+    || (message.role === 'assistant' && message.content.some(part => part.type === 'tool-result')))
+}
+
 /** The directive lives in the newest user turn; earlier ones are history the mock ignores. */
 export function lastUserText(prompt: LanguageModelV4Prompt): string {
   for (let index = prompt.length - 1; index >= 0; index--) {
@@ -34,7 +52,8 @@ function scriptStream(script: MockScript): ReadableStream<LanguageModelV4StreamP
 }
 
 function mockModel(provider: string, modelId: string): LanguageModelV4 {
-  const scriptFor = (options: LanguageModelV4CallOptions) => buildMockScript(lastUserText(options.prompt))
+  const scriptFor = (options: LanguageModelV4CallOptions) =>
+    buildMockScript(lastUserText(options.prompt), { toolsAlreadyRan: hasToolResult(options.prompt) })
   return {
     specificationVersion: 'v4',
     provider,
