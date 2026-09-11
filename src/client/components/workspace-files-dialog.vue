@@ -15,10 +15,9 @@ const props = withDefaults(defineProps<{
 
 const open = ref(false)
 const title = computed(() => (props.mount === 'project' ? 'Project 文件' : '会话文件'))
-/** Who can read what the model wrote — the one thing a mount's name does not say. */
 const hint = computed(() => (props.mount === 'project'
-  ? '模型写入 /project 的文件，这个 Project 下的所有会话都能读到。'
-  : '模型写入 /conversation 的文件，只有这次会话能读到。'))
+  ? '模型在这个 Project 里读写的文件。'
+  : '模型在这次会话里读写的文件。'))
 </script>
 
 <template lang="pug">

@@ -28,9 +28,30 @@ const preview = ref<{ record: FileRecord, content: string } | null>(null)
 const previewError = ref<string | null>(null)
 const busyId = ref<number | null>(null)
 
-const emptyHint = computed(() => (
-  props.mount === 'project' ? '这个 Project 还没有文件。' : '这次会话还没有自己的文件。'
-))
+/**
+ * Mount paths are the model's addressing scheme, not a concept to teach a reader. The panel says
+ * where a file lives by grouping, and names it by the path inside that group.
+ */
+const sections = computed(() => {
+  const project = {
+    key: 'project',
+    title: '当前项目',
+    hint: '这个 Project 下的所有会话都能读到。',
+    files: props.mount === 'project' ? files.value : projectFiles.value,
+    empty: '这个 Project 还没有文件。',
+  }
+  if (props.mount === 'project') return [project]
+  const conversation = {
+    key: 'conversation',
+    title: '当前会话',
+    hint: '只有这次会话能读到。',
+    files: files.value,
+    empty: '这次会话还没有自己的文件。',
+  }
+  // A conversation outside a Project has no second group, and one whose Project is empty gains
+  // nothing from an empty heading.
+  return projectFiles.value.length > 0 ? [conversation, project] : [conversation]
+})
 
 async function load() {
   loading.value = true
@@ -107,58 +128,51 @@ function setPreviewOpen(open: boolean) {
   .flex.flex-col.gap-2(v-else-if="loading && !files.length")
     Skeleton(v-for="n in 2" :key="n" class="h-14 w-full")
 
-  Empty(v-else-if="!files.length" class="border-border rounded-lg border border-dashed py-6")
-    EmptyHeader
-      EmptyTitle(class="text-sm") 暂无文件
-      EmptyDescription(class="text-xs") {{ emptyHint }}
+  template(v-else)
+    section.flex.flex-col.gap-2(v-for="group in sections" :key="group.key")
+      div
+        h3(class="text-sm font-medium") {{ group.title }}
+        p(class="text-muted-foreground text-xs") {{ group.hint }}
 
-  ItemGroup(v-else class="gap-1")
-    Item(v-for="file in files" :key="file.id" variant="outline" size="sm")
-      ItemContent(class="min-w-0")
-        ItemTitle(class="font-mono") {{ file.path }}
-        ItemDescription(class="text-xs") {{ fileMetaLine(file) }}
-      ItemActions(class="gap-1")
-        Button(
-          type="button" variant="ghost" size="icon-xs" class="size-10 md:size-8"
-          :disabled="busyId === file.id" :aria-label="`预览 ${file.path}`" title="预览" @click="openPreview(file)")
-          EyeIcon(data-icon="inline-start")
-        Button(
-          as="a" variant="ghost" size="icon-xs" class="size-10 md:size-8"
-          :href="api.workspaceFileDownloadUrl(file.id)" :aria-label="`下载 ${file.path}`" title="下载")
-          DownloadIcon(data-icon="inline-start")
-        AlertDialog
-          AlertDialogTrigger(as-child)
+      Empty(v-if="!group.files.length" class="border-border rounded-lg border border-dashed py-6")
+        EmptyHeader
+          EmptyTitle(class="text-sm") 暂无文件
+          EmptyDescription(class="text-xs") {{ group.empty }}
+
+      ItemGroup(v-else class="gap-1")
+        Item(v-for="file in group.files" :key="file.id" variant="outline" size="sm")
+          ItemContent(class="min-w-0")
+            ItemTitle(class="font-mono") {{ file.relativePath }}
+            ItemDescription(class="text-xs") {{ fileMetaLine(file) }}
+          ItemActions(class="gap-1")
             Button(
               type="button" variant="ghost" size="icon-xs" class="size-10 md:size-8"
-              :disabled="busyId === file.id" :aria-label="`删除 ${file.path}`" title="删除")
-              Trash2Icon(data-icon="inline-start")
-          AlertDialogContent
-            AlertDialogHeader
-              AlertDialogTitle 删除 {{ file.path }}？
-              AlertDialogDescription 模型将不再看到这个文件，已保存的历史版本不会被清除。
-            AlertDialogFooter
-              AlertDialogCancel 取消
-              AlertDialogAction(@click="remove(file)") 删除
-
-  section.flex.flex-col.gap-2(v-if="projectFiles.length")
-    p(class="text-muted-foreground text-xs") 这次会话还能读到 Project 的文件：
-    ItemGroup(class="gap-1")
-      Item(v-for="file in projectFiles" :key="file.id" size="sm")
-        ItemContent(class="min-w-0")
-          ItemTitle(class="text-muted-foreground font-mono") {{ file.path }}
-          ItemDescription(class="text-xs") {{ fileMetaLine(file) }}
-        ItemActions
-          Button(
-            type="button" variant="ghost" size="icon-xs" class="size-10 md:size-8"
-            :disabled="busyId === file.id" :aria-label="`预览 ${file.path}`" title="预览" @click="openPreview(file)")
-            EyeIcon(data-icon="inline-start")
+              :disabled="busyId === file.id" :aria-label="`预览 ${file.relativePath}`" title="预览" @click="openPreview(file)")
+              EyeIcon(data-icon="inline-start")
+            Button(
+              as="a" variant="ghost" size="icon-xs" class="size-10 md:size-8"
+              :href="api.workspaceFileDownloadUrl(file.id)" :aria-label="`下载 ${file.relativePath}`" title="下载")
+              DownloadIcon(data-icon="inline-start")
+            AlertDialog
+              AlertDialogTrigger(as-child)
+                Button(
+                  type="button" variant="ghost" size="icon-xs" class="size-10 md:size-8"
+                  :disabled="busyId === file.id" :aria-label="`删除 ${file.relativePath}`" title="删除")
+                  Trash2Icon(data-icon="inline-start")
+              AlertDialogContent
+                AlertDialogHeader
+                  AlertDialogTitle 删除 {{ file.relativePath }}？
+                  AlertDialogDescription 模型将不再看到这个文件，已保存的历史版本不会被清除。
+                AlertDialogFooter
+                  AlertDialogCancel 取消
+                  AlertDialogAction(@click="remove(file)") 删除
 
   Alert(v-if="previewError" variant="destructive")
     AlertTitle 无法读取文件
     AlertDescription {{ previewError }}
 
 ResponsiveOverlay(
-  mode="dialog" :open="preview !== null" :title="preview?.record.path ?? ''" @update:open="setPreviewOpen")
+  mode="dialog" :open="preview !== null" :title="preview?.record.relativePath ?? ''" @update:open="setPreviewOpen")
   template(v-if="preview")
     p(class="text-muted-foreground mb-3 text-xs")
       | 第 {{ preview.record.version }} 版 · {{ formatFileSize(preview.record.fileSize) }} · {{ preview.record.totalLines }} 行 · 更新于 {{ new Date(preview.record.updatedAt).toLocaleString() }}
