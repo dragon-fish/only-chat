@@ -63,7 +63,7 @@ SidebarContent(data-settings-content)
               span {{ category.label }}
   //- Their own group: a plugin page is not a sub-page of 插件, which manages which plugins run.
   SidebarGroup(v-if="pluginPages.length" data-settings-plugin-pages)
-    SidebarGroupLabel 插件高级配置
+    SidebarGroupLabel 插件数据管理
     SidebarGroupContent
       SidebarMenu
         SidebarMenuItem(v-for="page in pluginPages" :key="page.to")

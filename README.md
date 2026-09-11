@@ -214,7 +214,7 @@ A plugin owns three surfaces, and each has one place to live so two plugins can 
     /api/plugins/<plugin-id>/...         HTTP routes, behind the session guard
     /api/plugins/<plugin-id>/<seg>/...   routes registered as public, carrying their own credential
     /settings/plugins/<plugin-id>        the plugin's configuration
-    /settings/plugins/<plugin-id>/data   the plugin's own page, for what a config form cannot be
+    /settings/plugins/<plugin-id>/data   the plugin's own page, listed under 插件数据管理
 
 Plugin ids are already unique — the client host throws when two plugins claim one tool id — so
 namespacing by id makes a collision impossible rather than unlikely, and a URL says which plugin

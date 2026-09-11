@@ -51,7 +51,7 @@ function backToChat() {
           ItemActions
             ChevronRightIcon
     template(v-if="pluginPages.length")
-      h2.text-sm.font-medium.text-muted-foreground 插件高级配置
+      h2.text-sm.font-medium.text-muted-foreground 插件数据管理
       ItemGroup(class="gap-2")
         Item(v-for="page in pluginPages" :key="page.to" as-child variant="outline")
           RouterLink(:to="page.to")
