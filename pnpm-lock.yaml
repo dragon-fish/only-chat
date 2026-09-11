@@ -59,6 +59,9 @@ importers:
       ai:
         specifier: ^7.0.92
         version: 7.0.92(zod@4.5.4)
+      animated-scroll-to:
+        specifier: ^2.3.2
+        version: 2.3.2
       better-auth:
         specifier: 1.7.3
         version: 1.7.3(drizzle-kit@0.31.10)(drizzle-orm@0.45.2(kysely@0.29.5))(vitest@4.1.11(@types/node@24.13.3)(happy-dom@20.14.0)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(jiti@2.7.0)(sass-embedded@1.104.0)(sass@1.104.0)(stylus@0.57.0(supports-color@10.2.2))(tsx@4.23.13)))(vue@3.5.42(typescript@6.0.3))
@@ -2226,6 +2229,9 @@ packages:
 
   alien-signals@3.2.1:
     resolution: {integrity: sha512-I8FjmltrfnDFoZedi5CG8DghVYNhzb/Ijluz7tCSJH0xpd0484Kowhbb1XDYOxfJpU1p5wnM2X54dA+IfGyD1g==}
+
+  animated-scroll-to@2.3.2:
+    resolution: {integrity: sha512-GBX6+V06anH2rRt1sGmYXvAVpBo0tMmJxVvGuMcd+KV+EzMnYFSYBnccCa5IYWJvEigI+vFLKKLLEeO6SyfjcQ==}
 
   ansi-regex@5.0.1:
     resolution: {integrity: sha512-quJQXlTSUGL2LH9SUXo8VwsY4soanhgo6LNSm84E1LBcE8s3O0wpdiRzyR9z/ZZJMlMWv37qOOb9pdJlMUEKFQ==}
@@ -6584,6 +6590,8 @@ snapshots:
       require-from-string: 2.0.2
 
   alien-signals@3.2.1: {}
+
+  animated-scroll-to@2.3.2: {}
 
   ansi-regex@5.0.1: {}
 

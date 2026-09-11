@@ -136,3 +136,45 @@
 .oc-emoji {
   font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
 }
+
+/*
+ * Markstream ships an article typography scale: headings sized for a standalone document and
+ * paragraph rhythm to match. A chat reply is read in a narrow column between other messages, so
+ * that scale makes every heading shout and every gap feel like a section break.
+ *
+ * Spacing goes through the library's own --ms-flow-* variables. Heading size does not: it comes
+ * from further up the cascade, so it is set explicitly here rather than guessed at.
+ */
+.markstream-vue {
+  --ms-flow-paragraph-y: 0.85em;
+  --ms-flow-heading-1-mb: 0.5em;
+  --ms-flow-heading-2-mt: 1.2em;
+  --ms-flow-heading-2-mb: 0.45em;
+  --ms-flow-heading-3-mt: 1em;
+  --ms-flow-heading-3-mb: 0.35em;
+  --ms-flow-heading-4-mt: 0.85em;
+  --ms-flow-heading-4-mb: 0.3em;
+  --ms-flow-heading-5-mt: 0.75em;
+  --ms-flow-heading-6-mt: 0.75em;
+  --ms-flow-list-y: 0.6em;
+  --ms-flow-list-item-y: 0.15em;
+  --ms-flow-list-indent: 1.4em;
+  --ms-flow-codeblock-y: 0.85em;
+  --ms-flow-blockquote-y: 0.85em;
+  --ms-flow-table-y: 1em;
+  --ms-flow-hr-y: 1.5em;
+  --ms-flow-admonition-y: 0.85em;
+  --ms-flow-diagram-y: 1em;
+}
+
+/* Element selectors beat the utility classes that carry the article scale. */
+.markstream-vue h1 { font-size: 1.35em; }
+.markstream-vue h2 { font-size: 1.2em; }
+.markstream-vue h3 { font-size: 1.08em; }
+.markstream-vue h4,
+.markstream-vue h5,
+.markstream-vue h6 { font-size: 1em; }
+.markstream-vue :is(h1, h2, h3, h4, h5, h6) { font-weight: 600; }
+
+/* The first block in a reply must not push itself away from the bubble's top edge. */
+.markstream-vue > :first-child { margin-top: 0; }

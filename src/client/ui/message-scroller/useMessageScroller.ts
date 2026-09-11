@@ -1,3 +1,4 @@
+import animateScrollTo from 'animated-scroll-to'
 import type { ComputedRef, InjectionKey, Ref, ShallowRef } from 'vue'
 import { computed, getCurrentScope, inject, onMounted, onScopeDispose, provide, shallowRef, watch } from 'vue'
 
@@ -42,6 +43,15 @@ const DEFAULT_SCROLL_PREVIOUS_ITEM_PEEK = 64
 const DEFAULT_SCROLL_MARGIN = 0
 const SCROLL_EPSILON = 0.5
 const AUTOSCROLLING_TIMEOUT = 180
+/**
+ * Flat, not distance-scaled: the only animated scroll here is placing a new turn at the top, which
+ * is always roughly a viewport away, so a variable duration buys nothing and costs predictability.
+ * The library's own default maxDuration is 3000ms, which reads as the page having stalled.
+ */
+const SMOOTH_SCROLL_MS = 500
+
+/** Fast at the start, settling at the end — a move the eye can follow to its destination. */
+const easeOutCubic = (t: number) => 1 - (1 - t) ** 3
 
 const SCROLL_KEYS = new Set([
   'ArrowDown',
@@ -547,6 +557,22 @@ function createEngine(props: MessageScrollerProviderProps) {
     }
     if (isAutoscrolling)
       setAutoscrolling(true)
+    if (behavior === 'smooth') {
+      // Native smooth scrolling has no duration or easing control, and cannot be interrupted:
+      // a reader who grabs the scrollbar mid-flight gets dragged back. This library eases out
+      // over a bounded duration, cancels itself on any user scroll, and replaces its own
+      // in-flight animation on the same element.
+      const element = viewport
+      void animateScrollTo(target, {
+        elementToScroll: element,
+        cancelOnUserAction: true,
+        maxDuration: SMOOTH_SCROLL_MS,
+        minDuration: SMOOTH_SCROLL_MS,
+        easing: easeOutCubic,
+      }).finally(() => { if (viewport === element) scheduleStateCommit() })
+      scheduleStateCommit()
+      return
+    }
     viewport.scrollTo({ top: target, behavior })
     scheduleStateCommit()
   }
