@@ -33,6 +33,7 @@ export const SendCommandSchema = z.object({
   conversation_model_id: z.string().nullable().optional(),
   /** Selected tool snapshot, used only when creating the first Conversation row. */
   tools: z.array(z.string()).optional(),
+  tools_enabled: z.boolean().optional(),
 })
 /**
  * `provider_id`/`model_id` on `regenerate` and `edit` are the client's current model selection,
@@ -72,6 +73,7 @@ export const ConversationUpdateCommandSchema = z.object({
   system_prompt: z.string().nullable().optional(),
   params: ConversationParamsSchema.nullable().optional(),
   tools: z.array(z.string()).optional(),
+  tools_enabled: z.boolean().optional(),
 })
 export const ConversationDeleteCommandSchema = z.object({
   type: z.literal('conversation.delete'),

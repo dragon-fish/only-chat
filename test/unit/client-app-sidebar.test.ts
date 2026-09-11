@@ -104,7 +104,7 @@ it('updates image history from realtime conversation events', async () => {
   sync.applyEvent({ type: 'conversation.created', conversation: {
     id: 21, user_id: 2, project_id: null, title: '白毛红瞳兽耳娘', kind: 'image', head_message_id: 1,
     provider_id: null, model_id: null, image_provider_id: 4, image_model_id: 'seedream',
-    system_prompt: null, params: null, tools: [], created_at: 1, updated_at: 1, archived_at: null,
+    system_prompt: null, params: null, tools: [], tools_enabled: true, created_at: 1, updated_at: 1, archived_at: null,
   } })
 
   await vi.waitFor(() => expect(document.body.textContent).toContain('白毛红瞳兽耳娘'))

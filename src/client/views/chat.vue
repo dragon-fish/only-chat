@@ -45,6 +45,7 @@ const streaming = computed(() => sid.value !== null && sync.isStreaming(sid.valu
 const composer = ref<InstanceType<typeof Composer> | null>(null)
 const messageList = ref<{ scrollToMessage: (messageId: number) => boolean } | null>(null)
 const draftTools = ref<string[] | null>(null)
+const draftToolsEnabled = ref(true)
 const outstanding = ref<OutstandingSend>('idle')
 const optimisticRequestId = ref<string | null>(null)
 const optimisticBaseIds = ref(new Set<number>())
@@ -98,6 +99,7 @@ watch(sid, (id) => {
   if (id === null) {
     Object.assign(form, conversationFormFrom(undefined))
     draftTools.value = null
+    draftToolsEnabled.value = true
   }
 }, { immediate: true })
 watchEffect(() => {
@@ -140,6 +142,7 @@ const contextUsage = computed(() => {
 // While the config is still loading nothing is known to be unavailable, so sending stays possible.
 const modelAvailable = computed(() => !config.loaded || config.isAvailable(effective.value.model))
 const selectedTools = computed(() => sid.value === null ? (draftTools.value ?? []) : (conversation.value?.tools ?? []))
+const toolsEnabled = computed(() => sid.value === null ? draftToolsEnabled.value : conversation.value?.tools_enabled !== false)
 const optimisticToolCallIds = computed(() => {
   const headId = conversation.value?.head_message_id
   return headId === null || headId === undefined ? new Set<string>() : sync.optimisticToolCallIds(headId)
@@ -345,6 +348,7 @@ function onSend(parts: Part[]) {
       model: draftModel.value,
       params: paramsFromFields(form),
       tools: selectedTools.value,
+      tools_enabled: draftToolsEnabled.value,
     },
   }), request_id: requestId })
 }
@@ -411,6 +415,14 @@ function onToolsChange(tools: string[]) {
   }
   send({ type: 'conversation.update', conversation_id: sid.value, tools })
 }
+
+function onToolsEnabledChange(enabled: boolean) {
+  if (sid.value === null) {
+    draftToolsEnabled.value = enabled
+    return
+  }
+  send({ type: 'conversation.update', conversation_id: sid.value, tools_enabled: enabled })
+}
 </script>
 
 <template lang="pug">
@@ -460,7 +472,7 @@ function onToolsChange(tools: string[]) {
     template(#left-controls)
       ToolSelector(
         :model-value="selectedTools" :plugins="sync.settings.plugins" :plugin-config="sync.pluginConfig" :desktop="isDesktop"
-        :supported="toolsSupported"
+        :supported="toolsSupported" :enabled="toolsEnabled" @update:enabled="onToolsEnabledChange"
         @update:model-value="onToolsChange")
     template(#controls)
       ContextUsageIndicator(v-if="contextUsage" :usage="contextUsage.usage" :limit="contextUsage.limit")

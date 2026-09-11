@@ -54,9 +54,12 @@ interface Target {
 interface ConversationDraft extends ConversationConfigSource {
   project_id: number | null
   tools: string[]
+  tools_enabled: boolean
 }
 
-const EMPTY_DRAFT: ConversationDraft = { project_id: null, system_prompt: null, provider_id: null, model_id: null, params: null, tools: [] }
+const EMPTY_DRAFT: ConversationDraft = {
+  project_id: null, system_prompt: null, provider_id: null, model_id: null, params: null, tools: [], tools_enabled: true,
+}
 
 interface ResolveArgs {
   conversationId: number | null
@@ -114,9 +117,10 @@ async function resolveTarget(hub: Hub, args: ResolveArgs): Promise<Target> {
 
   const user = await getUser(hub.db, hub.userId)
   if (!user) throw new Error('user missing')
-  // A model that cannot call tools simply generates without them. Refusing the turn would force the
-  // user to empty the Conversation's selection by hand and rebuild it afterwards.
-  const toolIds = model.metadata_resolved.tool_call === true
+  // A model that cannot call tools simply generates without them, and so does a conversation whose
+  // master switch is off. Refusing the turn would force the user to empty the selection by hand and
+  // rebuild it afterwards.
+  const toolIds = draft.tools_enabled && model.metadata_resolved.tool_call === true
     ? hub.app.tools.usable(draft.tools, user.settings.plugins)
     : []
 
@@ -129,6 +133,7 @@ async function resolveTarget(hub: Hub, args: ResolveArgs): Promise<Target> {
     system_prompt: draft.system_prompt,
     params: draft.params,
     tools: draft.tools,
+    tools_enabled: draft.tools_enabled,
     provider_id: draft.provider_id,
     model_id: draft.model_id,
   })
@@ -390,7 +395,7 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
 // ---- entry points
 
 /** Fields that initialize a brand-new conversation and are therefore meaningless on an existing one. */
-const INIT_FIELDS = ['project_id', 'system_prompt', 'params', 'conversation_provider_id', 'conversation_model_id', 'tools'] as const
+const INIT_FIELDS = ['project_id', 'system_prompt', 'params', 'conversation_provider_id', 'conversation_model_id', 'tools', 'tools_enabled'] as const
 const SKIPPED_ASK_USER_MESSAGE = '用户跳过了问题并继续回复'
 
 async function resolveSendParent(hub: Hub, conversation: ConversationRow, parentId: number) {
@@ -443,6 +448,7 @@ export async function runSend(hub: Hub, cmd: SendCommand): Promise<void> {
       provider_id: cmd.conversation_provider_id ?? null,
       model_id: cmd.conversation_model_id ?? null,
       tools: hub.app.tools.normalize(cmd.tools ?? []),
+      tools_enabled: cmd.tools_enabled ?? true,
     },
   })
   const parentId = cmd.conversation_id === null ? null : (cmd.parent_id ?? target.conversation.head_message_id)

@@ -40,7 +40,7 @@ it('keeps a collapsed desktop sidebar as an expandable icon rail', async () => {
   const pinia = createPinia()
   const sync = useSyncStore(pinia)
   const project: Project = { id: 7, user_id: 1, name: 'Design', icon_attachment_id: null, system_prompt: null, provider_id: null, model_id: null, params: null, created_at: 0, updated_at: 0 }
-  const conversation: Conversation = { id: 12, user_id: 1, project_id: null, title: 'Notes', head_message_id: null, provider_id: null, model_id: null, system_prompt: null, params: null, tools: [], archived_at: null, created_at: 0, updated_at: 0 }
+  const conversation: Conversation = { id: 12, user_id: 1, project_id: null, title: 'Notes', head_message_id: null, provider_id: null, model_id: null, system_prompt: null, params: null, tools: [], tools_enabled: true, archived_at: null, created_at: 0, updated_at: 0 }
   sync.projects.set(project.id, project)
   sync.conversations.set(conversation.id, conversation)
   sync.projectsLoaded = true

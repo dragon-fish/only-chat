@@ -165,6 +165,8 @@ export const conversations = sqliteTable('conversations', {
   system_prompt: text(),
   params: text({ mode: 'json' }).$type<ConversationParams>(),
   tools: text({ mode: 'json' }).$type<string[]>().notNull().default([]),
+  /** A master switch over `tools`, so turning tools off for a while does not lose the selection. */
+  tools_enabled: integer({ mode: 'boolean' }).notNull().default(true),
   created_at: integer().notNull(),
   updated_at: integer().notNull(),
   archived_at: integer(),

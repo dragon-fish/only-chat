@@ -1,0 +1,1 @@
+ALTER TABLE `conversations` ADD `tools_enabled` integer DEFAULT true NOT NULL;

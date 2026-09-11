@@ -74,6 +74,8 @@ export const ConversationSchema = z.object({
   params: ConversationParamsSchema.nullable(),
   /** Stable selected tool IDs, captured when the Conversation is first created. */
   tools: z.array(z.string()),
+  /** False silences every selected tool without clearing the selection. */
+  tools_enabled: z.boolean(),
   created_at: z.number(),
   updated_at: z.number(),
   archived_at: z.number().nullable(),

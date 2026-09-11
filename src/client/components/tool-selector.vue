@@ -19,13 +19,18 @@ const props = defineProps<{
   desktop: boolean
   /** False when the chosen model cannot call tools: the selection is kept but no tool is sent. */
   supported: boolean
+  /** The conversation's master switch. Off silences every selected tool without unselecting any. */
+  enabled: boolean
 }>()
-const emit = defineEmits<{ 'update:modelValue': [tools: string[]] }>()
+const emit = defineEmits<{ 'update:modelValue': [tools: string[]], 'update:enabled': [enabled: boolean] }>()
 const host = inject<ClientPluginHost | null>('clientPluginHost', null)
 const rows = computed(() => availableToolGroups(pluginManifests, props.plugins, props.modelValue, props.pluginConfig))
 const selectedCount = computed(() => rows.value.filter(row => row.selected).length)
-const triggerHint = computed(() => (
-  props.supported ? '选择工具' : '当前模型不支持工具调用，本次不会发送工具定义'
+/** The trigger states what will actually happen this turn, not what is ticked below. */
+const active = computed(() => props.enabled && props.supported ? selectedCount.value : 0)
+const triggerLabel = computed(() => (active.value === 0 ? '未启用' : `启用 ${active.value} 个`))
+const headerHint = computed(() => (
+  props.supported ? '为当前对话选择可调用的工具。' : '当前模型不支持工具调用，本次生成不会发送工具定义。'
 ))
 
 watchEffect(() => {
@@ -41,20 +46,25 @@ function toggle(toolIds: string[], on: boolean) {
 <template lang="pug">
 component(:is="desktop ? Popover : Drawer")
   component(:is="desktop ? PopoverTrigger : DrawerTrigger" as-child)
+    //- The count is spelled out rather than badged: a corner badge sat on top of the icon.
     Button(
-      variant="ghost" :size="desktop ? 'icon-xs' : 'icon-sm'" aria-label="选择工具" :title="triggerHint"
-      :class="['relative size-10', desktop ? 'md:size-6' : '', supported ? '' : 'opacity-50']")
+      variant="ghost" :size="desktop ? 'xs' : 'icon-sm'" aria-label="选择工具" :title="headerHint"
+      :class="[desktop ? 'min-h-10 gap-1.5 md:min-h-6' : 'relative size-10', active ? '' : 'text-muted-foreground']")
       WrenchIcon(data-icon="inline-start")
-      Badge(v-if="selectedCount" variant="secondary" class="absolute -right-1 -top-1 min-w-4 justify-center px-1 text-[10px]") {{ selectedCount }}
+      template(v-if="desktop") {{ triggerLabel }}
+      Badge(v-else-if="active" variant="secondary" class="absolute -right-1 -top-1 min-w-4 justify-center px-1 text-[10px]") {{ active }}
   component(
     :is="desktop ? PopoverContent : DrawerContent"
     :align="desktop ? 'start' : undefined" :side="desktop ? 'top' : undefined"
     :class="desktop ? 'w-80' : ''")
-    component(:is="desktop ? PopoverHeader : DrawerHeader")
-      component(:is="desktop ? PopoverTitle : DrawerTitle") 工具
-      component(:is="desktop ? PopoverDescription : DrawerDescription")
-        | {{ supported ? '为当前对话选择可调用的工具。' : '当前模型不支持工具调用，本次生成不会发送工具定义。' }}
-    .oc-scroll.flex.flex-col.overflow-y-auto(:class="desktop ? 'max-h-80' : 'max-h-96 px-4 pb-6'")
+    component(:is="desktop ? PopoverHeader : DrawerHeader" class="flex-row items-center justify-between gap-3")
+      div(class="flex min-w-0 flex-col gap-0.5")
+        component(:is="desktop ? PopoverTitle : DrawerTitle") 工具
+        component(:is="desktop ? PopoverDescription : DrawerDescription") {{ headerHint }}
+      Switch(:model-value="enabled" aria-label="启用工具" @update:model-value="emit('update:enabled', $event)")
+    //- Still switchable while the master is off: the point of turning it off is to come back.
+    .oc-scroll.flex.flex-col.overflow-y-auto(
+      :class="[desktop ? 'max-h-80' : 'max-h-96 px-4 pb-6', enabled ? '' : 'opacity-60']")
       ItemGroup(class="gap-1")
         Item(v-for="row in rows" :key="row.id" size="sm")
           ItemContent

@@ -427,6 +427,8 @@ export interface ConversationDraft {
   params: ConversationParams | null
   /** The new Conversation's immutable tool snapshot. */
   tools?: string[]
+  /** False starts the conversation with its tools silenced but its selection intact. */
+  tools_enabled?: boolean
 }
 
 export interface SendInput {
@@ -461,6 +463,7 @@ export function sendCommandFor({ conversationId, parentId, parts, model, draft }
     conversation_provider_id: draft.model?.provider_id ?? null,
     conversation_model_id: draft.model?.model_id ?? null,
     tools: [...new Set(draft.tools ?? [])].sort(),
+    tools_enabled: draft.tools_enabled ?? true,
   }
 }
 

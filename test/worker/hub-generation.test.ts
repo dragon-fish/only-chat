@@ -297,6 +297,24 @@ describe('generation', () => {
     expect(created[0]!.doStreamCalls[0]!.tools).toBeUndefined()
   })
 
+  it('silences the tools of a conversation whose master switch is off, keeping the selection', async () => {
+    const providerId = await seedProvider('master-off-provider', 'master-off-model', false, { tool_call: true })
+    const db = createDb(env.DB)
+    await db.update(users).set({ settings: { plugins: { ask_user: true } } }).where(eq(users.id, 1))
+    const created = await installMock(() => new MockLanguageModelV4({
+      doStream: async () => ({ stream: simulateReadableStream({ chunks: STREAM, chunkDelayInMs: null, initialDelayInMs: null }) }),
+    }))
+    const c = await connect(await seedTestUser())
+    c.ws.send(JSON.stringify({
+      type: 'send', conversation_id: null, parent_id: null, parts: [{ type: 'text', text: 'hi' }],
+      provider_id: providerId, model_id: 'master-off-model', tools: ['ask_user'], tools_enabled: false,
+    }))
+    await c.next('message.done')
+    // Turning tools off must cost nothing to undo, so the selection survives untouched.
+    expect((await getConversation(db, conversationIdOf(c), 1))!.tools).toEqual(['ask_user'])
+    expect(created[0]!.doStreamCalls[0]!.tools).toBeUndefined()
+  })
+
   it('suppresses globally disabled selected tools without deleting or blocking the conversation snapshot', async () => {
     const providerId = await seedProvider('disabled-tool-provider', 'disabled-tool-model', false, {})
     const db = createDb(env.DB)

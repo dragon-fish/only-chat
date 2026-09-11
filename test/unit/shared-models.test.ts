@@ -12,7 +12,7 @@ describe('models schemas', () => {
     expect(ConversationSchema.parse({
       id: 7, user_id: 1, project_id: null, title: 'legacy', head_message_id: 12,
       provider_id: null, model_id: null, system_prompt: null, params: null,
-      tools: ['ask_user'], created_at: 0, updated_at: 1, archived_at: null,
+      tools: ['ask_user'], tools_enabled: true, created_at: 0, updated_at: 1, archived_at: null,
     })).toMatchObject({ id: 7, title: 'legacy', tools: ['ask_user'] })
   })
   it('distinguishes undefined and 0 in usage', () => {

@@ -41,7 +41,7 @@ import type { Message, Project, Conversation } from '@/shared/models'
 import type { Part } from '@/shared/parts'
 import { parseCommand } from '@/shared/ws'
 
-const conversation: Conversation = { id: 1, user_id: 1, project_id: null, title: 't', head_message_id: null, provider_id: null, model_id: null, system_prompt: null, params: null, tools: [], created_at: 1, updated_at: 1, archived_at: null }
+const conversation: Conversation = { id: 1, user_id: 1, project_id: null, title: 't', head_message_id: null, provider_id: null, model_id: null, system_prompt: null, params: null, tools: [], tools_enabled: true, created_at: 1, updated_at: 1, archived_at: null }
 const project: Project = { id: 1, user_id: 1, name: 'p', icon_attachment_id: null, system_prompt: null, provider_id: null, model_id: null, params: null, created_at: 1, updated_at: 1 }
 const msg = (id: number, parent_id: number | null, role: 'user' | 'assistant', over: Partial<Message> = {}): Message =>
   ({ id, conversation_id: 1, parent_id, seq: id, role, parts: [], provider_id: null, model_id: null, usage: null, status: 'done', error: null, created_at: 0, ...over })
@@ -535,7 +535,7 @@ describe('send payload', () => {
       provider_id: 4, model_id: 'gpt',
       project_id: 7, system_prompt: '  keep  ', params: { temperature: 0.3 },
       conversation_provider_id: 5, conversation_model_id: 'pinned',
-      tools: ['ask_user', 'z'],
+      tools: ['ask_user', 'z'], tools_enabled: true,
     })
     expect(parseCommand(JSON.stringify(cmd))).toEqual(cmd)
   })

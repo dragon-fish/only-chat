@@ -38,6 +38,7 @@ export async function createConversation(db: DB, input: {
   system_prompt?: string | null
   params?: ConversationParams | null
   tools?: string[]
+  tools_enabled?: boolean
   kind?: 'chat' | 'image'
   image_provider_id?: number | null
   image_model_id?: string | null
@@ -55,6 +56,7 @@ export async function createConversation(db: DB, input: {
     system_prompt: input.system_prompt ?? null,
     params: input.params ?? null,
     tools: input.tools ?? [],
+    tools_enabled: input.tools_enabled ?? true,
     head_message_id: null,
     created_at: now,
     updated_at: now,
@@ -67,7 +69,7 @@ export async function updateConversation(
   db: DB,
   id: number,
   userId: number,
-  patch: Partial<Pick<ConversationRow, 'title' | 'project_id' | 'provider_id' | 'model_id' | 'system_prompt' | 'params' | 'tools' | 'head_message_id'>>,
+  patch: Partial<Pick<ConversationRow, 'title' | 'project_id' | 'provider_id' | 'model_id' | 'system_prompt' | 'params' | 'tools' | 'tools_enabled' | 'head_message_id'>>,
 ): Promise<ConversationRow> {
   const [row] = await db.update(conversations).set({ ...patch, updated_at: Date.now() }).where(and(eq(conversations.id, id), eq(conversations.user_id, userId))).returning()
   if (!row) throw new Error('conversation not found')
@@ -124,6 +126,7 @@ export async function forkConversation(db: DB, sourceConversationId: number, use
     user_id: source.user_id, title: `${source.title} 副本`, project_id: source.project_id,
     provider_id: source.provider_id, model_id: source.model_id,
     system_prompt: source.system_prompt, params: source.params, tools: source.tools,
+    tools_enabled: source.tools_enabled,
   })
   try {
     let parentId: number | null = null

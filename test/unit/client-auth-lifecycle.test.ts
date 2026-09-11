@@ -51,7 +51,7 @@ const sessionFor = (id: number) => ({
 
 const conversationFor = (userId: number): Conversation => ({
   id: userId * 10, user_id: userId, project_id: null, title: `User ${userId} chat`, head_message_id: null,
-  provider_id: null, model_id: null, system_prompt: null, params: null, tools: [], created_at: userId, updated_at: userId, archived_at: null,
+  provider_id: null, model_id: null, system_prompt: null, params: null, tools: [], tools_enabled: true, created_at: userId, updated_at: userId, archived_at: null,
 })
 
 let cleanup = () => {}

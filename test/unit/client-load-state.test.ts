@@ -70,7 +70,7 @@ describe('collection load state', () => {
     vi.spyOn(api, 'conversations').mockImplementation(() => new Promise(resolve => { finishConversations = resolve }))
     vi.spyOn(api, 'providers').mockImplementation(() => new Promise(resolve => { finishProviders = resolve }))
     sync.applyEvent({ type: 'project.created', project: { id: 7, user_id: 1, name: 'Old', icon_attachment_id: null, system_prompt: null, provider_id: null, model_id: null, params: null, created_at: 1, updated_at: 1 } })
-    const oldConversation: Conversation = { id: 9, user_id: 1, project_id: null, title: 'Old chat', head_message_id: null, provider_id: null, model_id: null, system_prompt: null, params: null, tools: [], created_at: 1, updated_at: 1, archived_at: null }
+    const oldConversation: Conversation = { id: 9, user_id: 1, project_id: null, title: 'Old chat', head_message_id: null, provider_id: null, model_id: null, system_prompt: null, params: null, tools: [], tools_enabled: true, created_at: 1, updated_at: 1, archived_at: null }
     sync.applyEvent({ type: 'conversation.created', conversation: oldConversation })
     sync.applyEvent({ type: 'message.created', message: { id: 11, conversation_id: 9, parent_id: null, seq: 1, role: 'user', parts: [{ type: 'text', text: 'private' }], provider_id: null, model_id: null, usage: null, status: 'done', error: null, created_at: 1 } })
     sync.applyEvent({ type: 'settings.updated', settings: { plugins: { old: true } } })
