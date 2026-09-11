@@ -21,20 +21,20 @@ describe('tavily runners', () => {
     expect(await runWebSearch({ query: 'q' }, client, turn, 2)).toMatchObject({ query: 'q' })
 
     const refusal = await runWebSearch({ query: 'q' }, client, turn, 2)
-    expect(refusal).toEqual({ refused: 'web_search 本轮已调用 2 次，已达上限。' })
+    expect(refusal).toEqual({ refused: 'web_search 调用次数已用完（上限 2 次），额度在用户下次发言后重置。' })
     expect(client.search).toHaveBeenCalledTimes(2)
   })
 
   it('reports the remaining budget on every success, so the wall is never a surprise', async () => {
     const turn = new Map<string, unknown>()
     const client = searchClient()
-    expect(await runWebSearch({ query: 'q' }, client, turn, 3)).toMatchObject({ note: 'web_search 本轮还能使用 2 次。' })
-    expect(await runWebSearch({ query: 'q' }, client, turn, 3)).toMatchObject({ note: 'web_search 本轮还能使用 1 次。' })
-    expect(await runWebSearch({ query: 'q' }, client, turn, 3)).toMatchObject({ note: 'web_search 本轮还能使用 0 次。' })
+    expect(await runWebSearch({ query: 'q' }, client, turn, 3)).toMatchObject({ note: 'web_search 还能使用 2 次，额度在用户下次发言后重置。' })
+    expect(await runWebSearch({ query: 'q' }, client, turn, 3)).toMatchObject({ note: 'web_search 还能使用 1 次，额度在用户下次发言后重置。' })
+    expect(await runWebSearch({ query: 'q' }, client, turn, 3)).toMatchObject({ note: 'web_search 还能使用 0 次，额度在用户下次发言后重置。' })
 
     const extract = extractClient()
     expect(await runWebExtract({ urls: ['https://a.test'] }, extract, turn, 2))
-      .toMatchObject({ note: 'web_extract 本轮还能使用 1 次。' })
+      .toMatchObject({ note: 'web_extract 还能使用 1 次，额度在用户下次发言后重置。' })
   })
 
   it('budgets search and extract separately', async () => {
@@ -59,7 +59,7 @@ describe('tavily runners', () => {
     const failing: WebSearchClient = { search: vi.fn(async () => { throw new Error('boom') }) }
     await runWebSearch({ query: 'q' }, failing, turn, 1)
     expect(await runWebSearch({ query: 'q' }, failing, turn, 1)).toEqual({
-      refused: 'web_search 本轮已调用 1 次，已达上限。',
+      refused: 'web_search 调用次数已用完（上限 1 次），额度在用户下次发言后重置。',
     })
     expect(failing.search).toHaveBeenCalledTimes(1)
   })
@@ -85,7 +85,7 @@ describe('tavily runners', () => {
     expect(await runWebExtract({ urls: ['https://ok.test', 'https://bad.test'] }, client, turn, 2)).toEqual({
       results: [{ url: 'https://ok.test', content: 'body' }],
       failed: [{ url: 'https://bad.test', error: 'timeout' }],
-      note: 'web_extract 本轮还能使用 1 次。',
+      note: 'web_extract 还能使用 1 次，额度在用户下次发言后重置。',
     })
   })
 })

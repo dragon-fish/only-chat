@@ -11,9 +11,13 @@ function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-/** Rides along with every success so the agent plans against the budget instead of hitting it. */
+/**
+ * Rides along with every success so the agent plans against the budget instead of hitting it.
+ * States the reset condition rather than saying "this turn": an agent reading "本轮" has no way to
+ * tell whether that means this reply or the whole conversation, and guesses the expensive way.
+ */
 function budgetNote(tool: string, left: number): string {
-  return `${tool} 本轮还能使用 ${left} 次。`
+  return `${tool} 还能使用 ${left} 次，额度在用户下次发言后重置。`
 }
 
 /**
@@ -40,7 +44,7 @@ export async function runWebSearch(
 ): Promise<WebSearchOutput | ToolError | ToolRefusal> {
   const callsLeft = spend(turn, SEARCH_CALLS, cap)
   if (callsLeft === null) {
-    return { refused: `web_search 本轮已调用 ${cap} 次，已达上限。` }
+    return { refused: `web_search 调用次数已用完（上限 ${cap} 次），额度在用户下次发言后重置。` }
   }
   const maxResults = Math.min(Math.max(input.max_results ?? DEFAULT_SEARCH_RESULTS, 1), MAX_SEARCH_RESULTS)
   try {
@@ -59,7 +63,7 @@ export async function runWebExtract(
 ): Promise<WebExtractOutput | ToolError | ToolRefusal> {
   const callsLeft = spend(turn, EXTRACT_CALLS, cap)
   if (callsLeft === null) {
-    return { refused: `web_extract 本轮已调用 ${cap} 次，已达上限。` }
+    return { refused: `web_extract 调用次数已用完（上限 ${cap} 次），额度在用户下次发言后重置。` }
   }
   try {
     return { ...await client.extract(input.urls), note: budgetNote('web_extract', callsLeft) }

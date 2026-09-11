@@ -17,13 +17,18 @@ function clientOf(config: TavilyConfig): TavilyClient {
   return new TavilyClient({ apiKey: config.api_key, searchDepth: config.search_depth })
 }
 
-const TURN_LIMIT_TIP = '本工具存在单轮调用次数限制，剩余次数见调用结果。'
+/**
+ * Says when the budget resets rather than calling it a "turn": an agent reading 「本轮」 cannot
+ * tell whether that means this reply or the whole conversation, and guesses the expensive way.
+ * Carries no configured number, so it stays constant and costs no prompt cache.
+ */
+const TURN_LIMIT_TIP = '本工具存在调用次数限制，额度在每次用户发言后重置；剩余次数见调用结果。'
 
 const SEARCH_DESCRIPTION = [
   '联网搜索，返回标题、URL 与摘要片段。',
   '何时调：时效信息（最近的新闻、价格、赛事、版本）、训练截止之后的事实、小众专业话题、用户明确要求搜索。',
   '何时别调：稳定的事实性常识、闲聊、上下文或对话历史已经能回答的问题。',
-  '结果不对就换关键词重搜（加年份、换语言、换平台名）。用完本轮次数仍未找到，就告诉用户没查到，不要拆分 query 绕开限制。',
+  '结果不对就换关键词重搜（加年份、换语言、换平台名）。次数用完仍未找到，就告诉用户没查到，不要拆分 query 绕开限制。',
   '摘要不够时，挑 1-3 个最相关的 URL 一次性传给 web_extract，不要每个 URL 单独调。',
   TURN_LIMIT_TIP,
 ].join('\n')
