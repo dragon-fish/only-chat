@@ -47,7 +47,7 @@ const rows = computed(() => props.messages.map((message) => {
 </script>
 
 <template lang="pug">
-MessageScrollerProvider(ref="scroller" :auto-scroll="true" default-scroll-position="last-anchor")
+MessageScrollerProvider(ref="scroller" :auto-scroll="false" default-scroll-position="last-anchor")
   MessageScroller
     MessageScrollerViewport(class="oc-scroll")
       MessageScrollerContent(:aria-busy="streaming" class="mx-auto w-full max-w-3xl gap-6 px-4 py-5")
