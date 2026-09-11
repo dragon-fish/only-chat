@@ -87,7 +87,7 @@ tools: readonly { id: string; name: string; description: string }[]
 
 `write` 收到的是**部分**字段。必须先把 patch 合并到当前已存的值上再整体 `parse`，否则一次只改 `search_depth` 的提交会因为缺 `api_key` 而失败。整体 parse 通过后才落库，半套写入不允许存在。
 
-脱敏视图里非 secret 字段给原值（用户要读回来才能改），secret 字段只给 `configured: boolean`，明文永不出服务端。
+脱敏视图里非 secret 字段给原值（用户要读回来才能改），secret 字段只出现在 `secrets: Record<string, boolean>` 里表示「是否已存」，明文永不出服务端。每个插件另有一个 `configured: boolean`，回答「它的工具现在能跑吗」——客户端自己算不出来，因为决定它的值正是客户端永远拿不到的那些。
 
 ### 路由
 
@@ -98,7 +98,7 @@ PUT  /api/plugins/:pluginId/config
 
 **不走 WebSocket。** `settings.updated` 会把整个 `UserSettings` 广播给该用户的所有连接，密钥不能进那条链路。
 
-secret 的写入语义与 `provider-write.ts` 一致：字段不传 = 保持原值，传空串 = 清除。
+secret 的写入语义：字段不传 = 保持原值，传 `null` = 清除。表单永远不发空串——它对每个可见字段都提交，空串若解释成清除，改一个调用上限就会顺手抹掉没人碰过的 API Key。
 
 ## 四、工具注入
 
@@ -124,10 +124,12 @@ export type ToolFactory = (ctx: ToolContext) => Tool
 `streamText` 目前没传 `stopWhen`，AI SDK v7 默认 `stepCountIs(1)`——模型调完工具就结束，永远拿不到结果作答。加：
 
 ```ts
-stopWhen: stepCountIs(TOOL_MAX_STEPS)   // 常量 8，src/shared/constants.ts
+stopWhen: [stepCountIs(TOOL_MAX_STEPS), awaitsHumanToolResult(target.tools)]
 ```
 
-`ask_user` 不受影响：它没有 `execute`，不产出 tool result，不满足 SDK 的续步条件，仍然调用即停轮。
+常量 8 放 `src/shared/constants.ts`。
+
+**第二个条件不是可选项。** 没有 `execute` 的工具**仍然会**产出一个 `tool-error` 输出，而这满足 AI SDK 自己的续步判据（实测：`streamText` + `MockLanguageModelV4`，单个 `ask_user` 调用在裸 `stepCountIs(8)` 下跑满 8 步）。只加步数上限会让 `ask_user` 空转到上限，而不是停下来等人回答。`awaitsHumanToolResult` 检查上一步是否调用了没有 `execute` 的工具，是就停轮。
 
 `PartAccumulator` 已在 `start-step` 重置 id 索引，多步安全；`part.totalUsage` 本来就是全部 step 的合计。
 
@@ -201,7 +203,7 @@ Error: web_search 本轮已调用 3 次，已达上限。
 | `plugin-config-form.vue` | 按声明渲染；插件注册了自定义配置组件则优先用它 |
 | `tool-selector.vue` | 必填项未配置的工具行置灰，提示去插件设置 |
 
-secret 字段显示「已配置」与「更换」按钮，永不回显明文。
+secret 字段渲染成空的密码框，旁边一个「已配置」徽章，占位文字写「留空则保持不变」。永不回显明文。
 
 搜索卡片列出每条结果的标题（链接）、域名与摘要，可折叠。抓取卡片按 URL 列出成功/失败，正文可展开。
 
