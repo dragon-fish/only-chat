@@ -6,7 +6,9 @@ import { EllipsisIcon, GitForkIcon, LoaderCircle, PencilIcon, RefreshCwIcon, Tri
 import BranchSwitcher from '@/client/components/branch-switcher.vue'
 import LabAvatar from '@/client/components/lab-avatar.vue'
 import MessageUsage from '@/client/components/message-usage.vue'
+import ReasoningBlock from '@/client/components/reasoning-block.vue'
 import ToolPartRenderer from '@/client/components/tool-part-renderer.vue'
+import { messageSegments } from '@/client/components/message-segments'
 import { canContinueToolMessage } from '@/client/components/tool-part-renderer'
 import ProjectAvatar from '@/client/components/project-avatar.vue'
 import { api } from '@/client/lib/api'
@@ -19,7 +21,6 @@ import { Button } from '@/client/ui/button'
 import { Message as MessageRoot, MessageAvatar, MessageContent, MessageFooter, MessageHeader } from '@/client/ui/message'
 import { Textarea } from '@/client/ui/textarea'
 import type { Message, Project } from '@/shared/models'
-import type { ToolCallPart, ToolResultPart } from '@/shared/parts'
 import { useConversationFork } from '@/client/composables/use-conversation-fork'
 import { useTheme } from '@/client/composables/use-theme'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/client/ui/dropdown-menu'
@@ -46,16 +47,14 @@ const editing = ref(false)
 const draft = ref('')
 
 const textParts = computed(() => props.message.parts.filter((p) => p.type === 'text'))
-const reasoning = computed(() => props.message.parts.filter((p) => p.type === 'reasoning').map((p) => p.text).join('\n'))
 const images = computed(() => props.message.parts.filter((p) => p.type === 'image'))
-const markdown = computed(() => textParts.value.map((p) => p.text).join(''))
-const toolRows = computed(() => {
-  const results = new Map<string, ToolResultPart>()
-  for (const part of props.message.parts) if (part.type === 'tool_result') results.set(part.call_id, part)
-  return props.message.parts
-    .filter((part): part is ToolCallPart => part.type === 'tool_call')
-    .map(call => ({ call, result: results.get(call.id) ?? null }))
-})
+/**
+ * The assistant bubble renders these in order. A reasoning block is "active" — expanded, labelled
+ * 正在思考… — only while it is the live tail of a streaming reply; anything arriving after it
+ * collapses it, which is what makes a multi-step turn read as a sequence rather than a pile.
+ */
+const segments = computed(() => messageSegments(props.message.parts))
+const activeSegmentKey = computed(() => (streaming.value ? segments.value.at(-1)?.key ?? null : null))
 const canContinueTools = computed(() => canContinueToolMessage(
   props.message,
   [...(sync.messages.get(props.message.conversation_id)?.values() ?? [])],
@@ -107,23 +106,28 @@ MessageRoot(
               Button(size="sm" class="min-h-10 md:min-h-7" variant="secondary" @click="editing = false") 取消
               Button(size="sm" class="min-h-10 md:min-h-7" @click="submitEdit") 发送
         template(v-else)
-          //- Expanded while it is the only thing to show, collapsed once the reply starts.
-          details.mb-2.rounded.border.px-2.py-1.text-xs.text-muted-foreground(v-if="wait.showReasoning" :open="wait.reasoningOpen")
-            summary 思考过程
-            pre.whitespace-pre-wrap.pt-1 {{ reasoning }}
-          p.mb-2.flex.items-center.gap-2.text-xs.text-muted-foreground(v-if="wait.waiting")
+          .flex.flex-col.gap-2
+            template(v-for="segment in segments" :key="segment.key")
+              ReasoningBlock(
+                v-if="segment.kind === 'reasoning'" :text="segment.text"
+                :active="segment.key === activeSegmentKey")
+              MarkdownRender(
+                v-else-if="segment.kind === 'text'"
+                mode="chat" :content="segment.markdown"
+                :final="!streaming || segment.key !== activeSegmentKey" :smooth-streaming="false" :fade="true"
+                :is-dark="resolvedTheme === 'dark'" :code-block-props="codeBlockProps")
+              ToolPartRenderer(
+                v-else-if="segment.kind === 'tool'" :message-id="message.id"
+                :call="segment.call" :result="segment.result" :can-continue="canContinueTools"
+                :defer-pending="isConversationHead"
+                :input-pending="streaming && typeof segment.call.args === 'string'")
+              //- Generated images are served by the same authenticated attachment route as uploads.
+              img(
+                v-else-if="segment.kind === 'image'" class="max-h-80 rounded border"
+                :src="api.attachmentUrl(segment.part.attachment_id)")
+          p.mt-2.flex.items-center.gap-2.text-xs.text-muted-foreground(v-if="wait.waiting && !segments.length")
             LoaderCircle(class="size-3.5 animate-spin")
             span 正在思考…
-          MarkdownRender(
-            mode="chat" :content="markdown" :final="!streaming" :smooth-streaming="false" :fade="true"
-            :is-dark="resolvedTheme === 'dark'" :code-block-props="codeBlockProps")
-          ToolPartRenderer(
-            v-for="row in toolRows" :key="row.call.id" :message-id="message.id"
-            :call="row.call" :result="row.result" :can-continue="canContinueTools"
-            :defer-pending="isConversationHead" :input-pending="streaming && typeof row.call.args === 'string'")
-          //- Generated images are served by the same authenticated attachment route as uploads.
-          .flex.flex-wrap.gap-2.pt-2(v-if="images.length")
-            img.max-h-80.rounded.border(v-for="(img, i) in images" :key="i" :src="api.attachmentUrl(img.attachment_id)")
           Alert(v-if="message.status === 'error'" variant="destructive")
             TriangleAlertIcon
             AlertTitle 生成失败
