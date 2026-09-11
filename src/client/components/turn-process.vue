@@ -43,7 +43,9 @@ const label = computed(() => {
 
 const timing = computed(() => {
   if (live.value || totalMs.value === null || !Number.isFinite(totalMs.value)) return null
-  return `用时 ${seconds(totalMs.value)} 秒`
+  // 「用时 0 秒」 is noise, and a tool that answers instantly produces a lot of it.
+  const whole = seconds(totalMs.value)
+  return whole > 0 ? `用时 ${whole} 秒` : null
 })
 
 const steps = computed(() => props.segments.filter(segment => segment.kind === 'tool').length)
@@ -61,6 +63,7 @@ Collapsible(:open="open" @update:open="setOpen")
   CollapsibleContent
     .mt-2.border-l.pl-3
       TurnSegments(
+        inline-reasoning
         :segments="segments" :message-id="messageId" :streaming="streaming"
         :active-segment-key="activeSegmentKey" :can-continue-tools="canContinueTools"
         :is-conversation-head="isConversationHead" :is-dark="isDark"

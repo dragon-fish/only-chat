@@ -17,14 +17,22 @@ defineProps<{
   isConversationHead: boolean
   isDark: boolean
   codeBlockProps: NonNullable<NodeRendererProps['codeBlockProps']>
+  /**
+   * Inside a process group the surrounding collapsible is already labelled 「已思考」, so a thought
+   * renders as plain prose here. Repeating the header nests one 「已思考」 inside another.
+   */
+  inlineReasoning?: boolean
 }>()
 </script>
 
 <template lang="pug">
 .flex.flex-col.gap-2
   template(v-for="segment in segments" :key="segment.key")
+    p.whitespace-pre-wrap(
+      v-if="segment.kind === 'reasoning' && inlineReasoning"
+      class="text-xs leading-relaxed text-muted-foreground") {{ segment.text }}
     ReasoningBlock(
-      v-if="segment.kind === 'reasoning'" :text="segment.text"
+      v-else-if="segment.kind === 'reasoning'" :text="segment.text"
       :duration-ms="segment.durationMs"
       :active="segment.key === activeSegmentKey")
     MarkdownRender(

@@ -52,7 +52,8 @@ const label = computed(() => (props.active ? '正在思考' : '已思考'))
 const timing = computed(() => {
   if (props.active) return `${seconds(elapsed.value)} 秒`
   if (props.durationMs === null || !Number.isFinite(props.durationMs)) return null
-  return `用时 ${seconds(props.durationMs)} 秒`
+  const whole = seconds(props.durationMs)
+  return whole > 0 ? `用时 ${whole} 秒` : null
 })
 
 const preview = computed(() => props.text.replace(/\s+/g, ' ').trim())
