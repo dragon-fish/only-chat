@@ -4,6 +4,7 @@ import type { Assets } from './plugins/assets'
 import type { Llm } from './plugins/llm'
 import type { Hub } from './plugins/hub'
 import type { BeforeSendPayload } from './plugins/hub/generation'
+import type { ConversationForked } from './plugins/hub/conversations'
 import type { ApiApp, PluginApi } from './plugins/api'
 import type { ModelCatalog } from './plugins/model-catalog'
 import type { ToolRegistry } from './plugins/tools'
@@ -35,6 +36,8 @@ declare module 'cordis' {
     'conversation/created'(conversation: Conversation): void
     'conversation/updated'(conversation: Conversation): void
     'conversation/deleted'(conversationId: number): void
+    /** Awaited through `ctx.parallel`, inside the fork's rollback: a listener that throws undoes it. */
+    'conversation/forked'(payload: ConversationForked): Promise<void>
     'message/before-send'(payload: BeforeSendPayload): void
     'message/done'(message: Message): void
     'project/created'(project: Project): void

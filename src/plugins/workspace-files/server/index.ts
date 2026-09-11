@@ -50,8 +50,15 @@ function servicesFor(runtime: ToolContext) {
 
 export const WorkspaceFilesServerPlugin = {
   name: 'workspace-files',
-  inject: ['tools'] as const,
+  inject: ['tools', 'db', 'assets'] as const,
   apply(ctx: Context) {
+    // A fork inherits `project_id`, so `/project` needs nothing; `/conversation` is keyed on the
+    // conversation itself and would otherwise be empty under messages that talk about its files.
+    ctx.on('conversation/forked', async (payload) => {
+      const files = new WorkspaceFiles(ctx.db.orm, ctx.assets, payload.userId)
+      await files.copyConversationFiles(payload.sourceConversationId, payload.conversation.id)
+    })
+
     ctx.tools.register(WORKSPACE_FILES_PLUGIN_ID, LIST_FILES_TOOL_ID, runtime => tool({
       description: [
         'List what exists in the workspace filesystem. Start at "/" to see which mounts are available.',

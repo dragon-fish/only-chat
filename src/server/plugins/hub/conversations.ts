@@ -106,7 +106,35 @@ export async function deleteConversation(db: DB, id: number, userId: number, opt
   if (!row) throw new Error('conversation not found')
 }
 
-export async function forkConversation(db: DB, sourceConversationId: number, userId: number, headMessageId: number): Promise<ConversationRow> {
+/**
+ * What a fork produced, for whoever owns a table keyed on a conversation or a message.
+ *
+ * `messageIds` maps each copied source message to its counterpart in the fork. A subscriber given
+ * only the two conversation ids cannot rebuild a row keyed on `message_id`, which is what
+ * `artifact_links` is.
+ */
+export interface ConversationForked {
+  userId: number
+  sourceConversationId: number
+  conversation: ConversationRow
+  messageIds: ReadonlyMap<number, number>
+}
+
+/**
+ * Copies a conversation up to one message. Everything else keyed on the source conversation belongs
+ * to whoever owns that table and is announced through `onForked` instead — this function must not
+ * learn what a workspace file or an Artifact is.
+ *
+ * `onForked` runs inside the rollback on purpose: a subscriber that throws takes the whole fork with
+ * it, so a conversation whose messages arrived without their files never becomes visible.
+ */
+export async function forkConversation(
+  db: DB,
+  sourceConversationId: number,
+  userId: number,
+  headMessageId: number,
+  onForked?: (payload: ConversationForked) => Promise<void>,
+): Promise<ConversationRow> {
   const source = await db.query.conversations.findFirst({ where: and(eq(conversations.id, sourceConversationId), eq(conversations.user_id, userId)) })
   if (!source) throw new Error('conversation not found')
   const rows = await listMessages(db, source.id, userId)
@@ -130,12 +158,16 @@ export async function forkConversation(db: DB, sourceConversationId: number, use
   })
   try {
     let parentId: number | null = null
+    const messageIds = new Map<number, number>()
     for (const [index, message] of path.entries()) {
       const { id: _id, conversation_id: _conversationId, parent_id: _parentId, seq: _seq, ...copy } = message
       const inserted = await insertMessage(db, userId, { ...copy, conversation_id: target.id, parent_id: parentId, seq: index + 1 })
+      messageIds.set(message.id, inserted.id)
       parentId = inserted.id
     }
-    return await updateConversation(db, target.id, userId, { head_message_id: parentId })
+    const conversation = await updateConversation(db, target.id, userId, { head_message_id: parentId })
+    await onForked?.({ userId, sourceConversationId: source.id, conversation, messageIds })
+    return conversation
   } catch (error) {
     await deleteConversation(db, target.id, userId)
     throw error

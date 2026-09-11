@@ -542,6 +542,48 @@ export class WorkspaceFiles {
     })))
   }
 
+  /**
+   * Gives a forked conversation its own copy of the source's `/conversation` mount.
+   *
+   * Rows only: every version keeps pointing at the attachment it already had, so a fork costs no
+   * bytes. That sharing is safe because `purge` asks `attachmentInUse` before removing an object,
+   * and the copied version rows are exactly what that question finds — emptying one conversation's
+   * trash can never take the fork's content with it.
+   *
+   * The `/project` mount is deliberately untouched: the fork inherits `project_id`, so it already
+   * addresses those files, and copying them would fork a mount the two are meant to share.
+   *
+   * Trashed files stay behind. The fork starts from what the conversation had, not from what it
+   * threw away.
+   */
+  async copyConversationFiles(sourceConversationId: number, targetConversationId: number): Promise<{ files: number }> {
+    const rows = await this.db.select().from(workspaceFiles).where(and(
+      eq(workspaceFiles.user_id, this.userId),
+      eq(workspaceFiles.conversation_id, sourceConversationId),
+      isNull(workspaceFiles.deleted_at),
+    ))
+    if (rows.length === 0) return { files: 0 }
+
+    for (const file of rows) {
+      const [copy] = await this.db.insert(workspaceFiles).values({
+        user_id: file.user_id, project_id: null, conversation_id: targetConversationId,
+        relative_path: file.relative_path, current_version: file.current_version,
+        created_at: file.created_at, updated_at: file.updated_at, deleted_at: null,
+      }).returning()
+      if (!copy) throw new Error('Could not copy workspace file onto the fork')
+
+      const versions = await this.db.select().from(workspaceFileVersions)
+        .where(eq(workspaceFileVersions.file_id, file.id))
+      if (versions.length === 0) continue
+      // Provenance keeps naming the message that actually wrote the bytes, which is still a message
+      // in the source conversation. Remapping it here would claim the fork authored them.
+      await this.db.insert(workspaceFileVersions).values(versions.map(({ id: _id, file_id: _fileId, ...version }) => ({
+        ...version, file_id: copy.id,
+      })))
+    }
+    return { files: rows.length }
+  }
+
   /** The current bytes of one path, for serving a page's own stylesheet and script beside it. */
   async readBytes(mount: WorkspaceMount, scope: WorkspaceScope, relativePath: string): Promise<Result<Uint8Array>> {
     const target = this.scopeOf(mount, scope)

@@ -227,7 +227,10 @@ export class Hub extends Service {
 
   async conversationFork(cmd: Extract<WsCommand, { type: 'conversation.fork' }>): Promise<void> {
     if (this._inflight.has(cmd.message_id)) throw new Error('cannot fork a streaming message')
-    const conversation = await forkConversation(this.db, cmd.conversation_id, this.userId, cmd.message_id)
+    // `parallel` awaits every listener and rethrows their failures, which is what lets a plugin
+    // that cannot carry its own rows over abort the fork instead of leaving one half-copied.
+    const conversation = await forkConversation(this.db, cmd.conversation_id, this.userId, cmd.message_id,
+      payload => this.app.parallel('conversation/forked', payload))
     await this.emitConversationCreated(conversation)
     await this.broadcast({ type: 'conversation.forked', request_id: cmd.request_id, conversation_id: conversation.id })
   }
