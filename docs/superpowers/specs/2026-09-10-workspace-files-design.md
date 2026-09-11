@@ -105,6 +105,29 @@ The core publication method accepts authenticated bytes, metadata, and provenanc
 
 ## Tool Contracts
 
+### Writing the descriptions
+
+Tool descriptions are prompt surface, not documentation. Each one states, in this order: what the
+tool does, when to reach for it, its limits, and what it returns. Beyond that:
+
+- **Name the default budget.** "Reads up to 2,000 lines" tells the model what it is spending.
+- **Steer toward the cheap path.** Say outright that a model which already knows the range should
+  pass `offset` and `limit` instead of reading the whole file.
+- **Describe the return shape.** Numbered lines, 1-based, so the model can cite positions back.
+- **Separate the failure modes.** A missing file, an unavailable mount and an empty file are three
+  different answers, and each must read as a fact rather than as a malfunction.
+- **Include the negative instruction.** `list_files` never returns content; do not re-read a file
+  that `write_file` just returned metadata for. Saying what *not* to do saves more tokens than
+  saying what to do.
+- **Point at the right tool.** `list_files` for discovery, `read_file` for content, `write_file` for
+  a whole-file replacement — and state that partial edits are not supported in this release rather
+  than letting the model discover it by failing.
+- **Make the version protocol explicit.** Phrase it as a sequence the model can follow — read the
+  file, keep the `version` it returned, pass it back as `expectedVersion` — not as a bare parameter
+  requirement. Creating a new file omits it.
+
+Wording is ours. The structure above is drawn from how Claude Code's own file tools are written.
+
 ### `list_files`
 
 ```json
@@ -137,6 +160,27 @@ The result is structured and contains model-facing numbered text:
   "nextOffset": 3
 }
 ```
+
+#### Counting lines
+
+`totalLines` is `content.split('\n').length`, with no trailing element discarded, and `0` for an
+empty file. A trailing newline therefore produces a final empty line, which is real: it is what an
+editor shows and what `lines.join('\n')` needs to reproduce the bytes exactly.
+
+| Content | `totalLines` |
+| --- | --- |
+| `""` | 0 |
+| `"a\nb"` | 2 |
+| `"a\nb\n"` | 3 |
+| `"a\nb\n\n"` | 4 |
+
+This diverges from `wc -l` on purpose and matches Claude Code's Read tool, whose behaviour was
+measured rather than assumed. Discarding the trailing empty line would make `"a\nb"` and `"a\nb\n"`
+indistinguishable and break round-tripping. `totalLines` must equal exactly the number of lines
+`offset`/`limit` can address, or `nextOffset` goes wrong at the boundary.
+
+An empty file returns an explicit "file is empty" result rather than one blank line, so the model can
+tell an empty file from a file holding a single newline.
 
 The default limit is 2,000 lines. One model-visible result is limited to 100 KiB. A whole-file request beyond the bound asks the model to use `offset` and `limit`; an explicitly selected range that still exceeds it asks for a smaller range. No content is silently omitted. A session-local optimization may return `unchanged: true` when the same path, version, and range was already delivered; correctness does not depend on this cache surviving a restart.
 
@@ -205,11 +249,16 @@ interface ToolRuntimeContext {
 The tool pipeline exposes:
 
 ```text
-tools/pre-execute     waterfall
-tools/execute         waterfall around the default implementation
-tools/post-execute    waterfall
-tools/result          immutable completion notification
+tool/before-execute   waterfall over the input; a returned value short-circuits the default
+tool/execute          waterfall over the result, after the default ran
+tool/result           immutable completion notification
 ```
+
+Names follow the convention already in use: `module/event` for something that just happened,
+`module/before-event` for something about to happen, kebab-case, singular subject — matching the
+existing `message/before-send`. There is no separate "around" event: a `tool/before-execute`
+listener that returns a value replaces the default implementation, which is the same interception
+with fewer concepts.
 
 Lifecycle hooks expose mutable sessions at stable persistence points:
 
