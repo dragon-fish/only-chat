@@ -337,8 +337,10 @@ A model may legitimately write a page as several files — an HTML importing the
 script beside it — so the archive preserves relative layout, and single-file downloads stay
 available for anything else.
 
-Preview shows source, highlighted by the same renderer the chat uses. Rendering a page instead of
-reading it is a plugin setting that starts off. When it is on, a file is served to a frame
+Preview shows source, highlighted by the same renderer the chat uses. Markdown opens rendered
+instead — it is written to be read, and it goes through the chat's own `safe` HTML policy, so a
+script tag or event handler never survives it and nothing has to be opted into. Rendering a *page*
+is different, because a page runs: that is a plugin setting, and it starts off. When it is on, a file is served to a frame
 sandboxed without `allow-same-origin`, under a short-lived ticket carried in the URL's directory
 prefix: the frame's opaque origin means its own subresource requests are cross-site and arrive
 without cookies, and the prefix is exactly what a relative `./style.css` keeps. Responses carry a

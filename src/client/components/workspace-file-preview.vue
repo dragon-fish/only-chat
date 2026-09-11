@@ -9,7 +9,7 @@ import { Skeleton } from '@/client/ui/skeleton'
 import { Tabs, TabsList, TabsTrigger } from '@/client/ui/tabs'
 import { api } from '@/client/lib/api'
 import { useTheme } from '@/client/composables/use-theme'
-import { formatFileSize, isRenderable, languageOf, type FileRecord } from './workspace-files'
+import { formatFileSize, languageOf, previewKind, type FileRecord } from './workspace-files'
 
 const props = defineProps<{ fileId: number | null }>()
 const emit = defineEmits<{ 'update:fileId': [value: number | null] }>()
@@ -23,12 +23,15 @@ const view = ref<'source' | 'rendered'>('source')
 
 /**
  * Rendering model-written HTML is the plugin's own opt-in, and it starts off: the server hands back
- * a preview URL only while that setting is on, so its absence IS the answer.
+ * a preview URL only while that setting is on, so its absence IS the answer. Markdown has no such
+ * gate — nothing in it runs.
  */
 const frameSrc = ref<string | null>(null)
-const canRender = computed(() => (
-  frameSrc.value !== null && record.value !== null && isRenderable(record.value.relativePath)
-))
+const kind = computed<'markdown' | 'page' | null>(() => {
+  const value = record.value === null ? null : previewKind(record.value.relativePath)
+  return value === 'page' && frameSrc.value === null ? null : value
+})
+const renderLabel = computed(() => (kind.value === 'markdown' ? '预览' : '渲染'))
 const codeBlockProps: NonNullable<NodeRendererProps['codeBlockProps']> = {
   theme: { light: 'one-light', dark: 'one-dark-pro' },
 }
@@ -59,6 +62,8 @@ watch(() => props.fileId, async (fileId) => {
     record.value = body.record
     content.value = body.content
     frameSrc.value = body.previewUrl
+    // Markdown is written to be read, so it opens read. Source is one click away either way.
+    if (previewKind(body.record.relativePath) === 'markdown') view.value = 'rendered'
   }
   catch (cause) {
     error.value = cause instanceof Error ? cause.message : '无法读取文件'
@@ -89,14 +94,20 @@ ResponsiveOverlay(
     .mb-3.flex.flex-wrap.items-center.justify-between.gap-2
       p(class="text-muted-foreground text-xs")
         | 第 {{ record.version }} 版 · {{ formatFileSize(record.fileSize) }} · {{ record.totalLines }} 行 · 更新于 {{ new Date(record.updatedAt).toLocaleString() }}
-      Tabs(v-if="canRender" :model-value="view" @update:model-value="selectView")
+      Tabs(v-if="kind" :model-value="view" @update:model-value="selectView")
         TabsList
           TabsTrigger(value="source" class="min-h-10 md:min-h-7") 源码
-          TabsTrigger(value="rendered" class="min-h-10 md:min-h-7") 渲染
+          TabsTrigger(value="rendered" class="min-h-10 md:min-h-7") {{ renderLabel }}
+    //- Markdown renders with the chat's own `safe` policy: script tags and event handlers never
+    //- survive it, so a file is no more dangerous to read than the reply that wrote it.
+    MarkdownRender(
+      v-if="kind === 'markdown' && view === 'rendered'" mode="chat" :content="content"
+      :final="true" :smooth-streaming="false" :is-dark="resolvedTheme === 'dark'"
+      :code-block-props="codeBlockProps")
     //- Sandboxed without `allow-same-origin`: the page gets an opaque origin, so it cannot read
     //- this app's cookies or reach into the parent. It still runs code a model wrote.
     iframe(
-      v-if="canRender && view === 'rendered'" class="bg-background h-[60dvh] w-full rounded-lg border"
+      v-else-if="kind === 'page' && view === 'rendered'" class="bg-background h-[60dvh] w-full rounded-lg border"
       :src="frameSrc ?? undefined"
       sandbox="allow-scripts allow-forms allow-modals" referrerpolicy="no-referrer"
       :title="`${record.relativePath} 预览`")

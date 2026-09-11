@@ -43,10 +43,19 @@ export function languageOf(relativePath: string): string {
   return LANGUAGES[extensionOf(relativePath)] ?? 'text'
 }
 
-/** Only a page can be rendered; everything else is read as source. */
-export function isRenderable(relativePath: string): boolean {
+/**
+ * What a file can be shown as besides its source.
+ *
+ * `markdown` renders through the same renderer and the same `safe` HTML policy the chat already
+ * applies to every reply, so it executes nothing and needs no opt-in. `page` does execute, which is
+ * why it stays behind the plugin's own setting.
+ */
+export type PreviewKind = 'markdown' | 'page' | null
+
+export function previewKind(relativePath: string): PreviewKind {
   const extension = extensionOf(relativePath)
-  return extension === 'html' || extension === 'htm'
+  if (extension === 'md' || extension === 'markdown') return 'markdown'
+  return extension === 'html' || extension === 'htm' ? 'page' : null
 }
 
 /** One line of the file list: a folder to fold, or a file to act on. */
