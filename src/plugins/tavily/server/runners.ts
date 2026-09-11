@@ -12,12 +12,25 @@ function message(error: unknown): string {
 }
 
 /**
- * Rides along with every success so the agent plans against the budget instead of hitting it.
- * States the reset condition rather than saying "this turn": an agent reading "本轮" has no way to
- * tell whether that means this reply or the whole conversation, and guesses the expensive way.
+ * Names the reset condition rather than saying "this turn": an agent reading 「本轮」 cannot tell
+ * whether that means this reply or the whole conversation, and guesses the expensive way.
  */
-function budgetNote(tool: string, left: number): string {
-  return `${tool} 还能使用 ${left} 次，额度在用户下次发言后重置。`
+const RESET_CLAUSE = '额度在用户下次发言后重置'
+
+/**
+ * Rides along with every success so the agent plans against the budget instead of hitting it, and
+ * never in the vocabulary of failure: eight search hits delivered alongside the word 「耗尽」 read
+ * as an error the agent then has to reconcile. The reset clause appears only once the budget is
+ * actually gone, which is the only time it is actionable.
+ */
+function budgetNote(tool: string, left: number, cap: number): string {
+  const remaining = `${tool} 剩余 ${left}/${cap} 次`
+  return left > 0 ? `${remaining}。` : `${remaining}，${RESET_CLAUSE}。`
+}
+
+/** Attached to a call that was turned away — the one place 「耗尽」 describes what just happened. */
+function budgetRefusal(tool: string, cap: number): string {
+  return `${tool} 调用次数耗尽（0/${cap}），${RESET_CLAUSE}。`
 }
 
 /**
@@ -44,12 +57,12 @@ export async function runWebSearch(
 ): Promise<WebSearchOutput | ToolError | ToolRefusal> {
   const callsLeft = spend(turn, SEARCH_CALLS, cap)
   if (callsLeft === null) {
-    return { refused: `web_search 调用次数已用完（上限 ${cap} 次），额度在用户下次发言后重置。` }
+    return { refused: budgetRefusal('web_search', cap) }
   }
   const maxResults = Math.min(Math.max(input.max_results ?? DEFAULT_SEARCH_RESULTS, 1), MAX_SEARCH_RESULTS)
   try {
     const results = await client.search({ query: input.query, maxResults })
-    return { query: input.query, results, note: budgetNote('web_search', callsLeft) }
+    return { query: input.query, results, note: budgetNote('web_search', callsLeft, cap) }
   } catch (error) {
     return { error: `web_search 失败：${message(error)}` }
   }
@@ -63,10 +76,10 @@ export async function runWebExtract(
 ): Promise<WebExtractOutput | ToolError | ToolRefusal> {
   const callsLeft = spend(turn, EXTRACT_CALLS, cap)
   if (callsLeft === null) {
-    return { refused: `web_extract 调用次数已用完（上限 ${cap} 次），额度在用户下次发言后重置。` }
+    return { refused: budgetRefusal('web_extract', cap) }
   }
   try {
-    return { ...await client.extract(input.urls), note: budgetNote('web_extract', callsLeft) }
+    return { ...await client.extract(input.urls), note: budgetNote('web_extract', callsLeft, cap) }
   } catch (error) {
     return { error: `web_extract 失败：${message(error)}` }
   }
