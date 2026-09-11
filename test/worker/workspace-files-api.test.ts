@@ -126,6 +126,12 @@ describe('workspace files REST', () => {
     // Relative layout is the whole point: unzipped, the page finds its stylesheet where it looks.
     expect(Object.keys(entries).sort()).toEqual(['report.md', 'site/index.html', 'site/style.css'])
     expect(new TextDecoder().decode(entries['site/style.css'])).toBe('body{}')
+
+    // One folder on its own, for taking just the page that was asked about.
+    const folder = await f.client.request(`/api/projects/${f.projectId}/files/archive?prefix=site/`, { method: 'GET' })
+    expect(Object.keys(unzipSync(new Uint8Array(await folder.arrayBuffer()))).sort())
+      .toEqual(['site/index.html', 'site/style.css'])
+    expect((await f.client.request(`/api/projects/${f.projectId}/files/archive?prefix=../etc`, { method: 'GET' })).status).toBe(400)
   })
 
   it('offers no rendered preview until the plugin setting asks for one', async () => {

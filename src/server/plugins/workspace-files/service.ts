@@ -411,7 +411,7 @@ export class WorkspaceFiles {
    * Every live file in one mount with its bytes, for an archive. A page the model wrote as several
    * files — an HTML importing its own stylesheet — is only usable if they travel together.
    */
-  async readMount(mount: WorkspaceMount, scope: WorkspaceScope): Promise<Result<Array<{ relativePath: string, bytes: Uint8Array }>>> {
+  async readMount(mount: WorkspaceMount, scope: WorkspaceScope, prefix = ''): Promise<Result<Array<{ relativePath: string, bytes: Uint8Array }>>> {
     const target = this.scopeOf(mount, scope)
     if (!target.ok) return target
 
@@ -434,6 +434,9 @@ export class WorkspaceFiles {
 
     const out: Array<{ relativePath: string, bytes: Uint8Array }> = []
     for (const row of rows) {
+      // Prefix matching happens here rather than in SQL: `_` and `%` are ordinary characters in a
+      // path, and a LIKE pattern would quietly treat a folder named `a_b` as matching `axb`.
+      if (!row.relativePath.startsWith(prefix)) continue
       const stored = await this.storage.getBytes(row.r2Key)
       // A row whose bytes are gone is a broken file, not a reason to refuse the whole archive.
       if (stored) out.push({ relativePath: row.relativePath, bytes: stored.bytes })

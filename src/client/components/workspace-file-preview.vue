@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { CodeBlockNode } from 'markstream-vue'
+import MarkdownRender from 'markstream-vue'
+import type { NodeRendererProps } from 'markstream-vue'
 import ResponsiveOverlay from '@/client/components/layout/responsive-overlay.vue'
 import { Alert, AlertDescription, AlertTitle } from '@/client/ui/alert'
 import { Button } from '@/client/ui/button'
@@ -28,12 +29,20 @@ const frameSrc = ref<string | null>(null)
 const canRender = computed(() => (
   frameSrc.value !== null && record.value !== null && isRenderable(record.value.relativePath)
 ))
-const node = computed(() => ({
-  type: 'code_block' as const,
-  language: record.value === null ? 'text' : languageOf(record.value.relativePath),
-  code: content.value,
-  raw: content.value,
-}))
+const codeBlockProps: NonNullable<NodeRendererProps['codeBlockProps']> = {
+  theme: { light: 'one-light', dark: 'one-dark-pro' },
+}
+/**
+ * The source goes through the chat's own markdown renderer as one fenced block, which is what
+ * gives it the same highlighting: a hand-assembled code block renders unstyled.
+ */
+const markdown = computed(() => {
+  const language = record.value === null ? 'text' : languageOf(record.value.relativePath)
+  // A file carrying a fence of its own must not be able to end the block early.
+  const longest = Math.max(0, ...[...content.value.matchAll(/`+/g)].map(match => match[0].length))
+  const fence = '`'.repeat(Math.max(3, longest + 1))
+  return fence + language + '\n' + content.value + '\n' + fence
+})
 
 watch(() => props.fileId, async (fileId) => {
   record.value = null
@@ -91,13 +100,10 @@ ResponsiveOverlay(
       :src="frameSrc ?? undefined"
       sandbox="allow-scripts allow-forms allow-modals" referrerpolicy="no-referrer"
       :title="`${record.relativePath} 预览`")
-    //- Source, never executed by the app itself. Lines wrap rather than scroll sideways: a second
-    //- scroll container inside the overlay's own sends the wheel to whichever one it is over.
-    CodeBlockNode(
-      v-else :node="node" :is-dark="resolvedTheme === 'dark'"
-      :theme="{ light: 'one-light', dark: 'one-dark-pro' }"
-      :show-preview-button="false" :is-show-preview="false" :show-collapse-button="false"
-      :show-line-numbers="true")
+    //- Source, never executed by the app itself.
+    MarkdownRender(
+      v-else mode="chat" :content="markdown" :final="true" :smooth-streaming="false"
+      :is-dark="resolvedTheme === 'dark'" :code-block-props="codeBlockProps")
   template(#footer)
     Button(v-if="record" as="a" variant="outline" class="min-h-10" :href="api.workspaceFileDownloadUrl(record.id)") 下载
 </template>

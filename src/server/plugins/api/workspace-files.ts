@@ -73,6 +73,23 @@ async function previewUrlFor(ctx: Context, userId: number, record: FileRecord): 
  * read this app's cookies. It is still model-written code, which is why the plugin setting that
  * mints these tickets is off until someone turns it on.
  */
+/**
+ * An archive may be narrowed to one folder, which is how a page and the files it references travel
+ * together without everything else. `null` rejects a prefix the model could not have written.
+ */
+function archivePrefix(raw: string | undefined): string | null {
+  if (raw === undefined || raw === '') return ''
+  const trimmed = raw.endsWith('/') ? raw.slice(0, -1) : raw
+  const parsed = parseWorkspacePath(`/project/${trimmed}`)
+  return parsed.ok && parsed.value.relativePath !== '' ? `${parsed.value.relativePath}/` : null
+}
+
+/** The archive is named after the folder when there is one, so two downloads never collide. */
+function archiveName(prefix: string, fallback: string): string {
+  const folder = prefix === '' ? '' : prefix.slice(0, -1).split('/').pop()
+  return `${folder || fallback}.zip`
+}
+
 export function workspacePreviewRoutes(ctx: Context) {
   const r = new Hono<ApiEnv>()
 
@@ -183,9 +200,11 @@ export function workspaceFileRoutes(ctx: Context) {
       .where(and(eq(projects.id, projectId), eq(projects.user_id, userId))).limit(1)
     if (!project) return c.json({ error: 'not found' }, 404)
 
-    const result = await filesFor(userId).readMount('project', { conversationId: 0, projectId })
+    const prefix = archivePrefix(c.req.query('prefix'))
+    if (prefix === null) return c.json({ error: 'invalid prefix' }, 400)
+    const result = await filesFor(userId).readMount('project', { conversationId: 0, projectId }, prefix)
     if (!result.ok) return c.json({ error: result.error }, STATUS[result.error])
-    return zipResponse(result.value, `${project.name || 'project'}.zip`)
+    return zipResponse(result.value, archiveName(prefix, project.name || 'project'))
   })
 
   r.get('/conversations/:id/files/archive', async (c) => {
@@ -197,9 +216,11 @@ export function workspaceFileRoutes(ctx: Context) {
       .where(and(eq(conversations.id, conversationId), eq(conversations.user_id, userId))).limit(1)
     if (!conversation) return c.json({ error: 'not found' }, 404)
 
-    const result = await filesFor(userId).readMount('conversation', { conversationId, projectId: conversation.project_id })
+    const prefix = archivePrefix(c.req.query('prefix'))
+    if (prefix === null) return c.json({ error: 'invalid prefix' }, 400)
+    const result = await filesFor(userId).readMount('conversation', { conversationId, projectId: conversation.project_id }, prefix)
     if (!result.ok) return c.json({ error: result.error }, STATUS[result.error])
-    return zipResponse(result.value, `${conversation.title || 'conversation'}.zip`)
+    return zipResponse(result.value, archiveName(prefix, conversation.title || 'conversation'))
   })
 
   r.get('/workspace-files/:id', async (c) => {

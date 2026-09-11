@@ -1,3 +1,4 @@
+import { getLanguageIcon } from 'markstream-vue'
 import type { FileRecord } from '@/shared/workspace-files'
 
 export type { FileRecord }
@@ -46,4 +47,75 @@ export function languageOf(relativePath: string): string {
 export function isRenderable(relativePath: string): boolean {
   const extension = extensionOf(relativePath)
   return extension === 'html' || extension === 'htm'
+}
+
+/** One line of the file list: a folder to fold, or a file to act on. */
+export type FileTreeRow =
+  | { kind: 'dir', key: string, name: string, path: string, depth: number, count: number }
+  | { kind: 'file', key: string, name: string, depth: number, record: FileRecord }
+
+interface DirNode {
+  files: FileRecord[]
+  dirs: Map<string, DirNode>
+}
+
+function emptyDir(): DirNode {
+  return { files: [], dirs: new Map() }
+}
+
+function insert(root: DirNode, record: FileRecord): void {
+  const segments = record.relativePath.split('/')
+  const name = segments.pop()!
+  let node = root
+  for (const segment of segments) {
+    let child = node.dirs.get(segment)
+    if (!child) {
+      child = emptyDir()
+      node.dirs.set(segment, child)
+    }
+    node = child
+  }
+  node.files.push({ ...record, relativePath: name })
+}
+
+function countFiles(node: DirNode): number {
+  return node.files.length + [...node.dirs.values()].reduce((total, child) => total + countFiles(child), 0)
+}
+
+function walk(node: DirNode, prefix: string, depth: number, expanded: ReadonlySet<string>, out: FileTreeRow[]): void {
+  for (const [name, child] of [...node.dirs].sort((a, b) => a[0].localeCompare(b[0]))) {
+    const path = prefix === '' ? name : `${prefix}/${name}`
+    out.push({ kind: 'dir', key: `dir:${path}`, name, path, depth, count: countFiles(child) })
+    // A closed folder hides its whole subtree, which is the only reason to close one.
+    if (expanded.has(path)) walk(child, path, depth + 1, expanded, out)
+  }
+  for (const record of [...node.files].sort((a, b) => a.relativePath.localeCompare(b.relativePath))) {
+    out.push({ kind: 'file', key: `file:${record.id}`, name: record.relativePath, depth, record })
+  }
+}
+
+/**
+ * A flat list of paths stops being readable the moment a model writes a page as several files in
+ * several folders, so the panel shows the shape it actually wrote: folders first, then files, each
+ * named by its own last segment. Flattened rather than nested so one loop renders it.
+ *
+ * Folders start closed. A workspace is skimmed for the one thing that was just written, and a dozen
+ * files spilled across three folders is the state this replaced.
+ */
+export function fileTreeRows(files: readonly FileRecord[], expanded: ReadonlySet<string> = new Set()): FileTreeRow[] {
+  const root = emptyDir()
+  for (const record of files) insert(root, record)
+  const out: FileTreeRow[] = []
+  walk(root, '', 0, expanded, out)
+  return out
+}
+
+/** The same icon the chat's code blocks carry, so a file reads as the kind of file it is. */
+export function fileIcon(relativePath: string): string {
+  return getLanguageIcon(languageOf(relativePath))
+}
+
+/** What a row shows beside its name. Version and timestamp live in the preview, not in the list. */
+export function fileRowMeta(record: FileRecord): string {
+  return `${formatFileSize(record.fileSize)} · ${record.totalLines} 行`
 }
