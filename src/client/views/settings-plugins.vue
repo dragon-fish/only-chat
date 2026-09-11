@@ -1,15 +1,27 @@
 <script lang="ts">
-import type { PluginManifest } from '@/shared/plugins'
+import type { PluginConfigStatusMap, PluginManifest } from '@/shared/plugins'
 
-export interface PluginSettingsRow extends PluginManifest { enabled: boolean }
+export interface PluginSettingsRow extends PluginManifest {
+  enabled: boolean
+  /** Whether the plugin declares configuration at all — not whether it has been filled in. */
+  configurable: boolean
+  /** A configurable plugin whose stored values do not satisfy its schema. */
+  needsConfig: boolean
+}
 
 export function pluginSettingsRows(
   manifests: readonly PluginManifest[],
   settings: Readonly<Record<string, boolean>>,
+  status: PluginConfigStatusMap = {},
 ): PluginSettingsRow[] {
   return [...manifests]
     .sort((a, b) => a.id.localeCompare(b.id))
-    .map(manifest => ({ ...manifest, enabled: settings[manifest.id] === true }))
+    .map(manifest => ({
+      ...manifest,
+      enabled: settings[manifest.id] === true,
+      configurable: manifest.configSchema !== undefined,
+      needsConfig: manifest.configSchema !== undefined && status[manifest.id]?.configured !== true,
+    }))
 }
 </script>
 
@@ -29,7 +41,7 @@ import { DISCONNECTED_MESSAGE, useSyncStore } from '@/client/stores/sync'
 import { pluginManifests } from '@/client/plugins/loaders'
 
 const sync = useSyncStore()
-const plugins = computed(() => pluginSettingsRows(pluginManifests, sync.settings.plugins))
+const plugins = computed(() => pluginSettingsRows(pluginManifests, sync.settings.plugins, sync.pluginConfig))
 const pending = reactive(new Map<string, boolean>())
 
 watch(() => sync.settings, settings => {
@@ -81,6 +93,9 @@ function toggle(key: string, value: boolean) {
                 span {{ plugin.name }}
                 Badge(:variant="plugin.enabled ? 'secondary' : 'outline'") {{ pending.has(plugin.id) ? '更新中…' : plugin.enabled ? '已启用' : '已停用' }}
               ItemDescription {{ plugin.description }}
+              ItemDescription(v-if="plugin.needsConfig" class="text-destructive") 尚未配置，工具暂不可用。
             ItemActions
+              Button(v-if="plugin.configurable" as-child variant="outline" size="sm")
+                RouterLink(:to="`/settings/plugins/${plugin.id}`") 配置
               Switch(:model-value="plugin.enabled" :aria-label="`启用 ${plugin.name}`" :disabled="pending.has(plugin.id) || sync.status !== 'open'" :title="sync.status === 'open' ? undefined : DISCONNECTED_MESSAGE" class="after:-inset-y-3" @update:model-value="toggle(plugin.id, $event)")
 </template>

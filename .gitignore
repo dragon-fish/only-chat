@@ -10,3 +10,4 @@ dist/
 .wrangler/
 node_modules/.tmp/
 .playwright-mcp/
+.DS_Store

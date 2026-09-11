@@ -111,6 +111,7 @@ describe('real App authentication lifecycle', () => {
       if (path === '/api/site-settings') return Response.json({ allowRegister: false })
       privateRequests.push(path)
       if (path === '/api/me') return Response.json({ settings: { plugins: {} } })
+      if (path === '/api/plugins/config') return Response.json({})
       if (path === '/api/conversations') return Response.json([conversationFor(1)])
       if (path === '/api/projects' || path === '/api/providers') return Response.json([])
       throw new Error(`Unexpected request: ${path}`)
@@ -129,14 +130,14 @@ describe('real App authentication lifecycle', () => {
     }).toEqual({ auth: 'user1@example.com', config: true, conversations: true, projects: true, route: '/new', settings: true }))
     expect(sync.conversationList.map(item => item.title)).toEqual(['User 1 chat'])
     expect(FakeSocket.instances).toHaveLength(1)
-    expect(privateRequests.sort()).toEqual(['/api/conversations', '/api/me', '/api/projects', '/api/providers'])
+    expect(privateRequests.sort()).toEqual(['/api/conversations', '/api/me', '/api/plugins/config', '/api/projects', '/api/providers'])
     expect(document.querySelector('#page-header [aria-label^="选择模型"]')).not.toBeNull()
     expect(document.querySelector('#page-header [aria-label="会话设置"]')).not.toBeNull()
 
     await auth.refresh()
     await nextTick()
     expect(FakeSocket.instances).toHaveLength(1)
-    expect(privateRequests).toHaveLength(4)
+    expect(privateRequests).toHaveLength(5)
   })
 
   it('clears private state and navigates to login on an authentication socket close', async () => {
@@ -145,6 +146,7 @@ describe('real App authentication lifecycle', () => {
     vi.mocked(authClient.signIn.email).mockResolvedValue({ data: { user: sessionFor(1).user }, error: null } as never)
     const { auth, config, router, sync } = await mountGuestApp(async input => {
       if (String(input) === '/api/me') return Response.json({ settings: { plugins: {} } })
+      if (String(input) === '/api/plugins/config') return Response.json({})
       if (String(input) === '/api/conversations') return Response.json([conversationFor(1)])
       return Response.json([])
     })
@@ -173,6 +175,7 @@ describe('real App authentication lifecycle', () => {
       if (path === '/api/site-settings') return Response.json({ allowRegister: false })
       const requestUser = activeUser
       if (path === '/api/me') return Response.json({ settings: { plugins: { [`user-${requestUser}`]: true } } })
+      if (path === '/api/plugins/config') return Response.json({})
       if (path === '/api/conversations') return requestUser === 1 ? oldConversations : Response.json([conversationFor(2)])
       if (path === '/api/projects') return Response.json([])
       if (path === '/api/providers') return Response.json([{ ...provider, id: requestUser, user_id: requestUser, name: `User ${requestUser} provider` }])

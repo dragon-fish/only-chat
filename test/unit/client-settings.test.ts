@@ -14,7 +14,7 @@ const model = modelRecords[0]!
 
 describe('settings navigation and model editing', () => {
   it('renders built-in manifests even when the persisted settings key is absent', () => {
-    const manifests = [{ id: 'ask_user', name: 'Ask User', description: 'Ask questions', defaultTools: ['ask_user'] }]
+    const manifests = [{ id: 'ask_user', name: 'Ask User', description: 'Ask questions', tools: [{ id: 'ask_user', name: 'ask_user', description: 'ask_user' }] }]
     expect(pluginSettingsRows(manifests, {})).toEqual([
       expect.objectContaining({ id: 'ask_user', name: 'Ask User', enabled: false }),
     ])

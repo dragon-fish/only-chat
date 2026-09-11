@@ -1,5 +1,5 @@
-import { streamText, type LanguageModel, type ToolSet } from 'ai'
-import { INFLIGHT_FLUSH_INTERVAL_MS } from '@/shared/constants'
+import { stepCountIs, streamText, type LanguageModel, type StopCondition, type ToolSet } from 'ai'
+import { INFLIGHT_FLUSH_INTERVAL_MS, TOOL_MAX_STEPS } from '@/shared/constants'
 import type { Message, PersistedStatus, ConversationParams, Usage } from '@/shared/models'
 import type { Part, ToolCallPart, ToolResultPart } from '@/shared/parts'
 import type { SendCommand, WsCommand } from '@/shared/ws'
@@ -69,6 +69,14 @@ interface ResolveArgs {
   draft?: ConversationDraft
 }
 
+/**
+ * True once a step has called a tool the server cannot answer — one with no `execute`, which waits
+ * on a durable human response. Such a turn ends here and resumes through `tool.respond`.
+ */
+export function awaitsHumanToolResult(tools: ToolSet): StopCondition<ToolSet> {
+  return ({ steps }) => steps.at(-1)?.toolCalls.some(call => tools[call.toolName]?.execute === undefined) ?? false
+}
+
 function modelUnavailable(source: ModelSource): Error {
   if (source === 'project') return new Error('模型不可用（来源：Project）')
   if (source === 'conversation') return new Error('模型不可用（来源：会话）')
@@ -102,7 +110,12 @@ async function resolveTarget(hub: Hub, args: ResolveArgs): Promise<Target> {
 
   const user = await getUser(hub.db, hub.userId)
   if (!user) throw new Error('user missing')
-  const resolvedTools = hub.app.tools.resolve(draft.tools, user.settings.plugins)
+  // One Map per generation: tools that budget their own calls count into it, and it dies with the
+  // assistant message. Anything longer-lived would leak a budget across conversations.
+  const resolvedTools = await hub.app.tools.resolve(draft.tools, user.settings.plugins, {
+    userId: hub.userId,
+    turn: new Map<string, unknown>(),
+  })
   if (resolvedTools.length > 0 && model.metadata_resolved.tool_call !== true) {
     throw new Error('当前模型不支持工具调用，请取消所选工具或更换模型')
   }
@@ -274,6 +287,12 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
       model,
       messages,
       tools: target.tools,
+      // Without a stop condition the SDK runs one step, so an executing tool would produce a result
+      // the model never gets to answer from. The second condition is not optional: a tool with no
+      // `execute` still yields a tool-error output, which satisfies the SDK's own continue check —
+      // measured — so a bare step cap would make `ask_user` loop until the cap instead of stopping
+      // for the human.
+      stopWhen: [stepCountIs(TOOL_MAX_STEPS), awaitsHumanToolResult(target.tools)],
       // The system prompt travels as a `role: 'system'` message so cache breakpoints can attach to it.
       allowSystemInMessages: true,
       // Responses raw deltas preserve full-text versus summary provenance before SDK normalization.

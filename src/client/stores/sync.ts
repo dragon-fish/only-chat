@@ -7,6 +7,7 @@ import type { ModelRef } from '@/shared/api'
 import type { Message, Project, Conversation, ConversationParams, UserSettings } from '@/shared/models'
 import type { ModelMetadata } from '@/shared/model-metadata'
 import type { Part, ToolResultPart } from '@/shared/parts'
+import type { PluginConfigStatusMap } from '@/shared/plugins'
 import type { EditCommand, RegenerateCommand, SendCommand, WsCommand, WsEvent } from '@/shared/ws'
 
 /**
@@ -607,6 +608,9 @@ export const useSyncStore = defineStore('sync', () => {
   const streamingIds = reactive(new Set<number>())
   const forkResult = ref<{ request_id: string, conversation_id: number } | null>(null)
   const settings = ref<UserSettings>({ plugins: {} })
+  // Which plugins have usable configuration. Loaded with `settings` because every consumer of one
+  // needs the other: an enabled plugin whose credential is missing must not offer its tools.
+  const pluginConfig = ref<PluginConfigStatusMap>({})
   const lastError = ref<string | null>(null)
   // Whether the Projects list has been fetched. Before it has, a Project id from a route cannot be
   // judged missing — only absent — and must not be silently dropped.
@@ -634,6 +638,7 @@ export const useSyncStore = defineStore('sync', () => {
     optimisticMutations.clear()
     forkResult.value = null
     settings.value = { plugins: {} }
+    pluginConfig.value = {}
     lastError.value = null
     projectsLoaded.value = false
     conversationsLoaded.value = false
@@ -866,9 +871,10 @@ export const useSyncStore = defineStore('sync', () => {
     const epoch = loadEpoch
     settingsError.value = null
     try {
-      const result = await api.me()
+      const [result, configStatus] = await Promise.all([api.me(), api.pluginConfig()])
       if (epoch !== loadEpoch) return
       settings.value = result.settings
+      pluginConfig.value = configStatus
       settingsLoaded.value = true
     } catch (error) {
       if (epoch === loadEpoch) settingsError.value = error instanceof Error ? error.message : String(error)
@@ -907,7 +913,7 @@ export const useSyncStore = defineStore('sync', () => {
   }
 
   return {
-    status, snapshotSeq, conversations, projects, messages, streamingIds, forkResult, settings, lastError, projectsLoaded, conversationsLoaded, settingsLoaded,
+    status, snapshotSeq, conversations, projects, messages, streamingIds, forkResult, settings, pluginConfig, lastError, projectsLoaded, conversationsLoaded, settingsLoaded,
     optimisticMutations,
     conversationsError, projectsError, settingsError, loadedMessageConversations, conversationList, imageConversationList, projectList,
     applyEvent, ingestConversations, ingestMessages, conversationsInProject, pathFor, siblingsOf, leafOf, isStreaming, loadConversations, loadProjects, loadSettings, loadMessages, connect, reset, send,

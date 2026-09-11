@@ -7,7 +7,9 @@ import { HubPlugin } from './plugins/hub'
 import { ApiPlugin } from './plugins/api'
 import { ModelCatalog } from './plugins/model-catalog'
 import { ToolRegistryPlugin } from './plugins/tools'
+import { PluginConfigPlugin } from './plugins/plugin-config'
 import { AskUserServerPlugin } from '@/plugins/ask-user/server'
+import { TavilyServerPlugin } from '@/plugins/tavily/server'
 
 export type Side = 'worker' | 'hub'
 
@@ -34,6 +36,8 @@ export async function createApp(options: AppOptions): Promise<Context> {
 
   await ctx.plugin(Database)
   await ctx.plugin(Assets)
+  await ctx.plugin(PluginConfigPlugin)
+  if (!ctx.get('pluginConfig')) throw new Error('PluginConfigPlugin loaded but ctx.pluginConfig is unavailable')
   if (options.side === 'hub' || options.side === 'workflow') {
     await ctx.plugin(LlmPlugin)
     // `await ctx.plugin()` resolves even when the plugin stays PENDING on a missing injection,
@@ -43,6 +47,7 @@ export async function createApp(options: AppOptions): Promise<Context> {
       await ctx.plugin(ToolRegistryPlugin)
       if (!ctx.get('tools')) throw new Error('ToolRegistryPlugin loaded but ctx.tools is unavailable')
       await ctx.plugin(AskUserServerPlugin)
+      await ctx.plugin(TavilyServerPlugin)
       await ctx.plugin(HubPlugin, { userId: options.userId })
       if (!ctx.get('hub')) throw new Error('HubPlugin loaded but ctx.hub is unavailable')
     }

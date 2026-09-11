@@ -92,6 +92,13 @@
       "when": 1789032185781,
       "tag": "0012_drop-model-search",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1789110516878,
+      "tag": "0013_plugin-configs",
+      "breakpoints": true
     }
   ]
 }

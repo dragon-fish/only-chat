@@ -5,7 +5,11 @@ const manifest = {
   id: ASK_USER_PLUGIN_ID,
   name: '询问用户',
   description: '让模型在继续前向你提出一至三个问题。',
-  defaultTools: [ASK_USER_TOOL_ID],
+  tools: [{
+    id: ASK_USER_TOOL_ID,
+    name: '询问用户',
+    description: '让模型在继续前向你提出一至三个问题。',
+  }],
 } satisfies PluginManifest
 
 export default manifest

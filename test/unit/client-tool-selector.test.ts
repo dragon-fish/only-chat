@@ -13,8 +13,8 @@ import {
 } from '@/client/components/tool-selector'
 
 const manifests = [
-  { id: 'zeta', name: 'Zeta', description: 'Z', defaultTools: ['z_tool'] },
-  { id: 'ask_user', name: 'Ask User', description: 'Ask', defaultTools: ['ask_user'] },
+  { id: 'zeta', name: 'Zeta', description: 'Z', tools: [{ id: 'z_tool', name: 'z_tool', description: 'z_tool' }] },
+  { id: 'ask_user', name: 'Ask User', description: 'Ask', tools: [{ id: 'ask_user', name: 'ask_user', description: 'ask_user' }] },
 ]
 
 describe('conversation tool selection', () => {
@@ -67,7 +67,7 @@ describe('conversation tool selection', () => {
   ] as const)('uses the responsive tool surface (desktop=%s)', async (desktop, slot) => {
     const root = document.createElement('div')
     document.body.append(root)
-    const app = createApp({ render: () => h(TooltipProvider, null, { default: () => h(ToolSelector, { modelValue: [], plugins: { ask_user: true }, desktop }) }) })
+    const app = createApp({ render: () => h(TooltipProvider, null, { default: () => h(ToolSelector, { modelValue: [], plugins: { ask_user: true }, pluginConfig: {}, desktop }) }) })
     app.provide('clientPluginHost', null)
     app.mount(root)
     root.querySelector<HTMLButtonElement>('button[aria-label="选择工具"]')!.click()

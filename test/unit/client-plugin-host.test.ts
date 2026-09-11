@@ -5,7 +5,7 @@ describe('ClientPluginHost', () => {
   it('deduplicates concurrent loads and resolves a registered renderer', async () => {
     let loads = 0
     const host = new ClientPluginHost({
-      manifests: [{ id: 'ask_user', name: 'Ask', description: 'Ask', defaultTools: ['ask_user'] }],
+      manifests: [{ id: 'ask_user', name: 'Ask', description: 'Ask', tools: [{ id: 'ask_user', name: 'ask_user', description: 'ask_user' }] }],
       loaders: { ask_user: async () => { loads++; return { setup: ctx => ctx.tools.register('ask_user', { name: 'card' }) } } },
     })
     const [first, second] = await Promise.all([host.ensureToolRenderer('ask_user'), host.ensureToolRenderer('ask_user')])
@@ -17,7 +17,7 @@ describe('ClientPluginHost', () => {
   it('disposes registered renderers and retries a failed lazy load', async () => {
     let attempts = 0
     const host = new ClientPluginHost({
-      manifests: [{ id: 'ask_user', name: 'Ask', description: 'Ask', defaultTools: ['ask_user'] }],
+      manifests: [{ id: 'ask_user', name: 'Ask', description: 'Ask', tools: [{ id: 'ask_user', name: 'ask_user', description: 'ask_user' }] }],
       loaders: { ask_user: async () => {
         attempts++
         if (attempts === 1) throw new Error('network')
@@ -34,14 +34,14 @@ describe('ClientPluginHost', () => {
   it('rejects duplicate ownership and registrations outside the plugin manifest', async () => {
     expect(() => new ClientPluginHost({
       manifests: [
-        { id: 'first', name: 'First', description: 'First', defaultTools: ['shared'] },
-        { id: 'second', name: 'Second', description: 'Second', defaultTools: ['shared'] },
+        { id: 'first', name: 'First', description: 'First', tools: [{ id: 'shared', name: 'shared', description: 'shared' }] },
+        { id: 'second', name: 'Second', description: 'Second', tools: [{ id: 'shared', name: 'shared', description: 'shared' }] },
       ],
       loaders: {},
     })).toThrow(/owned by multiple plugins/i)
 
     const host = new ClientPluginHost({
-      manifests: [{ id: 'ask_user', name: 'Ask', description: 'Ask', defaultTools: ['ask_user'] }],
+      manifests: [{ id: 'ask_user', name: 'Ask', description: 'Ask', tools: [{ id: 'ask_user', name: 'ask_user', description: 'ask_user' }] }],
       loaders: { ask_user: async () => ({ setup: ctx => ctx.tools.register('foreign', { name: 'card' }) }) },
     })
     await expect(host.ensurePlugin('ask_user')).rejects.toThrow(/does not own tool/i)
@@ -51,7 +51,7 @@ describe('ClientPluginHost', () => {
   it('rolls back partial registrations when setup throws and permits a retry', async () => {
     let attempts = 0
     const host = new ClientPluginHost({
-      manifests: [{ id: 'ask_user', name: 'Ask', description: 'Ask', defaultTools: ['ask_user'] }],
+      manifests: [{ id: 'ask_user', name: 'Ask', description: 'Ask', tools: [{ id: 'ask_user', name: 'ask_user', description: 'ask_user' }] }],
       loaders: { ask_user: async () => ({
         setup: (ctx) => {
           attempts++

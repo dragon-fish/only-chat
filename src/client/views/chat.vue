@@ -149,7 +149,7 @@ const pendingToolCall = computed(() => pendingAskUserCalls(
   conversation.value?.head_message_id,
   optimisticToolCallIds.value,
 )[0] ?? null)
-const globallyAvailableTools = computed(() => new Set(defaultToolsForSettings(pluginManifests, sync.settings.plugins)))
+const globallyAvailableTools = computed(() => new Set(defaultToolsForSettings(pluginManifests, sync.settings.plugins, sync.pluginConfig)))
 const toolsSupported = computed(() => toolSelectionSupported(
   selectedTools.value,
   globallyAvailableTools.value,
@@ -186,7 +186,7 @@ const sendHint = computed(() => {
 const metadata = computed(() => entry.value?.model.metadata ?? null)
 watchEffect(() => {
   if (sid.value === null && sync.settingsLoaded && draftTools.value === null) {
-    draftTools.value = defaultToolsForSettings(pluginManifests, sync.settings.plugins)
+    draftTools.value = defaultToolsForSettings(pluginManifests, sync.settings.plugins, sync.pluginConfig)
   }
 })
 /** What the conversation inherits when it sets nothing itself. */
@@ -459,7 +459,7 @@ function onToolsChange(tools: string[]) {
           :call="pendingToolCall.call" :result="null" :can-continue="false")
     template(#left-controls)
       ToolSelector(
-        :model-value="selectedTools" :plugins="sync.settings.plugins" :desktop="isDesktop"
+        :model-value="selectedTools" :plugins="sync.settings.plugins" :plugin-config="sync.pluginConfig" :desktop="isDesktop"
         @update:model-value="onToolsChange")
     template(#controls)
       ContextUsageIndicator(v-if="contextUsage" :usage="contextUsage.usage" :limit="contextUsage.limit")

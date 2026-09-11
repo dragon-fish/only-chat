@@ -308,7 +308,25 @@ export const attachmentProviderFiles = sqliteTable('attachment_provider_files', 
   check('attachment_provider_files_family_check', sql`${t.file_family} IN ('openai', 'anthropic')`),
 ])
 
+/**
+ * One row per configured field. `plugin_id` and `key` stay separate columns rather than one
+ * "plugin:key" string so a plugin's whole configuration can be dropped by prefix and so no caller
+ * can forge a namespace.
+ *
+ * `value` holds a JSON-encoded value for an ordinary field and the raw AES-GCM ciphertext for a
+ * secret one — never a JSON string wrapping the ciphertext. Which one a key is comes from the
+ * manifest, not from this table.
+ */
+export const pluginConfigs = sqliteTable('plugin_configs', {
+  user_id: integer().notNull().references(() => users.id, { onDelete: 'cascade' }),
+  plugin_id: text().notNull(),
+  key: text().notNull(),
+  value: text().notNull(),
+  updated_at: integer().notNull(),
+}, t => [primaryKey({ columns: [t.user_id, t.plugin_id, t.key] })])
+
 export type UserRow = typeof users.$inferSelect
+export type PluginConfigRow = typeof pluginConfigs.$inferSelect
 export type ProviderRow = typeof providers.$inferSelect
 export type ProviderInterfaceRow = typeof providerInterfaces.$inferSelect
 export type ModelRow = typeof models.$inferSelect

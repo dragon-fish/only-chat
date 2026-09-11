@@ -14,12 +14,13 @@ import { adminEndpoints } from '../auth/access'
 import { AdminCreateUserSchema, AdminSetRoleSchema } from '@/shared/auth'
 import { adminSiteSettingsRoutes, publicSiteSettingsRoutes } from './site-settings'
 import { artifactRoutes } from './artifacts'
+import { pluginConfigRoutes } from './plugin-config'
 
 export type ApiApp = Hono<ApiEnv>
 
 export const ApiPlugin = {
   name: 'api',
-  inject: ['env', 'db', 'auth', 'assets', 'modelCatalog'],
+  inject: ['env', 'db', 'auth', 'assets', 'modelCatalog', 'pluginConfig'],
   apply(ctx: Context) {
     const app: ApiApp = new Hono()
     app.use('/api/auth/admin/*', async (c, next) => {
@@ -67,6 +68,7 @@ export const ApiPlugin = {
     app.route('/api', projectRoutes(ctx))
     app.route('/api', modelCatalogRoutes(ctx))
     app.route('/api', artifactRoutes(ctx))
+    app.route('/api', pluginConfigRoutes(ctx))
     app.onError((err, c) => {
       if (err instanceof CatalogUnavailableError) return c.json({ error: err.message }, 503)
       console.error('api error', err)

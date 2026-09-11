@@ -1,11 +1,14 @@
-import type { PluginManifest } from '@/shared/plugins'
+import type { PluginConfigStatusMap, PluginManifest } from '@/shared/plugins'
 
 export interface PluginToolRow {
   id: string
   pluginId: string
   pluginName: string
-  pluginDescription: string
+  /** The tool's own label. Two tools under one plugin must not read as the same row. */
+  name: string
+  description: string
   enabled: boolean
+  configured: boolean
   selected: boolean
 }
 
@@ -27,28 +30,49 @@ export function stableToolIds(ids: readonly string[]): string[] {
   return [...new Set(ids)].sort()
 }
 
+/**
+ * A plugin that declares no configuration is always ready. One that does is ready only when the
+ * server says so — the client never holds the secrets that decide it.
+ */
+export function pluginConfigured(manifest: PluginManifest, status: PluginConfigStatusMap): boolean {
+  return manifest.configSchema === undefined || status[manifest.id]?.configured === true
+}
+
+/**
+ * What a new conversation starts with. An enabled-but-unconfigured plugin is deliberately excluded:
+ * auto-selecting its tools would fail every generation until someone filled in a credential they
+ * were never told was missing.
+ */
 export function defaultToolsForSettings(
   manifests: readonly PluginManifest[],
   settings: Readonly<Record<string, boolean>>,
+  status: PluginConfigStatusMap = {},
 ): string[] {
-  return stableToolIds(manifests.flatMap(manifest => settings[manifest.id] === true ? [...manifest.defaultTools] : []))
+  return stableToolIds(manifests.flatMap(manifest => (
+    settings[manifest.id] === true && pluginConfigured(manifest, status)
+      ? manifest.tools.map(tool => tool.id)
+      : []
+  )))
 }
 
 export function availablePluginRows(
   manifests: readonly PluginManifest[],
   settings: Readonly<Record<string, boolean>>,
   selected: readonly string[],
+  status: PluginConfigStatusMap = {},
 ): PluginToolRow[] {
   const selectedIds = new Set(selected)
   return [...manifests]
     .sort((a, b) => a.id.localeCompare(b.id))
-    .flatMap(manifest => [...manifest.defaultTools].sort().map(toolId => ({
-      id: toolId,
+    .flatMap(manifest => manifest.tools.map(tool => ({
+      id: tool.id,
       pluginId: manifest.id,
       pluginName: manifest.name,
-      pluginDescription: manifest.description,
+      name: tool.name,
+      description: tool.description,
       enabled: settings[manifest.id] === true,
-      selected: selectedIds.has(toolId),
+      configured: pluginConfigured(manifest, status),
+      selected: selectedIds.has(tool.id),
     })))
 }
 

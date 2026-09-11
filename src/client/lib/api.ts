@@ -4,6 +4,7 @@ import type { PresetProvider } from '@/server/plugins/llm/presets'
 import type { AdminSiteSettings, AdminSiteSettingsUpdate, PublicSiteSettings } from '@/shared/auth'
 import { useAuthStore } from '@/client/stores/auth'
 import type { ArtifactDto, ArtifactPage, ArtifactRunDto, CreateImageRunInput, CreateImageRunResponse } from '@/shared/artifacts'
+import type { PluginConfigStatusMap } from '@/shared/plugins'
 
 export class ApiError extends Error {
   constructor(readonly status: number, readonly detail: string, method: string, path: string) {
@@ -57,6 +58,9 @@ export const api = {
   adminSettings: () => request<AdminSiteSettings>('GET', '/api/admin/settings'),
   updateAdminSettings: (input: AdminSiteSettingsUpdate) => request<AdminSiteSettings>('PUT', '/api/admin/settings', input),
   me: () => request<User>('GET', '/api/me'),
+  pluginConfig: () => request<PluginConfigStatusMap>('GET', '/api/plugins/config'),
+  updatePluginConfig: (pluginId: string, patch: Record<string, unknown>) =>
+    request<PluginConfigStatusMap>('PUT', `/api/plugins/${pluginId}/config`, patch),
   presets: () => request<PresetProvider[]>('GET', '/api/presets'),
   conversations: () => request<Conversation[]>('GET', '/api/conversations'),
   imageConversations: () => request<Conversation[]>('GET', '/api/conversations?kind=image'),

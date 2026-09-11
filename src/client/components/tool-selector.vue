@@ -9,16 +9,18 @@ import { Drawer, DrawerContent, DrawerDescription, DrawerHeader, DrawerTitle, Dr
 import { Item, ItemContent, ItemDescription, ItemGroup, ItemTitle } from '@/client/ui/item'
 import { Popover, PopoverContent, PopoverDescription, PopoverHeader, PopoverTitle, PopoverTrigger } from '@/client/ui/popover'
 import { Switch } from '@/client/ui/switch'
+import type { PluginConfigStatusMap } from '@/shared/plugins'
 import { availablePluginRows, ensureSelectedPlugins, nextToolSelection } from './tool-selector'
 
 const props = defineProps<{
   modelValue: string[]
   plugins: Record<string, boolean>
+  pluginConfig: PluginConfigStatusMap
   desktop: boolean
 }>()
 const emit = defineEmits<{ 'update:modelValue': [tools: string[]] }>()
 const host = inject<ClientPluginHost | null>('clientPluginHost', null)
-const rows = computed(() => availablePluginRows(pluginManifests, props.plugins, props.modelValue))
+const rows = computed(() => availablePluginRows(pluginManifests, props.plugins, props.modelValue, props.pluginConfig))
 const selectedCount = computed(() => props.modelValue.length)
 
 watchEffect(() => {
@@ -46,10 +48,11 @@ template(v-if="desktop")
       ItemGroup(class="gap-1")
         Item(v-for="row in rows" :key="row.id" size="sm")
           ItemContent
-            ItemTitle {{ row.pluginName }}
-            ItemDescription {{ row.pluginDescription }}
+            ItemTitle {{ row.name }}
+            ItemDescription {{ row.description }}
             ItemDescription(v-if="!row.enabled") 插件已停用；会话快照仍会保留。
-          Switch(:model-value="row.selected" :disabled="!row.enabled" :aria-label="`启用工具 ${row.pluginName}`" @update:model-value="toggle(row.id, $event)")
+            ItemDescription(v-else-if="!row.configured") {{ row.pluginName }} 尚未配置，请先在插件设置中填写。
+          Switch(:model-value="row.selected" :disabled="!row.enabled || !row.configured" :aria-label="`启用工具 ${row.name}`" @update:model-value="toggle(row.id, $event)")
 template(v-else)
   Drawer
     DrawerTrigger(as-child)
@@ -64,8 +67,9 @@ template(v-else)
         ItemGroup(class="gap-1")
           Item(v-for="row in rows" :key="row.id" size="sm")
             ItemContent
-              ItemTitle {{ row.pluginName }}
-              ItemDescription {{ row.pluginDescription }}
+              ItemTitle {{ row.name }}
+              ItemDescription {{ row.description }}
               ItemDescription(v-if="!row.enabled") 插件已停用；会话快照仍会保留。
-            Switch(:model-value="row.selected" :disabled="!row.enabled" :aria-label="`启用工具 ${row.pluginName}`" @update:model-value="toggle(row.id, $event)")
+              ItemDescription(v-else-if="!row.configured") {{ row.pluginName }} 尚未配置，请先在插件设置中填写。
+            Switch(:model-value="row.selected" :disabled="!row.enabled || !row.configured" :aria-label="`启用工具 ${row.name}`" @update:model-value="toggle(row.id, $event)")
 </template>

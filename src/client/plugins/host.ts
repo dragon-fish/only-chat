@@ -2,10 +2,17 @@ import type { PluginManifest } from '@/shared/plugins'
 
 /** Kept framework-neutral so lazy host behavior is testable without mounting Vue. */
 export type ToolRenderer = unknown
+export type ConfigRenderer = unknown
 
 export interface ClientPluginContext {
   manifests: readonly PluginManifest[]
   tools: { register(toolId: string, renderer: ToolRenderer): () => void }
+  /**
+   * Replaces the declaration-driven settings form for this plugin. Whether a plugin registered one
+   * IS the answer — a boolean on the manifest saying it did would be one more thing that can
+   * disagree with reality.
+   */
+  config: { register(component: ConfigRenderer): () => void }
 }
 
 export type ClientPluginSetup = (ctx: ClientPluginContext) => void | (() => void)
@@ -23,6 +30,7 @@ export class ClientPluginHost {
   private readonly loaders: Record<string, ClientPluginLoader>
   private readonly toolPlugins = new Map<string, string>()
   private readonly renderers = new Map<string, ToolRenderer>()
+  private readonly configRenderers = new Map<string, ConfigRenderer>()
   private readonly pending = new Map<string, Promise<void>>()
   private readonly disposers = new Map<string, () => void>()
 
@@ -30,7 +38,7 @@ export class ClientPluginHost {
     this.manifests = manifests
     this.loaders = loaders
     for (const manifest of manifests) {
-      for (const toolId of manifest.defaultTools) {
+      for (const { id: toolId } of manifest.tools) {
         const owner = this.toolPlugins.get(toolId)
         if (owner) throw new Error(`tool ${toolId} is owned by multiple plugins: ${owner}, ${manifest.id}`)
         this.toolPlugins.set(toolId, manifest.id)
@@ -40,6 +48,19 @@ export class ClientPluginHost {
 
   renderer(toolId: string): ToolRenderer | undefined {
     return this.renderers.get(toolId)
+  }
+
+  configRenderer(pluginId: string): ConfigRenderer | undefined {
+    return this.configRenderers.get(pluginId)
+  }
+
+  /** Historical Parts use this path even when their plugin is now globally disabled. */
+  async ensureConfigRenderer(pluginId: string): Promise<ConfigRenderer | undefined> {
+    const existing = this.configRenderer(pluginId)
+    if (existing !== undefined) return existing
+    if (!this.loaders[pluginId]) return undefined
+    await this.ensurePlugin(pluginId)
+    return this.configRenderer(pluginId)
   }
 
   install(setup: ClientPluginSetup, pluginId: string): () => void {
@@ -56,6 +77,17 @@ export class ClientPluginHost {
             this.renderers.set(toolId, renderer)
             const unregister = () => {
               if (this.renderers.get(toolId) === renderer) this.renderers.delete(toolId)
+            }
+            registrations.push(unregister)
+            return unregister
+          },
+        },
+        config: {
+          register: (component) => {
+            if (this.configRenderers.has(pluginId)) throw new Error(`config renderer already registered: ${pluginId}`)
+            this.configRenderers.set(pluginId, component)
+            const unregister = () => {
+              if (this.configRenderers.get(pluginId) === component) this.configRenderers.delete(pluginId)
             }
             registrations.push(unregister)
             return unregister
