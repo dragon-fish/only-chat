@@ -44,7 +44,10 @@ interface Target {
    * `resolveTarget` has already proved the model resolved, so consumers never re-check it.
    */
   config: EffectiveConfig & { model: EffectiveModel }
-  tools: ToolSet
+  /** Selected tool ids that would actually run. Instances are built per generation, after the shell. */
+  toolIds: string[]
+  /** Snapshotted with the rest of the config (spec §3.2) so it is not re-read mid-stream. */
+  enabledPlugins: Record<string, boolean>
 }
 
 /** The conversation-init draft carried by the first `send` of a new conversation (spec §5.2). */
@@ -111,16 +114,10 @@ async function resolveTarget(hub: Hub, args: ResolveArgs): Promise<Target> {
 
   const user = await getUser(hub.db, hub.userId)
   if (!user) throw new Error('user missing')
-  // One Map per generation: tools that budget their own calls count into it, and it dies with the
-  // assistant message. Anything longer-lived would leak a budget across conversations.
-  const resolvedTools = await hub.app.tools.resolve(draft.tools, user.settings.plugins, {
-    userId: hub.userId,
-    turn: new Map<string, unknown>(),
-  })
-  if (resolvedTools.length > 0 && model.metadata_resolved.tool_call !== true) {
+  const toolIds = hub.app.tools.usable(draft.tools, user.settings.plugins)
+  if (toolIds.length > 0 && model.metadata_resolved.tool_call !== true) {
     throw new Error('当前模型不支持工具调用，请取消所选工具或更换模型')
   }
-  const tools = Object.fromEntries(resolvedTools)
 
   // The persisted override is the draft's, never this generation's model: copying the latter down
   // would silently end the conversation's Project inheritance.
@@ -135,7 +132,7 @@ async function resolveTarget(hub: Hub, args: ResolveArgs): Promise<Target> {
     model_id: draft.model_id,
   })
   if (!existing) await hub.emitConversationCreated(conversation)
-  return { conversation, provider, providerInterface, model, config, tools }
+  return { conversation, provider, providerInterface, model, config, toolIds, enabledPlugins: user.settings.plugins }
 }
 
 // ---- stage 2: persist a user message
@@ -282,18 +279,33 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
     }
     const model: LanguageModel = await hub.app.llm.createModel(target.provider, target.providerInterface, target.model, trace)
 
+    // Built here rather than while the target was resolved: `assistantMessageId` does not exist any
+    // earlier, and a tool that records provenance needs the message it is about to answer into.
+    // One Map per generation: tools that budget their own calls count into it, and it dies with the
+    // assistant message. Anything longer-lived would leak a budget across conversations.
+    const tools: ToolSet = Object.fromEntries(await hub.app.tools.resolve(target.toolIds, target.enabledPlugins, {
+      userId: hub.userId,
+      conversationId: target.conversation.id,
+      projectId: target.conversation.project_id,
+      assistantMessageId: shell.id,
+      turn: new Map<string, unknown>(),
+      db: hub.db,
+      assets: hub.app.assets,
+      signal: controller.signal,
+    }))
+
     const requestStartedAt = performance.now()
     let firstTokenAt: number | null = null
     const result = streamText({
       model,
       messages,
-      tools: target.tools,
+      tools,
       // Without a stop condition the SDK runs one step, so an executing tool would produce a result
       // the model never gets to answer from. The second condition is not optional: a tool with no
       // `execute` still yields a tool-error output, which satisfies the SDK's own continue check —
       // measured — so a bare step cap would make `ask_user` loop until the cap instead of stopping
       // for the human.
-      stopWhen: [stepCountIs(TOOL_MAX_STEPS), awaitsHumanToolResult(target.tools)],
+      stopWhen: [stepCountIs(TOOL_MAX_STEPS), awaitsHumanToolResult(tools)],
       // The system prompt travels as a `role: 'system'` message so cache breakpoints can attach to it.
       allowSystemInMessages: true,
       // Responses raw deltas preserve full-text versus summary provenance before SDK normalization.

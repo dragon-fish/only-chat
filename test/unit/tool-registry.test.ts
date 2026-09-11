@@ -22,7 +22,16 @@ function contextWith(configs: Record<string, Record<string, unknown> | Error> = 
   return ctx
 }
 
-const resolution = { userId: 1, turn: new Map<string, unknown>() }
+const resolution = {
+  userId: 1,
+  conversationId: 7,
+  projectId: null,
+  assistantMessageId: 42,
+  turn: new Map<string, unknown>(),
+  db: {} as ToolContext['db'],
+  assets: {} as ToolContext['assets'],
+  signal: new AbortController().signal,
+}
 
 describe('ToolRegistry', () => {
   it('resolves only enabled, known tools in stable ID order', async () => {
@@ -55,6 +64,27 @@ describe('ToolRegistry', () => {
     const registry = new ToolRegistry(contextWith({ 'plugin-a': new Error('请填写 API Key') }))
     registry.register('plugin-a', 'a', () => registeredTool('a'))
     await expect(registry.resolve(['a'], { 'plugin-a': true }, resolution)).rejects.toThrow(/API Key/)
+  })
+
+  it('hands each factory the generation it belongs to', async () => {
+    const registry = new ToolRegistry(contextWith())
+    const seen: ToolContext[] = []
+    registry.register('files', 'read_file', (toolCtx) => { seen.push(toolCtx); return registeredTool('read') })
+    const signal = new AbortController().signal
+    await registry.resolve(['read_file'], { files: true }, { ...resolution, conversationId: 9, projectId: 3, assistantMessageId: 55, signal })
+    expect(seen).toHaveLength(1)
+    expect(seen[0]).toMatchObject({ userId: 1, conversationId: 9, projectId: 3, assistantMessageId: 55 })
+    expect(seen[0]!.signal).toBe(signal)
+  })
+
+  it('reports which selected tools are usable without building them', () => {
+    const registry = new ToolRegistry(contextWith())
+    let built = 0
+    registry.register('files', 'read_file', () => { built += 1; return registeredTool('read') })
+    registry.register('other', 'nope', () => registeredTool('nope'))
+    // The capability check runs before there is an assistant message to build against.
+    expect(registry.usable(['read_file', 'nope'], { files: true, other: false })).toEqual(['read_file'])
+    expect(built).toBe(0)
   })
 
   it('registers ask_user as a non-executing AI SDK tool', async () => {
