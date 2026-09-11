@@ -24,6 +24,8 @@ export class PartAccumulator {
   private readonly _indexById = new Map<string, number>()
   private readonly _pendingResponsesDeltas: ResponsesReasoningDelta[] = []
   private readonly _responsesById = new Map<string, ResponsesReasoningBuffers>()
+  /** Opened at the first sign of a reasoning block, read once when it closes. */
+  private readonly _reasoningStartedAt = new Map<string, number>()
 
   apply(part: TextStreamPart<ToolSet>): AccEvent[] {
     switch (part.type) {
@@ -57,11 +59,14 @@ export class PartAccumulator {
       }
       case 'reasoning-start': {
         const idx = this._ensure(part.id, { type: 'reasoning', text: '' })
+        this._openReasoningClock(part.id)
         this._setMeta(idx, part.providerMetadata)
         return [this._partEvent(idx)]
       }
       case 'reasoning-delta': {
         const idx = this._ensure(part.id, { type: 'reasoning', text: '' })
+        // Some providers stream deltas without ever sending `reasoning-start`.
+        this._openReasoningClock(part.id)
         this._setMeta(idx, part.providerMetadata)
         const source = this._pendingResponsesDeltas.shift()
         if (source) {
@@ -92,6 +97,9 @@ export class PartAccumulator {
         const buffer = this._responsesById.get(part.id)
         if (buffer) reasoning.providerOptions = completedResponsesReasoningOptions(reasoning.providerOptions, buffer)
         reasoning.text = completedResponsesReasoningText(reasoning.text, reasoning.providerOptions)
+        const startedAt = this._reasoningStartedAt.get(part.id)
+        if (startedAt !== undefined) reasoning.duration_ms = Math.max(0, Date.now() - startedAt)
+        this._reasoningStartedAt.delete(part.id)
         this._responsesById.delete(part.id)
         return [this._partEvent(idx)]
       }
@@ -137,6 +145,10 @@ export class PartAccumulator {
   append(part: Part): AccPartEvent {
     this.parts.push(part)
     return { kind: 'part', part_index: this.parts.length - 1, part }
+  }
+
+  private _openReasoningClock(id: string): void {
+    if (!this._reasoningStartedAt.has(id)) this._reasoningStartedAt.set(id, Date.now())
   }
 
   private _open(id: string, part: Part): number {

@@ -3,7 +3,7 @@ import { messageSegments } from '@/client/components/message-segments'
 import type { Part } from '@/shared/parts'
 
 const text = (t: string): Part => ({ type: 'text', text: t })
-const reasoning = (t: string): Part => ({ type: 'reasoning', text: t })
+const reasoning = (t: string, duration_ms?: number): Part => ({ type: 'reasoning', text: t, ...(duration_ms === undefined ? {} : { duration_ms }) })
 const call = (id: string, name = 'web_search'): Part => ({ type: 'tool_call', id, name, args: {} })
 const result = (id: string, name = 'web_search'): Part => ({ type: 'tool_result', call_id: id, name, content: {} })
 
@@ -47,6 +47,18 @@ describe('messageSegments', () => {
     const before = messageSegments([reasoning('one'), call('a')])
     const after = messageSegments([reasoning('one'), call('a'), result('a'), text('done')])
     expect(after.slice(0, 2).map(s => s.key)).toEqual(before.map(s => s.key))
+  })
+
+  it('adds up the durations of a merged run, and stays null when none were recorded', () => {
+    const merged = messageSegments([reasoning('one', 1200), reasoning('two', 800)])[0]!
+    expect(merged.kind === 'reasoning' && merged.durationMs).toBe(2000)
+
+    const unfinished = messageSegments([reasoning('still going')])[0]!
+    expect(unfinished.kind === 'reasoning' && unfinished.durationMs).toBeNull()
+
+    // A run where only the closed part carries one must not report zero for the other.
+    const partial = messageSegments([reasoning('one'), reasoning('two', 500)])[0]!
+    expect(partial.kind === 'reasoning' && partial.durationMs).toBe(500)
   })
 
   it('places images where they occur rather than collecting them at the end', () => {

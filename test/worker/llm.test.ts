@@ -431,7 +431,9 @@ describe('chat-completions reasoning', () => {
           acc.apply(part)
         }
         const persisted: Part[] = JSON.parse(JSON.stringify(acc.parts))
-        expect(persisted).toEqual([{ type: 'reasoning', text: 'complete reasoning' }, { type: 'text', text: 'fixture answer' }])
+        // toMatchObject, not toEqual: a closed reasoning block also carries its duration, and what
+        // this case is about is the text surviving into the replay below.
+        expect(persisted).toMatchObject([{ type: 'reasoning', text: 'complete reasoning' }, { type: 'text', text: 'fixture answer' }])
         const message: Message = { id: 1, conversation_id: 1, parent_id: null, seq: 1, role: 'assistant', parts: persisted, provider_id: 1, model_id: model.model_id, usage: null, status: 'done', error: null, created_at: 0 }
         const messages = buildModelMessages({ protocol: 'chat-completions', systemPrompt: null, path: [message], attachments: new Map() })
         const providerOptions = buildProviderOptions('chat-completions', { reasoning_enabled: false }, { reasoning: true, reasoning_options: [{ type: 'effort', values: ['none', 'high'] }] })

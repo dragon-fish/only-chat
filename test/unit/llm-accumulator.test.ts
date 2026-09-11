@@ -1,7 +1,43 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { PartAccumulator } from '@/server/plugins/llm/accumulator'
 
+/**
+ * Drops the wall-clock duration a closed reasoning block carries. It is asserted on its own above;
+ * every other case here is about text and provider metadata, and a timing number in those
+ * expectations would only obscure what they are checking.
+ */
+function untimed(value: unknown): any {
+  if (Array.isArray(value)) return value.map(untimed)
+  if (value === null || typeof value !== 'object') return value
+  return Object.fromEntries(
+    Object.entries(value).filter(([key]) => key !== 'duration_ms').map(([key, entry]) => [key, untimed(entry)]),
+  )
+}
+
 describe('PartAccumulator', () => {
+  it('stamps how long a reasoning block took, and leaves an unfinished one unstamped', () => {
+    vi.useFakeTimers()
+    try {
+      const acc = new PartAccumulator()
+      acc.apply({ type: 'reasoning-start', id: 'r1' })
+      vi.advanceTimersByTime(1500)
+      acc.apply({ type: 'reasoning-delta', id: 'r1', text: 'weighing' })
+      vi.advanceTimersByTime(900)
+      acc.apply({ type: 'reasoning-end', id: 'r1' })
+      // Providers that stream deltas without a start still get a clock, opened at the first delta.
+      acc.apply({ type: 'reasoning-delta', id: 'r2', text: 'more' })
+      vi.advanceTimersByTime(300)
+
+      const [first, second] = acc.parts
+      expect(first).toMatchObject({ type: 'reasoning', duration_ms: 2400 })
+      // Still open: a duration would be a guess at when it will close.
+      expect(second).toMatchObject({ type: 'reasoning' })
+      expect(second && 'duration_ms' in second ? second.duration_ms : undefined).toBeUndefined()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('builds reasoning then text parts with indexes and keeps the last provider metadata', () => {
     const acc = new PartAccumulator()
     const events = [
@@ -20,7 +56,7 @@ describe('PartAccumulator', () => {
       { kind: 'delta', part_index: 1, part_kind: 'text', delta: 'Hel' },
       { kind: 'delta', part_index: 1, part_kind: 'text', delta: 'lo' },
     ])
-    expect(acc.parts).toEqual([
+    expect(untimed(acc.parts)).toEqual([
       { type: 'reasoning', text: 'think', providerOptions: { anthropic: { signature: 'SIG' } } },
       { type: 'text', text: 'Hello' },
     ])
@@ -29,7 +65,7 @@ describe('PartAccumulator', () => {
   it('opens a part when a delta arrives without a start', () => {
     const acc = new PartAccumulator()
     acc.apply({ type: 'text-delta', id: 'x', text: 'a' })
-    expect(acc.parts).toEqual([{ type: 'text', text: 'a' }])
+    expect(untimed(acc.parts)).toEqual([{ type: 'text', text: 'a' }])
   })
 
   it('opens a new part when the same stream id changes kind', () => {
@@ -38,11 +74,11 @@ describe('PartAccumulator', () => {
       ...acc.apply({ type: 'reasoning-delta', id: 'same', text: 'why' }),
       ...acc.apply({ type: 'text-delta', id: 'same', text: 'because' }),
     ]
-    expect(events).toEqual([
+    expect(untimed(events)).toEqual([
       { kind: 'delta', part_index: 0, part_kind: 'reasoning', delta: 'why' },
       { kind: 'delta', part_index: 1, part_kind: 'text', delta: 'because' },
     ])
-    expect(acc.parts).toEqual([
+    expect(untimed(acc.parts)).toEqual([
       { type: 'reasoning', text: 'why' },
       { type: 'text', text: 'because' },
     ])
@@ -56,7 +92,7 @@ describe('PartAccumulator', () => {
     acc.apply({ type: 'text-delta', id: 'shared', text: 'answer' })
     acc.apply({ type: 'reasoning-delta', id: 'shared', text: ' last', providerMetadata: { responses: { signature: 'SIG' } } })
     acc.apply({ type: 'reasoning-end', id: 'shared', providerMetadata: { responses: { reasoningEncryptedContent: 'ENC' } } })
-    expect(acc.parts).toEqual([
+    expect(untimed(acc.parts)).toEqual([
       { type: 'reasoning', text: 'first last', providerOptions: { responses: { itemId: 'rs_1', signature: 'SIG', reasoningEncryptedContent: 'ENC' } } },
       { type: 'text', text: 'answer' },
     ])
@@ -69,7 +105,7 @@ describe('PartAccumulator', () => {
     acc.apply({ type: 'text-delta', id: 't1', text: 'after tool' })
     acc.apply({ type: 'tool-input-end', id: 'c1', providerMetadata: { responses: { opaque: { state: ['A', null, 0] } } } })
     acc.apply({ type: 'tool-call', toolCallId: 'c1', toolName: 'lookup', input: { q: 1 } } as never)
-    expect(acc.parts).toEqual([
+    expect(untimed(acc.parts)).toEqual([
       { type: 'tool_call', id: 'c1', name: 'lookup', args: { q: 1 }, providerOptions: { responses: { itemId: 'fc_1', signature: 'SIG', opaque: { state: ['A', null, 0] } } } },
       { type: 'text', text: 'after tool' },
     ])
@@ -97,7 +133,7 @@ describe('PartAccumulator', () => {
       type: 'tool-call', toolCallId: 'c1', toolName: 'ask_user', input: { questions: [] },
     } as never)
 
-    expect(started).toEqual([{
+    expect(untimed(started)).toEqual([{
       kind: 'part', part_index: 0,
       part: {
         type: 'tool_call', id: 'c1', name: 'ask_user', args: '',
@@ -106,7 +142,7 @@ describe('PartAccumulator', () => {
     }])
     expect(firstDelta).toEqual([])
     expect(secondDelta).toEqual([])
-    expect(ended).toEqual([])
+    expect(untimed(ended)).toEqual([])
     expect(completed).toEqual([{
       kind: 'part', part_index: 0,
       part: {
@@ -121,14 +157,14 @@ describe('PartAccumulator', () => {
     acc.apply({ type: 'text-delta', id: 'reused', text: 'first' })
     acc.apply({ type: 'start-step', request: {}, warnings: [] })
     acc.apply({ type: 'text-delta', id: 'reused', text: 'second' })
-    expect(acc.parts).toEqual([{ type: 'text', text: 'first' }, { type: 'text', text: 'second' }])
+    expect(untimed(acc.parts)).toEqual([{ type: 'text', text: 'first' }, { type: 'text', text: 'second' }])
   })
 
   it('preserves a tool result and its opaque metadata before subsequent reasoning', () => {
     const acc = new PartAccumulator()
     acc.apply({ type: 'tool-result', toolCallId: 'c1', toolName: 'lookup', input: {}, output: { ok: true }, providerMetadata: { responses: { opaque: ['state', null, 0] } } } as never)
     acc.apply({ type: 'reasoning-delta', id: 'r2', text: 'next' })
-    expect(acc.parts).toEqual([
+    expect(untimed(acc.parts)).toEqual([
       { type: 'tool_result', call_id: 'c1', name: 'lookup', content: { ok: true }, providerOptions: { responses: { opaque: ['state', null, 0] } } },
       { type: 'reasoning', text: 'next' },
     ])
@@ -152,7 +188,7 @@ describe('PartAccumulator', () => {
       part_index: 1,
       part: { type: 'tool_call', id: 'c1', name: 'f', args: { a: 1 }, providerOptions: { google: { thoughtSignature: 'TS_TOOL' } } },
     }])
-    expect(acc.parts).toEqual([
+    expect(untimed(acc.parts)).toEqual([
       { type: 'text', text: 'hi', providerOptions: { google: { thoughtSignature: 'TS_TEXT' } } },
       { type: 'tool_call', id: 'c1', name: 'f', args: { a: 1 }, providerOptions: { google: { thoughtSignature: 'TS_TOOL' } } },
     ])
@@ -163,7 +199,7 @@ describe('PartAccumulator', () => {
     // OpenAI Responses with `store: false`: no visible summary, but an item id and encrypted content.
     acc.apply({ type: 'reasoning-start', id: 'r1', providerMetadata: { openai: { itemId: 'rs_1' } } })
     acc.apply({ type: 'reasoning-end', id: 'r1', providerMetadata: { openai: { itemId: 'rs_1', reasoningEncryptedContent: 'ENC' } } })
-    expect(acc.parts).toEqual([
+    expect(untimed(acc.parts)).toEqual([
       { type: 'reasoning', text: '', providerOptions: { openai: { itemId: 'rs_1', reasoningEncryptedContent: 'ENC' } } },
     ])
   })
@@ -172,8 +208,8 @@ describe('PartAccumulator', () => {
     const acc = new PartAccumulator()
     const started = acc.apply({ type: 'reasoning-start', id: 'r1', providerMetadata: { responses: { itemId: 'r1' } } })
     const ended = acc.apply({ type: 'reasoning-end', id: 'r1', providerMetadata: { responses: { reasoningEncryptedContent: 'ENC' } } })
-    expect(started).toEqual([{ kind: 'part', part_index: 0, part: { type: 'reasoning', text: '', providerOptions: { responses: { itemId: 'r1' } } } }])
-    expect(ended).toEqual([{ kind: 'part', part_index: 0, part: { type: 'reasoning', text: '', providerOptions: { responses: { itemId: 'r1', reasoningEncryptedContent: 'ENC' } } } }])
+    expect(untimed(started)).toEqual([{ kind: 'part', part_index: 0, part: { type: 'reasoning', text: '', providerOptions: { responses: { itemId: 'r1' } } } }])
+    expect(untimed(ended)).toEqual([{ kind: 'part', part_index: 0, part: { type: 'reasoning', text: '', providerOptions: { responses: { itemId: 'r1', reasoningEncryptedContent: 'ENC' } } } }])
   })
 
   it.each([
@@ -192,8 +228,8 @@ describe('PartAccumulator', () => {
     acc.apply({ type: 'reasoning-delta', id: 'r1', text: 'streamed text' })
     const providerMetadata = { responses: { itemId: 'r1', reasoningContent: content, reasoningSummary: summary, reasoningEncryptedContent: 'ENC' } }
     const events = acc.apply({ type: 'reasoning-end', id: 'r1', providerMetadata })
-    expect(acc.parts).toEqual([{ type: 'reasoning', text: expected, providerOptions: providerMetadata }])
-    expect(events).toEqual([{ kind: 'part', part_index: 0, part: { type: 'reasoning', text: expected, providerOptions: providerMetadata } }])
+    expect(untimed(acc.parts)).toEqual([{ type: 'reasoning', text: expected, providerOptions: providerMetadata }])
+    expect(untimed(events)).toEqual([{ kind: 'part', part_index: 0, part: { type: 'reasoning', text: expected, providerOptions: providerMetadata } }])
   })
 
   it('uses raw delta provenance with remapped IDs even when summary and full text are identical', () => {
@@ -209,11 +245,11 @@ describe('PartAccumulator', () => {
     const ended = acc.apply({ type: 'reasoning-end', id: 'normalized-1', providerMetadata: { responses: {
       itemId: 'wire-1', reasoningContent: null, reasoningSummary: [{ type: 'summary_text', text: 'final summary' }], reasoningEncryptedContent: 'ENC',
     } } })
-    expect(acc.parts[0]).toEqual({ type: 'reasoning', text: 'same', providerOptions: { responses: {
+    expect(untimed(acc.parts[0])).toEqual({ type: 'reasoning', text: 'same', providerOptions: { responses: {
       itemId: 'wire-1', reasoningContent: [{ type: 'reasoning_text', text: 'same' }],
       reasoningSummary: [{ type: 'summary_text', text: 'final summary' }], reasoningEncryptedContent: 'ENC',
     } } })
-    expect(ended).toEqual([{ kind: 'part', part_index: 0, part: acc.parts[0] }])
+    expect(untimed(ended)).toEqual([{ kind: 'part', part_index: 0, part: untimed(acc.parts[0]) }])
   })
 
   it('keeps full buffers independent for interleaved items and prefers explicit completion content', () => {
@@ -235,7 +271,7 @@ describe('PartAccumulator', () => {
     acc.apply({ type: 'raw', rawValue: { type: 'response.reasoning_summary_text.delta', item_id: 'wire', delta: 'summary only' } })
     acc.apply({ type: 'reasoning-delta', id: 'normalized', text: 'summary only' })
     acc.apply({ type: 'reasoning-end', id: 'normalized', providerMetadata: { responses: { itemId: 'wire', reasoningContent: null, reasoningSummary: [] } } })
-    expect(acc.parts[0]).toEqual({ type: 'reasoning', text: 'summary only', providerOptions: { responses: {
+    expect(untimed(acc.parts[0])).toEqual({ type: 'reasoning', text: 'summary only', providerOptions: { responses: {
       itemId: 'wire', reasoningContent: null, reasoningSummary: [{ type: 'summary_text', text: 'summary only' }],
     } } })
   })
@@ -245,7 +281,7 @@ describe('PartAccumulator', () => {
     acc.apply({ type: 'raw', rawValue: { type: 'response.reasoning_text.delta', item_id: 'old', delta: 'old' } })
     acc.apply({ type: 'start-step', request: {}, warnings: [] })
     acc.apply({ type: 'reasoning-delta', id: 'new', text: 'generic' })
-    expect(acc.parts).toEqual([{ type: 'reasoning', text: 'generic' }])
+    expect(untimed(acc.parts)).toEqual([{ type: 'reasoning', text: 'generic' }])
   })
 
   it('never lets a later event without metadata clear what was already captured', () => {
@@ -256,7 +292,7 @@ describe('PartAccumulator', () => {
     acc.apply({ type: 'text-start', id: 't1' })
     acc.apply({ type: 'text-delta', id: 't1', text: 'because', providerMetadata: { google: { thoughtSignature: 'TS' } } })
     acc.apply({ type: 'text-end', id: 't1' })
-    expect(acc.parts).toEqual([
+    expect(untimed(acc.parts)).toEqual([
       { type: 'reasoning', text: 'why', providerOptions: { anthropic: { signature: 'SIG' } } },
       { type: 'text', text: 'because', providerOptions: { google: { thoughtSignature: 'TS' } } },
     ])
@@ -271,7 +307,7 @@ describe('PartAccumulator', () => {
     expect(ev).toEqual({ kind: 'part', part_index: 1, part: { type: 'image', attachment_id: 7 } })
     // The open text block keeps its own index; nothing can reopen the image part.
     acc.apply({ type: 'text-delta', id: 't1', text: 'done' })
-    expect(acc.parts).toEqual([
+    expect(untimed(acc.parts)).toEqual([
       { type: 'text', text: 'here: done' },
       { type: 'image', attachment_id: 7 },
     ])

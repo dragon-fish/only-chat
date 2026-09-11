@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { BrainIcon, ChevronRightIcon } from '@lucide/vue'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/client/ui/collapsible'
 
@@ -7,6 +7,8 @@ const props = defineProps<{
   text: string
   /** The live tail of a streaming reply. Open while it is, collapsed the moment anything follows. */
   active: boolean
+  /** Stamped server-side when the block closed; null while it is still open, or for older parts. */
+  durationMs: number | null
 }>()
 
 // Follows `active` until the reader touches it; after that their choice wins for this block.
@@ -19,15 +21,50 @@ function setOpen(value: boolean) {
   open.value = value
 }
 
+/**
+ * A live count for the block being written, because the server's figure only arrives once it
+ * closes. It starts when this component first goes active rather than when the model did, so it
+ * can read a touch short — a settled block always shows the server's number instead.
+ */
+const elapsed = ref(0)
+let startedAt: number | null = null
+let ticker: ReturnType<typeof setInterval> | undefined
+
+watch(() => props.active, (value) => {
+  clearInterval(ticker)
+  ticker = undefined
+  if (!value) return
+  startedAt ??= Date.now()
+  elapsed.value = Date.now() - startedAt
+  ticker = setInterval(() => { elapsed.value = Date.now() - (startedAt ?? Date.now()) }, 200)
+}, { immediate: true })
+
+onBeforeUnmount(() => clearInterval(ticker))
+
+const seconds = (ms: number) => Math.max(0, Math.round(ms / 1000))
+
+const label = computed(() => (props.active ? '正在思考' : '已思考'))
+
+/**
+ * Absent, not zero, when nothing was measured — a reply persisted before durations were recorded
+ * has no honest figure to show, and rendering one anyway is how 「用时 NaN 秒」 happens.
+ */
+const timing = computed(() => {
+  if (props.active) return `${seconds(elapsed.value)} 秒`
+  if (props.durationMs === null || !Number.isFinite(props.durationMs)) return null
+  return `用时 ${seconds(props.durationMs)} 秒`
+})
+
 const preview = computed(() => props.text.replace(/\s+/g, ' ').trim())
 </script>
 
 <template lang="pug">
 Collapsible(:open="open" @update:open="setOpen")
   CollapsibleTrigger(
-    class="group flex w-full items-center gap-2 rounded-md py-1 text-xs text-muted-foreground hover:text-foreground")
-    BrainIcon(class="size-3.5 shrink-0")
-    span.shrink-0 {{ active ? '正在思考…' : '思考过程' }}
+    class="oc-turn-row group text-xs text-muted-foreground hover:bg-accent hover:text-foreground")
+    BrainIcon(class="size-4 shrink-0")
+    span.shrink-0 {{ label }}
+    span.shrink-0(v-if="timing" class="opacity-70") （{{ timing }}）
     //- The one-line peek is what makes a collapsed block worth leaving collapsed.
     span(v-if="!open" class="min-w-0 flex-1 truncate text-left opacity-60") {{ preview }}
     ChevronRightIcon(class="size-3.5 shrink-0 transition-transform group-data-[state=open]:rotate-90")

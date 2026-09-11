@@ -1,7 +1,7 @@
 import type { ImagePart, Part, ToolCallPart, ToolResultPart } from '@/shared/parts'
 
 export type MessageSegment =
-  | { kind: 'reasoning'; key: string; text: string }
+  | { kind: 'reasoning'; key: string; text: string; durationMs: number | null }
   | { kind: 'text'; key: string; markdown: string }
   | { kind: 'tool'; key: string; call: ToolCallPart; result: ToolResultPart | null }
   | { kind: 'image'; key: string; part: ImagePart }
@@ -34,8 +34,21 @@ export function messageSegments(parts: readonly Part[]): MessageSegment[] {
       case 'reasoning': {
         if (part.text.trim() === '') break
         const last = segments.at(-1)
-        if (last?.kind === 'reasoning') last.text += `\n${part.text}`
-        else segments.push({ kind: 'reasoning', key: `reasoning:${index}`, text: part.text })
+        // Merged blocks add up: the reader sees one span of thinking, so it reports one duration.
+        // Still null when no part in the run carries one — an unfinished block, or one from before
+        // durations were recorded.
+        if (last?.kind === 'reasoning') {
+          last.text += `\n${part.text}`
+          if (part.duration_ms !== undefined) last.durationMs = (last.durationMs ?? 0) + part.duration_ms
+        }
+        else {
+          segments.push({
+            kind: 'reasoning',
+            key: `reasoning:${index}`,
+            text: part.text,
+            durationMs: part.duration_ms ?? null,
+          })
+        }
         break
       }
       case 'tool_call': {

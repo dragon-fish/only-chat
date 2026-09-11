@@ -204,6 +204,18 @@ async function installMock(
   return created
 }
 
+/**
+ * Drops the wall-clock duration a closed reasoning block carries. These cases are about what the
+ * stream persisted and replayed; a timing number in their expectations would only obscure that.
+ */
+function untimed(value: unknown): any {
+  if (Array.isArray(value)) return value.map(untimed)
+  if (value === null || typeof value !== 'object') return value
+  return Object.fromEntries(
+    Object.entries(value).filter(([key]) => key !== 'duration_ms').map(([key, entry]) => [key, untimed(entry)]),
+  )
+}
+
 describe('generation', () => {
   it('passes globally enabled conversation tools to the model and persists an unresolved call without executing it', async () => {
     const providerId = await seedProvider('tool-provider', 'tool-model', false, { tool_call: true })
@@ -220,7 +232,7 @@ describe('generation', () => {
     await c.next('message.done')
 
     const rows = await listMessages(db, conversationIdOf(c), 1)
-    expect(rows[1]!.parts).toEqual([{ type: 'tool_call', id: 'call-ask-1', name: 'ask_user', args: ASK_USER_INPUT }])
+    expect(untimed(rows[1]!.parts)).toEqual([{ type: 'tool_call', id: 'call-ask-1', name: 'ask_user', args: ASK_USER_INPUT }])
     expect(rows[1]!.parts.some(part => part.type === 'tool_result')).toBe(false)
     expect(created).toHaveLength(1)
     expect(created[0]!.doStreamCalls[0]!.tools?.map(tool => tool.name)).toEqual(['ask_user'])
@@ -1048,7 +1060,7 @@ describe('generation', () => {
     expect((created1 as { conversation: { title: string } }).conversation.title).toBe('hi there')
     const rows = await listMessages(createDb(env.DB), conversationId, 1)
     expect(rows.map((r) => r.role)).toEqual(['user', 'assistant'])
-    expect(rows[1]!.parts).toEqual([
+    expect(untimed(rows[1]!.parts)).toEqual([
       { type: 'reasoning', text: 'think', providerOptions: { anthropic: { signature: 'SIG' } } },
       { type: 'text', text: 'Hello, world!' },
     ])
@@ -1415,7 +1427,7 @@ describe('DeepSeek Responses reasoning lifecycle', () => {
     const conversationId = conversationIdOf(c)
     const saved = (await listMessages(db, conversationId, 1))[1]!
     expect(saved.parts.map(part => part.type)).toEqual(['reasoning', 'tool_call', 'text'])
-    expect(saved.parts[0]).toEqual({
+    expect(untimed(saved.parts[0])).toEqual({
       type: 'reasoning', text: 'complete reasoning', providerOptions: { responses: {
         itemId: 'rs_fixture', reasoningSummary: deepseekReasoningItem.summary,
         reasoningContent: deepseekReasoningItem.content, reasoningEncryptedContent: 'fixture-encrypted-state',
@@ -1446,7 +1458,7 @@ describe('DeepSeek Responses reasoning lifecycle', () => {
       { type: 'function_call_output', call_id: 'call_fixture', output: '{"found":true}' },
       { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'next' }] },
     ])
-    expect((await listMessages(db, conversationId, 1))[3]!.parts).toEqual(saved.parts)
+    expect(untimed((await listMessages(db, conversationId, 1))[3]!.parts)).toEqual(untimed(saved.parts))
   })
 })
 
@@ -1479,7 +1491,7 @@ describe('provider metadata round trip', () => {
       { type: 'text', text: 'Hello', providerOptions: { google: { thoughtSignature: 'TS_TEXT' } } },
     ]
     // An empty summary is not an absent round trip: the encrypted item still has to reach D1.
-    expect((await listMessages(createDb(env.DB), conversationId, 1))[1]!.parts).toEqual(stored)
+    expect(untimed((await listMessages(createDb(env.DB), conversationId, 1))[1]!.parts)).toEqual(untimed(stored))
 
     c.ws.send(JSON.stringify({ type: 'send', conversation_id: conversationId, parent_id: null, parts: [{ type: 'text', text: 'more' }], provider_id: providerId, model_id: 'mock-1' }))
     await c.nextAfter('message.done', 2)
@@ -1789,7 +1801,7 @@ describe('generated image output', () => {
     expect(new Uint8Array(await object!.arrayBuffer())).toEqual(bytes)
 
     const rows = await listMessages(createDb(env.DB), conversationIdOf(a), 1)
-    expect(rows[1]!.parts).toEqual([
+    expect(untimed(rows[1]!.parts)).toEqual([
       { type: 'text', text: 'here it is' },
       { type: 'image', attachment_id: attachmentId },
     ])
@@ -1832,7 +1844,7 @@ describe('generated image output', () => {
       // The provider's temporary URL reaches neither the socket nor D1.
       expect(JSON.stringify(c.events)).not.toContain('provider.example')
       const rows = await listMessages(createDb(env.DB), conversationIdOf(c), 1)
-      expect(rows[1]!.parts).toEqual([
+      expect(untimed(rows[1]!.parts)).toEqual([
         { type: 'text', text: 'here it is' },
         { type: 'image', attachment_id: saved.id },
       ])
@@ -1875,7 +1887,7 @@ describe('generated image output', () => {
     const rows = await listMessages(createDb(env.DB), conversationIdOf(c), 1)
     expect(rows[1]!.status).toBe('error')
     // Spec §9: the text already received survives, and no trace of the file is written anywhere.
-    expect(rows[1]!.parts).toEqual([{ type: 'text', text: 'here it is' }])
+    expect(untimed(rows[1]!.parts)).toEqual([{ type: 'text', text: 'here it is' }])
     expect(await attachmentBySha(digest)).toBeUndefined()
     expect(await env.BUCKET.head(r2Key(1, digest))).toBeNull()
   })
@@ -2221,7 +2233,7 @@ describe('cross-feature integration', () => {
       const turn1 = await listMessages(db, conversationId, 1)
       // The Project default won over the command model, and was recorded on the reply.
       expect(turn1[1]).toMatchObject({ provider_id: providerA, model_id: 'int-a-1' })
-      expect(turn1[1]!.parts).toEqual([
+      expect(untimed(turn1[1]!.parts)).toEqual([
         { type: 'text', text: 'here it is' },
         { type: 'image', attachment_id: generatedId },
         { type: 'text', text: ' and more' },

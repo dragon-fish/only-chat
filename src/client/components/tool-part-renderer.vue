@@ -29,7 +29,7 @@ const optimisticResult = computed(() => sync.optimisticToolResult(props.messageI
 const effectiveResult = computed(() => props.result ?? optimisticResult.value ?? null)
 const inputPendingLabel = computed(() => props.call.name === ASK_USER_TOOL_ID
   ? '正在生成问答…'
-  : `正在生成 ${props.call.name} 参数…`)
+  : `正在调用 ${props.call.name}`)
 const compactPending = computed(() => (
   props.placement !== 'composer'
   && props.deferPending === true
@@ -101,5 +101,5 @@ Alert(v-else-if="compactPending")
 Alert(v-else)
   BracesIcon
   AlertTitle {{ call.name }}
-  AlertDescription {{ effectiveResult ? '工具调用已完成' : '等待工具结果' }}
+  AlertDescription {{ effectiveResult ? '调用完成' : `正在调用 ${call.name}` }}
 </template>

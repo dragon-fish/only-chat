@@ -27,7 +27,7 @@ const summary = computed(() => {
 
 <template lang="pug">
 .flex.w-full.flex-col.gap-2
-  div(v-if="refusal" class="flex items-center gap-2 rounded-md bg-muted px-2 py-1.5 text-sm text-muted-foreground")
+  div(v-if="refusal" class="oc-turn-row bg-muted text-sm text-muted-foreground")
     FileTextIcon(class="size-4 shrink-0")
     span {{ refusal }}
   Alert(v-else-if="failure" variant="destructive")
@@ -35,12 +35,12 @@ const summary = computed(() => {
     AlertTitle 网页抓取失败
     AlertDescription {{ failure }}
   template(v-else-if="!result")
-    .flex.items-center.gap-2.text-sm.text-muted-foreground
-      FileTextIcon(class="size-4")
+    .oc-turn-row.text-sm.text-muted-foreground
+      FileTextIcon(class="size-4 shrink-0")
       span 正在抓取 {{ urls.length || '' }} 个网页…
     Skeleton(class="h-16 w-full")
   Collapsible(v-else-if="output")
-    CollapsibleTrigger(class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent")
+    CollapsibleTrigger(class="oc-turn-row text-sm hover:bg-accent")
       FileTextIcon(class="size-4 shrink-0 text-muted-foreground")
       span.min-w-0.truncate.text-left 网页抓取
       Badge(variant="secondary" class="ml-auto shrink-0") {{ summary }}

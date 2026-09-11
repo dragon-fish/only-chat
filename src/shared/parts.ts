@@ -16,6 +16,13 @@ export const ImagePartSchema = z.object({
 export const ReasoningPartSchema = z.object({
   type: z.literal('reasoning'),
   text: z.string(),
+  /**
+   * Wall-clock milliseconds the model spent on this block, stamped server-side when it closes.
+   * Measured here rather than in the browser so it survives a reload — a duration the reader can
+   * only see while the tab that produced it stays open is not worth showing. Optional: parts
+   * persisted before this existed have none, and a block that never closed has none either.
+   */
+  duration_ms: z.number().int().nonnegative().optional(),
   providerOptions: ProviderOptionsSchema.optional(),
 })
 export const ToolCallPartSchema = z.object({
