@@ -297,6 +297,45 @@ Tool calls use plugin-owned cards:
 
 The file modal shows source text, path, current version, size, line count, update time, and provenance. Markdown, JSON, HTML, and other UTF-8 files are previewed as source. HTML is never executed in the first release.
 
+## Projected Mounts
+
+Beyond the two writable mounts, the VFS can expose read-only mounts that are *projections* of data
+the app already owns — uploads attached to messages, generated images and other Artifacts.
+
+A projection stores nothing of its own. The service derives its entries from `attachments`,
+`messages` and `artifacts` at read time; no `workspace_files` row is created. This keeps the
+dependency pointing the right way: the filesystem reads the core's data, and the core never learns
+that a filesystem exists. It also makes lifecycle automatic — deleting the message deletes the
+entry, with no reconciliation to drift — and it sidesteps the version model entirely, since a
+projected entry has no `current_version` to compare and swap.
+
+`write_file` to a projected mount is refused. Artifacts and Workspace Files stay separate as
+described above: a projection is a view, not a transfer of ownership.
+
+### Reading media
+
+`read_file` is bounded by what the *current model* accepts, not by a hard-coded list of types:
+
+- UTF-8 text is always readable, as numbered lines.
+- A modality the model declares support for (image, PDF, audio) is returned as media, so the model
+  sees it exactly as it would see a file the user attached.
+- Anything else returns a plain statement that this model cannot read this kind of file. That is a
+  fact the model can act on, not a failure.
+
+This needs the model's declared input modalities in `ToolContext`; they are already resolved on
+`models.metadata_resolved.modalities.input`.
+
+**Media must not travel inside the tool result.** `LanguageModelV4ToolResultOutput` can carry media
+only as base-64 (`{ type: 'media', data, mediaType }`) — there is no file-reference variant — so a
+2 MiB image becomes ~2.7 MiB of request body, resent on every subsequent turn. The app already has
+the cheaper path: `resolveAttachmentInputs` uploads an attachment through the provider's Files API
+when the interface supports it, reuses the pointer, and falls back to inline only when it must.
+
+So a media read returns metadata as its tool result and attaches the underlying attachment to the
+assistant message as an image part, which puts it on the same transport as a user upload. Making a
+tool able to contribute a message part rather than only a return value is what the `tool/execute`
+waterfall is for.
+
 ## Errors and Security
 
 Expected model-correctable failures return stable tool error values:
