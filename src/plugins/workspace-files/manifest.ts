@@ -1,6 +1,6 @@
 import type { PluginManifest } from '@/shared/plugins'
 import {
-  LIST_FILES_TOOL_ID, READ_FILE_TOOL_ID, WORKSPACE_FILES_PLUGIN_ID, WRITE_FILE_TOOL_ID,
+  LIST_FILES_TOOL_ID, READ_FILE_TOOL_ID, RESTORE_FILE_TOOL_ID, WORKSPACE_FILES_PLUGIN_ID, WRITE_FILE_TOOL_ID,
 } from '@/shared/plugins'
 
 const manifest = {
@@ -22,6 +22,11 @@ const manifest = {
       id: WRITE_FILE_TOOL_ID,
       name: '写入文件',
       description: '创建或整体替换一个文本文件，每次写入都会保留为一个版本。',
+    },
+    {
+      id: RESTORE_FILE_TOOL_ID,
+      name: '还原文件',
+      description: '把某个历史版本还原为一个新文件，不会覆盖任何现有文件。',
     },
   ],
 } satisfies PluginManifest

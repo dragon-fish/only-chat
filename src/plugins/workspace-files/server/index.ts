@@ -2,10 +2,13 @@ import type { Context } from 'cordis'
 import { tool } from 'ai'
 import { WorkspaceFiles, type Result, type WorkspaceError } from '@/server/plugins/workspace-files/service'
 import type { ToolContext } from '@/server/plugins/tools'
-import { LIST_FILES_TOOL_ID, READ_FILE_TOOL_ID, WORKSPACE_FILES_PLUGIN_ID, WRITE_FILE_TOOL_ID } from '@/shared/plugins'
 import {
-  ListFilesInputSchema, ReadFileInputSchema, WriteFileInputSchema,
-  type ListFilesOutput, type ReadFileOutput, type WriteFileOutput, type WorkspaceToolError,
+  LIST_FILES_TOOL_ID, READ_FILE_TOOL_ID, RESTORE_FILE_TOOL_ID, WORKSPACE_FILES_PLUGIN_ID, WRITE_FILE_TOOL_ID,
+} from '@/shared/plugins'
+import {
+  ListFilesInputSchema, ReadFileInputSchema, RestoreFileInputSchema, WriteFileInputSchema,
+  type ListFilesOutput, type ReadFileOutput, type RestoreFileOutput, type WriteFileOutput,
+  type WorkspaceToolError,
 } from '../shared'
 
 /** Each expected failure reads as a fact the model can act on, never as a malfunction. */
@@ -13,9 +16,9 @@ const MESSAGES: Record<WorkspaceError, string> = {
   INVALID_PATH: 'Not a valid workspace path. Paths are absolute and start with /project or /conversation, with no . or .. segments.',
   MOUNT_UNAVAILABLE: 'This conversation does not belong to a project, so /project has nowhere to store files. Use /conversation instead.',
   FILE_NOT_FOUND: 'No such file. Use list_files to see what exists.',
-  FILE_ALREADY_EXISTS: 'Another write created this file first. Read it, then write again with its version.',
-  VERSION_REQUIRED: 'This file already exists. Read it first and pass the version it returns as expectedVersion.',
-  VERSION_CONFLICT: 'The file changed since you read it. Read it again and retry with the new version.',
+  FILE_ALREADY_EXISTS: 'That name is taken. Restoring never overwrites, so choose a name nothing uses yet.',
+  VERSION_CONFLICT: 'The file is not at the version you named, so someone else changed it. Read it again and decide whether to keep their work.',
+  VERSION_NOT_FOUND: 'That version does not exist for this file. list_files and read_file report the current one.',
   FILE_TOO_LARGE: 'Too large to store. The limit is 1 MiB of UTF-8 text.',
   INVALID_UTF8: 'Content must be valid UTF-8 text.',
   READ_RANGE_TOO_LARGE: 'That range is past the end of the file, or too large to return. Use a smaller offset and limit.',
@@ -24,6 +27,15 @@ const MESSAGES: Record<WorkspaceError, string> = {
 function unwrap<T>(result: Result<T>): T | WorkspaceToolError {
   return result.ok ? result.value : { error: result.error, message: MESSAGES[result.error] }
 }
+
+/**
+ * Where this turn records the version of each file it read.
+ *
+ * `turn` is shared by every tool built for one generation and dies with it, so this cannot leak
+ * between conversations. It exists so a later write can tell "I replaced the version I read" from
+ * "I replaced a version I never saw".
+ */
+const readVersionKey = (path: string) => `workspace_files:read:${path}`
 
 function servicesFor(runtime: ToolContext) {
   const files = new WorkspaceFiles(runtime.db, runtime.assets, runtime.userId)
@@ -75,6 +87,7 @@ export const WorkspaceFilesServerPlugin = {
         const result = await files.read({ path: input.path, offset: input.offset, limit: input.limit, ...scope })
         if (!result.ok) return unwrap(result) as WorkspaceToolError
         const { updatedAt: _updatedAt, ...output } = result.value
+        runtime.turn.set(readVersionKey(output.path), output.version)
         return output
       },
     }))
@@ -82,8 +95,8 @@ export const WorkspaceFilesServerPlugin = {
     ctx.tools.register(WORKSPACE_FILES_PLUGIN_ID, WRITE_FILE_TOOL_ID, runtime => tool({
       description: [
         'Create a workspace file, or replace one completely. This writes the whole file; it is not a patch or pattern edit, and partial edits are not available in this release.',
-        'To create a new file, omit expectedVersion. To replace an existing one, read it first and pass back the version it returned — this is what stops two writers from silently overwriting each other.',
-        'A rejected write tells you why: read the file again and retry with its current version.',
+'Writing over an existing file is allowed and never loses anything: the previous version is kept and the result tells you which one was displaced, so restore_file can bring it back.',
+        'Pass expectedVersion only when it matters that nobody else has touched the file meanwhile — it is a guard, not a requirement, and a mismatch means someone else moved it.',
         'Limit is 1 MiB of UTF-8 text. Every successful write stores an immutable version and advances the file to it.',
         'Files under /project are shared by every conversation in the project; files under /conversation are private to this one.',
       ].join(' '),
@@ -99,10 +112,50 @@ export const WorkspaceFilesServerPlugin = {
           ...scope,
         })
         if (!result.ok) return unwrap(result) as WorkspaceToolError
-        const { path, operation, fileSize, totalLines, version } = result.value
+        const { path, operation, fileSize, totalLines, version, replacedVersion } = result.value
+        const read = runtime.turn.get(readVersionKey(path))
+        // Older than what was replaced means somebody wrote in between and this write went over
+        // content the caller never read.
+        const staleReadVersion = typeof read === 'number' && replacedVersion !== null && read < replacedVersion
+          ? read
+          : null
+        runtime.turn.set(readVersionKey(path), version)
+
+        const size = `${fileSize.toLocaleString('en-US')} bytes, ${totalLines.toLocaleString('en-US')} lines`
+        const message = operation === 'created'
+          ? `Created ${size}`
+          : replacedVersion === null
+            ? `Saved ${size}`
+            : staleReadVersion === null
+              ? `Saved ${size}. Replaced v${replacedVersion}, still restorable with restore_file.`
+              : `Saved ${size}. Replaced v${replacedVersion}, which was written after you read v${staleReadVersion} — you never saw it. Restore it with restore_file if that content mattered.`
+        return { path, operation, fileSize, totalLines, version, replacedVersion, staleReadVersion, message }
+      },
+    }))
+
+    ctx.tools.register(WORKSPACE_FILES_PLUGIN_ID, RESTORE_FILE_TOOL_ID, runtime => tool({
+      description: [
+        'Bring back an earlier version of a file, under a name that is not in use.',
+        'Use it after a write replaced something you wanted to keep — the result of that write names the version it displaced.',
+        'toPath must be free. Restoring never overwrites anything, because overwriting is the thing it exists to undo.',
+        'The restored copy starts its own history at version 1; the original file is untouched.',
+      ].join(' '),
+      inputSchema: RestoreFileInputSchema,
+      async execute(input, options): Promise<RestoreFileOutput | WorkspaceToolError> {
+        const { files, scope } = servicesFor(runtime)
+        const result = await files.restore({
+          path: input.path,
+          version: input.version,
+          toPath: input.toPath,
+          sourceMessageId: runtime.assistantMessageId,
+          toolCallId: options?.toolCallId ?? null,
+          ...scope,
+        })
+        if (!result.ok) return unwrap(result) as WorkspaceToolError
+        const { path, sourcePath, restoredFrom, version, fileSize, totalLines } = result.value
         return {
-          path, operation, fileSize, totalLines, version,
-          message: `${operation === 'created' ? 'Created' : 'Saved'} ${fileSize.toLocaleString('en-US')} bytes, ${totalLines.toLocaleString('en-US')} lines`,
+          path, sourcePath, restoredFrom, version, fileSize, totalLines,
+          message: `Restored ${sourcePath} v${restoredFrom} to ${path}`,
         }
       },
     }))

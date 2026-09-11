@@ -9,6 +9,7 @@ import { encryptSecret } from '@/server/plugins/llm/crypto'
 import type { UserHub } from '@/server/index'
 import type { ToolCallPart, ToolResultPart } from '@/shared/parts'
 import { listMessages } from '@/server/plugins/hub/conversations'
+import { hasToolResult } from '@/server/plugins/mock-provider'
 import { ensureTestUser as seedTestUser } from './auth-helper'
 import { connect } from './ws-helper'
 
@@ -27,6 +28,20 @@ function toolCallStream(toolName: string, input: unknown): StreamPart[] {
     },
   ] as StreamPart[]
 }
+
+/** What the model answers with once its tool call has come back. */
+const DONE_STREAM = [
+  { type: 'stream-start', warnings: [] },
+  { type: 'response-metadata', id: 'r2', modelId: 'mock', timestamp: new Date(0) },
+  { type: 'text-start', id: 't1' },
+  { type: 'text-delta', id: 't1', delta: 'done' },
+  { type: 'text-end', id: 't1' },
+  {
+    type: 'finish',
+    finishReason: { unified: 'stop', raw: 'stop' },
+    usage: { inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 1, text: 1, reasoning: 0 }, raw: {} },
+  },
+] as StreamPart[]
 
 async function seedProvider(): Promise<number> {
   const db = createDb(env.DB)
@@ -60,7 +75,16 @@ async function installModel() {
       apply(ctx) {
         ctx.llm.register('responses', {
           createModel: () => new MockLanguageModelV4({
-            doStream: async () => ({ stream: simulateReadableStream({ chunks: modelStream, chunkDelayInMs: null, initialDelayInMs: null }) }),
+            // The hub loops while the model keeps calling tools. Emitting the same call on every
+            // step would now overwrite the file once per step, so stop as soon as a result exists.
+            // Only this turn counts: results from an earlier turn must not silence the next call.
+            doStream: async ({ prompt }) => {
+              return { stream: simulateReadableStream({
+                chunks: hasToolResult(prompt) ? DONE_STREAM : modelStream,
+                chunkDelayInMs: null,
+                initialDelayInMs: null,
+              }) }
+            },
           }) as never,
         })
       },
@@ -121,14 +145,24 @@ describe('workspace file tools', () => {
     })
   })
 
-  it('returns a correctable error rather than failing the turn', async () => {
+  it('overwrites rather than refusing, and says what it displaced', async () => {
     const providerId = await seedProvider()
     await installModel()
     const { conversationId } = await callTool(providerId, 'write_file', { path: '/conversation/b.md', content: 'one' })
     const { result } = await callTool(providerId, 'write_file', { path: '/conversation/b.md', content: 'two' }, conversationId)
 
-    expect(result?.content).toMatchObject({ error: 'VERSION_REQUIRED' })
-    expect(String((result?.content as { message: string }).message)).toContain('expectedVersion')
+    // Refusing would discard whatever producing `two` cost, to protect a version that is still there.
+    expect(result?.content).toMatchObject({ operation: 'replaced', version: 2, replacedVersion: 1 })
+    expect(String((result?.content as { message: string }).message)).toContain('restore_file')
+  })
+
+  it('returns a correctable error when the named version is wrong', async () => {
+    const providerId = await seedProvider()
+    await installModel()
+    const { conversationId } = await callTool(providerId, 'write_file', { path: '/conversation/c.md', content: 'one' })
+    const { result } = await callTool(providerId, 'write_file', { path: '/conversation/c.md', content: 'two', expectedVersion: 99 }, conversationId)
+
+    expect(result?.content).toMatchObject({ error: 'VERSION_CONFLICT' })
   })
 
   it('tells the model a project mount is unavailable instead of erroring', async () => {

@@ -10,8 +10,8 @@ export type WorkspaceError =
   | 'MOUNT_UNAVAILABLE'
   | 'FILE_NOT_FOUND'
   | 'FILE_ALREADY_EXISTS'
-  | 'VERSION_REQUIRED'
   | 'VERSION_CONFLICT'
+  | 'VERSION_NOT_FOUND'
   | 'FILE_TOO_LARGE'
   | 'INVALID_UTF8'
   | 'READ_RANGE_TOO_LARGE'
@@ -53,10 +53,32 @@ export interface WriteInput extends WorkspaceScope {
 
 export interface WriteResult {
   path: string
-  operation: 'created' | 'updated'
+  /** `replaced` means a version was displaced without the caller naming it; it remains restorable. */
+  operation: 'created' | 'updated' | 'replaced'
   fileSize: number
   totalLines: number
   version: number
+  /** The version this write displaced, or `null` when nothing was displaced. */
+  replacedVersion: number | null
+  updatedAt: number
+}
+
+export interface RestoreInput extends WorkspaceScope {
+  path: string
+  version: number
+  /** Must not exist. Restoring may never destroy anything. */
+  toPath: string
+  sourceMessageId?: number | null
+  toolCallId?: string | null
+}
+
+export interface RestoreResult {
+  path: string
+  sourcePath: string
+  restoredFrom: number
+  version: number
+  fileSize: number
+  totalLines: number
   updatedAt: number
 }
 
@@ -186,9 +208,14 @@ export class WorkspaceFiles {
     if (bytes.byteLength > MAX_FILE_BYTES) return fail('FILE_TOO_LARGE')
 
     const existing = await this.findFile(target, relativePath)
-    if (existing && input.expectedVersion === undefined) return fail('VERSION_REQUIRED')
     if (!existing && input.expectedVersion !== undefined) return fail('FILE_NOT_FOUND')
-    if (existing && input.expectedVersion !== existing.current_version) return fail('VERSION_CONFLICT')
+    // Omitting the version is not an error: refusing would throw away whatever the caller spent
+    // producing this content, to protect a version that stays restorable either way. Passing one is
+    // a claim about the current state, and a wrong claim means someone else moved the file — that
+    // is a real conflict, and overwriting it would lose their work.
+    if (existing && input.expectedVersion !== undefined && input.expectedVersion !== existing.current_version) {
+      return fail('VERSION_CONFLICT')
+    }
 
     const attachmentId = await this.publishBytes(input.content)
     const now = Date.now()
@@ -208,13 +235,22 @@ export class WorkspaceFiles {
         return fail('FILE_ALREADY_EXISTS')
       }
       await this.commitVersion(fileId, 0, 1, { attachmentId, bytes: bytes.byteLength, totalLines, now, input })
-      return succeed({ path, operation: 'created', fileSize: bytes.byteLength, totalLines, version: 1, updatedAt: now })
+      return succeed({ path, operation: 'created', fileSize: bytes.byteLength, totalLines, version: 1, replacedVersion: null, updatedAt: now })
     }
 
     const version = existing.current_version + 1
     const moved = await this.commitVersion(existing.id, existing.current_version, version, { attachmentId, bytes: bytes.byteLength, totalLines, now, input })
     if (!moved) return fail('VERSION_CONFLICT')
-    return succeed({ path, operation: 'updated', fileSize: bytes.byteLength, totalLines, version, updatedAt: now })
+    const claimed = input.expectedVersion !== undefined
+    return succeed({
+      path,
+      operation: claimed ? 'updated' : 'replaced',
+      fileSize: bytes.byteLength,
+      totalLines,
+      version,
+      replacedVersion: claimed ? null : existing.current_version,
+      updatedAt: now,
+    })
   }
 
   /**
@@ -244,6 +280,69 @@ export class WorkspaceFiles {
     const [, update] = await this.db.batch([statements[0], statements[1]])
     const changed = (update as { meta?: { changes?: number } }).meta?.changes
     return changed === undefined || changed > 0
+  }
+
+  /**
+   * Copies one stored version out under a name that is free.
+   *
+   * Never writes over anything: an overwrite is what restoring is meant to undo, so a taken name is
+   * refused rather than resolved. The bytes already exist as an attachment, so this costs one
+   * pointer row and one version row and no storage at all.
+   */
+  async restore(input: RestoreInput): Promise<Result<RestoreResult>> {
+    const from = parseWorkspacePath(input.path)
+    const to = parseWorkspacePath(input.toPath)
+    if (!from.ok || !to.ok) return fail('INVALID_PATH')
+    if (from.value.mount === null || from.value.relativePath === '') return fail('INVALID_PATH')
+    if (to.value.mount === null || to.value.relativePath === '') return fail('INVALID_PATH')
+
+    const fromScope = this.scopeOf(from.value.mount, input)
+    if (!fromScope.ok) return fromScope
+    const toScope = this.scopeOf(to.value.mount, input)
+    if (!toScope.ok) return toScope
+
+    const source = await this.findFile(fromScope.value, from.value.relativePath)
+    if (!source) return fail('FILE_NOT_FOUND')
+
+    const [version] = await this.db.select().from(workspaceFileVersions).where(and(
+      eq(workspaceFileVersions.file_id, source.id),
+      eq(workspaceFileVersions.version, input.version),
+    )).limit(1)
+    if (!version) return fail('VERSION_NOT_FOUND')
+
+    if (await this.findFile(toScope.value, to.value.relativePath)) return fail('FILE_ALREADY_EXISTS')
+
+    const now = Date.now()
+    let fileId: number
+    try {
+      const [created] = await this.db.insert(workspaceFiles).values({
+        user_id: this.userId, project_id: toScope.value.projectId, conversation_id: toScope.value.conversationId,
+        relative_path: to.value.relativePath, current_version: 0, created_at: now, updated_at: now, deleted_at: null,
+      }).returning()
+      fileId = created!.id
+    } catch {
+      return fail('FILE_ALREADY_EXISTS')
+    }
+
+    await this.db.batch([
+      this.db.insert(workspaceFileVersions).values({
+        file_id: fileId, version: 1, attachment_id: version.attachment_id, mime: version.mime,
+        file_size: version.file_size, total_lines: version.total_lines,
+        source_conversation_id: input.conversationId, source_message_id: input.sourceMessageId ?? null,
+        tool_call_id: input.toolCallId ?? null, created_at: now,
+      }),
+      this.db.update(workspaceFiles).set({ current_version: 1, updated_at: now }).where(eq(workspaceFiles.id, fileId)),
+    ])
+
+    return succeed({
+      path: formatWorkspacePath(to.value),
+      sourcePath: formatWorkspacePath(from.value),
+      restoredFrom: input.version,
+      version: 1,
+      fileSize: version.file_size,
+      totalLines: version.total_lines,
+      updatedAt: now,
+    })
   }
 
   async read(input: ReadInput): Promise<Result<ReadResult>> {

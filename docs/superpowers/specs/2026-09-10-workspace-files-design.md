@@ -196,12 +196,48 @@ The default limit is 2,000 lines. One model-visible result is limited to 100 KiB
 }
 ```
 
-- Creating a missing path omits `expectedVersion`.
-- Updating an existing path requires the version returned by `read_file` or `list_files`.
-- A create racing with another create returns `FILE_ALREADY_EXISTS`.
-- A stale update returns `VERSION_CONFLICT`.
+- Writing over an existing path is allowed and `expectedVersion` is optional.
+- Passing `expectedVersion` asserts what the file currently is; a mismatch returns `VERSION_CONFLICT`.
 - Every success creates an immutable version and switches the logical pointer.
 - The maximum file size is 1 MiB of valid UTF-8 text.
+
+Refusing a write because the caller did not read first would be the expensive choice, not the safe
+one. The content being written may have cost tens of thousands of tokens to produce, while the
+version it displaces is never destroyed — it stays addressable and `restore_file` brings it back.
+Protecting recoverable data by discarding unrecoverable work is the wrong trade, so a blind write
+lands and the result reports what it displaced.
+
+`expectedVersion` therefore stops being a requirement and becomes an optional guard: it is a claim
+about the file's current state, and a false claim means someone else moved it, which is a real
+conflict worth refusing.
+
+### Replacing a version nobody read
+
+A result distinguishes two kinds of overwrite, because they mean different things to the caller:
+
+- It replaced the version this turn had read, or a version it wrote itself. Ordinary; the reply
+  notes the displacement.
+- It replaced a version written *after* this turn last read the file. The write went over content
+  the caller never saw, so the reply says so explicitly and names the version to restore.
+
+The distinction comes from the per-turn scratchpad in `ToolContext`: `read_file` records the version
+it returned and `write_file` records the version it produced, so a version the caller wrote itself
+counts as one it has seen. The scratchpad dies with the generation, so this can never leak between
+conversations. The service does not participate — it reports which version was displaced, and
+interpreting that against what this turn knows belongs to the tool.
+
+### `restore_file`
+
+```json
+{ "path": "/project/report.md", "version": 3, "toPath": "/project/report-v3.md" }
+```
+
+Copies one stored version out under a name that is free. `toPath` must not exist: overwriting is the
+thing restoring exists to undo, so a taken name returns `FILE_ALREADY_EXISTS` rather than being
+resolved. The restored copy starts its own history at version 1 and the source file is untouched.
+
+Restoring costs no storage. The bytes are already an attachment, so the operation is one pointer row
+and one version row pointing at content that is already there.
 
 Success returns `path`, `operation` (`created` or `updated`), `fileSize`, `totalLines`, `version`, `updatedAt`, and a concise message such as `Saved 1,234 bytes, 42 lines`.
 
@@ -345,8 +381,8 @@ INVALID_PATH
 MOUNT_UNAVAILABLE
 FILE_NOT_FOUND
 FILE_ALREADY_EXISTS
-VERSION_REQUIRED
 VERSION_CONFLICT
+VERSION_NOT_FOUND
 FILE_TOO_LARGE
 INVALID_UTF8
 READ_RANGE_TOO_LARGE
@@ -367,10 +403,10 @@ Synchronous VFS operations are bounded work required to form the tool result. Fu
 
 ## Acceptance Criteria
 
-- The three tools are owned by one built-in plugin and selected by default only for new Conversations when enabled.
+- The four tools are owned by one built-in plugin and selected by default only for new Conversations when enabled.
 - Project and Conversation mounts enforce ownership and remain distinguishable when empty or unavailable.
 - Bytes live in attachments/R2; logical files and immutable versions live in D1.
-- Concurrent writes cannot silently overwrite a newer version.
+- A write never destroys anything: a displaced version stays restorable, and a caller that named a version is told when that claim no longer holds.
 - Read/list/write results include the agreed size, line, range, time, version, and truncation data.
 - No result silently truncates content, exposes storage keys, or leaks another tenant's existence.
 - Tool results and official hook modifications reaching the model are persisted and replayable.

@@ -11,12 +11,13 @@ export const WORKSPACE_FILES_PLUGIN_ID = 'workspace_files' as const
 export const LIST_FILES_TOOL_ID = 'list_files' as const
 export const READ_FILE_TOOL_ID = 'read_file' as const
 export const WRITE_FILE_TOOL_ID = 'write_file' as const
+export const RESTORE_FILE_TOOL_ID = 'restore_file' as const
 export const CURRENT_TIME_TOOL_ID = 'current_time' as const
 
 export type BuiltInPluginId = typeof ASK_USER_PLUGIN_ID | typeof TAVILY_PLUGIN_ID | typeof DATETIME_PLUGIN_ID
   | typeof WORKSPACE_FILES_PLUGIN_ID
 export type BuiltInToolId = typeof ASK_USER_TOOL_ID | typeof WEB_SEARCH_TOOL_ID | typeof WEB_EXTRACT_TOOL_ID | typeof CURRENT_TIME_TOOL_ID
-  | typeof LIST_FILES_TOOL_ID | typeof READ_FILE_TOOL_ID | typeof WRITE_FILE_TOOL_ID
+  | typeof LIST_FILES_TOOL_ID | typeof READ_FILE_TOOL_ID | typeof WRITE_FILE_TOOL_ID | typeof RESTORE_FILE_TOOL_ID
 
 /**
  * One tool's own identity. A plugin may own several, and each needs its own label: listing two

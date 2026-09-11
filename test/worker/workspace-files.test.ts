@@ -53,18 +53,70 @@ describe('workspace files service', () => {
     expect(result.value).toMatchObject({ operation: 'created', version: 1, totalLines: 2, fileSize: 13 })
   })
 
-  it('requires the current version to update, and refuses a stale one', async () => {
+  it('overwrites without a version, and says what it replaced', async () => {
     await f.files.write({ path: '/project/a.md', content: 'one', ...scope(f) })
 
-    const missing = await f.files.write({ path: '/project/a.md', content: 'two', ...scope(f) })
-    expect(missing).toMatchObject({ ok: false, error: 'VERSION_REQUIRED' })
+    // Refusing here would throw away whatever the model spent producing `two`, to protect a version
+    // that is not going anywhere. The write lands and the reply says what it displaced.
+    const blind = await f.files.write({ path: '/project/a.md', content: 'two', ...scope(f) })
+    expect(blind).toMatchObject({ ok: true })
+    if (blind.ok) expect(blind.value).toMatchObject({ operation: 'replaced', version: 2, replacedVersion: 1 })
+  })
 
+  it('still refuses a write that names the wrong version', async () => {
+    await f.files.write({ path: '/project/a.md', content: 'one', ...scope(f) })
+
+    // Passing a version is a claim about what the file currently is. A wrong claim is a real
+    // conflict — someone else moved it — and silently overwriting would lose their work.
     const stale = await f.files.write({ path: '/project/a.md', content: 'two', expectedVersion: 99, ...scope(f) })
     expect(stale).toMatchObject({ ok: false, error: 'VERSION_CONFLICT' })
 
     const good = await f.files.write({ path: '/project/a.md', content: 'two', expectedVersion: 1, ...scope(f) })
     expect(good).toMatchObject({ ok: true })
-    if (good.ok) expect(good.value).toMatchObject({ operation: 'updated', version: 2 })
+    if (good.ok) expect(good.value).toMatchObject({ operation: 'updated', version: 2, replacedVersion: null })
+  })
+
+  it('restores an old version under a new name, leaving both intact', async () => {
+    await f.files.write({ path: '/project/a.md', content: 'original', ...scope(f) })
+    await f.files.write({ path: '/project/a.md', content: 'overwritten', ...scope(f) })
+
+    const restored = await f.files.restore({ path: '/project/a.md', version: 1, toPath: '/project/a-v1.md', ...scope(f) })
+    expect(restored).toMatchObject({ ok: true })
+    if (restored.ok) expect(restored.value).toMatchObject({ path: '/project/a-v1.md', version: 1, restoredFrom: 1 })
+
+    const copy = await f.files.read({ path: '/project/a-v1.md', ...scope(f) })
+    const current = await f.files.read({ path: '/project/a.md', ...scope(f) })
+    expect(copy.ok && copy.value.content).toContain('original')
+    expect(current.ok && current.value.content).toContain('overwritten')
+  })
+
+  it('refuses to restore onto a name that is taken', async () => {
+    await f.files.write({ path: '/project/a.md', content: 'one', ...scope(f) })
+    await f.files.write({ path: '/project/a.md', content: 'two', ...scope(f) })
+    await f.files.write({ path: '/project/taken.md', content: 'mine', ...scope(f) })
+
+    // Restoring must never destroy anything; that is the whole reason it insists on a free name.
+    const clash = await f.files.restore({ path: '/project/a.md', version: 1, toPath: '/project/taken.md', ...scope(f) })
+    expect(clash).toMatchObject({ ok: false, error: 'FILE_ALREADY_EXISTS' })
+
+    const ontoSelf = await f.files.restore({ path: '/project/a.md', version: 1, toPath: '/project/a.md', ...scope(f) })
+    expect(ontoSelf).toMatchObject({ ok: false, error: 'FILE_ALREADY_EXISTS' })
+  })
+
+  it('reports a version that never existed', async () => {
+    await f.files.write({ path: '/project/a.md', content: 'one', ...scope(f) })
+    const missing = await f.files.restore({ path: '/project/a.md', version: 7, toPath: '/project/b.md', ...scope(f) })
+    expect(missing).toMatchObject({ ok: false, error: 'VERSION_NOT_FOUND' })
+  })
+
+  it('costs no extra storage to restore, because the bytes already exist', async () => {
+    await f.files.write({ path: '/project/a.md', content: 'original', ...scope(f) })
+    await f.files.write({ path: '/project/a.md', content: 'overwritten', ...scope(f) })
+    const before = await f.db.select().from(attachments).where(eq(attachments.user_id, 1))
+
+    await f.files.restore({ path: '/project/a.md', version: 1, toPath: '/project/a-v1.md', ...scope(f) })
+    const after = await f.db.select().from(attachments).where(eq(attachments.user_id, 1))
+    expect(after.length).toBe(before.length)
   })
 
   it('leaves no orphan version behind when the pointer does not move', async () => {
@@ -76,14 +128,6 @@ describe('workspace files service', () => {
     // The losing write must be invisible in both places, not just in the pointer.
     expect(file!.current_version).toBe(1)
     expect(versions).toHaveLength(1)
-  })
-
-  it('refuses a blind write over an existing path', async () => {
-    await f.files.write({ path: '/project/a.md', content: 'one', ...scope(f) })
-    // Not FILE_ALREADY_EXISTS: that is reserved for a create that loses the unique index to a
-    // concurrent create. A model that simply forgot the version is told to go read it.
-    const again = await f.files.write({ path: '/project/a.md', content: 'two', ...scope(f) })
-    expect(again).toMatchObject({ ok: false, error: 'VERSION_REQUIRED' })
   })
 
   it('reads back numbered lines with the range it actually returned', async () => {
