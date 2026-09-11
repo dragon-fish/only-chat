@@ -109,16 +109,14 @@ describe('collection load state', () => {
     const store = useSyncStore()
     expect(store[loaded]).toBe(false)
     expect(store[error]).toBeNull()
-    // `loadSettings` fetches plugin configuration alongside /api/me; only the collection
-    // under test is asserted on, and every request fails so the retry path is exercised.
     vi.stubGlobal('fetch', async (url: string) => {
-      if (url !== '/api/plugins/config') expect(url).toBe(`/api/${path}`)
+      expect(url).toBe(`/api/${path}`)
       return new Response('{"error":"unavailable"}', { status: 503 })
     })
     await expect(store[method]()).rejects.toThrow('503')
     expect(store[loaded]).toBe(false)
     expect(store[error]).toContain('503')
-    vi.stubGlobal('fetch', async (url: string) => Response.json(url === '/api/plugins/config' ? {} : response))
+    vi.stubGlobal('fetch', async () => Response.json(response))
     await store[method]()
     expect(store[loaded]).toBe(true)
     expect(store[error]).toBeNull()

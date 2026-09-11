@@ -34,8 +34,8 @@ const storedValue = async (key: string) => {
 
 describe('plugin configuration', () => {
   it('reports an unconfigured plugin rather than failing', async () => {
-    const status = await (await json('GET', '/api/plugins/config')).json() as PluginConfigStatusMap
-    expect(status[TAVILY_PLUGIN_ID]).toEqual({ configured: false, values: {}, secrets: { api_key: false } })
+    const me = await (await json('GET', '/api/me')).json() as { plugin_config: PluginConfigStatusMap }
+    expect(me.plugin_config[TAVILY_PLUGIN_ID]).toEqual({ configured: false, values: {}, secrets: { api_key: false } })
   })
 
   it('stores the API key encrypted and never returns it', async () => {

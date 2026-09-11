@@ -15,10 +15,6 @@ const PatchSchema = z.record(z.string(), z.unknown())
 export function pluginConfigRoutes(ctx: Context) {
   const r = new Hono<ApiEnv>()
 
-  r.get('/plugins/config', async (c) => {
-    return c.json(await ctx.pluginConfig.status(authUserId(c)))
-  })
-
   r.put('/plugins/:pluginId/config', async (c) => {
     const pluginId = c.req.param('pluginId')
     const manifest = findPluginManifest(pluginId)

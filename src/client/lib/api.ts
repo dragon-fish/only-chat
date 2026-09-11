@@ -58,7 +58,6 @@ export const api = {
   adminSettings: () => request<AdminSiteSettings>('GET', '/api/admin/settings'),
   updateAdminSettings: (input: AdminSiteSettingsUpdate) => request<AdminSiteSettings>('PUT', '/api/admin/settings', input),
   me: () => request<User>('GET', '/api/me'),
-  pluginConfig: () => request<PluginConfigStatusMap>('GET', '/api/plugins/config'),
   updatePluginConfig: (pluginId: string, patch: Record<string, unknown>) =>
     request<PluginConfigStatusMap>('PUT', `/api/plugins/${pluginId}/config`, patch),
   presets: () => request<PresetProvider[]>('GET', '/api/presets'),

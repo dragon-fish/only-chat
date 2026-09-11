@@ -1,4 +1,4 @@
-import type { z } from 'zod'
+import { z } from 'zod'
 
 /** Stable built-in IDs; persisted Conversation snapshots must never depend on display names. */
 export const ASK_USER_PLUGIN_ID = 'ask_user' as const
@@ -72,6 +72,12 @@ export interface PluginConfigStatus {
 }
 
 export type PluginConfigStatusMap = Record<string, PluginConfigStatus>
+
+export const PluginConfigStatusSchema = z.object({
+  configured: z.boolean(),
+  values: z.record(z.string(), z.unknown()),
+  secrets: z.record(z.string(), z.boolean()),
+})
 
 export function pluginToolIds(manifest: PluginManifest): string[] {
   return manifest.tools.map(tool => tool.id)

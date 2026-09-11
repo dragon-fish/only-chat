@@ -26,7 +26,6 @@ it('tears down Alice and starts Bob when another tab changes the cookie account'
       user: { id: String(currentUser), name: `User ${currentUser}`, email: `user${currentUser}@example.com`, emailVerified: false, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z', image: null },
     })
     if (path === '/api/me') return Response.json({ settings: { plugins: { [`user-${currentUser}`]: true } } })
-    if (path === '/api/plugins/config') return Response.json({})
     if (path === '/api/conversations') return Response.json([{ id: currentUser! * 10, user_id: currentUser, title: `Private ${currentUser}`, project_id: null, head_message_id: null, provider_id: null, model_id: null, system_prompt: null, params: null, tools: [], created_at: 0, updated_at: 0, archived_at: null }])
     if (path === '/api/projects' || path === '/api/providers') return Response.json([])
     if (path === '/api/site-settings') return Response.json({ allowRegister: false })

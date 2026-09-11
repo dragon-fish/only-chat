@@ -129,7 +129,7 @@ describe('authenticated REST tenant isolation', () => {
     await ctx.db.orm.update(users).set({ settings: { plugins: { bob: true } } }).where(eq(users.id, bobId))
     const me = await (await bobRequest('GET', '/me')).json()
     expect.soft(me).toMatchObject({ id: bobId, name: 'Bob', email: 'bob@example.com', role: 'user', settings: { plugins: { bob: true } } })
-    expect.soft(Object.keys(me as object).sort()).toEqual(['created_at', 'email', 'id', 'name', 'role', 'settings'])
+    expect.soft(Object.keys(me as object).sort()).toEqual(['created_at', 'email', 'id', 'name', 'plugin_config', 'role', 'settings'])
     expect.soft((await request('GET', '/model-catalog/status')).status).toBe(200)
     expect.soft(await (await bobRequest('GET', '/model-catalog/status')).json()).toEqual(await (await request('GET', '/model-catalog/status')).json())
     for (const path of ['/model-catalog/status', '/model-catalog/providers', '/model-catalog/refresh/catalog-manual-test']) expect.soft((await workerFetch(`/api${path}`)).status).toBe(401)

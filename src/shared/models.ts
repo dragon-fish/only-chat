@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { CatalogMatchesSchema, ModelMetadataSchema, ModelMetadataOverrideSchema } from './model-metadata'
 import { PartsSchema } from './parts'
 import { ModelRefSchema } from './model-ref'
+import { PluginConfigStatusSchema } from './plugins'
 
 /** Supported provider interfaces. */
 export const InterfaceProtocolSchema = z.enum(['responses', 'chat-completions', 'anthropic', 'vertex-compatible'])
@@ -49,6 +50,11 @@ export const UserSchema = z.object({
   id: z.number().int(),
   name: z.string(),
   settings: UserSettingsSchema,
+  /**
+   * Masked plugin configuration, delivered with the rest of the user's settings because every
+   * consumer of one needs the other. Secrets never appear here — see PluginConfigStatus.
+   */
+  plugin_config: z.record(z.string(), PluginConfigStatusSchema),
   created_at: z.number(),
 })
 export type User = z.infer<typeof UserSchema>

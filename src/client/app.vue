@@ -15,10 +15,15 @@ const sync = useSyncStore()
 const config = useConfigStore()
 const auth = useAuthStore()
 const frameworkAuthSession = authClient.useSession()
+// The router guard already read the cookie before this component existed, so the atom's first
+// settle says nothing new — re-reading it there is a third request for an answer nobody's asked a
+// question about yet. Every LATER settle is a real signal (another tab changed account, a refocus)
+// and still forces a fenced re-read, so an older atom response cannot restore a superseded identity.
+let sessionSettled = false
 watch(frameworkAuthSession, state => {
   if (state.isPending || state.isRefetching || state.error) return
-  // Mount the framework's cross-tab/focus subscriptions. Re-read the current cookie through the
-  // fenced store refresh so an older atom response cannot restore a superseded identity.
+  if (!sessionSettled) { sessionSettled = true; return }
+  // Mount the framework's cross-tab/focus subscriptions.
   void auth.refresh(true)
 })
 const route = useRoute()

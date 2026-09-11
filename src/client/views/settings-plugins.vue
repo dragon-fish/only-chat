@@ -27,7 +27,7 @@ export function pluginSettingsRows(
 
 <script setup lang="ts">
 import { computed, reactive, watch } from 'vue'
-import { PlugIcon } from '@lucide/vue'
+import { PlugIcon, Settings2Icon } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 import { toast } from 'vue-sonner'
 import CollectionState from '@/client/components/collection-state.vue'
@@ -95,7 +95,10 @@ function toggle(key: string, value: boolean) {
               ItemDescription {{ plugin.description }}
               ItemDescription(v-if="plugin.needsConfig" class="text-destructive") 尚未配置，工具暂不可用。
             ItemActions
-              Button(v-if="plugin.configurable" as-child variant="outline" size="sm")
-                RouterLink(:to="`/settings/plugins/${plugin.id}`") 配置
+              //- Left of the switch on purpose: every row's toggle then lines up on one axis,
+              //- and a gear says "opens a form" where a chevron would promise an accordion.
+              Button(v-if="plugin.configurable" as-child variant="ghost" size="icon-sm")
+                RouterLink(:to="`/settings/plugins/${plugin.id}`" :aria-label="`配置 ${plugin.name}`")
+                  Settings2Icon
               Switch(:model-value="plugin.enabled" :aria-label="`启用 ${plugin.name}`" :disabled="pending.has(plugin.id) || sync.status !== 'open'" :title="sync.status === 'open' ? undefined : DISCONNECTED_MESSAGE" class="after:-inset-y-3" @update:model-value="toggle(plugin.id, $event)")
 </template>

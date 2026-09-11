@@ -267,7 +267,11 @@ describe('REST api', () => {
     const res = await json('GET', '/api/me')
     expect(res.status).toBe(200)
     const stored = await env.DB.prepare('SELECT created_at FROM users WHERE id = ?').bind(userId).first<{ created_at: number }>()
-    expect(await res.json()).toEqual({ id: userId, name: 'owner', email: 'owner@example.com', role: 'user', settings: { plugins: {} }, created_at: stored!.created_at })
+    expect(await res.json()).toEqual({
+      id: userId, name: 'owner', email: 'owner@example.com', role: 'user', settings: { plugins: {} },
+      plugin_config: { tavily: { configured: false, values: {}, secrets: { api_key: false } } },
+      created_at: stored!.created_at,
+    })
   })
 
   it('creates a provider without leaking the key, lists models, deletes', async () => {

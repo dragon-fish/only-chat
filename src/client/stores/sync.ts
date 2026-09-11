@@ -871,10 +871,12 @@ export const useSyncStore = defineStore('sync', () => {
     const epoch = loadEpoch
     settingsError.value = null
     try {
-      const [result, configStatus] = await Promise.all([api.me(), api.pluginConfig()])
+      const result = await api.me()
       if (epoch !== loadEpoch) return
       settings.value = result.settings
-      pluginConfig.value = configStatus
+      // Absent only from a payload older than this field; an empty map degrades to "nothing
+      // configured", which the settings screen already renders correctly.
+      pluginConfig.value = result.plugin_config ?? {}
       settingsLoaded.value = true
     } catch (error) {
       if (epoch === loadEpoch) settingsError.value = error instanceof Error ? error.message : String(error)
