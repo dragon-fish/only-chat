@@ -6,9 +6,11 @@ export const ASK_USER_TOOL_ID = 'ask_user' as const
 export const TAVILY_PLUGIN_ID = 'tavily' as const
 export const WEB_SEARCH_TOOL_ID = 'web_search' as const
 export const WEB_EXTRACT_TOOL_ID = 'web_extract' as const
+export const DATETIME_PLUGIN_ID = 'datetime' as const
+export const CURRENT_TIME_TOOL_ID = 'current_time' as const
 
-export type BuiltInPluginId = typeof ASK_USER_PLUGIN_ID | typeof TAVILY_PLUGIN_ID
-export type BuiltInToolId = typeof ASK_USER_TOOL_ID | typeof WEB_SEARCH_TOOL_ID | typeof WEB_EXTRACT_TOOL_ID
+export type BuiltInPluginId = typeof ASK_USER_PLUGIN_ID | typeof TAVILY_PLUGIN_ID | typeof DATETIME_PLUGIN_ID
+export type BuiltInToolId = typeof ASK_USER_TOOL_ID | typeof WEB_SEARCH_TOOL_ID | typeof WEB_EXTRACT_TOOL_ID | typeof CURRENT_TIME_TOOL_ID
 
 /**
  * One tool's own identity. A plugin may own several, and each needs its own label: listing two

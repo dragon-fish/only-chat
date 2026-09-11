@@ -24,6 +24,7 @@ import {
 } from './conversations'
 import { resolveAttachmentInputs } from './attachment-transport'
 import { pathToRoot, titleFromParts } from './tree'
+import { completedToolState } from './tool-state'
 
 /** Payload of the `message/before-send` event: feature plugins may inspect or amend the prompt. */
 export interface BeforeSendPayload {
@@ -494,19 +495,6 @@ async function ownedTerminalToolMessage(hub: Hub, messageId: number) {
     throw new Error('cannot respond to a streaming or incomplete message')
   }
   return { message, conversation }
-}
-
-function completedToolState(parts: Part[]): 'waiting' | 'cancelled' | 'answered' {
-  const calls = parts.filter(part => part.type === 'tool_call')
-  if (calls.length === 0) throw new Error('message has no tool calls')
-  const results = new Map(parts.filter(part => part.type === 'tool_result').map(part => [part.call_id, part]))
-  if (calls.some(call => !results.has(call.id))) return 'waiting'
-  for (const call of calls) {
-    if (call.name !== ASK_USER_TOOL_ID) throw new Error(`unsupported pending tool: ${call.name}`)
-    const result = AskUserResultSchema.parse(results.get(call.id)!.content)
-    if (result.status === 'cancelled') return 'cancelled'
-  }
-  return 'answered'
 }
 
 async function continueFromToolMessage(hub: Hub, messageId: number): Promise<void> {

@@ -56,7 +56,11 @@ function resultStatus(result: ToolResultPart | undefined): unknown {
     : undefined
 }
 
-/** Recovery is only valid for the current leaf after every sibling call was answered. */
+/**
+ * Recovery is only valid for the current leaf after every question was answered. Tools that execute
+ * may share the step with `ask_user`; their results carry no answer status and must not be asked
+ * for one, or a model that searches and asks in one breath can never be resumed.
+ */
 export function canContinueToolMessage(
   message: Message,
   allMessages: readonly Message[],
@@ -64,6 +68,8 @@ export function canContinueToolMessage(
 ): boolean {
   if (conversationHeadId !== message.id) return false
   const { calls, results } = toolState(message)
-  if (!calls.length || calls.some(call => resultStatus(results.get(call.id)) !== 'answered')) return false
+  const questions = calls.filter(call => call.name === ASK_USER_TOOL_ID)
+  if (!questions.length || questions.some(call => resultStatus(results.get(call.id)) !== 'answered')) return false
+  if (calls.some(call => !results.has(call.id))) return false
   return !allMessages.some(candidate => candidate.role === 'assistant' && candidate.parent_id === message.id)
 }
