@@ -11,6 +11,11 @@ function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+/** Rides along with every success so the agent plans against the budget instead of hitting it. */
+function budgetNote(tool: string, left: number): string {
+  return `${tool} 本轮还能使用 ${left} 次。`
+}
+
 /**
  * The per-turn budget exists to stop a loop, not to save money: an agent that has searched its
  * allowance without finding the answer is searching for the wrong thing and should come back to the
@@ -24,7 +29,7 @@ function spend(turn: Map<string, unknown>, key: string, cap: number): number | n
   const used = (turn.get(key) as number | undefined) ?? 0
   if (used >= cap) return null
   turn.set(key, used + 1)
-  return used + 1
+  return cap - used - 1
 }
 
 export async function runWebSearch(
@@ -33,12 +38,14 @@ export async function runWebSearch(
   turn: Map<string, unknown>,
   cap: number,
 ): Promise<WebSearchOutput | ToolError | ToolRefusal> {
-  if (spend(turn, SEARCH_CALLS, cap) === null) {
+  const callsLeft = spend(turn, SEARCH_CALLS, cap)
+  if (callsLeft === null) {
     return { refused: `web_search 本轮已调用 ${cap} 次，已达上限。` }
   }
   const maxResults = Math.min(Math.max(input.max_results ?? DEFAULT_SEARCH_RESULTS, 1), MAX_SEARCH_RESULTS)
   try {
-    return { query: input.query, results: await client.search({ query: input.query, maxResults }) }
+    const results = await client.search({ query: input.query, maxResults })
+    return { query: input.query, results, note: budgetNote('web_search', callsLeft) }
   } catch (error) {
     return { error: `web_search 失败：${message(error)}` }
   }
@@ -50,11 +57,12 @@ export async function runWebExtract(
   turn: Map<string, unknown>,
   cap: number,
 ): Promise<WebExtractOutput | ToolError | ToolRefusal> {
-  if (spend(turn, EXTRACT_CALLS, cap) === null) {
+  const callsLeft = spend(turn, EXTRACT_CALLS, cap)
+  if (callsLeft === null) {
     return { refused: `web_extract 本轮已调用 ${cap} 次，已达上限。` }
   }
   try {
-    return await client.extract(input.urls)
+    return { ...await client.extract(input.urls), note: budgetNote('web_extract', callsLeft) }
   } catch (error) {
     return { error: `web_extract 失败：${message(error)}` }
   }

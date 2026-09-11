@@ -25,6 +25,13 @@ export const WebSearchResultSchema = z.object({
 export const WebSearchOutputSchema = z.object({
   query: z.string(),
   results: z.array(WebSearchResultSchema),
+  /**
+   * A self-describing sentence — "本工具本轮还能使用 2 次。" — rather than a bare number with its
+   * meaning explained in the tool description. Tool descriptions sit in the cached prompt prefix,
+   * so editing one invalidates the prompt cache of every conversation; a result travels in the
+   * appended body and costs nothing. Optional so results persisted before this field still parse.
+   */
+  note: z.string().optional(),
 })
 
 export const WebExtractOutputSchema = z.object({
@@ -34,6 +41,8 @@ export const WebExtractOutputSchema = z.object({
     content: z.string(),
   })),
   failed: z.array(z.object({ url: z.string(), error: z.string() })),
+  /** See WebSearchOutputSchema.note. */
+  note: z.string().optional(),
 })
 
 /** A real failure — the network, the API, a bad key. Something went wrong. */

@@ -25,6 +25,18 @@ describe('tavily runners', () => {
     expect(client.search).toHaveBeenCalledTimes(2)
   })
 
+  it('reports the remaining budget on every success, so the wall is never a surprise', async () => {
+    const turn = new Map<string, unknown>()
+    const client = searchClient()
+    expect(await runWebSearch({ query: 'q' }, client, turn, 3)).toMatchObject({ note: 'web_search 本轮还能使用 2 次。' })
+    expect(await runWebSearch({ query: 'q' }, client, turn, 3)).toMatchObject({ note: 'web_search 本轮还能使用 1 次。' })
+    expect(await runWebSearch({ query: 'q' }, client, turn, 3)).toMatchObject({ note: 'web_search 本轮还能使用 0 次。' })
+
+    const extract = extractClient()
+    expect(await runWebExtract({ urls: ['https://a.test'] }, extract, turn, 2))
+      .toMatchObject({ note: 'web_extract 本轮还能使用 1 次。' })
+  })
+
   it('budgets search and extract separately', async () => {
     const turn = new Map<string, unknown>()
     const search = searchClient()
@@ -73,6 +85,7 @@ describe('tavily runners', () => {
     expect(await runWebExtract({ urls: ['https://ok.test', 'https://bad.test'] }, client, turn, 2)).toEqual({
       results: [{ url: 'https://ok.test', content: 'body' }],
       failed: [{ url: 'https://bad.test', error: 'timeout' }],
+      note: 'web_extract 本轮还能使用 1 次。',
     })
   })
 })
