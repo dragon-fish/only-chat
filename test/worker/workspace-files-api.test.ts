@@ -1,10 +1,11 @@
 import { env } from 'cloudflare:workers'
+import { unzipSync } from 'fflate'
 import { eq } from 'drizzle-orm'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createDb, type DB } from '@/server/db/client'
-import { conversations, projects, users, workspaceFileVersions, workspaceFiles } from '@/server/db/schema'
+import { conversations, pluginConfigs, projects, users, workspaceFileVersions, workspaceFiles } from '@/server/db/schema'
 import { WorkspaceFiles, type WorkspaceStorage } from '@/server/plugins/workspace-files/service'
-import { ensureTestUser, type AuthTestClient } from './auth-helper'
+import { ensureTestUser, workerFetch, type AuthTestClient } from './auth-helper'
 
 interface Fixture {
   db: DB
@@ -25,6 +26,14 @@ const storage: WorkspaceStorage = {
     const object = await env.BUCKET.get(key)
     return object ? { bytes: new Uint8Array(await object.arrayBuffer()) } : null
   },
+}
+
+/** The rendered preview is opt-in; tests that want it say so. */
+async function enableHtmlPreview(db: DB) {
+  await db.delete(pluginConfigs)
+  await db.insert(pluginConfigs).values({
+    user_id: 1, plugin_id: 'workspace_files', key: 'html_preview', value: 'true', updated_at: Date.now(),
+  })
 }
 
 async function fixture(): Promise<Fixture> {
@@ -102,6 +111,58 @@ describe('workspace files REST', () => {
     const again = await files.write({ path: '/project/report.md', content: 'new one', conversationId: f.conversationId, projectId: f.projectId })
     expect(again).toMatchObject({ ok: true })
     if (again.ok) expect(again.value).toMatchObject({ operation: 'created', version: 1 })
+  })
+
+  it('packs a mount into one archive so a page keeps the files it references', async () => {
+    const files = new WorkspaceFiles(f.db, storage, 1)
+    await files.write({ path: '/project/site/index.html', content: '<link href="./style.css">', conversationId: f.conversationId, projectId: f.projectId })
+    await files.write({ path: '/project/site/style.css', content: 'body{}', conversationId: f.conversationId, projectId: f.projectId })
+
+    const response = await f.client.request(`/api/projects/${f.projectId}/files/archive`, { method: 'GET' })
+    expect(response.status).toBe(200)
+    expect(response.headers.get('content-type')).toBe('application/zip')
+    const archive = new Uint8Array(await response.arrayBuffer())
+    const entries = unzipSync(archive)
+    // Relative layout is the whole point: unzipped, the page finds its stylesheet where it looks.
+    expect(Object.keys(entries).sort()).toEqual(['report.md', 'site/index.html', 'site/style.css'])
+    expect(new TextDecoder().decode(entries['site/style.css'])).toBe('body{}')
+  })
+
+  it('offers no rendered preview until the plugin setting asks for one', async () => {
+    const body = await (await f.client.request(`/api/workspace-files/${f.fileId}`, { method: 'GET' })).json() as { previewUrl: string | null }
+    expect(body.previewUrl).toBeNull()
+    // Guessing a ticket is not a way in either.
+    expect((await f.client.request(`/api/workspace-preview/${'0'.repeat(32)}/report.md`, { method: 'GET' })).status).toBe(404)
+  })
+
+  it('serves a page and the files it references under one ticket', async () => {
+    await enableHtmlPreview(f.db)
+    const files = new WorkspaceFiles(f.db, storage, 1)
+    await files.write({ path: '/project/site/index.html', content: '<link href="./style.css">', conversationId: f.conversationId, projectId: f.projectId })
+    await files.write({ path: '/project/site/style.css', content: 'body{}', conversationId: f.conversationId, projectId: f.projectId })
+    const [row] = await f.db.select().from(workspaceFiles).where(eq(workspaceFiles.relative_path, 'site/index.html'))
+
+    const body = await (await f.client.request(`/api/workspace-files/${row!.id}`, { method: 'GET' })).json() as { previewUrl: string }
+    expect(body.previewUrl).toMatch(/^\/api\/workspace-preview\/[0-9a-f]{32}\/site\/index\.html$/)
+
+    // No cookie: a sandboxed frame has an opaque origin and sends none. The ticket in the path is
+    // the credential, and the relative sibling it resolves to must arrive the same way.
+    const page = await workerFetch(body.previewUrl)
+    expect(page.status).toBe(200)
+    expect(page.headers.get('content-type')).toContain('text/html')
+    expect(page.headers.get('content-security-policy')).toContain('sandbox')
+
+    const sibling = await workerFetch(body.previewUrl.replace('index.html', 'style.css'))
+    expect(sibling.status).toBe(200)
+    expect(sibling.headers.get('content-type')).toContain('text/css')
+    expect(await sibling.text()).toBe('body{}')
+  })
+
+  it('stops serving a preview the moment the setting goes back off', async () => {
+    await enableHtmlPreview(f.db)
+    const body = await (await f.client.request(`/api/workspace-files/${f.fileId}`, { method: 'GET' })).json() as { previewUrl: string }
+    await f.db.delete(pluginConfigs)
+    expect((await workerFetch(body.previewUrl)).status).toBe(404)
   })
 
   it('never reveals a file belonging to another tenant', async () => {

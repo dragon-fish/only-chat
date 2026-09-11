@@ -370,6 +370,8 @@ export class WorkspaceFiles {
       id: file.id,
       path: `/${mount}/${file.relative_path}`,
       relativePath: file.relative_path,
+      projectId: file.project_id,
+      conversationId: file.conversation_id,
       fileSize: version?.file_size ?? 0,
       totalLines: version?.total_lines ?? 0,
       version: file.current_version,
@@ -378,6 +380,65 @@ export class WorkspaceFiles {
       sourceConversationId: version?.source_conversation_id ?? null,
       sourceMessageId: version?.source_message_id ?? null,
     })))
+  }
+
+  /** The current bytes of one path, for serving a page's own stylesheet and script beside it. */
+  async readBytes(mount: WorkspaceMount, scope: WorkspaceScope, relativePath: string): Promise<Result<Uint8Array>> {
+    const target = this.scopeOf(mount, scope)
+    if (!target.ok) return target
+
+    const [row] = await this.db.select({ r2Key: attachments.r2_key })
+      .from(workspaceFiles)
+      .innerJoin(workspaceFileVersions, and(
+        eq(workspaceFileVersions.file_id, workspaceFiles.id),
+        eq(workspaceFileVersions.version, workspaceFiles.current_version),
+      ))
+      .innerJoin(attachments, eq(attachments.id, workspaceFileVersions.attachment_id))
+      .where(and(
+        eq(workspaceFiles.user_id, this.userId),
+        this.whereScope(target.value),
+        eq(workspaceFiles.relative_path, relativePath),
+        isNull(workspaceFiles.deleted_at),
+      ))
+      .limit(1)
+    if (!row) return fail('FILE_NOT_FOUND')
+
+    const stored = await this.storage.getBytes(row.r2Key)
+    return stored ? succeed(stored.bytes) : fail('FILE_NOT_FOUND')
+  }
+
+  /**
+   * Every live file in one mount with its bytes, for an archive. A page the model wrote as several
+   * files — an HTML importing its own stylesheet — is only usable if they travel together.
+   */
+  async readMount(mount: WorkspaceMount, scope: WorkspaceScope): Promise<Result<Array<{ relativePath: string, bytes: Uint8Array }>>> {
+    const target = this.scopeOf(mount, scope)
+    if (!target.ok) return target
+
+    const rows = await this.db.select({
+      relativePath: workspaceFiles.relative_path,
+      r2Key: attachments.r2_key,
+    })
+      .from(workspaceFiles)
+      .innerJoin(workspaceFileVersions, and(
+        eq(workspaceFileVersions.file_id, workspaceFiles.id),
+        eq(workspaceFileVersions.version, workspaceFiles.current_version),
+      ))
+      .innerJoin(attachments, eq(attachments.id, workspaceFileVersions.attachment_id))
+      .where(and(
+        eq(workspaceFiles.user_id, this.userId),
+        this.whereScope(target.value),
+        isNull(workspaceFiles.deleted_at),
+      ))
+      .orderBy(asc(workspaceFiles.relative_path))
+
+    const out: Array<{ relativePath: string, bytes: Uint8Array }> = []
+    for (const row of rows) {
+      const stored = await this.storage.getBytes(row.r2Key)
+      // A row whose bytes are gone is a broken file, not a reason to refuse the whole archive.
+      if (stored) out.push({ relativePath: row.relativePath, bytes: stored.bytes })
+    }
+    return succeed(out)
   }
 
   /** Ownership is re-checked here rather than trusted from the route. */
@@ -412,6 +473,8 @@ export class WorkspaceFiles {
         id: file.id,
         path: `/${mount}/${file.relative_path}`,
         relativePath: file.relative_path,
+        projectId: file.project_id,
+        conversationId: file.conversation_id,
         fileSize: version.file_size,
         totalLines: version.total_lines,
         version: file.current_version,

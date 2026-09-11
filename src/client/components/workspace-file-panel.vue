@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { DownloadIcon, EyeIcon, RefreshCwIcon, Trash2Icon } from '@lucide/vue'
+import { DownloadIcon, EyeIcon, FileArchiveIcon, RefreshCwIcon, Trash2Icon } from '@lucide/vue'
 import { Alert, AlertDescription, AlertTitle } from '@/client/ui/alert'
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
@@ -22,6 +22,8 @@ const props = defineProps<{
 
 const files = ref<FileRecord[]>([])
 const projectFiles = ref<FileRecord[]>([])
+/** The Project a conversation can also reach, so its archive can be offered beside its files. */
+const projectId = ref<number | null>(null)
 const loading = ref(false)
 const error = ref<string | null>(null)
 const previewId = ref<number | null>(null)
@@ -38,6 +40,7 @@ const sections = computed(() => {
     hint: '这个 Project 下的所有会话都能读到。',
     files: props.mount === 'project' ? files.value : projectFiles.value,
     empty: '这个 Project 还没有文件。',
+    archiveUrl: projectId.value === null ? null : api.projectFilesArchiveUrl(projectId.value),
   }
   if (props.mount === 'project') return [project]
   const conversation = {
@@ -46,6 +49,7 @@ const sections = computed(() => {
     hint: '只有这次会话能读到。',
     files: files.value,
     empty: '这次会话还没有自己的文件。',
+    archiveUrl: api.conversationFilesArchiveUrl(props.scopeId),
   }
   // A conversation outside a Project has no second group, and one whose Project is empty gains
   // nothing from an empty heading.
@@ -59,11 +63,13 @@ async function load() {
     if (props.mount === 'project') {
       files.value = (await api.projectFiles(props.scopeId)).files
       projectFiles.value = []
+      projectId.value = props.scopeId
     }
     else {
       const body = await api.conversationFiles(props.scopeId)
       files.value = body.files
       projectFiles.value = body.projectFiles
+      projectId.value = body.projectId
     }
   }
   catch (cause) {
@@ -110,9 +116,16 @@ async function remove(record: FileRecord) {
 
   template(v-else)
     section.flex.flex-col.gap-2(v-for="group in sections" :key="group.key")
-      div
-        h3(class="text-sm font-medium") {{ group.title }}
-        p(class="text-muted-foreground text-xs") {{ group.hint }}
+      .flex.items-start.justify-between.gap-2
+        div
+          h3(class="text-sm font-medium") {{ group.title }}
+          p(class="text-muted-foreground text-xs") {{ group.hint }}
+        //- One archive keeps the relative layout: a page the model split across files stays usable.
+        Button(
+          v-if="group.files.length && group.archiveUrl" as="a" variant="ghost" size="xs"
+          class="min-h-10 shrink-0 md:min-h-7" :href="group.archiveUrl" :title="`打包下载${group.title}的全部文件`")
+          FileArchiveIcon(data-icon="inline-start")
+          | 打包下载
 
       Empty(v-if="!group.files.length" class="border-border rounded-lg border border-dashed py-6")
         EmptyHeader

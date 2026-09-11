@@ -1,24 +1,46 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
+import { CodeBlockNode } from 'markstream-vue'
 import ResponsiveOverlay from '@/client/components/layout/responsive-overlay.vue'
 import { Alert, AlertDescription, AlertTitle } from '@/client/ui/alert'
 import { Button } from '@/client/ui/button'
 import { Skeleton } from '@/client/ui/skeleton'
+import { Tabs, TabsList, TabsTrigger } from '@/client/ui/tabs'
 import { api } from '@/client/lib/api'
-import { formatFileSize, type FileRecord } from './workspace-files'
+import { useTheme } from '@/client/composables/use-theme'
+import { formatFileSize, isRenderable, languageOf, type FileRecord } from './workspace-files'
 
 const props = defineProps<{ fileId: number | null }>()
 const emit = defineEmits<{ 'update:fileId': [value: number | null] }>()
 
+const { resolved: resolvedTheme } = useTheme()
 const record = ref<FileRecord | null>(null)
 const content = ref('')
 const loading = ref(false)
 const error = ref<string | null>(null)
+const view = ref<'source' | 'rendered'>('source')
+
+/**
+ * Rendering model-written HTML is the plugin's own opt-in, and it starts off: the server hands back
+ * a preview URL only while that setting is on, so its absence IS the answer.
+ */
+const frameSrc = ref<string | null>(null)
+const canRender = computed(() => (
+  frameSrc.value !== null && record.value !== null && isRenderable(record.value.relativePath)
+))
+const node = computed(() => ({
+  type: 'code_block' as const,
+  language: record.value === null ? 'text' : languageOf(record.value.relativePath),
+  code: content.value,
+  raw: content.value,
+}))
 
 watch(() => props.fileId, async (fileId) => {
   record.value = null
   content.value = ''
+  frameSrc.value = null
   error.value = null
+  view.value = 'source'
   if (fileId === null) return
   loading.value = true
   try {
@@ -27,6 +49,7 @@ watch(() => props.fileId, async (fileId) => {
     if (props.fileId !== fileId) return
     record.value = body.record
     content.value = body.content
+    frameSrc.value = body.previewUrl
   }
   catch (cause) {
     error.value = cause instanceof Error ? cause.message : '无法读取文件'
@@ -38,6 +61,9 @@ watch(() => props.fileId, async (fileId) => {
 
 function setOpen(open: boolean) {
   if (!open) emit('update:fileId', null)
+}
+function selectView(value: unknown) {
+  if (value === 'source' || value === 'rendered') view.value = value
 }
 </script>
 
@@ -51,13 +77,27 @@ ResponsiveOverlay(
     Skeleton(class="h-4 w-48")
     Skeleton(class="h-40 w-full")
   template(v-else)
-    p(class="text-muted-foreground mb-3 text-xs")
-      | 第 {{ record.version }} 版 · {{ formatFileSize(record.fileSize) }} · {{ record.totalLines }} 行 · 更新于 {{ new Date(record.updatedAt).toLocaleString() }}
-    //- Source, never rendered: this text was written by a model and HTML must not execute here.
-    //- Lines wrap rather than scroll sideways: a second scroll container inside the overlay's own
-    //- makes the wheel land on whichever one the pointer happens to be over.
-    pre.bg-muted.rounded-lg.p-3.text-xs(class="break-words whitespace-pre-wrap")
-      code {{ content }}
+    .mb-3.flex.flex-wrap.items-center.justify-between.gap-2
+      p(class="text-muted-foreground text-xs")
+        | 第 {{ record.version }} 版 · {{ formatFileSize(record.fileSize) }} · {{ record.totalLines }} 行 · 更新于 {{ new Date(record.updatedAt).toLocaleString() }}
+      Tabs(v-if="canRender" :model-value="view" @update:model-value="selectView")
+        TabsList
+          TabsTrigger(value="source" class="min-h-10 md:min-h-7") 源码
+          TabsTrigger(value="rendered" class="min-h-10 md:min-h-7") 渲染
+    //- Sandboxed without `allow-same-origin`: the page gets an opaque origin, so it cannot read
+    //- this app's cookies or reach into the parent. It still runs code a model wrote.
+    iframe(
+      v-if="canRender && view === 'rendered'" class="bg-background h-[60dvh] w-full rounded-lg border"
+      :src="frameSrc ?? undefined"
+      sandbox="allow-scripts allow-forms allow-modals" referrerpolicy="no-referrer"
+      :title="`${record.relativePath} 预览`")
+    //- Source, never executed by the app itself. Lines wrap rather than scroll sideways: a second
+    //- scroll container inside the overlay's own sends the wheel to whichever one it is over.
+    CodeBlockNode(
+      v-else :node="node" :is-dark="resolvedTheme === 'dark'"
+      :theme="{ light: 'one-light', dark: 'one-dark-pro' }"
+      :show-preview-button="false" :is-show-preview="false" :show-collapse-button="false"
+      :show-line-numbers="true")
   template(#footer)
     Button(v-if="record" as="a" variant="outline" class="min-h-10" :href="api.workspaceFileDownloadUrl(record.id)") 下载
 </template>

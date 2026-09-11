@@ -5,6 +5,15 @@ export {
 } from '@/shared/plugins'
 
 /**
+ * Rendering model-written HTML is opt-in and off by default. Off, the app only ever shows source
+ * text; on, a page is served to a sandboxed frame so its own stylesheet and script resolve.
+ */
+export const WORKSPACE_FILES_CONFIG_SCHEMA = z.object({
+  html_preview: z.boolean().default(false),
+})
+export type WorkspaceFilesConfig = z.infer<typeof WORKSPACE_FILES_CONFIG_SCHEMA>
+
+/**
  * Paths are validated again by the service; this only keeps obvious nonsense out of the model's
  * way early enough to be corrected in the same turn.
  */

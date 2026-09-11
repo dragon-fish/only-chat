@@ -6,6 +6,9 @@ export interface FileRecord {
   id: number
   path: string
   relativePath: string
+  /** Where it lives. Exactly one is set, which is also what its mount is. */
+  projectId: number | null
+  conversationId: number | null
   fileSize: number
   totalLines: number
   version: number

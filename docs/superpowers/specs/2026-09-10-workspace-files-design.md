@@ -330,7 +330,20 @@ files under 当前会话 and 当前项目, each saying who can read them, and na
 that group.
 
 The list shows size, line count, version, update time. Users can preview, download, or logically
-delete a file. Version history and rollback are not exposed in the first release.
+delete a file, and take a whole group as one archive. Version history and rollback are not exposed
+in the first release.
+
+A model may legitimately write a page as several files — an HTML importing the stylesheet and
+script beside it — so the archive preserves relative layout, and single-file downloads stay
+available for anything else.
+
+Preview shows source, highlighted by the same renderer the chat uses. Rendering a page instead of
+reading it is a plugin setting that starts off. When it is on, a file is served to a frame
+sandboxed without `allow-same-origin`, under a short-lived ticket carried in the URL's directory
+prefix: the frame's opaque origin means its own subresource requests are cross-site and arrive
+without cookies, and the prefix is exactly what a relative `./style.css` keeps. Responses carry a
+CSP sandbox so even a direct navigation lands in an opaque origin. The setting exists because none
+of that changes the fact that the code was written by a model.
 
 A finished assistant message ends with the files that turn produced — the first few, then a link to
 the full panel. The tool cards above it are a log of calls; this is the outcome, which is usually

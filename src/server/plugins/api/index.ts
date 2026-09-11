@@ -14,7 +14,7 @@ import { adminEndpoints } from '../auth/access'
 import { AdminCreateUserSchema, AdminSetRoleSchema } from '@/shared/auth'
 import { adminSiteSettingsRoutes, publicSiteSettingsRoutes } from './site-settings'
 import { artifactRoutes } from './artifacts'
-import { workspaceFileRoutes } from './workspace-files'
+import { workspaceFileRoutes, workspacePreviewRoutes } from './workspace-files'
 import { pluginConfigRoutes } from './plugin-config'
 
 export type ApiApp = Hono<ApiEnv>
@@ -37,6 +37,9 @@ export const ApiPlugin = {
     app.all('/api/auth/*', c => ctx.auth.instance.handler(c.req.raw))
     app.get('/api/health', (c) => c.json({ ok: true }))
     app.route('/api', publicSiteSettingsRoutes(ctx))
+    // Before the session guard: a sandboxed preview frame cannot send the cookie, so its own
+    // short-lived ticket in the path is what authorises it.
+    app.route('/api', workspacePreviewRoutes(ctx))
     app.use('/api/*', requireAuth(ctx))
     app.use('/ws', requireAuth(ctx))
     app.route('/api', adminSiteSettingsRoutes(ctx))
