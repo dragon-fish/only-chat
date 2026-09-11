@@ -1,14 +1,13 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import MarkdownRender from 'markstream-vue'
 import type { NodeRendererProps } from 'markstream-vue'
 import { EllipsisIcon, GitForkIcon, LoaderCircle, PencilIcon, RefreshCwIcon, TriangleAlertIcon } from '@lucide/vue'
 import BranchSwitcher from '@/client/components/branch-switcher.vue'
 import LabAvatar from '@/client/components/lab-avatar.vue'
 import MessageUsage from '@/client/components/message-usage.vue'
-import ReasoningBlock from '@/client/components/reasoning-block.vue'
-import ToolPartRenderer from '@/client/components/tool-part-renderer.vue'
-import { messageSegments } from '@/client/components/message-segments'
+import TurnProcess from '@/client/components/turn-process.vue'
+import TurnSegments from '@/client/components/turn-segments.vue'
+import { messageSegments, turnBlocks } from '@/client/components/message-segments'
 import { canContinueToolMessage } from '@/client/components/tool-part-renderer'
 import ProjectAvatar from '@/client/components/project-avatar.vue'
 import { api } from '@/client/lib/api'
@@ -55,6 +54,8 @@ const images = computed(() => props.message.parts.filter((p) => p.type === 'imag
  */
 const segments = computed(() => messageSegments(props.message.parts))
 const activeSegmentKey = computed(() => (streaming.value ? segments.value.at(-1)?.key ?? null : null))
+/** Steps fold into collapsibles; speech and output never do. */
+const blocks = computed(() => turnBlocks(segments.value))
 const canContinueTools = computed(() => canContinueToolMessage(
   props.message,
   [...(sync.messages.get(props.message.conversation_id)?.values() ?? [])],
@@ -106,26 +107,18 @@ MessageRoot(
               Button(size="sm" class="min-h-10 md:min-h-7" variant="secondary" @click="editing = false") 取消
               Button(size="sm" class="min-h-10 md:min-h-7" @click="submitEdit") 发送
         template(v-else)
-          .flex.flex-col.gap-2
-            template(v-for="segment in segments" :key="segment.key")
-              ReasoningBlock(
-                v-if="segment.kind === 'reasoning'" :text="segment.text"
-                :duration-ms="segment.durationMs"
-                :active="segment.key === activeSegmentKey")
-              MarkdownRender(
-                v-else-if="segment.kind === 'text'"
-                mode="chat" :content="segment.markdown"
-                :final="!streaming || segment.key !== activeSegmentKey" :smooth-streaming="false" :fade="true"
+          .flex.flex-col.gap-3
+            template(v-for="block in blocks" :key="block.key")
+              TurnProcess(
+                v-if="block.kind === 'process'" :segments="block.segments" :message-id="message.id"
+                :streaming="streaming" :active-segment-key="activeSegmentKey"
+                :can-continue-tools="canContinueTools" :is-conversation-head="isConversationHead"
                 :is-dark="resolvedTheme === 'dark'" :code-block-props="codeBlockProps")
-              ToolPartRenderer(
-                v-else-if="segment.kind === 'tool'" :message-id="message.id"
-                :call="segment.call" :result="segment.result" :can-continue="canContinueTools"
-                :defer-pending="isConversationHead"
-                :input-pending="streaming && typeof segment.call.args === 'string'")
-              //- Generated images are served by the same authenticated attachment route as uploads.
-              img(
-                v-else-if="segment.kind === 'image'" class="max-h-80 rounded border"
-                :src="api.attachmentUrl(segment.part.attachment_id)")
+              TurnSegments(
+                v-else :segments="[block.segment]" :message-id="message.id"
+                :streaming="streaming" :active-segment-key="activeSegmentKey"
+                :can-continue-tools="canContinueTools" :is-conversation-head="isConversationHead"
+                :is-dark="resolvedTheme === 'dark'" :code-block-props="codeBlockProps")
           p.mt-2.flex.items-center.gap-2.text-xs.text-muted-foreground(v-if="wait.waiting && !segments.length")
             LoaderCircle(class="size-3.5 animate-spin")
             span 正在思考…

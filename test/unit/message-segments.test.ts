@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { messageSegments } from '@/client/components/message-segments'
+import { hasPendingTool, messageSegments, totalReasoningMs, turnBlocks } from '@/client/components/message-segments'
 import type { Part } from '@/shared/parts'
 
 const text = (t: string): Part => ({ type: 'text', text: t })
@@ -65,5 +65,50 @@ describe('messageSegments', () => {
     const image: Part = { type: 'image', attachment_id: 7 }
     expect(messageSegments([text('before'), image, text('after')]).map(s => s.kind))
       .toEqual(['text', 'image', 'text'])
+  })
+})
+
+describe('turnBlocks', () => {
+  const blocks = (parts: Part[]) => turnBlocks(messageSegments(parts))
+  const shape = (parts: Part[]) => blocks(parts).map(b => (b.kind === 'process' ? `process(${b.segments.length})` : b.segment.kind))
+
+  it('folds a run of steps into one collapsible', () => {
+    expect(shape([
+      reasoning('planning'), call('a'), result('a'), reasoning('reading'), call('b'), result('b'),
+      text('Here is what I found.'),
+    ])).toEqual(['process(4)', 'text'])
+  })
+
+  it('never folds prose away, even written mid-chain', () => {
+    // A model reporting progress before continuing is talking to the reader, not thinking aloud.
+    expect(shape([
+      reasoning('planning'), text('I will look this up.'), call('a'), result('a'), reasoning('done'),
+      text('Here it is.'),
+    ])).toEqual(['reasoning', 'text', 'process(2)', 'text'])
+  })
+
+  it('leaves a lone thought unwrapped, since it already collapses itself', () => {
+    expect(shape([reasoning('thinking'), text('answer')])).toEqual(['reasoning', 'text'])
+  })
+
+  it('does not fold a run holding a tool still waiting on a person', () => {
+    // A collapsible pinned open is a chevron that does nothing, around something needing an answer.
+    expect(shape([reasoning('asking'), call('q', 'ask_user')])).toEqual(['reasoning', 'tool'])
+  })
+
+  it('keeps images visible as output rather than folding them into the steps', () => {
+    expect(shape([reasoning('drawing'), call('a'), result('a'), { type: 'image', attachment_id: 3 }]))
+      .toEqual(['process(2)', 'image'])
+  })
+
+  it('reports a pending tool and adds up thinking time', () => {
+    const waiting = messageSegments([reasoning('asking', 400), call('q', 'ask_user')])
+    expect(hasPendingTool(waiting)).toBe(true)
+    expect(totalReasoningMs(waiting)).toBe(400)
+
+    const answered = messageSegments([reasoning('a', 300), call('x'), result('x'), reasoning('b', 700)])
+    expect(hasPendingTool(answered)).toBe(false)
+    expect(totalReasoningMs(answered)).toBe(1000)
+    expect(totalReasoningMs(messageSegments([reasoning('untimed')]))).toBeNull()
   })
 })

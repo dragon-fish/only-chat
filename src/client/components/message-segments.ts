@@ -71,3 +71,62 @@ export function messageSegments(parts: readonly Part[]): MessageSegment[] {
   }
   return segments
 }
+
+export type TurnBlock =
+  /** Rendered as itself: speech, output, or a lone thought that already collapses on its own. */
+  | { kind: 'segment'; key: string; segment: MessageSegment }
+  /** A run of steps behind one summary, so step count stops driving message height. */
+  | { kind: 'process'; key: string; segments: MessageSegment[] }
+
+/**
+ * Groups a turn for display. Consecutive thinking and tool calls fold into one collapsible; an
+ * agent that calls twenty tools between two sentences costs one line, not twenty.
+ *
+ * Text is never folded away, even mid-chain. A model that reports progress before continuing is
+ * talking to the reader, not thinking out loud, and hiding that turns a conversation into a log.
+ *
+ * A run holding a tool nobody has answered yet is not folded either: the reader is being asked to
+ * act on it, and a collapsible pinned open is just a chevron that does nothing.
+ */
+export function turnBlocks(segments: readonly MessageSegment[]): TurnBlock[] {
+  const blocks: TurnBlock[] = []
+  let run: MessageSegment[] = []
+
+  const flush = () => {
+    if (run.length === 0) return
+    const plain = hasPendingTool(run)
+      // One thought is already a collapsible; wrapping it would show two identical headers.
+      || (run.length === 1 && run[0]!.kind === 'reasoning')
+    if (plain) blocks.push(...run.map(segment => ({ kind: 'segment' as const, key: segment.key, segment })))
+    else blocks.push({ kind: 'process', key: `process:${run[0]!.key}`, segments: run })
+    run = []
+  }
+
+  for (const segment of segments) {
+    if (segment.kind === 'reasoning' || segment.kind === 'tool') run.push(segment)
+    else {
+      flush()
+      blocks.push({ kind: 'segment', key: segment.key, segment })
+    }
+  }
+  flush()
+  return blocks
+}
+
+/**
+ * A tool the server cannot answer — `ask_user` waiting on a person. Its run stays unfolded, or the
+ * reader is asked to respond to something they cannot see.
+ */
+export function hasPendingTool(segments: readonly MessageSegment[]): boolean {
+  return segments.some(segment => segment.kind === 'tool' && segment.result === null)
+}
+
+/** Total thinking time across a run, or null when nothing in it was measured. */
+export function totalReasoningMs(segments: readonly MessageSegment[]): number | null {
+  let total: number | null = null
+  for (const segment of segments) {
+    if (segment.kind !== 'reasoning' || segment.durationMs === null) continue
+    total = (total ?? 0) + segment.durationMs
+  }
+  return total
+}
