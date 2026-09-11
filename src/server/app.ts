@@ -11,6 +11,7 @@ import { PluginConfigPlugin } from './plugins/plugin-config'
 import { AskUserServerPlugin } from '@/plugins/ask-user/server'
 import { TavilyServerPlugin } from '@/plugins/tavily/server'
 import { DatetimeServerPlugin } from '@/plugins/datetime/server'
+import { WorkspaceFilesServerPlugin } from '@/plugins/workspace-files/server'
 
 export type Side = 'worker' | 'hub'
 
@@ -50,6 +51,7 @@ export async function createApp(options: AppOptions): Promise<Context> {
       await ctx.plugin(AskUserServerPlugin)
       await ctx.plugin(TavilyServerPlugin)
       await ctx.plugin(DatetimeServerPlugin)
+      await ctx.plugin(WorkspaceFilesServerPlugin)
       await ctx.plugin(HubPlugin, { userId: options.userId })
       if (!ctx.get('hub')) throw new Error('HubPlugin loaded but ctx.hub is unavailable')
     }
