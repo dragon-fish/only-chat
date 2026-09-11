@@ -23,12 +23,13 @@ const hint = computed(() => (props.mount === 'project'
 <template lang="pug">
 Dialog(v-if="scopeId !== null" v-model:open="open")
   DialogTrigger(as-child)
-    Button(
-      :variant="label ? 'outline' : 'ghost'" :size="label ? 'default' : 'icon-xs'"
-      :class="label ? 'min-h-10' : 'min-h-10 min-w-10 md:min-h-6 md:min-w-6'"
-      :title="title" :aria-label="title")
-      FolderOpenIcon(:data-icon="label ? 'inline-start' : undefined")
-      template(v-if="label") 文件
+    slot(name="trigger")
+      Button(
+        :variant="label ? 'outline' : 'ghost'" :size="label ? 'default' : 'icon-xs'"
+        :class="label ? 'min-h-10' : 'min-h-10 min-w-10 md:min-h-6 md:min-w-6'"
+        :title="title" :aria-label="title")
+        FolderOpenIcon(:data-icon="label ? 'inline-start' : undefined")
+        template(v-if="label") 文件
   DialogContent(class="flex max-h-[85dvh] max-w-[95vw] flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl")
     DialogHeader(class="px-4 pt-4")
       DialogTitle(class="text-sm") {{ title }}

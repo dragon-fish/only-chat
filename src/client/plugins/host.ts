@@ -3,6 +3,7 @@ import type { PluginManifest } from '@/shared/plugins'
 /** Kept framework-neutral so lazy host behavior is testable without mounting Vue. */
 export type ToolRenderer = unknown
 export type ConfigRenderer = unknown
+export type MessageFooterRenderer = unknown
 
 export interface ClientPluginContext {
   manifests: readonly PluginManifest[]
@@ -13,6 +14,11 @@ export interface ClientPluginContext {
    * disagree with reality.
    */
   config: { register(component: ConfigRenderer): () => void }
+  /**
+   * Something to say about a finished assistant message as a whole, rendered after its content —
+   * what a per-tool-call card cannot do, because the point is the turn's outcome, not one call.
+   */
+  messageFooter: { register(component: MessageFooterRenderer): () => void }
 }
 
 export type ClientPluginSetup = (ctx: ClientPluginContext) => void | (() => void)
@@ -31,6 +37,7 @@ export class ClientPluginHost {
   private readonly toolPlugins = new Map<string, string>()
   private readonly renderers = new Map<string, ToolRenderer>()
   private readonly configRenderers = new Map<string, ConfigRenderer>()
+  private readonly messageFooters = new Map<string, MessageFooterRenderer>()
   private readonly pending = new Map<string, Promise<void>>()
   private readonly disposers = new Map<string, () => void>()
 
@@ -52,6 +59,15 @@ export class ClientPluginHost {
 
   configRenderer(pluginId: string): ConfigRenderer | undefined {
     return this.configRenderers.get(pluginId)
+  }
+
+  messageFooter(pluginId: string): MessageFooterRenderer | undefined {
+    return this.messageFooters.get(pluginId)
+  }
+
+  /** Which plugin owns a tool, so a message can load exactly the plugins its own calls belong to. */
+  ownerOf(toolId: string): string | undefined {
+    return this.toolPlugins.get(toolId)
   }
 
   /** Historical Parts use this path even when their plugin is now globally disabled. */
@@ -77,6 +93,17 @@ export class ClientPluginHost {
             this.renderers.set(toolId, renderer)
             const unregister = () => {
               if (this.renderers.get(toolId) === renderer) this.renderers.delete(toolId)
+            }
+            registrations.push(unregister)
+            return unregister
+          },
+        },
+        messageFooter: {
+          register: (component) => {
+            if (this.messageFooters.has(pluginId)) throw new Error(`message footer already registered: ${pluginId}`)
+            this.messageFooters.set(pluginId, component)
+            const unregister = () => {
+              if (this.messageFooters.get(pluginId) === component) this.messageFooters.delete(pluginId)
             }
             registrations.push(unregister)
             return unregister

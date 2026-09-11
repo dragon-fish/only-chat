@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { DownloadIcon, EyeIcon, RefreshCwIcon, Trash2Icon } from '@lucide/vue'
-import ResponsiveOverlay from '@/client/components/layout/responsive-overlay.vue'
 import { Alert, AlertDescription, AlertTitle } from '@/client/ui/alert'
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
@@ -12,7 +11,8 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/client/ui/em
 import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemTitle } from '@/client/ui/item'
 import { Skeleton } from '@/client/ui/skeleton'
 import { api } from '@/client/lib/api'
-import { fileMetaLine, formatFileSize, type FileRecord } from './workspace-files'
+import WorkspaceFilePreview from './workspace-file-preview.vue'
+import { fileMetaLine, type FileRecord } from './workspace-files'
 
 const props = defineProps<{
   /** Which mount to list. A conversation also shows the Project mount it can reach, read-only. */
@@ -24,8 +24,7 @@ const files = ref<FileRecord[]>([])
 const projectFiles = ref<FileRecord[]>([])
 const loading = ref(false)
 const error = ref<string | null>(null)
-const preview = ref<{ record: FileRecord, content: string } | null>(null)
-const previewError = ref<string | null>(null)
+const previewId = ref<number | null>(null)
 const busyId = ref<number | null>(null)
 
 /**
@@ -77,21 +76,6 @@ async function load() {
 
 watch(() => [props.mount, props.scopeId] as const, load, { immediate: true })
 
-async function openPreview(record: FileRecord) {
-  busyId.value = record.id
-  previewError.value = null
-  try {
-    const body = await api.workspaceFile(record.id)
-    preview.value = { record: body.record, content: body.content }
-  }
-  catch (cause) {
-    previewError.value = cause instanceof Error ? cause.message : '无法读取文件'
-  }
-  finally {
-    busyId.value = null
-  }
-}
-
 async function remove(record: FileRecord) {
   busyId.value = record.id
   try {
@@ -105,10 +89,6 @@ async function remove(record: FileRecord) {
   finally {
     busyId.value = null
   }
-}
-
-function setPreviewOpen(open: boolean) {
-  if (!open) preview.value = null
 }
 </script>
 
@@ -147,7 +127,7 @@ function setPreviewOpen(open: boolean) {
           ItemActions(class="gap-1")
             Button(
               type="button" variant="ghost" size="icon-xs" class="size-10 md:size-8"
-              :disabled="busyId === file.id" :aria-label="`预览 ${file.relativePath}`" title="预览" @click="openPreview(file)")
+              :disabled="busyId === file.id" :aria-label="`预览 ${file.relativePath}`" title="预览" @click="previewId = file.id")
               EyeIcon(data-icon="inline-start")
             Button(
               as="a" variant="ghost" size="icon-xs" class="size-10 md:size-8"
@@ -167,18 +147,6 @@ function setPreviewOpen(open: boolean) {
                   AlertDialogCancel 取消
                   AlertDialogAction(@click="remove(file)") 删除
 
-  Alert(v-if="previewError" variant="destructive")
-    AlertTitle 无法读取文件
-    AlertDescription {{ previewError }}
 
-ResponsiveOverlay(
-  mode="dialog" :open="preview !== null" :title="preview?.record.relativePath ?? ''" @update:open="setPreviewOpen")
-  template(v-if="preview")
-    p(class="text-muted-foreground mb-3 text-xs")
-      | 第 {{ preview.record.version }} 版 · {{ formatFileSize(preview.record.fileSize) }} · {{ preview.record.totalLines }} 行 · 更新于 {{ new Date(preview.record.updatedAt).toLocaleString() }}
-    //- Source, never rendered: this text was written by a model and HTML must not execute here.
-    pre.oc-scroll.bg-muted.overflow-x-auto.rounded-lg.p-3.text-xs
-      code {{ preview.content }}
-  template(#footer)
-    Button(v-if="preview" as="a" variant="outline" class="min-h-10" :href="api.workspaceFileDownloadUrl(preview.record.id)") 下载
+WorkspaceFilePreview(:file-id="previewId" @update:file-id="previewId = $event")
 </template>

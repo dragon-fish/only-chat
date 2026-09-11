@@ -321,9 +321,21 @@ Host/Client plugin communication uses authenticated, plugin-private JSON RPC. Th
 
 ## Human UI
 
-Project settings receives a Files tab for `/project`. Conversation settings receives a Files section for `/conversation` and may show the current Project mount. Both use one reusable file-list component.
+The file panel is its own modal, opened from the chat header and from the Project view — files are
+not a setting, and burying them in a settings form makes them reachable only by opening a dialog
+about something else.
 
-The list shows path, size, line count, update time, and latest source. Users can open, download, or logically delete a file. Version history and rollback are not exposed in the first release.
+Mount paths are the model's addressing scheme and are never shown to a reader. The panel groups
+files under 当前会话 and 当前项目, each saying who can read them, and names a row by its path inside
+that group.
+
+The list shows size, line count, version, update time. Users can preview, download, or logically
+delete a file. Version history and rollback are not exposed in the first release.
+
+A finished assistant message ends with the files that turn produced — the first few, then a link to
+the full panel. The tool cards above it are a log of calls; this is the outcome, which is usually
+what the reader wanted. It is contributed by the plugin through a message-footer extension point,
+not hard-coded into the message renderer.
 
 Tool calls use plugin-owned cards:
 

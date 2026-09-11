@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import type { NodeRendererProps } from 'markstream-vue'
 import { EllipsisIcon, GitForkIcon, LoaderCircle, PencilIcon, RefreshCwIcon, TriangleAlertIcon } from '@lucide/vue'
 import BranchSwitcher from '@/client/components/branch-switcher.vue'
+import MessageFooters from '@/client/components/message-footers.vue'
 import LabAvatar from '@/client/components/lab-avatar.vue'
 import MessageUsage from '@/client/components/message-usage.vue'
 import TurnProcess from '@/client/components/turn-process.vue'
@@ -119,6 +120,7 @@ MessageRoot(
                 :streaming="streaming" :active-segment-key="activeSegmentKey"
                 :can-continue-tools="canContinueTools" :is-conversation-head="isConversationHead"
                 :is-dark="resolvedTheme === 'dark'" :code-block-props="codeBlockProps")
+          MessageFooters(v-if="!streaming" :message="message")
           p.mt-2.flex.items-center.gap-2.text-xs.text-muted-foreground(v-if="wait.waiting && !segments.length")
             LoaderCircle(class="size-3.5 animate-spin")
             span 正在思考…
