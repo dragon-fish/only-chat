@@ -6,8 +6,12 @@ import type { Message, Project, Conversation, UserSettings } from '@/shared/mode
 import type { Part } from '@/shared/parts'
 import { encodeEvent, parseCommand, type WsCommand, type WsEvent } from '@/shared/ws'
 import {
-  deleteConversation, finalizeMessage, forkConversation, getMessage, getConversation, getModel, getUser, toMessage, updateConversation, updateUserSettings,
+  deleteConversation, finalizeMessage, firstUserMessageText, forkConversation, getMessage, getConversation,
+  getModel, getProvider, getUser, renameIfTitleUnchanged, toMessage, updateConversation, updateUserSettings,
 } from './conversations'
+import { suggestConversationTitle } from './service-model'
+import { canServeAsServiceModel } from '@/shared/service-model'
+import { missingRequiredPlaceholders } from '@/shared/service-prompts'
 import { createProject, deleteProject, getProject, listProjectConversations, updateProject, validateProjectIcon } from './projects'
 import { SeqAllocator } from './seq'
 import { runEdit, runRegenerate, runSend, runToolContinue, runToolRespond } from './generation'
@@ -140,6 +144,7 @@ export class Hub extends Service {
       case 'switch_head': return this.switchHead(cmd.conversation_id, cmd.message_id)
       case 'conversation.update': return this.conversationUpdate(cmd)
       case 'conversation.delete': return this.conversationDelete(cmd.conversation_id)
+      case 'conversation.suggest_title': return this.conversationSuggestTitle(cmd)
       case 'conversation.fork': return this.conversationFork(cmd)
       case 'settings.update': return this.settingsUpdate(cmd.settings)
       case 'project.create': return this.projectCreate(cmd)
@@ -226,6 +231,35 @@ export class Hub extends Service {
     this.app.emit('conversation/deleted', conversationId)
   }
 
+  /**
+   * Names a conversation with the service model and replaces the placeholder it was given.
+   *
+   * Never awaited by the turn that triggers it: a conversation is usable the moment it exists, and
+   * its name arriving a few seconds later costs nothing. Silent throughout — see
+   * `suggestConversationTitle` for why none of its failures are worth reporting.
+   */
+  async nameConversation(conversationId: number, placeholder: string, firstText: string): Promise<void> {
+    const user = await getUser(this.db, this.userId)
+    if (!user) return
+    const title = await suggestConversationTitle({ db: this.db, llm: this.app.llm }, this.userId, user.settings, firstText)
+    if (title === null || title === placeholder) return
+    const renamed = await renameIfTitleUnchanged(this.db, conversationId, this.userId, placeholder, title)
+    if (renamed) await this.emitConversationUpdated(renamed)
+  }
+
+  /** The same suggestion on request, handed back for the user to accept rather than applied. */
+  async conversationSuggestTitle(cmd: Extract<WsCommand, { type: 'conversation.suggest_title' }>): Promise<void> {
+    const user = await getUser(this.db, this.userId)
+    if (!user) throw new Error('user missing')
+    if (!(await getConversation(this.db, cmd.conversation_id, this.userId))) throw new Error('conversation not found')
+    const text = await firstUserMessageText(this.db, cmd.conversation_id, this.userId)
+    const title = await suggestConversationTitle({ db: this.db, llm: this.app.llm }, this.userId, user.settings, text)
+    await this.broadcast({
+      type: 'conversation.title_suggested', request_id: cmd.request_id,
+      conversation_id: cmd.conversation_id, title,
+    })
+  }
+
   async conversationFork(cmd: Extract<WsCommand, { type: 'conversation.fork' }>): Promise<void> {
     if (this._inflight.has(cmd.message_id)) throw new Error('cannot fork a streaming message')
     // `parallel` awaits every listener and rethrows their failures, which is what lets a plugin
@@ -236,16 +270,35 @@ export class Hub extends Service {
     await this.broadcast({ type: 'conversation.forked', request_id: cmd.request_id, conversation_id: conversation.id })
   }
 
-  async settingsUpdate(patch: { plugins?: Record<string, boolean>; image_model?: { provider_id: number; model_id: string } | null }): Promise<void> {
+  /** Derived from the command rather than restated: a new setting must not compile until handled. */
+  async settingsUpdate(patch: Extract<WsCommand, { type: 'settings.update' }>['settings']): Promise<void> {
     const user = await getUser(this.db, this.userId)
     if (!user) throw new Error('user missing')
     if (patch.image_model && !(await getModel(this.db, patch.image_model.provider_id, patch.image_model.model_id, this.userId))?.supports_image_output) {
       throw new Error('image model not found')
     }
+    // Refused here as well as hidden from the picker: settings arrive over a socket, and the only
+    // authority on what a model can do is this side of it.
+    if (patch.service_model) {
+      const provider = await getProvider(this.db, patch.service_model.provider_id, this.userId)
+      const model = await getModel(this.db, patch.service_model.provider_id, patch.service_model.model_id, this.userId)
+      if (!provider?.enabled || !model?.enabled || !canServeAsServiceModel(model.metadata_resolved)) {
+        throw new Error('service model not found')
+      }
+    }
+    const titlePrompt = patch.service_prompts?.conversation_title
+    if (titlePrompt !== undefined) {
+      const missing = missingRequiredPlaceholders(titlePrompt)
+      if (missing.length > 0) throw new Error(`title prompt must contain ${missing.join(', ')}`)
+    }
     const settings: UserSettings = {
       ...user.settings,
       plugins: { ...user.settings.plugins, ...(patch.plugins ?? {}) },
       ...(patch.image_model === undefined ? {} : { image_model: patch.image_model }),
+      ...(patch.service_model === undefined ? {} : { service_model: patch.service_model }),
+      ...(patch.service_prompts === undefined
+        ? {}
+        : { service_prompts: { ...user.settings.service_prompts, ...patch.service_prompts } }),
     }
     const updated = await updateUserSettings(this.db, this.userId, settings)
     await this.broadcast({ type: 'settings.updated', settings: updated.settings })

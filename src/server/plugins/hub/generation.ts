@@ -23,7 +23,7 @@ import {
   lastGenerationModel, listAssistantChildren, listMessages, maxSeq, replaceMessagePartsIfCurrentHead, toMessage, updateConversation,
 } from './conversations'
 import { resolveAttachmentInputs } from './attachment-transport'
-import { pathToRoot, titleFromParts } from './tree'
+import { pathToRoot, titleFromParts, titleTextFromParts } from './tree'
 import { completedToolState } from './tool-state'
 
 /** Payload of the `message/before-send` event: feature plugins may inspect or amend the prompt. */
@@ -137,7 +137,13 @@ async function resolveTarget(hub: Hub, args: ResolveArgs): Promise<Target> {
     provider_id: draft.provider_id,
     model_id: draft.model_id,
   })
-  if (!existing) await hub.emitConversationCreated(conversation)
+  if (!existing) {
+    await hub.emitConversationCreated(conversation)
+    // Not awaited: the reply must not wait on a name. The Durable Object outlives this turn, and
+    // every failure inside is already swallowed, so a floating promise here cannot surface.
+    void hub.nameConversation(conversation.id, conversation.title, titleTextFromParts(args.firstParts))
+      .catch(() => {})
+  }
   return { conversation, provider, providerInterface, model, config, toolIds, enabledPlugins: user.settings.plugins }
 }
 

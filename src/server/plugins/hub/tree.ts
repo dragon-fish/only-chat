@@ -19,6 +19,11 @@ export function siblingsOf(all: readonly Message[], message: Message): Message[]
   return all.filter((m) => m.parent_id === message.parent_id).sort((a, b) => a.seq - b.seq)
 }
 
+/** The opening message in full, for a namer that can read more than a placeholder shows. */
+export function titleTextFromParts(parts: Part[]): string {
+  return parts.find((p): p is Extract<Part, { type: 'text' }> => p.type === 'text')?.text.trim() ?? ''
+}
+
 export function titleFromParts(parts: Part[]): string {
   const text = parts.find((p): p is Extract<Part, { type: 'text' }> => p.type === 'text')?.text.trim() ?? ''
   return text.length > 0 ? text.slice(0, 40) : '新对话'

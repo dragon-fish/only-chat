@@ -76,6 +76,26 @@ export async function updateConversation(
   return row
 }
 
+/**
+ * Renames a conversation only if it still carries the title the caller saw.
+ *
+ * The service model takes seconds to answer and a rename takes one, so the two race. Whoever the
+ * user is, their name wins: a suggestion that arrives late finds the title changed and does nothing.
+ */
+export async function renameIfTitleUnchanged(
+  db: DB,
+  id: number,
+  userId: number,
+  expectedTitle: string,
+  nextTitle: string,
+): Promise<ConversationRow | undefined> {
+  const [row] = await db.update(conversations)
+    .set({ title: nextTitle, updated_at: Date.now() })
+    .where(and(eq(conversations.id, id), eq(conversations.user_id, userId), eq(conversations.title, expectedTitle)))
+    .returning()
+  return row
+}
+
 /** Moves a Conversation head only if it still equals the caller's observed parent. */
 export async function compareAndSwapConversationHead(
   db: DB,
@@ -169,6 +189,14 @@ export async function forkConversation(
     await deleteConversation(db, target.id, userId)
     throw error
   }
+}
+
+/** The words a title is made from: the conversation's opening message, as the user wrote it. */
+export async function firstUserMessageText(db: DB, conversationId: number, userId: number): Promise<string> {
+  const rows = await listMessages(db, conversationId, userId)
+  const first = rows.find(row => row.role === 'user')
+  if (!first) return ''
+  return first.parts.find((part): part is Extract<Part, { type: 'text' }> => part.type === 'text')?.text.trim() ?? ''
 }
 
 export async function listMessages(db: DB, conversationId: number, userId: number): Promise<MessageRow[]> {

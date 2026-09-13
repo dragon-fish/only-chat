@@ -80,6 +80,12 @@ export const ConversationDeleteCommandSchema = z.object({
   ...base,
   conversation_id: z.number().int(),
 })
+export const ConversationSuggestTitleCommandSchema = z.object({
+  type: z.literal('conversation.suggest_title'),
+  // Required, not from `base`: this command is answered, and the answer has to find its caller.
+  request_id: z.string().min(1),
+  conversation_id: z.number().int(),
+})
 export const ConversationForkCommandSchema = z.object({
   type: z.literal('conversation.fork'),
   request_id: z.string().min(1),
@@ -92,6 +98,8 @@ export const SettingsUpdateCommandSchema = z.object({
   settings: z.object({
     plugins: z.record(z.string(), z.boolean()).optional(),
     image_model: ModelRefSchema.nullable().optional(),
+    service_model: ModelRefSchema.nullable().optional(),
+    service_prompts: z.object({ conversation_title: z.string().optional() }).optional(),
   }),
 })
 export const ProjectCreateCommandSchema = z.object({
@@ -142,6 +150,7 @@ export const WsCommandSchema = z.discriminatedUnion('type', [
   ConversationUpdateCommandSchema,
   ConversationDeleteCommandSchema,
   ConversationForkCommandSchema,
+  ConversationSuggestTitleCommandSchema,
   SettingsUpdateCommandSchema,
   ProjectCreateCommandSchema,
   ProjectUpdateCommandSchema,
@@ -183,6 +192,13 @@ export const WsEventSchema = z.discriminatedUnion('type', [
   }),
   z.object({ type: z.literal('head.changed'), conversation_id: z.number().int(), message_id: z.number().int() }),
   z.object({ type: z.literal('settings.updated'), settings: UserSettingsSchema }),
+  /** `title` is null when the service model declined, timed out, or is no longer usable. */
+  z.object({
+    type: z.literal('conversation.title_suggested'),
+    request_id: z.string(),
+    conversation_id: z.number().int(),
+    title: z.string().nullable(),
+  }),
   z.object({ type: z.literal('project.created'), project: ProjectSchema }),
   z.object({ type: z.literal('project.updated'), project: ProjectSchema }),
   z.object({ type: z.literal('project.deleted'), project_id: z.number().int() }),
