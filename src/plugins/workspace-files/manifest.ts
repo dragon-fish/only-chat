@@ -41,7 +41,7 @@ const manifest = {
       description: '把文件或整个目录移入回收站，30 天内你都可以在这里还原。',
     },
   ],
-  settingsEntry: { label: '工作区文件' },
+  settingsEntry: { label: '工作区文件', description: '模型在 Project 与对话中读写的文本文件' },
   configSchema: WORKSPACE_FILES_CONFIG_SCHEMA,
   config: [
     {

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ImagesIcon, MessageCircleIcon, PlusIcon, SettingsIcon } from '@lucide/vue'
+import { CircleUserRoundIcon, ImagesIcon, MessageCircleIcon, PlusIcon, SettingsIcon } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 import { Button } from '@/client/ui/button'
 </script>
@@ -24,6 +24,12 @@ import { Button } from '@/client/ui/button'
     <Button as-child size="icon-lg" class="size-10 rounded-full">
       <RouterLink to="/new" aria-label="开始随心聊">
         <PlusIcon />
+      </RouterLink>
+    </Button>
+    <Button as-child variant="ghost" class="h-auto min-h-10 min-w-16 flex-col gap-1 py-1">
+      <RouterLink to="/me" active-class="bg-accent text-accent-foreground">
+        <CircleUserRoundIcon />
+        <span class="text-xs">我的</span>
       </RouterLink>
     </Button>
     <Button as-child variant="ghost" class="h-auto min-h-10 min-w-16 flex-col gap-1 py-1">

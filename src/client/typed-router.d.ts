@@ -119,6 +119,13 @@ declare module 'vue-router/auto-routes' {
       Record<never, never>,
       | never
     >,
+    '/me/': RouteRecordInfo<
+      '/me/',
+      '/me',
+      Record<never, never>,
+      Record<never, never>,
+      | never
+    >,
     '/new': RouteRecordInfo<
       '/new',
       '/new/:conversationId?',
@@ -343,6 +350,14 @@ declare module 'vue-router/auto-routes' {
     'src/client/pages/login.vue': {
       routes:
         | '/login'
+      views:
+        | never
+      pathParamNames:
+        | never
+    }
+    'src/client/pages/me/index.vue': {
+      routes:
+        | '/me/'
       views:
         | never
       pathParamNames:

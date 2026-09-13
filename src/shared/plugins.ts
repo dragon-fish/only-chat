@@ -75,6 +75,8 @@ export interface PluginConfigIntro {
  */
 export interface PluginSettingsEntry {
   label: string
+  /** The plugin's own one-liner. Core renders whatever is declared and knows no plugin by name. */
+  description?: string
 }
 
 /** Metadata that can be discovered without loading a plugin's client implementation. */
@@ -129,10 +131,15 @@ export const PluginConfigStatusSchema = z.object({
 export function pluginSettingsEntries(
   manifests: readonly PluginManifest[],
   settings: Readonly<Record<string, boolean>>,
-): Array<{ id: string, label: string, to: string }> {
+): Array<{ id: string, label: string, description: string, to: string }> {
   return manifests
     .filter(manifest => manifest.settingsEntry !== undefined && settings[manifest.id] === true)
-    .map(manifest => ({ id: manifest.id, label: manifest.settingsEntry!.label, to: `/settings/plugins/${manifest.id}/data` }))
+    .map(manifest => ({
+      id: manifest.id,
+      label: manifest.settingsEntry!.label,
+      description: manifest.settingsEntry!.description ?? '管理这个插件保存的数据',
+      to: `/settings/plugins/${manifest.id}/data`,
+    }))
 }
 
 export function pluginToolIds(manifest: PluginManifest): string[] {

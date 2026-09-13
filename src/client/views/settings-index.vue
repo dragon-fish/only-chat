@@ -59,7 +59,7 @@ function backToChat() {
               FolderIcon
             ItemContent
               ItemTitle {{ page.label }}
-              ItemDescription 管理这个插件保存的数据
+              ItemDescription {{ page.description }}
             ItemActions
               ChevronRightIcon
     template(v-if="isAuthAdmin(auth.authUser)")
