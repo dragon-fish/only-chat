@@ -274,14 +274,16 @@ export class Hub extends Service {
   async settingsUpdate(patch: Extract<WsCommand, { type: 'settings.update' }>['settings']): Promise<void> {
     const user = await getUser(this.db, this.userId)
     if (!user) throw new Error('user missing')
-    if (patch.image_model && !(await getModel(this.db, patch.image_model.provider_id, patch.image_model.model_id, this.userId))?.supports_image_output) {
-      throw new Error('image model not found')
-    }
     // Refused here as well as hidden from the picker: settings arrive over a socket, and the only
     // authority on what a model can do is this side of it.
-    if (patch.service_model) {
-      const provider = await getProvider(this.db, patch.service_model.provider_id, this.userId)
-      const model = await getModel(this.db, patch.service_model.provider_id, patch.service_model.model_id, this.userId)
+    const image = patch.service_models?.image
+    if (image && !(await getModel(this.db, image.provider_id, image.model_id, this.userId))?.supports_image_output) {
+      throw new Error('image model not found')
+    }
+    const text = patch.service_models?.text
+    if (text) {
+      const provider = await getProvider(this.db, text.provider_id, this.userId)
+      const model = await getModel(this.db, text.provider_id, text.model_id, this.userId)
       if (!provider?.enabled || !model?.enabled || !canServeAsServiceModel(model.metadata_resolved)) {
         throw new Error('service model not found')
       }
@@ -294,8 +296,9 @@ export class Hub extends Service {
     const settings: UserSettings = {
       ...user.settings,
       plugins: { ...user.settings.plugins, ...(patch.plugins ?? {}) },
-      ...(patch.image_model === undefined ? {} : { image_model: patch.image_model }),
-      ...(patch.service_model === undefined ? {} : { service_model: patch.service_model }),
+      ...(patch.service_models === undefined
+        ? {}
+        : { service_models: { ...user.settings.service_models, ...patch.service_models } }),
       ...(patch.service_prompts === undefined
         ? {}
         : { service_prompts: { ...user.settings.service_prompts, ...patch.service_prompts } }),

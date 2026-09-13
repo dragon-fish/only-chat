@@ -198,13 +198,6 @@ declare module 'vue-router/auto-routes' {
       Record<never, never>,
       | never
     >,
-    '/settings/images': RouteRecordInfo<
-      '/settings/images',
-      '/settings/images',
-      Record<never, never>,
-      Record<never, never>,
-      | never
-    >,
     '/settings/plugins/': RouteRecordInfo<
       '/settings/plugins/',
       '/settings/plugins',
@@ -240,9 +233,9 @@ declare module 'vue-router/auto-routes' {
       { id: ParamValue<false> },
       | never
     >,
-    '/settings/service': RouteRecordInfo<
-      '/settings/service',
-      '/settings/service',
+    '/settings/service-models': RouteRecordInfo<
+      '/settings/service-models',
+      '/settings/service-models',
       Record<never, never>,
       Record<never, never>,
       | never
@@ -453,14 +446,6 @@ declare module 'vue-router/auto-routes' {
       pathParamNames:
         | never
     }
-    'src/client/pages/settings/images.vue': {
-      routes:
-        | '/settings/images'
-      views:
-        | never
-      pathParamNames:
-        | never
-    }
     'src/client/pages/settings/plugins/index.vue': {
       routes:
         | '/settings/plugins/'
@@ -501,9 +486,9 @@ declare module 'vue-router/auto-routes' {
       pathParamNames:
         | 'id'
     }
-    'src/client/pages/settings/service.vue': {
+    'src/client/pages/settings/service-models.vue': {
       routes:
-        | '/settings/service'
+        | '/settings/service-models'
       views:
         | never
       pathParamNames:

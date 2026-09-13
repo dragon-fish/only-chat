@@ -42,9 +42,16 @@ export type ConversationParams = z.infer<typeof ConversationParamsSchema>
 
 export const UserSettingsSchema = z.object({
   plugins: z.record(z.string(), z.boolean()).default({}),
-  image_model: ModelRefSchema.nullable().optional(),
-  /** The light model that does auxiliary work nobody asked for, such as naming a conversation. */
-  service_model: ModelRefSchema.nullable().optional(),
+  /**
+   * App-level models, one slot per capability rather than per job: a single text model does every
+   * text chore (naming a conversation, rewriting a prompt), and the image slot is what Studio and
+   * the image tools fall back to. A slot that is unset, or points at something no longer usable,
+   * means the job it serves simply does not happen.
+   */
+  service_models: z.object({
+    text: ModelRefSchema.nullable().optional(),
+    image: ModelRefSchema.nullable().optional(),
+  }).optional(),
   /**
    * One template per service job. Stored unvalidated: a template that stopped being usable must
    * still load, or a bad save would lock the user out of the settings page that repairs it. The

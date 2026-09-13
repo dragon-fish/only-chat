@@ -157,7 +157,7 @@ async function loadModels() {
     const current = props.conversationId === null ? undefined : conversations.value.find(item => item.id === props.conversationId)
     const preferred = current?.image_provider_id && current.image_model_id
       ? { provider_id: current.image_provider_id, model_id: current.image_model_id }
-      : sync.settings.image_model ?? undefined
+      : sync.settings.service_models?.image ?? undefined
     const preferredKey = preferred ? `${preferred.provider_id}:${preferred.model_id}` : ''
     modelKey.value = modelOptions.value.some(item => item.key === preferredKey) ? preferredKey : modelOptions.value[0]?.key ?? ''
   }

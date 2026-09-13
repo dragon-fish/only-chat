@@ -36,12 +36,14 @@ describe('ws protocol', () => {
     expect(cmd.type).toBe('settings.update')
   })
 
-  it('settings.update accepts a nullable default image model', () => {
+  it('settings.update carries a nullable model for each service slot', () => {
     expect(parseCommand(JSON.stringify({
-      type: 'settings.update', settings: { image_model: { provider_id: 3, model_id: 'image' } },
-    }))).toMatchObject({ settings: { image_model: { provider_id: 3, model_id: 'image' } } })
-    expect(parseCommand(JSON.stringify({ type: 'settings.update', settings: { image_model: null } })))
-      .toMatchObject({ settings: { image_model: null } })
+      type: 'settings.update',
+      settings: { service_models: { image: { provider_id: 3, model_id: 'image' }, text: { provider_id: 4, model_id: 'light' } } },
+    }))).toMatchObject({ settings: { service_models: { image: { provider_id: 3 }, text: { model_id: 'light' } } } })
+    // Null is how a slot is emptied, and has to survive the wire as itself rather than as absent.
+    expect(parseCommand(JSON.stringify({ type: 'settings.update', settings: { service_models: { image: null } } })))
+      .toMatchObject({ settings: { service_models: { image: null } } })
   })
 
   it('send carries nullable project_id, system_prompt, params and a conversation model override for first-message conversation init', () => {

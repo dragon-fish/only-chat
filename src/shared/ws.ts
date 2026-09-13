@@ -97,8 +97,10 @@ export const SettingsUpdateCommandSchema = z.object({
   ...base,
   settings: z.object({
     plugins: z.record(z.string(), z.boolean()).optional(),
-    image_model: ModelRefSchema.nullable().optional(),
-    service_model: ModelRefSchema.nullable().optional(),
+    service_models: z.object({
+      text: ModelRefSchema.nullable().optional(),
+      image: ModelRefSchema.nullable().optional(),
+    }).optional(),
     service_prompts: z.object({ conversation_title: z.string().optional() }).optional(),
   }),
 })

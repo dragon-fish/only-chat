@@ -42,7 +42,7 @@ const { pending: forkPending, fork } = useConversationFork()
 const { pending: namingPending, suggest } = useTitleSuggestion(value => { title.value = value })
 // Offered only when it can work. A button that explains why it is greyed out teaches a concept
 // nobody has met yet; its absence costs the user nothing.
-const canSuggestTitle = computed(() => Boolean(useSync().settings.service_model))
+const canSuggestTitle = computed(() => Boolean(useSync().settings.service_models?.text))
 watch(() => props.conversation.title, value => { if (!renameOpen.value) title.value = value })
 
 function restoreActionFocus(event: Event) {

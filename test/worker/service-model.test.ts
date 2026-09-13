@@ -37,7 +37,7 @@ async function addModel(db: DB, providerId: number, modelId: string, metadata: o
 
 const settings = (modelId: string | null, providerId: number): UserSettings => ({
   plugins: {},
-  service_model: modelId === null ? null : { provider_id: providerId, model_id: modelId },
+  service_models: { text: modelId === null ? null : { provider_id: providerId, model_id: modelId } },
 })
 
 describe('the service model is whatever is still usable right now', () => {

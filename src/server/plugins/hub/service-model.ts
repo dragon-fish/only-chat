@@ -32,7 +32,7 @@ export async function resolveServiceModel(
   userId: number,
   settings: UserSettings,
 ): Promise<ResolvedServiceModel | null> {
-  const ref = settings.service_model
+  const ref = settings.service_models?.text
   if (!ref) return null
 
   const provider = await getProvider(db, ref.provider_id, userId)
