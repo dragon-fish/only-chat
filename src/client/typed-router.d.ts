@@ -240,6 +240,13 @@ declare module 'vue-router/auto-routes' {
       { id: ParamValue<false> },
       | never
     >,
+    '/settings/service': RouteRecordInfo<
+      '/settings/service',
+      '/settings/service',
+      Record<never, never>,
+      Record<never, never>,
+      | never
+    >,
   }
 
   /**
@@ -493,6 +500,14 @@ declare module 'vue-router/auto-routes' {
         | never
       pathParamNames:
         | 'id'
+    }
+    'src/client/pages/settings/service.vue': {
+      routes:
+        | '/settings/service'
+      views:
+        | never
+      pathParamNames:
+        | never
     }
   }
 

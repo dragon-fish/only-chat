@@ -610,6 +610,8 @@ export const useSyncStore = defineStore('sync', () => {
   const loadedMessageConversations = reactive(new Set<number>())
   const streamingIds = reactive(new Set<number>())
   const forkResult = ref<{ request_id: string, conversation_id: number } | null>(null)
+  /** `title` is null when the service model could not produce one; the caller says so and stops. */
+  const titleSuggestion = ref<{ request_id: string, conversation_id: number, title: string | null } | null>(null)
   const settings = ref<UserSettings>({ plugins: {} })
   // Which plugins have usable configuration. Loaded with `settings` because every consumer of one
   // needs the other: an enabled plugin whose credential is missing must not offer its tools.
@@ -640,6 +642,7 @@ export const useSyncStore = defineStore('sync', () => {
     streamingIds.clear()
     optimisticMutations.clear()
     forkResult.value = null
+    titleSuggestion.value = null
     settings.value = { plugins: {} }
     pluginConfig.value = {}
     lastError.value = null
@@ -747,6 +750,9 @@ export const useSyncStore = defineStore('sync', () => {
       }
       case 'conversation.forked':
         forkResult.value = { request_id: e.request_id, conversation_id: e.conversation_id }
+        break
+      case 'conversation.title_suggested':
+        titleSuggestion.value = { request_id: e.request_id, conversation_id: e.conversation_id, title: e.title }
         break
       case 'message.created':
         upsertMessage(e.message)
@@ -918,7 +924,7 @@ export const useSyncStore = defineStore('sync', () => {
   }
 
   return {
-    status, snapshotSeq, conversations, projects, messages, streamingIds, forkResult, settings, pluginConfig, lastError, projectsLoaded, conversationsLoaded, settingsLoaded,
+    status, snapshotSeq, conversations, projects, messages, streamingIds, forkResult, titleSuggestion, settings, pluginConfig, lastError, projectsLoaded, conversationsLoaded, settingsLoaded,
     optimisticMutations,
     conversationsError, projectsError, settingsError, loadedMessageConversations, conversationList, imageConversationList, projectList,
     applyEvent, ingestConversations, ingestMessages, conversationsInProject, pathFor, siblingsOf, leafOf, isStreaming, loadConversations, loadProjects, loadSettings, loadMessages, connect, reset, send,

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { ArrowLeftIcon, CircleUserRoundIcon, FolderIcon, ImagesIcon, PaletteIcon, PlugIcon, ServerIcon, SettingsIcon, UsersIcon } from '@lucide/vue'
+import { ArrowLeftIcon, CircleUserRoundIcon, FolderIcon, ImagesIcon, PaletteIcon, PlugIcon, ServerIcon, SettingsIcon, SparklesIcon, UsersIcon } from '@lucide/vue'
 import { pluginManifests } from '@/client/plugins/loaders'
 import { pluginSettingsEntries } from '@/shared/plugins'
 import { activeNavTarget } from '@/client/lib/settings-nav'
@@ -31,6 +31,7 @@ const categories = [
   { label: '账户', to: '/settings/account', icon: CircleUserRoundIcon },
   { label: '模型服务', to: '/settings/providers', icon: ServerIcon },
   { label: '图片生成', to: '/settings/images', icon: ImagesIcon },
+  { label: '服务模型', to: '/settings/service', icon: SparklesIcon },
   { label: '插件', to: '/settings/plugins', icon: PlugIcon },
   { label: '外观', to: '/settings/appearance', icon: PaletteIcon },
 ]

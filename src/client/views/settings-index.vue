@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { ArrowLeftIcon, ChevronRightIcon, CircleUserRoundIcon, FolderIcon, PaletteIcon, PlugIcon, ServerIcon, SettingsIcon, UsersIcon } from '@lucide/vue'
+import { ArrowLeftIcon, ChevronRightIcon, CircleUserRoundIcon, FolderIcon, ImagesIcon, SparklesIcon, PaletteIcon, PlugIcon, ServerIcon, SettingsIcon, UsersIcon } from '@lucide/vue'
 import { pluginManifests } from '@/client/plugins/loaders'
 import { pluginSettingsEntries } from '@/shared/plugins'
 import { useSyncStore } from '@/client/stores/sync'
@@ -19,6 +19,8 @@ const pluginPages = computed(() => pluginSettingsEntries(pluginManifests, sync.s
 const categories = [
   { label: '账户', description: '管理个人信息与登录密码', to: '/settings/account', icon: CircleUserRoundIcon },
   { label: '模型服务', description: '连接供应商，管理模型与能力', to: '/settings/providers', icon: ServerIcon },
+  { label: '图片生成', description: '设置 Studio 与聊天使用的生图模型', to: '/settings/images', icon: ImagesIcon },
+  { label: '服务模型', description: '给对话起名等杂活使用的轻量模型', to: '/settings/service', icon: SparklesIcon },
   { label: '插件', description: '管理聊天中的工具与扩展', to: '/settings/plugins', icon: PlugIcon },
   { label: '外观', description: '调整主题与显示偏好', to: '/settings/appearance', icon: PaletteIcon },
 ]

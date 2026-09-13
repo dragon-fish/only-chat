@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
-import { DownloadIcon, EllipsisIcon, FolderInputIcon, GitForkIcon, MessageCircleIcon, PencilIcon, Trash2Icon } from '@lucide/vue'
+import { DownloadIcon, EllipsisIcon, FolderInputIcon, GitForkIcon, MessageCircleIcon, PencilIcon, SparklesIcon, Trash2Icon } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 import { toast } from 'vue-sonner'
 import { useConversationFork } from '@/client/composables/use-conversation-fork'
+import { useTitleSuggestion } from '@/client/composables/use-title-suggestion'
+import { useSyncStore as useSync } from '@/client/stores/sync'
 import { api } from '@/client/lib/api'
 import { conversationExport, type ExportFormat } from '@/client/lib/conversation-export'
 import { DISCONNECTED_MESSAGE, moveConversationCommand, useSyncStore } from '@/client/stores/sync'
@@ -36,6 +38,11 @@ const action = ref<InstanceType<typeof SidebarMenuAction> | null>(null)
 const renameOpen = ref(false)
 const title = ref(props.conversation.title)
 const { pending: forkPending, fork } = useConversationFork()
+// Fills the box rather than renaming: the dialog exists so the user has the last word.
+const { pending: namingPending, suggest } = useTitleSuggestion(value => { title.value = value })
+// Offered only when it can work. A button that explains why it is greyed out teaches a concept
+// nobody has met yet; its absence costs the user nothing.
+const canSuggestTitle = computed(() => Boolean(useSync().settings.service_model))
 watch(() => props.conversation.title, value => { if (!renameOpen.value) title.value = value })
 
 function restoreActionFocus(event: Event) {
@@ -157,7 +164,16 @@ function send(command: Parameters<typeof sync.send>[0]): boolean {
       <DialogContent>
         <DialogHeader><DialogTitle>重命名对话</DialogTitle></DialogHeader>
         <form class="contents" @submit.prevent="rename">
-          <Input v-model="title" class="min-h-10" maxlength="200" autofocus aria-label="对话名称" />
+          <div class="flex items-center gap-2">
+            <Input v-model="title" class="min-h-10 flex-1" maxlength="200" autofocus aria-label="对话名称" />
+            <Button
+              v-if="canSuggestTitle" type="button" variant="outline" size="icon"
+              class="size-10 shrink-0" :disabled="Boolean(namingPending)" title="让服务模型起名"
+              aria-label="让服务模型起名" @click="suggest(conversation.id)"
+            >
+              <SparklesIcon />
+            </Button>
+          </div>
           <DialogFooter>
             <Button type="button" variant="outline" class="min-h-10" @click="renameOpen = false">取消</Button>
             <Button type="submit" class="min-h-10" :disabled="!title.trim()">保存</Button>
