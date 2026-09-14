@@ -15,15 +15,26 @@ import { buildMockScript, type MockScript } from './script'
  * directive that produced a tool call would produce the same one on every step, up to the step cap.
  * Seeing a tool result in the prompt is how it knows the work is already done.
  */
-export function hasToolResult(prompt: LanguageModelV4Prompt): boolean {
+export function toolResultCount(prompt: LanguageModelV4Prompt): number {
   // Only this turn counts. Scanning the whole prompt would see tool results from earlier turns and
-  // refuse to call anything for the rest of the conversation.
+  // resume a macro somewhere past its end for the rest of the conversation.
   let start = 0
   for (let index = prompt.length - 1; index >= 0; index--) {
     if (prompt[index]!.role === 'user') { start = index + 1; break }
   }
-  return prompt.slice(start).some(message => message.role === 'tool'
-    || (message.role === 'assistant' && message.content.some(part => part.type === 'tool-result')))
+  // Counted, not merely detected: a macro hands out one segment per call, and which segment comes
+  // next is exactly how many have already come back.
+  let count = 0
+  for (const message of prompt.slice(start)) {
+    if (message.role === 'tool') count += message.content.length
+    else if (message.role === 'assistant') count += message.content.filter(part => part.type === 'tool-result').length
+  }
+  return count
+}
+
+/** Whether this turn already ran a tool. Kept for callers that only need the question answered. */
+export function hasToolResult(prompt: LanguageModelV4Prompt): boolean {
+  return toolResultCount(prompt) > 0
 }
 
 /** The directive lives in the newest user turn; earlier ones are history the mock ignores. */
@@ -44,7 +55,8 @@ function scriptStream(script: MockScript): ReadableStream<LanguageModelV4StreamP
   return new ReadableStream<LanguageModelV4StreamPart>({
     async pull(controller) {
       if (index >= script.parts.length) { controller.close(); return }
-      if (script.delayMs > 0 && index > 0) await new Promise(resolve => setTimeout(resolve, script.delayMs))
+      const delayMs = script.delays[index] ?? 0
+      if (delayMs > 0 && index > 0) await new Promise(resolve => setTimeout(resolve, delayMs))
       controller.enqueue(script.parts[index]!)
       index += 1
     },
@@ -53,7 +65,7 @@ function scriptStream(script: MockScript): ReadableStream<LanguageModelV4StreamP
 
 function mockModel(provider: string, modelId: string): LanguageModelV4 {
   const scriptFor = (options: LanguageModelV4CallOptions) =>
-    buildMockScript(lastUserText(options.prompt), { toolsAlreadyRan: hasToolResult(options.prompt) })
+    buildMockScript(lastUserText(options.prompt), { toolResults: toolResultCount(options.prompt) })
   return {
     specificationVersion: 'v4',
     provider,
