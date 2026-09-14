@@ -121,8 +121,14 @@ describe('ws protocol', () => {
   })
 
   it('rejects malformed tool response envelopes at the wire boundary', () => {
-    expect(() => parseCommand(JSON.stringify({
+    // The result body is the tool's business, validated by its own protocol in the hub; the
+    // envelope around it is not.
+    expect(parseCommand(JSON.stringify({
       type: 'tool.respond', request_id: 'answer-1', message_id: 7, call_id: 'call-1',
+      result: { status: 'answered', answers: [] },
+    }))).toMatchObject({ type: 'tool.respond', call_id: 'call-1' })
+    expect(() => parseCommand(JSON.stringify({
+      type: 'tool.respond', request_id: 'answer-1', message_id: 7,
       result: { status: 'answered', answers: [] },
     }))).toThrow()
     expect(() => parseCommand(JSON.stringify({

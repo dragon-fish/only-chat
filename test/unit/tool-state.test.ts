@@ -27,26 +27,28 @@ const message = (parts: Part[]): Message => ({
   provider_id: null, model_id: null, usage: null, status: 'done', error: null, created_at: 0,
 })
 
+const skipped = (name: string, content: unknown) => name === 'ask_user' && (content as { status?: string }).status === 'cancelled'
+
 describe('completedToolState', () => {
   // A model may search and ask in one breath; the searches say nothing about whether the person answered.
   it('resumes once the questions are answered, however many tools ran alongside them', () => {
     expect(completedToolState([
       search('s1'), search('s2'), ask('a1'),
       searched('s1'), searched('s2'), answered('a1'),
-    ])).toBe('answered')
+    ], skipped)).toBe('answered')
   })
 
   it('still waits while any call lacks a result', () => {
-    expect(completedToolState([search('s1'), ask('a1'), answered('a1')])).toBe('waiting')
-    expect(completedToolState([search('s1'), ask('a1'), searched('s1')])).toBe('waiting')
+    expect(completedToolState([search('s1'), ask('a1'), answered('a1')], skipped)).toBe('waiting')
+    expect(completedToolState([search('s1'), ask('a1'), searched('s1')], skipped)).toBe('waiting')
   })
 
   it('reports a cancelled question even when its neighbours succeeded', () => {
-    expect(completedToolState([search('s1'), ask('a1'), searched('s1'), cancelled('a1')])).toBe('cancelled')
+    expect(completedToolState([search('s1'), ask('a1'), searched('s1'), cancelled('a1')], skipped)).toBe('cancelled')
   })
 
   it('treats a step of executed tools as complete rather than as something to ask about', () => {
-    expect(completedToolState([search('s1'), searched('s1')])).toBe('answered')
+    expect(completedToolState([search('s1'), searched('s1')], skipped)).toBe('answered')
   })
 })
 

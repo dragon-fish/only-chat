@@ -5,7 +5,6 @@ import {
   ConversationPluginSettingsSchema, ConversationSchema, UsageSchema, UserSettingsSchema,
 } from './models'
 import { ModelRefSchema } from './model-ref'
-import { AskUserResultSchema } from '@/plugins/ask-user/shared'
 
 const base = { request_id: z.string().optional() }
 
@@ -138,7 +137,8 @@ export const ToolRespondCommandSchema = z.strictObject({
   request_id: z.string().min(1),
   message_id: z.number().int(),
   call_id: z.string().min(1),
-  result: AskUserResultSchema,
+  /** Shaped by the tool being answered; the hub validates it through that tool's own protocol. */
+  result: z.unknown(),
 })
 export const ToolContinueCommandSchema = z.strictObject({
   type: z.literal('tool.continue'),

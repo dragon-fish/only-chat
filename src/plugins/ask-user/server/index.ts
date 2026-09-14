@@ -1,6 +1,8 @@
 import { tool } from 'ai'
 import { ASK_USER_PLUGIN_ID, ASK_USER_TOOL_ID } from '@/shared/plugins'
-import { AskUserInputSchema } from '../shared'
+import { AskUserInputSchema, AskUserResultSchema, validateAskUserResult } from '../shared'
+
+const SKIPPED_MESSAGE = '用户跳过了问题并继续回复'
 
 /** The missing `execute` is deliberate: this tool pauses for a durable human response. */
 export const AskUserServerPlugin = {
@@ -18,6 +20,11 @@ export const AskUserServerPlugin = {
         'Choice questions allow one custom "Other" answer by default. Set allowOther to false only when a custom answer would be invalid.',
       ].join(' '),
       inputSchema: AskUserInputSchema,
-    }))
+    }), {
+      respond: (input, result) => validateAskUserResult(AskUserInputSchema.parse(input), AskUserResultSchema.parse(result)),
+      // Not parsed: a person walking away from a malformed question must not be told they cannot.
+      skip: () => ({ status: 'cancelled', message: SKIPPED_MESSAGE }),
+      skipped: content => AskUserResultSchema.parse(content).status === 'cancelled',
+    })
   },
 }

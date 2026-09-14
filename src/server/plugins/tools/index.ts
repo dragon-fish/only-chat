@@ -42,9 +42,23 @@ export type ToolResolution = Omit<ToolContext, 'config' | 'conversationConfig'> 
   pluginSettings: ConversationPluginSettings | null
 }
 
+/**
+ * How a tool without `execute` is answered by a person. The hub owns the pause and the resume; the
+ * plugin owns what an answer looks like, which is the only part that differs between such tools.
+ */
+export interface HumanToolProtocol {
+  /** Validates the client's answer against the persisted call and returns the result content. */
+  respond(input: unknown, result: unknown): unknown
+  /** The result content recorded when the person moves on (sends a message) without answering. */
+  skip(input: unknown): unknown
+  /** Whether a recorded result is such a skip, which must not resume the generation on its own. */
+  skipped(content: unknown): boolean
+}
+
 interface RegisteredTool {
   pluginId: string
   factory: ToolFactory
+  human?: HumanToolProtocol
 }
 
 /** Server-owned catalog of built-in tools. Resolution never silently drops a selected tool. */
@@ -59,14 +73,24 @@ export class ToolRegistry extends Service {
   }
 
   /** Registration belongs to the caller's Cordis lifecycle and is reversible. */
-  register(pluginId: string, toolId: string, factory: ToolFactory): () => void {
+  register(pluginId: string, toolId: string, factory: ToolFactory, human?: HumanToolProtocol): () => void {
     if (this.entries.has(toolId)) throw new Error(`tool already registered: ${toolId}`)
     return this.ctx.effect(() => {
-      this.entries.set(toolId, { pluginId, factory })
+      this.entries.set(toolId, { pluginId, factory, ...(human ? { human } : {}) })
       return () => {
         if (this.entries.get(toolId)?.factory === factory) this.entries.delete(toolId)
       }
     }, `tools.register(${toolId})`) as () => void
+  }
+
+  /** The protocol a person answers this tool by; undefined for a tool the server executes itself. */
+  human(toolId: string): HumanToolProtocol | undefined {
+    return this.entries.get(toolId)?.human
+  }
+
+  /** `completedToolState`'s question, answered from the registry: only a human tool can be skipped. */
+  skipped(toolId: string, content: unknown): boolean {
+    return this.human(toolId)?.skipped(content) ?? false
   }
 
   /** Canonicalizes a snapshot while rejecting IDs that no installed server plugin owns. */

@@ -5,7 +5,7 @@ import type { Part, ToolCallPart, ToolResultPart } from '@/shared/parts'
 import type { SendCommand, WsCommand } from '@/shared/ws'
 import { ASK_USER_TOOL_ID, parseConversationPluginSettings } from '@/shared/plugins'
 import { pluginManifests } from '@/shared/plugin-manifests'
-import { AskUserInputSchema, AskUserResultSchema, validateAskUserResult } from '@/plugins/ask-user/shared'
+import { AskUserInputSchema } from '@/plugins/ask-user/shared'
 import { createAskUserToolCallRepair } from '@/plugins/ask-user/server/repair'
 import type { ModelRow, ProviderInterfaceRow, ProviderRow, ConversationRow } from '../../db/schema'
 import { PartAccumulator } from '../llm/accumulator'
@@ -407,7 +407,6 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
 
 /** Fields that initialize a brand-new conversation and are therefore meaningless on an existing one. */
 const INIT_FIELDS = ['project_id', 'system_prompt', 'params', 'conversation_provider_id', 'conversation_model_id', 'tools', 'tools_enabled', 'plugin_settings'] as const
-const SKIPPED_ASK_USER_MESSAGE = '用户跳过了问题并继续回复'
 
 async function resolveSendParent(hub: Hub, conversation: ConversationRow, parentId: number) {
   const parent = await getMessage(hub.db, parentId, hub.userId)
@@ -421,16 +420,11 @@ async function resolveSendParent(hub: Hub, conversation: ConversationRow, parent
     throw new Error('cannot skip tool calls on an incomplete message')
   }
 
-  for (const call of pending) {
-    if (call.name !== ASK_USER_TOOL_ID) throw new Error(`cannot skip unsupported tool: ${call.name}`)
-    AskUserInputSchema.parse(call.args)
-  }
-  const skipped = pending.map(call => ({
-    type: 'tool_result' as const,
-    call_id: call.id,
-    name: call.name,
-    content: { status: 'cancelled' as const, message: SKIPPED_ASK_USER_MESSAGE },
-  }))
+  const skipped = pending.map((call) => {
+    const human = hub.app.tools.human(call.name)
+    if (!human) throw new Error(`cannot skip unsupported tool: ${call.name}`)
+    return { type: 'tool_result' as const, call_id: call.id, name: call.name, content: human.skip(call.args) }
+  })
   const nextParts: Part[] = [...parent.parts, ...skipped]
   if (!(await replaceMessagePartsIfCurrentHead(hub.db, parent, hub.userId, nextParts))) {
     throw new Error('pending tool state changed; resync before sending')
@@ -530,7 +524,7 @@ async function ownedTerminalToolMessage(hub: Hub, messageId: number) {
 
 async function continueFromToolMessage(hub: Hub, messageId: number): Promise<void> {
   const { message, conversation } = await ownedTerminalToolMessage(hub, messageId)
-  const state = completedToolState(message.parts)
+  const state = completedToolState(message.parts, hub.app.tools.skipped.bind(hub.app.tools))
   if (state === 'waiting') throw new Error('tool calls are still waiting for responses')
   if (state === 'cancelled') throw new Error('cancelled tool calls cannot continue automatically')
 
@@ -584,11 +578,10 @@ export async function runToolRespond(hub: Hub, cmd: Extract<WsCommand, { type: '
   const { message } = await ownedTerminalToolMessage(hub, cmd.message_id)
   const call = toolCallFor(message.parts, cmd.call_id)
   if (!call) throw new Error('tool call not found')
-  if (call.name !== ASK_USER_TOOL_ID) throw new Error(`unsupported tool: ${call.name}`)
+  const human = hub.app.tools.human(call.name)
+  if (!human) throw new Error(`unsupported tool: ${call.name}`)
 
-  const input = AskUserInputSchema.parse(call.args)
-  const result = validateAskUserResult(input, AskUserResultSchema.parse(cmd.result))
-  const part = { type: 'tool_result' as const, call_id: call.id, name: call.name, content: result }
+  const part = { type: 'tool_result' as const, call_id: call.id, name: call.name, content: human.respond(call.args, cmd.result) }
   const appended = await appendToolResult(hub.db, message.id, hub.userId, message.conversation_id, part)
   if (!appended) {
     const current = await getMessage(hub.db, message.id, hub.userId)
@@ -596,7 +589,7 @@ export async function runToolRespond(hub: Hub, cmd: Extract<WsCommand, { type: '
     if (!existing || existing.name !== part.name || !sameJson(existing.content, part.content)) {
       throw new Error('tool result conflict')
     }
-    if (current && completedToolState(current.parts) === 'answered') {
+    if (current && completedToolState(current.parts, hub.app.tools.skipped.bind(hub.app.tools)) === 'answered') {
       await continueFromToolMessage(hub, current.id)
     }
     return
@@ -608,7 +601,7 @@ export async function runToolRespond(hub: Hub, cmd: Extract<WsCommand, { type: '
     type: 'message.part', message_id: updated.id, part_index: updated.parts.length - 1,
     part: updated.parts.at(-1)!,
   })
-  if (completedToolState(updated.parts) === 'answered') await continueFromToolMessage(hub, updated.id)
+  if (completedToolState(updated.parts, hub.app.tools.skipped.bind(hub.app.tools)) === 'answered') await continueFromToolMessage(hub, updated.id)
 }
 
 export async function runToolContinue(hub: Hub, cmd: Extract<WsCommand, { type: 'tool.continue' }>): Promise<void> {

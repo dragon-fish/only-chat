@@ -7,9 +7,8 @@ import { DISCONNECTED_MESSAGE, useSyncStore } from '@/client/stores/sync'
 import { Alert, AlertDescription, AlertTitle } from '@/client/ui/alert'
 import { Spinner } from '@/client/ui/spinner'
 import type { ToolCallPart, ToolResultPart } from '@/shared/parts'
-import type { AskUserResult } from '@/plugins/ask-user/shared'
-import { AskUserInputSchema } from '@/plugins/ask-user/shared'
-import { ASK_USER_TOOL_ID } from '@/shared/plugins'
+import { humanToolDescriptor } from '@/shared/plugins'
+import { pluginManifests } from '@/shared/plugin-manifests'
 
 const props = defineProps<{
   messageId: number
@@ -27,15 +26,16 @@ const loading = shallowRef(false)
 const busy = shallowRef(false)
 const optimisticResult = computed(() => sync.optimisticToolResult(props.messageId, props.call.id))
 const effectiveResult = computed(() => props.result ?? optimisticResult.value ?? null)
-const inputPendingLabel = computed(() => props.call.name === ASK_USER_TOOL_ID
-  ? '正在生成问答…'
+/** A tool a person answers, by the manifests; nothing needs to be loaded to know. */
+const human = computed(() => humanToolDescriptor(pluginManifests, props.call.name))
+const inputPendingLabel = computed(() => human.value
+  ? `正在准备${human.value.name}…`
   : `正在调用 ${props.call.name}`)
 const compactPending = computed(() => (
   props.placement !== 'composer'
   && props.deferPending === true
   && effectiveResult.value === null
-  && props.call.name === ASK_USER_TOOL_ID
-  && AskUserInputSchema.safeParse(props.call.args).success
+  && human.value !== undefined
 ))
 
 watch(() => props.call.name, async (name) => {
@@ -64,7 +64,7 @@ function send(command: Parameters<typeof sync.send>[0], optimisticRequestId?: st
   busy.value = true
 }
 
-function respond(result: AskUserResult) {
+function respond(result: unknown) {
   const requestId = crypto.randomUUID()
   sync.beginOptimistic(requestId, {
     kind: 'tool_result',

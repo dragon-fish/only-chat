@@ -16,7 +16,7 @@ import ToolSelector from '@/client/components/tool-selector.vue'
 import WorkspaceFilesDialog from '@/client/components/workspace-files-dialog.vue'
 import ToolPartRenderer from '@/client/components/tool-part-renderer.vue'
 import { defaultToolsForSettings, conversationToolBlockReason } from '@/client/components/tool-selector'
-import { pendingAskUserCalls } from '@/client/components/tool-part-renderer'
+import { pendingHumanCalls } from '@/client/components/tool-part-renderer'
 import { pluginManifests } from '@/client/plugins/loaders'
 import { projectPresentation, conversationPath } from '@/client/lib/ui-models'
 import {
@@ -154,7 +154,7 @@ const optimisticToolCallIds = computed(() => {
   const headId = conversation.value?.head_message_id
   return headId === null || headId === undefined ? new Set<string>() : sync.optimisticToolCallIds(headId)
 })
-const pendingToolCall = computed(() => pendingAskUserCalls(
+const pendingToolCall = computed(() => pendingHumanCalls(
   path.value,
   conversation.value?.head_message_id,
   optimisticToolCallIds.value,

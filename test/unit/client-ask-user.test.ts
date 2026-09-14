@@ -7,7 +7,7 @@ import Composer from '@/client/components/composer.vue'
 import ToolPartRenderer from '@/client/components/tool-part-renderer.vue'
 import { buildAnsweredResult, initialAnswers } from '@/plugins/ask-user/client/answers'
 import type { AskUserInput } from '@/plugins/ask-user/shared'
-import { canContinueToolMessage, hasPendingToolCalls, pendingAskUserCalls } from '@/client/components/tool-part-renderer'
+import { canContinueToolMessage, hasPendingToolCalls, pendingHumanCalls } from '@/client/components/tool-part-renderer'
 import { useSyncStore } from '@/client/stores/sync'
 import type { Message } from '@/shared/models'
 import { TooltipProvider } from '@/client/ui/tooltip'
@@ -218,7 +218,9 @@ describe('ask_user answer serialization', () => {
     expect(hasPendingToolCalls([{ ...message([valid]), status: 'error' }])).toBe(false)
     expect(hasPendingToolCalls([{ ...message([valid]), status: 'aborted' }])).toBe(false)
     expect(hasPendingToolCalls([message([{ ...valid, name: 'unknown_tool' }])])).toBe(false)
-    expect(hasPendingToolCalls([message([{ ...valid, args: { questions: [] } }])])).toBe(false)
+    // Which tools wait for a person is read from the manifest; the arguments are the plugin's own
+    // business, and the server never persists a completed call whose arguments failed repair.
+    expect(hasPendingToolCalls([message([{ ...valid, args: { questions: [] } }])])).toBe(true)
   })
 
   it('selects only unresolved ask_user calls from the current Conversation head for the composer', () => {
@@ -230,9 +232,9 @@ describe('ask_user answer serialization', () => {
       { type: 'tool_result', call_id: 'first', name: 'ask_user', content: { status: 'answered' } },
       second,
     ])
-    expect(pendingAskUserCalls([old, head], head.id)).toEqual([{ messageId: head.id, call: second }])
-    expect(pendingAskUserCalls([old, head], head.id, new Set(['second']))).toEqual([])
-    expect(pendingAskUserCalls([old, head], old.id)).toEqual([{ messageId: old.id, call: { ...first, id: 'old' } }])
+    expect(pendingHumanCalls([old, head], head.id)).toEqual([{ messageId: head.id, call: second }])
+    expect(pendingHumanCalls([old, head], head.id, new Set(['second']))).toEqual([])
+    expect(pendingHumanCalls([old, head], old.id)).toEqual([{ messageId: old.id, call: { ...first, id: 'old' } }])
   })
 
   it('replaces the composer input without discarding its draft', async () => {
@@ -310,7 +312,7 @@ describe('ask_user answer serialization', () => {
     app.provide('clientPluginHost', null)
     app.mount(root)
     await nextTick()
-    expect(root.textContent).toContain('正在生成问答')
+    expect(root.textContent).toContain('正在准备询问用户')
     expect(root.textContent).not.toContain('工具调用已完成')
     app.unmount()
     root.remove()

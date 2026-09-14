@@ -31,6 +31,28 @@ export interface PluginToolDescriptor {
   id: string
   name: string
   description: string
+  /**
+   * Set when the server cannot answer this tool and the generation stops for a person. The
+   * statuses name the results that mean "the person is done", so the client can tell an answered
+   * call from one the person walked away from without knowing the plugin's result shape.
+   */
+  human?: { doneStatuses: readonly string[] }
+}
+
+export function humanToolDescriptor(manifests: readonly PluginManifest[], toolId: string): PluginToolDescriptor | undefined {
+  for (const manifest of manifests) {
+    const tool = manifest.tools.find(candidate => candidate.id === toolId)
+    if (tool) return tool.human ? tool : undefined
+  }
+  return undefined
+}
+
+/** Whether a human tool's recorded result is one the person finished, by the manifest's own list. */
+export function humanToolDone(descriptor: PluginToolDescriptor, content: unknown): boolean {
+  const status = typeof content === 'object' && content !== null && 'status' in content
+    ? (content as { status?: unknown }).status
+    : undefined
+  return typeof status === 'string' && (descriptor.human?.doneStatuses.includes(status) ?? false)
 }
 
 /**
