@@ -56,14 +56,16 @@ const stashPreview = computed(() => {
 /**
  * What the right-hand control does, which is three different things while a turn is running.
  *
- * Ordered by what the operator has already committed to. Words waiting on the server outrank words
- * still in the box: they are the ones that will be acted on, and the control should be about them.
+ * Something in the box always means queue, however much is already waiting — the queue has no
+ * limit, and a control that stopped accepting additions would be refusing the obvious next thing
+ * to do. Interrupting is what an empty box plus a full stash means: nothing more to add, send it
+ * now rather than waiting for a boundary that may never come.
  */
 type Action = 'send' | 'stop' | 'queue' | 'interrupt'
 const action = computed<Action>(() => {
   if (!props.streaming) return 'send'
-  if (stashed.value.length > 0) return 'interrupt'
-  return hasContent.value ? 'queue' : 'stop'
+  if (hasContent.value) return 'queue'
+  return stashed.value.length > 0 ? 'interrupt' : 'stop'
 })
 
 /** Pug attribute values cannot span lines, so the conditional classes are assembled here. */
@@ -73,14 +75,16 @@ const actionClass = computed(() => [
 ])
 
 const actionLabel = computed(() => ({
-  send: '发送消息', stop: '停止生成', queue: '排队此消息', interrupt: '打断并立即插入',
+  send: '发送消息', stop: '停止生成', queue: '排队此消息', interrupt: '打断并立即送出已排队的消息',
 }[action.value]))
 
 const actionHint = computed(() => {
   if (action.value === 'send') return sendBlockedReason.value ?? '发送消息'
   if (action.value === 'stop') return '停止生成'
-  if (action.value === 'queue') return '排队此消息，模型能听时再说'
-  return '打断当前生成，立即从最近的合法位置把这条消息插入对话'
+  if (action.value === 'queue') {
+    return stashed.value.length > 0 ? '继续排队，与已排队的消息一并送出' : '排队此消息，模型能听时再说'
+  }
+  return '打断当前生成，立即把已排队的消息从最近的合法位置插入对话'
 })
 
 const sendBlockedReason = computed(() => {

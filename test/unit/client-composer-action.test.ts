@@ -70,9 +70,20 @@ it('stops only when there is nothing to say', async () => {
   expect(fired.stop).toBe(1)
 })
 
-it('interrupts once something is already waiting, carrying what is still typed', async () => {
+it('keeps queueing while there is something in the box, however much is waiting', async () => {
+  // The queue has no limit. A control that stopped accepting additions once one message was
+  // waiting would refuse the obvious next thing to do.
   const { host, fired } = mount({ streaming: true, stash: [{ type: 'text', text: 'earlier' }] })
   await typeAndEnter(host, 'and this')
-  expect(fired.interrupt).toEqual([[{ type: 'text', text: 'and this' }]])
+  expect(fired.queue).toEqual([[{ type: 'text', text: 'and this' }]])
+  expect(fired.interrupt).toHaveLength(0)
+})
+
+it('interrupts on an empty box once something is waiting', async () => {
+  // Nothing more to add: send it now rather than waiting for a boundary that may never come.
+  const { host, fired } = mount({ streaming: true, stash: [{ type: 'text', text: 'earlier' }] })
+  host.querySelector('textarea')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+  await Promise.resolve()
+  expect(fired.interrupt).toEqual([[]])
   expect(fired.stop).toBe(0)
 })
