@@ -187,6 +187,18 @@ export function requiredAttachmentIds(path: readonly Message[]): Set<number> {
 }
 
 /**
+ * Stored on the half-turn a handoff closed. Everything it produced is intact, so it is `done` and
+ * the UI shows nothing — only `status === 'error'` renders this column — but the prompt builder
+ * needs to know the reply was taken over rather than finished.
+ *
+ * Do not try to infer this from the shape of the parts. A reply ending on a `tool_result` looks
+ * identical and is perfectly ordinary: `awaitsHumanToolResult` stops a turn exactly there, so every
+ * ask_user leaves one, and telling the model those were interrupted makes it apologise for a
+ * conversation that never happened.
+ */
+export const INTERJECTED = 'interjected'
+
+/**
  * What an interruption looks like from the model's side.
  *
  * Verbatim from Claude Code's `INTERRUPT_MESSAGE`, and placed where it places it: text in a user
@@ -202,9 +214,7 @@ export function requiredAttachmentIds(path: readonly Message[]): Set<number> {
  * - Stopped with work already done. That work stays; rolling back would contradict the screen.
  * - Stopped before the turn produced anything. Then it is not a turn, and the user messages either
  *   side of it become one — Anthropic requires the roles to alternate.
- * - Taken over the moment the operator spoke. Stored as `done`, so the status says nothing, but it
- *   ends on a `tool_result` — which a turn that ran to its own finish never does, because
- *   `stopWhen` goes round again rather than stopping there. No column records this: the parts do.
+ * - Taken over the moment the operator spoke. Stored as `done`, and marked with `INTERJECTED`.
  */
 const INTERRUPT_MESSAGE = '[Request interrupted by user]'
 
@@ -280,7 +290,10 @@ export function buildModelMessages(input: BuildInput): ModelMessage[] {
       return
     }
     out.push(...said)
-    if (m.status === 'aborted' || m.parts.at(-1)?.type === 'tool_result') pending = INTERRUPT_MESSAGE
+    // A note belongs to the message right after the turn it describes. Set it or clear it here:
+    // a reply standing between the interruption and the next thing said means the turn was
+    // answered after all, and carrying the note past it marks an innocent message as interrupted.
+    pending = m.status === 'aborted' || m.error === INTERJECTED ? INTERRUPT_MESSAGE : null
   })
 
   return out

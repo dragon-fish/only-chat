@@ -10,7 +10,7 @@ import { createAskUserToolCallRepair } from '@/plugins/ask-user/server/repair'
 import type { ModelRow, ProviderInterfaceRow, ProviderRow, ConversationRow } from '../../db/schema'
 import { PartAccumulator } from '../llm/accumulator'
 import { logLifecycle, partsBytes } from './lifecycle-log'
-import { buildModelMessages, buildProviderOptions, interjectedUserMessage, requiredAttachmentIds, type AttachmentInput } from '../llm/messages'
+import { buildModelMessages, buildProviderOptions, INTERJECTED, interjectedUserMessage, requiredAttachmentIds, type AttachmentInput } from '../llm/messages'
 import { generationDurationMs, toUsage, type GenerationStepPerformance } from '../llm/usage'
 import type { Hub, InflightJob } from './index'
 import {
@@ -401,8 +401,10 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
      * claiming all of it.
      */
     const handOff = async (said: Part[]): Promise<void> => {
-      await finalizeMessage(hub.db, shell.id, hub.userId, { parts: acc.parts, usage: null, status: 'done', error: null })
-      await hub.broadcastGeneration({ type: 'message.done', message_id: shell.id, status: 'done', usage: null, error: null })
+      // `done`, because everything it produced is intact — and marked, because nothing in those
+      // parts distinguishes a turn that was taken over from one that simply ended.
+      await finalizeMessage(hub.db, shell.id, hub.userId, { parts: acc.parts, usage: null, status: 'done', error: INTERJECTED })
+      await hub.broadcastGeneration({ type: 'message.done', message_id: shell.id, status: 'done', usage: null, error: INTERJECTED })
       await hub.untrackInflight(shell.id)
       logLifecycle('generation.handoff', {
         conversationId: target.conversation.id, messageId: shell.id, bytes: partsBytes(said),

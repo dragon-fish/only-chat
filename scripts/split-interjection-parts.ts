@@ -85,7 +85,9 @@ async function splitOnce(row: Row, at: number, nextSeq: number): Promise<number>
   // Anything that hung from the original now hangs from its tail, the conversation head included.
   await sql(`UPDATE messages SET parent_id = ${tailId} WHERE parent_id = ${row.id} AND id <> ${userId};`)
   await sql(`UPDATE conversations SET head_message_id = ${tailId} WHERE id = ${row.conversation_id} AND head_message_id = ${row.id};`)
-  await sql(`UPDATE messages SET parts = ${escapeSqlLiteral(JSON.stringify(before))} WHERE id = ${row.id};`)
+  // Marked, not merely shortened: what is left is the half-turn a handoff closed, and nothing in
+  // its parts says so. The prompt builder reads this column, not the shape.
+  await sql(`UPDATE messages SET parts = ${escapeSqlLiteral(JSON.stringify(before))}, error = 'interjected' WHERE id = ${row.id};`)
   console.log(`  message ${row.id} → ${row.id} / user ${userId} / assistant ${tailId}`)
   return nextSeq + 2
 }

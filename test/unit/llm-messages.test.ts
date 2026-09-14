@@ -428,13 +428,13 @@ describe('rolling back to somewhere legal', () => {
     expect(roles.filter((role, i) => role === 'user' && roles[i + 1] === 'user')).toEqual([])
   })
 
-  it('tells the model a reply ending on a tool result was taken over, not finished', () => {
-    // A handoff keeps everything the half-turn produced, so it is stored as `done` — the status
-    // says nothing. Without this, the model reads its own unanswered lookup as a turn it chose to
-    // end, and the operator's words as a fresh topic rather than an interruption.
+  it('tells the model a reply that was taken over was not finished', () => {
+    // A handoff keeps everything the half-turn produced, so it is stored as `done` and only the
+    // marker says otherwise. Without this, the model reads its own unanswered lookup as a turn it
+    // chose to end, and the operator's words as a fresh topic rather than an interruption.
     const out = build([
       msg({ id: 1, role: 'user', parts: [{ type: 'text', text: '搜一下' }] }),
-      msg({ id: 2, role: 'assistant', status: 'done', parts: [
+      msg({ id: 2, role: 'assistant', status: 'done', error: 'interjected', parts: [
         { type: 'tool_call', id: 'c', name: 'lookup', args: {} },
         { type: 'tool_result', call_id: 'c', name: 'lookup', content: { ok: true } },
       ] }),
@@ -446,6 +446,40 @@ describe('rolling back to somewhere legal', () => {
     expect(last.content).toEqual([
       { type: 'text', text: expect.any(String) },
       { type: 'text', text: '算了' },
+    ])
+  })
+
+  it('says nothing about a turn that stopped for an answer', () => {
+    // `awaitsHumanToolResult` stops a turn on the tool result, so every ask_user leaves a reply
+    // ending on one. Nothing was interrupted; the person simply answered and it went on.
+    const out = build([
+      msg({ id: 1, role: 'user', parts: [{ type: 'text', text: '帮我改改' }] }),
+      msg({ id: 2, role: 'assistant', parts: [
+        { type: 'text', text: '两个方向，选一个' },
+        { type: 'tool_call', id: 'q', name: 'ask_user', args: {} },
+        { type: 'tool_result', call_id: 'q', name: 'ask_user', content: { answers: [] } },
+      ] }),
+      msg({ id: 3, role: 'assistant', parts: [{ type: 'text', text: '好的，改完了' }] }),
+      msg({ id: 4, role: 'user', parts: [{ type: 'text', text: '确实是好多了' }] }),
+    ])
+    expect((out.at(-1) as { content: Array<{ text: string }> }).content).toEqual([
+      { type: 'text', text: '确实是好多了' },
+    ])
+  })
+
+  it('does not carry a note past the reply that came after it', () => {
+    // Two replies in a row is a legal shape, not a broken one: a single tool exchange spans both
+    // rows when a person answers it, the first ending on the result and the second picking up with
+    // reasoning. So the note has to expire at the reply after the one it describes — anything
+    // further on was said in a conversation that carried on normally.
+    const out = build([
+      msg({ id: 1, role: 'user', parts: [{ type: 'text', text: '开始' }] }),
+      msg({ id: 2, role: 'assistant', status: 'aborted', parts: [{ type: 'text', text: '半句' }] }),
+      msg({ id: 3, role: 'assistant', parts: [{ type: 'text', text: '答完了' }] }),
+      msg({ id: 4, role: 'user', parts: [{ type: 'text', text: '新话题' }] }),
+    ])
+    expect((out.at(-1) as { content: Array<{ text: string }> }).content).toEqual([
+      { type: 'text', text: '新话题' },
     ])
   })
 
