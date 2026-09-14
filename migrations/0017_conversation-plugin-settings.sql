@@ -1,0 +1,1 @@
+ALTER TABLE `conversations` ADD `plugin_settings` text;

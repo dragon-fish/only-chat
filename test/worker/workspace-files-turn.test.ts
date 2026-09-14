@@ -66,12 +66,13 @@ async function fixture(): Promise<Fixture> {
     projectId: project!.id,
     assistantMessageId: assistant!.id,
     config: {},
+    conversationConfig: {},
     turn,
     db,
     assets: assets as never,
     signal: new AbortController().signal,
   }
-  const built = await registry.resolve(['read_file', 'write_file'], { workspace_files: true }, runtime)
+  const built = await registry.resolve(['read_file', 'write_file'], { workspace_files: true }, { ...runtime, pluginSettings: null })
   return {
     db,
     tools: Object.fromEntries(built),

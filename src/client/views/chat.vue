@@ -30,7 +30,7 @@ import { useConfigStore } from '@/client/stores/config'
 import { Button } from '@/client/ui/button'
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from '@/client/ui/empty'
 import type { ModelRef } from '@/shared/api'
-import type { Message } from '@/shared/models'
+import type { ConversationPluginSettings, Message } from '@/shared/models'
 import type { Part } from '@/shared/parts'
 
 const props = withDefaults(defineProps<{ conversationId: number | null; projectId?: number | null }>(), { projectId: null })
@@ -47,6 +47,11 @@ const composer = ref<InstanceType<typeof Composer> | null>(null)
 const messageList = ref<{ scrollToMessage: (messageId: number) => boolean } | null>(null)
 const draftTools = ref<string[] | null>(null)
 const draftToolsEnabled = ref(true)
+/** Per-plugin settings chosen before the conversation exists; null until something is changed. */
+const draftPluginSettings = ref<ConversationPluginSettings | null>(null)
+const pluginSettings = computed<ConversationPluginSettings | null>(() => (
+  sid.value === null ? draftPluginSettings.value : conversation.value?.plugin_settings ?? null
+))
 const outstanding = ref<OutstandingSend>('idle')
 const optimisticRequestId = ref<string | null>(null)
 const optimisticBaseIds = ref(new Set<number>())
@@ -101,6 +106,7 @@ watch(sid, (id) => {
     Object.assign(form, conversationFormFrom(undefined))
     draftTools.value = null
     draftToolsEnabled.value = true
+    draftPluginSettings.value = null
   }
 }, { immediate: true })
 watchEffect(() => {
@@ -190,7 +196,7 @@ const sendHint = computed(() => {
 const metadata = computed(() => entry.value?.model.metadata ?? null)
 watchEffect(() => {
   if (sid.value === null && sync.settingsLoaded && draftTools.value === null) {
-    draftTools.value = defaultToolsForSettings(pluginManifests, sync.settings.plugins, sync.pluginConfig)
+    draftTools.value = defaultToolsForSettings(pluginManifests, sync.settings.plugins, sync.pluginConfig, { projectId: draftProjectId.value })
   }
 })
 /** What the conversation inherits when it sets nothing itself. */
@@ -350,6 +356,7 @@ function onSend(parts: Part[]) {
       params: paramsFromFields(form),
       tools: selectedTools.value,
       tools_enabled: draftToolsEnabled.value,
+      plugin_settings: draftPluginSettings.value,
     },
   }), request_id: requestId })
 }
@@ -424,6 +431,15 @@ function onToolsEnabledChange(enabled: boolean) {
   }
   send({ type: 'conversation.update', conversation_id: sid.value, tools_enabled: enabled })
 }
+
+/** One plugin's settings at a time: the hub merges per plugin id, so nothing else is resent. */
+function onPluginSettingsChange(pluginId: string, values: Record<string, unknown>) {
+  if (sid.value === null) {
+    draftPluginSettings.value = { ...draftPluginSettings.value, [pluginId]: values }
+    return
+  }
+  send({ type: 'conversation.update', conversation_id: sid.value, plugin_settings: { [pluginId]: values } })
+}
 </script>
 
 <template lang="pug">
@@ -449,7 +465,8 @@ function onToolsEnabledChange(enabled: boolean) {
         WorkspaceFilesDialog(mount="conversation" :scope-id="sid")
         ConversationSettings(
           :form="form" :sources="sources" :project="project" :has-conversation="sid !== null"
-          @commit="commitSettings")
+          :plugin-settings="pluginSettings"
+          @commit="commitSettings" @update-plugin-settings="onPluginSettingsChange")
   .min-h-0.flex-1
     CollectionState(:loaded="visiblePath.length > 0 || sid === null || (sync.conversationsLoaded && sync.loadedMessageConversations.has(sid))" :error="messageLoadError || (sid !== null ? sync.conversationsError : null)" :retry="retryChat")
       MessageList(
@@ -474,6 +491,7 @@ function onToolsEnabledChange(enabled: boolean) {
     template(#left-controls)
       ToolSelector(
         :model-value="selectedTools" :plugins="sync.settings.plugins" :plugin-config="sync.pluginConfig" :desktop="isDesktop"
+        :project-id="project?.id ?? null"
         :supported="toolsSupported" :enabled="toolsEnabled" @update:enabled="onToolsEnabledChange"
         @update:model-value="onToolsChange")
     template(#controls)

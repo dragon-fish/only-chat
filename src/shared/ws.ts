@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { PartSchema, PartsSchema } from './parts'
 import {
   MessageSchema, MessageStatusSchema, PersistedStatusSchema, ProjectSchema, ConversationParamsSchema,
-  ConversationSchema, UsageSchema, UserSettingsSchema,
+  ConversationPluginSettingsSchema, ConversationSchema, UsageSchema, UserSettingsSchema,
 } from './models'
 import { ModelRefSchema } from './model-ref'
 import { AskUserResultSchema } from '@/plugins/ask-user/shared'
@@ -34,6 +34,7 @@ export const SendCommandSchema = z.object({
   /** Selected tool snapshot, used only when creating the first Conversation row. */
   tools: z.array(z.string()).optional(),
   tools_enabled: z.boolean().optional(),
+  plugin_settings: ConversationPluginSettingsSchema.optional(),
 })
 /**
  * `provider_id`/`model_id` on `regenerate` and `edit` are the client's current model selection,
@@ -74,6 +75,8 @@ export const ConversationUpdateCommandSchema = z.object({
   params: ConversationParamsSchema.nullable().optional(),
   tools: z.array(z.string()).optional(),
   tools_enabled: z.boolean().optional(),
+  /** Merged per plugin id: a plugin left out keeps what it had, a plugin named is replaced whole. */
+  plugin_settings: ConversationPluginSettingsSchema.optional(),
 })
 export const ConversationDeleteCommandSchema = z.object({
   type: z.literal('conversation.delete'),

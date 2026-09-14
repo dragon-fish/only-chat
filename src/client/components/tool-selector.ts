@@ -1,5 +1,8 @@
-import type { PluginConfigStatusMap, PluginManifest, PluginToolDescriptor } from '@/shared/plugins'
-import { pluginToolGroups } from '@/shared/plugins'
+import type { ConversationScope, PluginConfigStatusMap, PluginManifest, PluginToolDescriptor } from '@/shared/plugins'
+import { pluginAvailableIn, pluginToolGroups } from '@/shared/plugins'
+
+/** Callers that know no Project get the narrower offer: hiding a tool is recoverable, offering one that cannot run is not. */
+const NO_PROJECT: ConversationScope = { projectId: null }
 
 /**
  * One declared tool group as one switch. Which tools travel together is the plugin's own call, so
@@ -55,9 +58,10 @@ export function defaultToolsForSettings(
   manifests: readonly PluginManifest[],
   settings: Readonly<Record<string, boolean>>,
   status: PluginConfigStatusMap = {},
+  scope: ConversationScope = NO_PROJECT,
 ): string[] {
   return stableToolIds(manifests.flatMap(manifest => (
-    settings[manifest.id] === true && pluginConfigured(manifest, status)
+    settings[manifest.id] === true && pluginConfigured(manifest, status) && pluginAvailableIn(manifest, scope)
       ? manifest.tools.map(tool => tool.id)
       : []
   )))
@@ -73,9 +77,11 @@ export function availableToolGroups(
   settings: Readonly<Record<string, boolean>>,
   selected: readonly string[],
   status: PluginConfigStatusMap = {},
+  scope: ConversationScope = NO_PROJECT,
 ): ToolGroupRow[] {
   const selectedIds = new Set(selected)
   return [...manifests]
+    .filter(manifest => pluginAvailableIn(manifest, scope))
     .sort((a, b) => a.id.localeCompare(b.id))
     .flatMap(manifest => pluginToolGroups(manifest).map(group => ({
       id: `${manifest.id}:${group.id}`,

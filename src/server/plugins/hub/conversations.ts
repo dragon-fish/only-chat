@@ -6,7 +6,9 @@ import { attachmentProviderFiles, attachments, messages, models, providerInterfa
 import type {
   AttachmentProviderFileRow, AttachmentRow, MessageRow, ModelRow, ProviderInterfaceRow, ProviderRow, ConversationRow, UserRow,
 } from '../../db/schema'
-import type { Message, MessageStatus, PersistedStatus, ConversationParams, Usage, UserSettings } from '@/shared/models'
+import type {
+  Message, MessageStatus, PersistedStatus, ConversationParams, ConversationPluginSettings, Usage, UserSettings,
+} from '@/shared/models'
 import type { Part, ToolResultPart } from '@/shared/parts'
 
 /** Row → wire DTO. Persisted rows only carry the persisted statuses; live ones pass `status` in. */
@@ -39,6 +41,7 @@ export async function createConversation(db: DB, input: {
   params?: ConversationParams | null
   tools?: string[]
   tools_enabled?: boolean
+  plugin_settings?: ConversationPluginSettings | null
   kind?: 'chat' | 'image'
   image_provider_id?: number | null
   image_model_id?: string | null
@@ -57,6 +60,7 @@ export async function createConversation(db: DB, input: {
     params: input.params ?? null,
     tools: input.tools ?? [],
     tools_enabled: input.tools_enabled ?? true,
+    plugin_settings: input.plugin_settings ?? null,
     head_message_id: null,
     created_at: now,
     updated_at: now,
@@ -69,7 +73,7 @@ export async function updateConversation(
   db: DB,
   id: number,
   userId: number,
-  patch: Partial<Pick<ConversationRow, 'title' | 'project_id' | 'provider_id' | 'model_id' | 'system_prompt' | 'params' | 'tools' | 'tools_enabled' | 'head_message_id'>>,
+  patch: Partial<Pick<ConversationRow, 'title' | 'project_id' | 'provider_id' | 'model_id' | 'system_prompt' | 'params' | 'tools' | 'tools_enabled' | 'plugin_settings' | 'head_message_id'>>,
 ): Promise<ConversationRow> {
   const [row] = await db.update(conversations).set({ ...patch, updated_at: Date.now() }).where(and(eq(conversations.id, id), eq(conversations.user_id, userId))).returning()
   if (!row) throw new Error('conversation not found')
@@ -171,7 +175,7 @@ export async function forkConversation(
     user_id: source.user_id, title: `${source.title} 副本`, project_id: source.project_id,
     provider_id: source.provider_id, model_id: source.model_id,
     system_prompt: source.system_prompt, params: source.params, tools: source.tools,
-    tools_enabled: source.tools_enabled,
+    tools_enabled: source.tools_enabled, plugin_settings: source.plugin_settings,
   })
   try {
     let parentId: number | null = null

@@ -4,7 +4,7 @@ import type { CatalogMatches, ModelMetadata, ModelMetadataOverride } from '@/sha
 import type { ArtifactRunStatus, ArtifactUsage, ImageGenerationParams } from '@/shared/artifacts'
 import type { Part } from '@/shared/parts'
 import type {
-  InterfaceProtocol, PersistedStatus, ConversationParams, Usage, UserSettings,
+  InterfaceProtocol, PersistedStatus, ConversationParams, ConversationPluginSettings, Usage, UserSettings,
 } from '@/shared/models'
 
 export const users = sqliteTable('users', {
@@ -167,6 +167,11 @@ export const conversations = sqliteTable('conversations', {
   tools: text({ mode: 'json' }).$type<string[]>().notNull().default([]),
   /** A master switch over `tools`, so turning tools off for a while does not lose the selection. */
   tools_enabled: integer({ mode: 'boolean' }).notNull().default(true),
+  /**
+   * Per-plugin settings that only make sense for one conversation, keyed by plugin id. Each value
+   * is whatever that plugin's `conversationConfigSchema` accepts; the core never reads inside.
+   */
+  plugin_settings: text({ mode: 'json' }).$type<ConversationPluginSettings>(),
   created_at: integer().notNull(),
   updated_at: integer().notNull(),
   archived_at: integer(),

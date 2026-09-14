@@ -21,10 +21,14 @@ const props = defineProps<{
   supported: boolean
   /** The conversation's master switch. Off silences every selected tool without unselecting any. */
   enabled: boolean
+  /** Which Project the conversation belongs to; plugins that need one are not offered without it. */
+  projectId: number | null
 }>()
 const emit = defineEmits<{ 'update:modelValue': [tools: string[]], 'update:enabled': [enabled: boolean] }>()
 const host = inject<ClientPluginHost | null>('clientPluginHost', null)
-const rows = computed(() => availableToolGroups(pluginManifests, props.plugins, props.modelValue, props.pluginConfig))
+const rows = computed(() => availableToolGroups(
+  pluginManifests, props.plugins, props.modelValue, props.pluginConfig, { projectId: props.projectId },
+))
 const selectedCount = computed(() => rows.value.filter(row => row.selected).length)
 /** The trigger states what will actually happen this turn, not what is ticked below. */
 const active = computed(() => props.enabled && props.supported ? selectedCount.value : 0)

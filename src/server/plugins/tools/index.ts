@@ -1,5 +1,8 @@
 import { Context, Service } from 'cordis'
 import type { Tool } from 'ai'
+import type { ConversationPluginSettings } from '@/shared/models'
+import { conversationConfigOf, pluginAvailableIn, type ConversationScope } from '@/shared/plugins'
+import { findPluginManifest } from '@/shared/plugin-manifests'
 import type { DB } from '../../db/client'
 import type { Assets } from '../assets'
 
@@ -22,6 +25,8 @@ export interface ToolContext {
   assistantMessageId: number
   /** The owning plugin's parsed configuration; empty for a plugin that declares none. */
   config: Record<string, unknown>
+  /** The owning plugin's per-conversation settings with defaults applied; empty when it declares none. */
+  conversationConfig: Record<string, unknown>
   turn: Map<string, unknown>
   db: DB
   assets: Assets
@@ -31,8 +36,11 @@ export interface ToolContext {
 
 export type ToolFactory = (ctx: ToolContext) => Tool
 
-/** The half of `ToolContext` a caller supplies; the registry fills in `config` per plugin. */
-export type ToolResolution = Omit<ToolContext, 'config'>
+/** The half of `ToolContext` a caller supplies; the registry fills in the per-plugin halves. */
+export type ToolResolution = Omit<ToolContext, 'config' | 'conversationConfig'> & {
+  /** The conversation's raw `plugin_settings`; each plugin sees only its own entry, parsed. */
+  pluginSettings: ConversationPluginSettings | null
+}
 
 interface RegisteredTool {
   pluginId: string
@@ -74,8 +82,12 @@ export class ToolRegistry extends Service {
    * Answers the "does this model support tool calls" check while the target is still being resolved,
    * long before there is an assistant message to build tools against.
    */
-  usable(ids: readonly string[], enabledPlugins: Record<string, boolean>): string[] {
-    return this.normalize(ids).filter(id => enabledPlugins[this.entries.get(id)!.pluginId] === true)
+  usable(ids: readonly string[], enabledPlugins: Record<string, boolean>, scope: ConversationScope): string[] {
+    return this.normalize(ids).filter((id) => {
+      const pluginId = this.entries.get(id)!.pluginId
+      const manifest = findPluginManifest(pluginId)
+      return enabledPlugins[pluginId] === true && (manifest === undefined || pluginAvailableIn(manifest, scope))
+    })
   }
 
   /**
@@ -88,12 +100,21 @@ export class ToolRegistry extends Service {
     enabledPlugins: Record<string, boolean>,
     resolution: ToolResolution,
   ): Promise<[string, Tool][]> {
-    const selected = this.usable(ids, enabledPlugins).map(id => [id, this.entries.get(id)!] as const)
+    const { pluginSettings, ...shared } = resolution
+    const selected = this.usable(ids, enabledPlugins, { projectId: shared.projectId })
+      .map(id => [id, this.entries.get(id)!] as const)
     const configs = new Map<string, Record<string, unknown>>()
+    const conversationConfigs = new Map<string, Record<string, unknown>>()
     for (const pluginId of new Set(selected.map(([, entry]) => entry.pluginId))) {
-      configs.set(pluginId, await this.ctx.pluginConfig.readIfConfigurable(resolution.userId, pluginId))
+      configs.set(pluginId, await this.ctx.pluginConfig.readIfConfigurable(shared.userId, pluginId))
+      const manifest = findPluginManifest(pluginId)
+      conversationConfigs.set(pluginId, manifest ? conversationConfigOf(manifest, pluginSettings) : {})
     }
-    return selected.map(([id, entry]) => [id, entry.factory({ ...resolution, config: configs.get(entry.pluginId)! })])
+    return selected.map(([id, entry]) => [id, entry.factory({
+      ...shared,
+      config: configs.get(entry.pluginId)!,
+      conversationConfig: conversationConfigs.get(entry.pluginId)!,
+    })])
   }
 }
 

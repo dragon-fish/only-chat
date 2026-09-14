@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import type { ConversationPluginSettings } from './models'
 
 /** Stable built-in IDs; persisted Conversation snapshots must never depend on display names. */
 export const ASK_USER_PLUGIN_ID = 'ask_user' as const
@@ -79,11 +80,26 @@ export interface PluginSettingsEntry {
   description?: string
 }
 
+/** A tab in the chat view's workspace panel. Declared so the tab strip needs no plugin loaded. */
+export interface PluginWorkspaceTab {
+  label: string
+}
+
 /** Metadata that can be discovered without loading a plugin's client implementation. */
 export interface PluginManifest {
   id: string
   name: string
   description: string
+  /** Its tools only make sense inside a Project; a conversation without one is never offered them. */
+  requiresProject?: boolean
+  workspaceTab?: PluginWorkspaceTab
+  /**
+   * Settings kept per conversation rather than per user, validated the same way `configSchema` is.
+   * Defaults live in the schema, so a conversation that never touched them parses to the defaults.
+   */
+  conversationConfigSchema?: z.ZodObject
+  /** Declaration order is the form's field order, rendered inside conversation settings. */
+  conversationConfig?: readonly PluginConfigField[]
   /** Declaration order is the order the selector renders them in. */
   tools: readonly PluginToolDescriptor[]
   /**
@@ -144,6 +160,41 @@ export function pluginSettingsEntries(
 
 export function pluginToolIds(manifest: PluginManifest): string[] {
   return manifest.tools.map(tool => tool.id)
+}
+
+/** Where a conversation lives decides which plugins can serve it. */
+export interface ConversationScope {
+  projectId: number | null
+}
+
+export function pluginAvailableIn(manifest: PluginManifest, scope: ConversationScope): boolean {
+  return manifest.requiresProject !== true || scope.projectId !== null
+}
+
+/** This plugin's per-conversation settings with defaults applied; `{}` when it declares none. */
+export function conversationConfigOf(
+  manifest: PluginManifest,
+  settings: ConversationPluginSettings | null | undefined,
+): Record<string, unknown> {
+  if (!manifest.conversationConfigSchema) return {}
+  return manifest.conversationConfigSchema.parse(settings?.[manifest.id] ?? {}) as Record<string, unknown>
+}
+
+/**
+ * Validates what a client sent, entry by entry. A plugin that declares no conversation settings is
+ * refused rather than stored: an opaque blob nobody validates is how a bad value survives forever.
+ */
+export function parseConversationPluginSettings(
+  manifests: readonly PluginManifest[],
+  settings: ConversationPluginSettings,
+): ConversationPluginSettings {
+  const out: ConversationPluginSettings = {}
+  for (const [pluginId, values] of Object.entries(settings)) {
+    const manifest = manifests.find(candidate => candidate.id === pluginId)
+    if (!manifest?.conversationConfigSchema) throw new Error(`plugin ${pluginId} has no conversation settings`)
+    out[pluginId] = manifest.conversationConfigSchema.parse(values) as Record<string, unknown>
+  }
+  return out
 }
 
 /** A group with its tools resolved, which is what anything rendering or toggling a group needs. */

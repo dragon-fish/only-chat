@@ -14,8 +14,15 @@ import {
   NumberFieldInput,
 } from '@/client/ui/number-field'
 import { Textarea } from '@/client/ui/textarea'
-import { fieldLooksBlank, optionalNumber, type ConversationSettingSources, type ConversationSettingsForm, type SettingSource } from '@/client/stores/sync'
-import type { Project } from '@/shared/models'
+import PluginConfigForm from '@/client/components/plugin-config-form.vue'
+import { buildConfigPatch, buildConversationConfigControls, initialFormValues } from '@/client/lib/plugin-config-form'
+import { pluginManifests } from '@/client/plugins/loaders'
+import {
+  fieldLooksBlank, optionalNumber, useSyncStore,
+  type ConversationSettingSources, type ConversationSettingsForm, type SettingSource,
+} from '@/client/stores/sync'
+import type { ConversationPluginSettings, Project } from '@/shared/models'
+import { pluginAvailableIn } from '@/shared/plugins'
 
 const props = defineProps<{
   /**
@@ -29,11 +36,35 @@ const props = defineProps<{
   project: Project | undefined
   /** A draft has no title yet: the conversation does not exist until the first message is sent. */
   hasConversation: boolean
+  /** What plugins keep for this conversation; null means every plugin at its defaults. */
+  pluginSettings: ConversationPluginSettings | null
 }>()
-const emit = defineEmits<{ commit: [] }>()
+const emit = defineEmits<{ commit: []; updatePluginSettings: [pluginId: string, values: Record<string, unknown>] }>()
 const open = ref(false)
+const sync = useSyncStore()
 
 const inherited = computed(() => props.project?.params)
+
+/**
+ * One section per plugin that keeps conversation-level settings and can serve this conversation.
+ * Listed from the manifests, so the form needs no plugin loaded; values come from the schema
+ * defaults until the conversation stores its own.
+ */
+const pluginSections = computed(() => pluginManifests
+  .filter(manifest => manifest.conversationConfig !== undefined
+    && sync.settings.plugins[manifest.id] === true
+    && pluginAvailableIn(manifest, { projectId: props.project?.id ?? null }))
+  .map(manifest => ({
+    manifest,
+    controls: buildConversationConfigControls(manifest, props.pluginSettings?.[manifest.id]),
+  })))
+const pluginValues = computed<Record<string, Record<string, unknown>>>(() => Object.fromEntries(
+  pluginSections.value.map(({ manifest, controls }) => [manifest.id, initialFormValues(controls)]),
+))
+function setPluginValues(pluginId: string, values: Record<string, unknown>) {
+  const controls = pluginSections.value.find(section => section.manifest.id === pluginId)?.controls ?? []
+  emit('updatePluginSettings', pluginId, buildConfigPatch(controls, values))
+}
 
 const BADGES: Record<SettingSource, string> = {
   conversation: '会话覆盖',
@@ -217,6 +248,13 @@ ResponsiveOverlay(:open="open" title="会话设置" @update:open="setOpen")
             NumberFieldInput(class="text-sm" @input="onType('max_tokens', $event)" @blur="onSettle('max_tokens')")
             NumberFieldIncrement(:disabled="blank('max_tokens')")
         FieldDescription(class="text-xs") {{ inheritHint('max_tokens', inherited?.max_tokens) }}
+
+      template(v-for="section in pluginSections" :key="section.manifest.id")
+        .flex.flex-col.gap-2
+          .text-xs.font-medium {{ section.manifest.name }}
+          PluginConfigForm(
+            :controls="section.controls" :model-value="pluginValues[section.manifest.id] ?? {}"
+            @update:model-value="setPluginValues(section.manifest.id, $event)")
 
       Field(v-if="!hasConversation")
         FieldDescription(class="text-xs") 这些设置会随第一条消息一起创建会话。

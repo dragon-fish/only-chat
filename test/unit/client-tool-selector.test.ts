@@ -110,7 +110,7 @@ describe('conversation tool selection', () => {
   ] as const)('uses the responsive tool surface (desktop=%s)', async (desktop, slot) => {
     const root = document.createElement('div')
     document.body.append(root)
-    const app = createApp({ render: () => h(TooltipProvider, null, { default: () => h(ToolSelector, { modelValue: [], plugins: { ask_user: true }, pluginConfig: {}, desktop, supported: true, enabled: true }) }) })
+    const app = createApp({ render: () => h(TooltipProvider, null, { default: () => h(ToolSelector, { modelValue: [], plugins: { ask_user: true }, pluginConfig: {}, desktop, supported: true, enabled: true, projectId: null }) }) })
     app.provide('clientPluginHost', null)
     app.mount(root)
     root.querySelector<HTMLButtonElement>('button[aria-label="选择工具"]')!.click()

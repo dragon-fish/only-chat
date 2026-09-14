@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import type { PluginConfigFieldType, PluginConfigStatus, PluginManifest } from '@/shared/plugins'
+import type { PluginConfigField, PluginConfigFieldType, PluginConfigStatus, PluginManifest } from '@/shared/plugins'
 
 export interface PluginConfigControl {
   key: string
@@ -38,9 +38,27 @@ interface JsonSchemaObject {
  */
 export function buildConfigControls(manifest: PluginManifest, status: PluginConfigStatus | undefined): PluginConfigControl[] {
   if (!manifest.configSchema) return []
-  const json = z.toJSONSchema(manifest.configSchema, { io: 'input' }) as JsonSchemaObject
+  return controlsFrom(manifest.configSchema, manifest.config ?? [], status?.values ?? {}, status?.secrets ?? {})
+}
+
+/** The same form machinery over a plugin's per-conversation settings, which hold no secrets. */
+export function buildConversationConfigControls(
+  manifest: PluginManifest,
+  values: Readonly<Record<string, unknown>> | undefined,
+): PluginConfigControl[] {
+  if (!manifest.conversationConfigSchema) return []
+  return controlsFrom(manifest.conversationConfigSchema, manifest.conversationConfig ?? [], values ?? {}, {})
+}
+
+function controlsFrom(
+  schema: z.ZodObject,
+  fields: readonly PluginConfigField[],
+  values: Readonly<Record<string, unknown>>,
+  secrets: Readonly<Record<string, boolean>>,
+): PluginConfigControl[] {
+  const json = z.toJSONSchema(schema, { io: 'input' }) as JsonSchemaObject
   const required = new Set(json.required ?? [])
-  return (manifest.config ?? []).map((field) => {
+  return fields.map((field) => {
     const property = json.properties?.[field.key] ?? {}
     return {
       key: field.key,
@@ -54,9 +72,9 @@ export function buildConfigControls(manifest: PluginManifest, status: PluginConf
       ...(property.default === undefined ? {} : { default: property.default }),
       ...(field.type === 'secret'
         ? {}
-        : { value: status?.values[field.key] ?? property.default ?? (field.type === 'boolean' ? false : '') }),
+        : { value: values[field.key] ?? property.default ?? (field.type === 'boolean' ? false : '') }),
       required: required.has(field.key),
-      configured: status?.secrets[field.key] === true,
+      configured: secrets[field.key] === true,
     }
   })
 }

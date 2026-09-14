@@ -31,6 +31,7 @@ const resolution = {
   db: {} as ToolContext['db'],
   assets: {} as ToolContext['assets'],
   signal: new AbortController().signal,
+  pluginSettings: null,
 }
 
 describe('ToolRegistry', () => {
@@ -83,7 +84,7 @@ describe('ToolRegistry', () => {
     registry.register('files', 'read_file', () => { built += 1; return registeredTool('read') })
     registry.register('other', 'nope', () => registeredTool('nope'))
     // The capability check runs before there is an assistant message to build against.
-    expect(registry.usable(['read_file', 'nope'], { files: true, other: false })).toEqual(['read_file'])
+    expect(registry.usable(['read_file', 'nope'], { files: true, other: false }, { projectId: null })).toEqual(['read_file'])
     expect(built).toBe(0)
   })
 

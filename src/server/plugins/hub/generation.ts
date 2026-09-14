@@ -1,9 +1,10 @@
 import { stepCountIs, streamText, type LanguageModel, type StopCondition, type ToolSet } from 'ai'
 import { INFLIGHT_FLUSH_INTERVAL_MS, TOOL_MAX_STEPS } from '@/shared/constants'
-import type { Message, PersistedStatus, ConversationParams, Usage } from '@/shared/models'
+import type { Message, PersistedStatus, ConversationParams, ConversationPluginSettings, Usage } from '@/shared/models'
 import type { Part, ToolCallPart, ToolResultPart } from '@/shared/parts'
 import type { SendCommand, WsCommand } from '@/shared/ws'
-import { ASK_USER_TOOL_ID } from '@/shared/plugins'
+import { ASK_USER_TOOL_ID, parseConversationPluginSettings } from '@/shared/plugins'
+import { pluginManifests } from '@/shared/plugin-manifests'
 import { AskUserInputSchema, AskUserResultSchema, validateAskUserResult } from '@/plugins/ask-user/shared'
 import { createAskUserToolCallRepair } from '@/plugins/ask-user/server/repair'
 import type { ModelRow, ProviderInterfaceRow, ProviderRow, ConversationRow } from '../../db/schema'
@@ -55,10 +56,12 @@ interface ConversationDraft extends ConversationConfigSource {
   project_id: number | null
   tools: string[]
   tools_enabled: boolean
+  plugin_settings: ConversationPluginSettings | null
 }
 
 const EMPTY_DRAFT: ConversationDraft = {
   project_id: null, system_prompt: null, provider_id: null, model_id: null, params: null, tools: [], tools_enabled: true,
+  plugin_settings: null,
 }
 
 interface ResolveArgs {
@@ -121,7 +124,7 @@ async function resolveTarget(hub: Hub, args: ResolveArgs): Promise<Target> {
   // master switch is off. Refusing the turn would force the user to empty the selection by hand and
   // rebuild it afterwards.
   const toolIds = draft.tools_enabled && model.metadata_resolved.tool_call === true
-    ? hub.app.tools.usable(draft.tools, user.settings.plugins)
+    ? hub.app.tools.usable(draft.tools, user.settings.plugins, { projectId: draft.project_id })
     : []
 
   // The persisted override is the draft's, never this generation's model: copying the latter down
@@ -134,6 +137,7 @@ async function resolveTarget(hub: Hub, args: ResolveArgs): Promise<Target> {
     params: draft.params,
     tools: draft.tools,
     tools_enabled: draft.tools_enabled,
+    plugin_settings: draft.plugin_settings,
     provider_id: draft.provider_id,
     model_id: draft.model_id,
   })
@@ -304,6 +308,7 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
       db: hub.db,
       assets: hub.app.assets,
       signal: controller.signal,
+      pluginSettings: target.conversation.plugin_settings ?? null,
     }))
 
     const requestStartedAt = performance.now()
@@ -401,7 +406,7 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
 // ---- entry points
 
 /** Fields that initialize a brand-new conversation and are therefore meaningless on an existing one. */
-const INIT_FIELDS = ['project_id', 'system_prompt', 'params', 'conversation_provider_id', 'conversation_model_id', 'tools', 'tools_enabled'] as const
+const INIT_FIELDS = ['project_id', 'system_prompt', 'params', 'conversation_provider_id', 'conversation_model_id', 'tools', 'tools_enabled', 'plugin_settings'] as const
 const SKIPPED_ASK_USER_MESSAGE = '用户跳过了问题并继续回复'
 
 async function resolveSendParent(hub: Hub, conversation: ConversationRow, parentId: number) {
@@ -455,6 +460,7 @@ export async function runSend(hub: Hub, cmd: SendCommand): Promise<void> {
       model_id: cmd.conversation_model_id ?? null,
       tools: hub.app.tools.normalize(cmd.tools ?? []),
       tools_enabled: cmd.tools_enabled ?? true,
+      plugin_settings: cmd.plugin_settings === undefined ? null : parseConversationPluginSettings(pluginManifests, cmd.plugin_settings),
     },
   })
   const parentId = cmd.conversation_id === null ? null : (cmd.parent_id ?? target.conversation.head_message_id)

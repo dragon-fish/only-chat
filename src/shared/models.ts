@@ -40,6 +40,13 @@ export const ConversationParamsSchema = z.object({
 })
 export type ConversationParams = z.infer<typeof ConversationParamsSchema>
 
+/**
+ * Settings a plugin keeps per conversation, keyed by plugin id. The core validates each entry
+ * through that plugin's `conversationConfigSchema` on write and otherwise treats it as opaque.
+ */
+export const ConversationPluginSettingsSchema = z.record(z.string(), z.record(z.string(), z.unknown()))
+export type ConversationPluginSettings = z.infer<typeof ConversationPluginSettingsSchema>
+
 export const UserSettingsSchema = z.object({
   plugins: z.record(z.string(), z.boolean()).default({}),
   /**
@@ -91,6 +98,8 @@ export const ConversationSchema = z.object({
   tools: z.array(z.string()),
   /** False silences every selected tool without clearing the selection. */
   tools_enabled: z.boolean(),
+  /** Absent on rows written before the column existed; both mean "every plugin at its defaults". */
+  plugin_settings: ConversationPluginSettingsSchema.nullable().optional(),
   created_at: z.number(),
   updated_at: z.number(),
   archived_at: z.number().nullable(),
