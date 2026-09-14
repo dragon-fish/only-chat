@@ -215,6 +215,22 @@ const INTERRUPTED_NOTE = '上面那轮回复没有说完，是用户在生成途
 const RESENT_NOTE = '（用户在这里打断了一次生成，紧接着又说了下面这些。两段是连着发的，中间没有模型的回复。）'
 
 /**
+ * The message a handoff has to splice into a run that is already in flight.
+ *
+ * Nothing rebuilds the prompt from the database mid-run: the SDK carries its own message list from
+ * step to step, so words stored by a handoff are words the model never sees unless they are handed
+ * to `prepareStep` as an override. Built here, next to the rule it mirrors, so the request sent now
+ * and the one rebuilt from the rows on the next turn say the same thing — note first, then what
+ * they said, exactly where `buildModelMessages` puts it for a reply that ends on a tool result.
+ */
+export function interjectedUserMessage(
+  said: Part[],
+  attachments: ReadonlyMap<number, AttachmentInput>,
+): ModelMessage {
+  return { role: 'user', content: [{ type: 'text', text: INTERRUPTED_NOTE }, ...userParts(said, attachments)] }
+}
+
+/**
  * Pure. Same input → byte-identical output, whether the parts came from memory or from D1.
  * Nothing request-specific may ever be added here (see spec §7.2).
  *

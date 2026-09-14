@@ -10,7 +10,7 @@ import { createAskUserToolCallRepair } from '@/plugins/ask-user/server/repair'
 import type { ModelRow, ProviderInterfaceRow, ProviderRow, ConversationRow } from '../../db/schema'
 import { PartAccumulator } from '../llm/accumulator'
 import { logLifecycle, partsBytes } from './lifecycle-log'
-import { buildModelMessages, buildProviderOptions, requiredAttachmentIds, type AttachmentInput } from '../llm/messages'
+import { buildModelMessages, buildProviderOptions, interjectedUserMessage, requiredAttachmentIds, type AttachmentInput } from '../llm/messages'
 import { generationDurationMs, toUsage, type GenerationStepPerformance } from '../llm/usage'
 import type { Hub, InflightJob } from './index'
 import {
@@ -370,11 +370,14 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
        * them. Anything else would put the operator's sentence inside the assistant's record, where
        * neither the tree nor the screen has any use for it.
        */
-      prepareStep: async () => {
+      prepareStep: async ({ messages }) => {
         const said = hub.takeStash(shell.id)
         if (said.length === 0) return {}
         await handOff(said)
-        return {}
+        // Writing the row is not enough — the SDK would carry on with the list it built at the
+        // start, and the model would never hear what was said. The override carries forward, so
+        // every later step sees it too.
+        return { messages: [...messages, interjectedUserMessage(said, attachments)] }
       },
       providerOptions: buildProviderOptions(target.providerInterface.protocol, params, target.model.metadata_resolved),
     })
@@ -407,6 +410,12 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
 
       const interjection = await reserveUserMessage(hub, target.conversation, shell.id, said)
       await hub.broadcast({ type: 'interject.stash', conversation_id: target.conversation.id, parts: [] })
+
+      // Pictures they attached are not in the map assembled before the run began. Which ids are
+      // needed stays the message builder's answer, so the row just written is what gets asked.
+      const deps = { db: hub.db, userId: hub.userId, assets: hub.app.assets, llm: hub.app.llm }
+      const added = await resolveAttachmentInputs(deps, target.provider, target.providerInterface, requiredAttachmentIds([interjection]))
+      for (const [id, input] of added) attachments.set(id, input)
 
       shell = await openReservedAssistantShell(hub, target, interjection.id)
       acc = new PartAccumulator()
