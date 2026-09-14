@@ -96,6 +96,18 @@ describe('turnBlocks', () => {
     expect(shape([reasoning('asking'), call('q', 'ask_user')])).toEqual(['reasoning', 'tool'])
   })
 
+  it('leaves a lone answered call unwrapped, the way a lone thought is', () => {
+    // The wrapper exists to collapse a sequence. One call is not one, and folding it puts a
+    // chevron in front of the only thing the reader wanted — commonly an answered ask_user.
+    expect(shape([text('Pick one.'), call('q', 'ask_user'), result('q', 'ask_user')]))
+      .toEqual(['text', 'tool'])
+  })
+
+  it('still folds a call that came with thinking, which is a sequence', () => {
+    expect(shape([reasoning('deciding'), call('q', 'ask_user'), result('q', 'ask_user')]))
+      .toEqual(['process(2)'])
+  })
+
   it('keeps images visible as output rather than folding them into the steps', () => {
     expect(shape([reasoning('drawing'), call('a'), result('a'), { type: 'image', attachment_id: 3 }]))
       .toEqual(['process(2)', 'image'])

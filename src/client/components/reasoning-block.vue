@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { BrainIcon, ChevronRightIcon } from '@lucide/vue'
+import { Spinner } from '@/client/ui/spinner'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/client/ui/collapsible'
 
 const props = defineProps<{
@@ -63,7 +64,8 @@ const preview = computed(() => props.text.replace(/\s+/g, ' ').trim())
 Collapsible(:open="open" @update:open="setOpen")
   CollapsibleTrigger(
     class="oc-turn-row group text-xs text-muted-foreground hover:bg-accent hover:text-foreground")
-    BrainIcon(class="size-4 shrink-0")
+    //- Spinning while it runs, the brain once it has stopped — the same reading a tool card gives.
+    component(:is="active ? Spinner : BrainIcon" class="size-4 shrink-0")
     span.shrink-0 {{ label }}
     span.shrink-0(v-if="timing" class="opacity-70") （{{ timing }}）
     //- The one-line peek is what makes a collapsed block worth leaving collapsed.

@@ -97,6 +97,9 @@ export function turnBlocks(segments: readonly MessageSegment[]): TurnBlock[] {
     const plain = hasPendingTool(run)
       // One thought is already a collapsible; wrapping it would show two identical headers.
       || (run.length === 1 && run[0]!.kind === 'reasoning')
+      // Nor is one call a sequence. Folding it puts a chevron in front of the only thing in the
+      // run — most often an ask_user the reader has just answered, or is about to read.
+      || (run.length === 1 && run[0]!.kind === 'tool')
     if (plain) blocks.push(...run.map(segment => ({ kind: 'segment' as const, key: segment.key, segment })))
     else blocks.push({ kind: 'process', key: `process:${run[0]!.key}`, segments: run })
     run = []
