@@ -29,7 +29,8 @@ async function call(binding: BrowserBinding, path: string): Promise<string> {
     const retryAfter = Number(response.headers.get('Retry-After'))
     throw new BrowserRateLimited(Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : null, text)
   }
-  if (!response.ok) throw new Error(`Browser Run ${path} failed: ${response.status} ${text}`)
+  // Only the first line: a failure body can carry a stack trace, and that would reach the model.
+  if (!response.ok) throw new Error(`Browser Run ${path} failed: ${response.status} ${text.split('\n')[0]?.trim() ?? ''}`)
   return text
 }
 
