@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
-import { ChevronUpIcon, CircleHelpIcon, CircleXIcon, XIcon } from '@lucide/vue'
+import { ChevronDownIcon, CircleHelpIcon, CircleXIcon, XIcon } from '@lucide/vue'
 import { Alert, AlertDescription, AlertTitle } from '@/client/ui/alert'
 import { Button } from '@/client/ui/button'
 import { Card, CardAction, CardContent, CardFooter, CardHeader, CardTitle } from '@/client/ui/card'
@@ -182,11 +182,12 @@ Card(v-else-if="terminal" size="sm" class="my-2 w-full")
 template(v-else)
   //- Its own strip above the card, and nowhere near the X. Sharing the header put a small target
   //- for "put this aside" next to a small target for "throw it away".
-  .flex.justify-end(v-if="!collapsed")
+  .flex.justify-center(v-if="!collapsed")
     Button(
-      variant="ghost" size="sm" class="min-h-10 gap-1 text-xs text-muted-foreground md:min-h-7"
+      variant="ghost" size="sm"
+      class="min-h-10 w-48 max-w-full gap-1 text-xs text-muted-foreground md:min-h-7"
       aria-label="暂时收起" :aria-expanded="true" @click="collapsed = true")
-      ChevronUpIcon(class="size-3.5")
+      ChevronDownIcon(class="size-3.5")
       | 暂时收起
   //- Collapsing is deliberate and gets its own control; expanding is someone coming back to answer,
   //- so anywhere on the card will do. The X stops the click so it never expands on its way out.
@@ -196,15 +197,18 @@ template(v-else)
     CardHeader
       CardTitle.flex.items-center.gap-2.text-sm
         CircleHelpIcon
-        span.shrink-0 需要你的回答
+        span.shrink-0 {{ collapsed ? '点击回答问题' : '需要你的回答' }}
         //- Collapsed, the header is all there is, so it has to say what is behind it.
         span.min-w-0.truncate.font-normal.text-xs(
           v-if="collapsed && collapsedPreview" class="text-muted-foreground") {{ collapsedPreview }}
       CardAction
+        //- Labelled rather than a bare glyph, and the label is part of the button: words beside a
+        //- control that ignores them are a worse target than no words at all.
         Button(
-          variant="ghost" size="icon-xs" class="size-10 md:size-6" :disabled="busy"
-          title="取消回答（Esc）" aria-label="取消回答" @click.stop="cancel")
-          XIcon
+          variant="ghost" size="sm" class="min-h-10 gap-1 px-2 text-xs text-muted-foreground md:min-h-6"
+          :disabled="busy" title="不回答（Esc）" aria-label="不回答" @click.stop="cancel")
+          | 不回答
+          XIcon(class="size-3.5")
     CardContent(v-if="collapsed" class="text-muted-foreground text-sm")
       | 点开继续回答{{ questionCount > 1 ? `（${questionCount} 个问题）` : '' }}
     CardContent(v-else)
