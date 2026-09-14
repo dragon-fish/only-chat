@@ -351,7 +351,7 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
       if (part.type === 'file') {
         const image = await persistGeneratedImage(hub, part.file)
         const ev = acc.append(image)
-        await hub.broadcast({ type: 'message.part', message_id: shell.id, part_index: ev.part_index, part: ev.part })
+        await hub.broadcastGeneration({ type: 'message.part', message_id: shell.id, part_index: ev.part_index, part: ev.part })
         await hub.flushInflight(tracked)
         continue
       }
@@ -361,9 +361,9 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
         }
         if (ev.kind === 'delta') {
           if (firstTokenAt === null && ev.delta.length > 0) firstTokenAt = performance.now()
-          await hub.broadcast({ type: 'message.delta', message_id: shell.id, part_index: ev.part_index, kind: ev.part_kind, delta: ev.delta })
+          await hub.broadcastGeneration({ type: 'message.delta', message_id: shell.id, part_index: ev.part_index, kind: ev.part_kind, delta: ev.delta })
         }
-        else await hub.broadcast({ type: 'message.part', message_id: shell.id, part_index: ev.part_index, part: ev.part })
+        else await hub.broadcastGeneration({ type: 'message.part', message_id: shell.id, part_index: ev.part_index, part: ev.part })
       }
       if (Date.now() - lastFlush > INFLIGHT_FLUSH_INTERVAL_MS) {
         lastFlush = Date.now()
@@ -396,7 +396,7 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
   }
   try {
     const final: Message = { ...shell, parts: acc.parts, usage, status, error }
-    await hub.broadcast({ type: 'message.done', message_id: shell.id, status, usage, error })
+    await hub.broadcastGeneration({ type: 'message.done', message_id: shell.id, status, usage, error })
     hub.app.emit('message/done', final)
   } finally {
     await hub.untrackInflight(shell.id)

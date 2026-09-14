@@ -251,14 +251,14 @@ export const BrowserRunServerPlugin = {
       switch (call.kind) {
         case 'log': {
           scratch?.lines.push(call.line)
-          await state.hub.broadcast({ type: 'tool.progress', message_id: call.messageId, call_id: call.callId, lines: [call.line] })
+          await state.hub.broadcastGeneration({ type: 'tool.progress', message_id: call.messageId, call_id: call.callId, lines: [call.line] })
           return undefined
         }
         case 'attach': {
           const bytes = new Uint8Array(call.bytes)
           const attachmentId = await storeGeneratedAttachment(state.hub.db, state.hub.app.assets, state.hub.userId, bytes, call.mime)
           scratch?.images.push({ attachmentId, name: call.name, mime: call.mime, bytes })
-          await state.hub.broadcast({ type: 'tool.progress', message_id: call.messageId, call_id: call.callId, lines: [`[截图] ${call.name}`] })
+          await state.hub.broadcastGeneration({ type: 'tool.progress', message_id: call.messageId, call_id: call.callId, lines: [`[截图] ${call.name}`] })
           return attachmentId
         }
       }

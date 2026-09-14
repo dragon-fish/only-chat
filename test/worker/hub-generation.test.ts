@@ -1088,6 +1088,21 @@ describe('generation', () => {
     expect(created[0]!.doStreamCalls[0]!.prompt.at(-1)).toMatchObject({ role: 'user' })
   })
 
+  it('finishes the current generation when its initiating session expires mid-stream', async () => {
+    const providerId = await seedProvider()
+    await installMock(() => new MockLanguageModelV4({
+      doStream: async () => ({ stream: simulateReadableStream({ chunks: [...STREAM], chunkDelayInMs: 30, initialDelayInMs: null }) }),
+    }))
+    const auth = await seedTestUser()
+    const session = await (await auth.request('/api/auth/get-session')).json() as { session: { id: string } }
+    const client = await connect(auth)
+    client.ws.send(JSON.stringify({ type: 'send', conversation_id: null, parent_id: null, parts: [{ type: 'text', text: 'finish this turn' }], provider_id: providerId, model_id: 'mock-1' }))
+    await client.next('message.delta')
+    await env.DB.prepare('UPDATE auth_sessions SET expires_at = 0 WHERE id = ?').bind(session.session.id).run()
+    expect(await client.next('message.done')).toMatchObject({ status: 'done' })
+    expect(client.events.filter(event => event.type === 'message.delta')).toHaveLength(3)
+  })
+
   it('regenerate creates a sibling and moves the head; edit creates a sibling user message', async () => {
     const providerId = await seedProvider()
     await installMock(() => new MockLanguageModelV4({

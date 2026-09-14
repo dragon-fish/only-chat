@@ -224,6 +224,31 @@ describe('authenticated UserHub', () => {
     expect(silent.events.map(event => event.type)).toEqual(['snapshot'])
   })
 
+  it('finishes an authorized generation after session expiry but rejects the next generation', async () => {
+    const client = await registerAndLogin()
+    const { userId, authSessionId } = await identity(client)
+    const socket = await connect(client)
+    await socket.next('snapshot')
+    const message = { id: 9001, conversation_id: 100, parent_id: 99, seq: 2, role: 'assistant' as const, parts: [], provider_id: 1, model_id: 'model', usage: null, status: 'streaming' as const, error: null, created_at: 0 }
+    await runInDurableObject(env.USER_HUB.getByName(String(userId)), async (instance: UserHub) => {
+      await instance.app.hub.broadcast({ type: 'message.created', message })
+    })
+    await socket.next('message.created')
+    await env.DB.prepare('UPDATE auth_sessions SET expires_at = 0 WHERE id = ?').bind(authSessionId).run()
+    await runInDurableObject(env.USER_HUB.getByName(String(userId)), async (instance: UserHub) => {
+      await instance.app.hub.broadcastGeneration({ type: 'message.delta', message_id: message.id, part_index: 0, kind: 'text', delta: 'complete' })
+      await instance.app.hub.broadcastGeneration({ type: 'message.done', message_id: message.id, status: 'done', usage: null, error: null })
+    })
+    await Promise.all([socket.next('message.delta'), socket.next('message.done')])
+
+    const closing = closed(socket.ws)
+    await runInDurableObject(env.USER_HUB.getByName(String(userId)), async (instance: UserHub) => {
+      await instance.app.hub.broadcast({ type: 'message.created', message: { ...message, id: 9002 } })
+    })
+    expect((await closing).code).toBe(4001)
+    expect(socket.events.filter(event => event.type === 'message.created')).toHaveLength(1)
+  })
+
   it('aborts all in-flight jobs and waits for settlement before closing sockets', async () => {
     const client = await registerAndLogin()
     const { userId } = await identity(client)

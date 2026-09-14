@@ -20,6 +20,8 @@ import { runEdit, runRegenerate, runSend, runToolContinue, runToolRespond } from
 import { parseAuthUserId } from '../auth/user-id'
 import { AUTH_REVOKED_CLOSE_CODE, hasActiveAuthSession, type SocketAttachment } from './identity'
 
+type GenerationEvent = Extract<WsEvent, { type: 'message.delta' | 'message.part' | 'message.done' | 'tool.progress' }>
+
 export interface InflightJob {
   message: Message
   conversationId: number
@@ -76,9 +78,18 @@ export class Hub extends Service {
   get accessEpoch(): number { return this._accessEpoch }
 
   async broadcast(event: WsEvent): Promise<void> {
+    return this._enqueueBroadcast(event, true)
+  }
+
+  /** Deliver output already authorized by the command that started this generation. */
+  async broadcastGeneration(event: GenerationEvent): Promise<void> {
+    return this._enqueueBroadcast(event, false)
+  }
+
+  private async _enqueueBroadcast(event: WsEvent, validateSession: boolean): Promise<void> {
     const raw = encodeEvent(event)
     // Serialize whole broadcasts so all recipients observe the same order across producers.
-    const sending = this._broadcastTail.then(() => this._deliverBroadcast(raw))
+    const sending = this._broadcastTail.then(() => this._deliverBroadcast(raw, validateSession))
     // Keep a rejected delivery visible to its caller without blocking subsequent broadcasts.
     this._broadcastTail = sending.catch(() => {})
     return sending
@@ -89,19 +100,20 @@ export class Hub extends Service {
     return this.broadcast({ type: 'plugin.event', plugin: pluginId, payload })
   }
 
-  private async _deliverBroadcast(raw: string): Promise<void> {
+  private async _deliverBroadcast(raw: string, validateSession: boolean): Promise<void> {
     for (const ws of this.state.getWebSockets()) {
       try {
         const epoch = this._accessEpoch
         const attachment = ws.deserializeAttachment() as Partial<SocketAttachment> | null
-        // Every delivery reads D1. Await callers to apply backpressure instead of caching access.
-        if (this._revoked || !(await hasActiveAuthSession(this.db, this.userId, attachment?.authSessionId)) || epoch !== this._accessEpoch) {
+        // A generation is authorized once at its command/start boundary. Its output frames must not
+        // turn D1 latency into model backpressure; explicit user revocation still stops them locally.
+        if (this._revoked || (validateSession && (!(await hasActiveAuthSession(this.db, this.userId, attachment?.authSessionId)) || epoch !== this._accessEpoch))) {
           ws.close(AUTH_REVOKED_CLOSE_CODE, 'Authentication revoked')
           continue
         }
         ws.send(raw)
       } catch {
-        // Database errors may contain credentials; withhold data if validity cannot be established.
+        // Database errors may contain credentials, and send failures need no client details either.
         console.warn('WebSocket delivery failed')
         try { ws.close(1011, 'Delivery unavailable') } catch { /* Socket already closed. */ }
       }
