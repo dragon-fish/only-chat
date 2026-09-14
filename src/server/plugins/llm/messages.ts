@@ -79,8 +79,12 @@ function targetOptions(protocol: InterfaceProtocol, stored: ProviderOptions | un
   return entries.length > 0 ? Object.fromEntries(entries) : undefined
 }
 
-function assistantMessages(parts: Part[], protocol: InterfaceProtocol): Array<AssistantModelMessage | ToolModelMessage> {
-  const out: Array<AssistantModelMessage | ToolModelMessage> = []
+function assistantMessages(
+  parts: Part[],
+  protocol: InterfaceProtocol,
+  attachments: ReadonlyMap<number, AttachmentInput>,
+): Array<AssistantModelMessage | ToolModelMessage | UserModelMessage> {
+  const out: Array<AssistantModelMessage | ToolModelMessage | UserModelMessage> = []
   let assistant: AssistantPart[] = []
   let tool: ToolPart[] = []
   const flushAssistant = () => {
@@ -121,6 +125,13 @@ function assistantMessages(parts: Part[], protocol: InterfaceProtocol): Array<As
         // Generated images are not replayed to the model in MVP. `requiredAttachmentIds` below is
         // the other half of that decision: it must skip exactly what this branch drops.
         break
+      case 'interjection':
+        // Back where the model met it: after the step that was running when it arrived, before the
+        // one that answered it. Both halves flush first, or it would land inside them.
+        flushAssistant()
+        flushTool()
+        out.push({ role: 'user', content: userParts(p.parts, attachments) })
+        break
     }
   }
   flushAssistant()
@@ -141,8 +152,13 @@ function assistantMessages(parts: Part[], protocol: InterfaceProtocol): Array<As
 export function requiredAttachmentIds(path: readonly Message[]): Set<number> {
   const ids = new Set<number>()
   for (const m of path) {
-    if (m.role !== 'user') continue
-    for (const p of m.parts) if (p.type === 'image') ids.add(p.attachment_id)
+    for (const p of m.parts) {
+      if (m.role === 'user' && p.type === 'image') ids.add(p.attachment_id)
+      // An interjection is the operator speaking, whichever message carries it.
+      if (p.type === 'interjection') {
+        for (const inner of p.parts) if (inner.type === 'image') ids.add(inner.attachment_id)
+      }
+    }
   }
   return ids
 }
@@ -176,7 +192,7 @@ export function buildModelMessages(input: BuildInput): ModelMessage[] {
         : { role: 'user', content })
       return
     }
-    out.push(...assistantMessages(m.parts, protocol))
+    out.push(...assistantMessages(m.parts, protocol, attachments))
   })
 
   return out

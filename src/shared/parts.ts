@@ -40,15 +40,34 @@ export const ToolResultPartSchema = z.object({
   providerOptions: ProviderOptionsSchema.optional(),
 })
 
+/**
+ * Something the operator said while the turn was still running.
+ *
+ * Kept inside the assistant message rather than as a node of its own. The transcript is a tree of
+ * alternating user and assistant messages, and an interjection has no place in that alternation:
+ * it arrived in the middle of one turn and the rest of that turn answers it. Stored here it sits
+ * exactly where it landed, the tree keeps its shape, and rebuilding the prompt puts it back between
+ * the same two steps the model saw it between.
+ *
+ * Carries whole parts rather than a string, because what is said while waiting can include an
+ * image as easily as a sentence.
+ */
+export const InterjectionPartSchema = z.object({
+  type: z.literal('interjection'),
+  parts: z.array(z.union([TextPartSchema, ImagePartSchema])),
+})
+
 export const PartSchema = z.discriminatedUnion('type', [
   TextPartSchema,
   ImagePartSchema,
   ReasoningPartSchema,
   ToolCallPartSchema,
   ToolResultPartSchema,
+  InterjectionPartSchema,
 ])
 export const PartsSchema = z.array(PartSchema)
 
+export type InterjectionPart = z.infer<typeof InterjectionPartSchema>
 export type TextPart = z.infer<typeof TextPartSchema>
 export type ImagePart = z.infer<typeof ImagePartSchema>
 export type ReasoningPart = z.infer<typeof ReasoningPartSchema>

@@ -375,3 +375,34 @@ describe('buildProviderOptions', () => {
     expect(buildProviderOptions('anthropic', null, caps)).toEqual({})
   })
 })
+
+describe('interjections', () => {
+  const interrupted: Message[] = [
+    msg({ id: 1, role: 'user', parts: [{ type: 'text', text: 'start' }] }),
+    msg({ id: 2, role: 'assistant', parts: [
+      { type: 'text', text: 'working on it' },
+      { type: 'tool_call', id: 'c1', name: 'lookup', args: {} },
+      { type: 'tool_result', call_id: 'c1', name: 'lookup', content: { ok: true } },
+      { type: 'interjection', parts: [{ type: 'text', text: 'actually, in French' }, { type: 'image', attachment_id: 7 }] },
+      { type: 'text', text: 'voilà' },
+    ] }),
+  ]
+
+  it('replays it as a user message between the steps it arrived between', () => {
+    const out = buildModelMessages({
+      protocol: 'chat-completions', systemPrompt: null, path: interrupted,
+      attachments: new Map([[7, inlinePng]]),
+    })
+    // The model met it after the tool answered and before the next step; so does the replay.
+    expect(out.map(m => m.role)).toEqual(['user', 'assistant', 'tool', 'user', 'assistant'])
+    const said = out[3] as { content: Array<{ type: string }> }
+    // The SDK calls an inlined image a file part; what matters is that both survived.
+    expect(said.content.map(part => part.type)).toEqual(['text', 'file'])
+  })
+
+  it('resolves the images it carries, wherever the message says they live', () => {
+    // requiredAttachmentIds and the builder have to agree, or bytes are fetched for parts that are
+    // never sent — or worse, a part is sent with nothing to send.
+    expect(requiredAttachmentIds(interrupted)).toEqual(new Set([7]))
+  })
+})
