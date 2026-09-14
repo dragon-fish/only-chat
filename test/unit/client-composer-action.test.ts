@@ -208,3 +208,15 @@ it('comes back to life once the turn has actually ended', async () => {
   await typeAndEnter(host, 'after')
   expect(fired.send).toEqual([[{ type: 'text', text: 'after' }]])
 })
+
+it('keeps the box focused through a withdrawal', async () => {
+  // Disabling a focused element blurs it, and re-enabling does not give focus back — which left
+  // the caret nowhere to edit what had just been returned, and Escape with nothing listening.
+  const { host } = mount({ streaming: true, stash: [{ type: 'text', text: 'earlier' }] })
+  const box = host.querySelector('textarea')!
+  box.focus()
+  await press(host, 'Escape')
+  await nextTick()
+  expect(document.activeElement).toBe(box)
+  expect(box.disabled).toBe(false)
+})

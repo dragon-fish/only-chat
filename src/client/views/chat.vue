@@ -390,15 +390,6 @@ function onStop() {
 /** What the server is holding for this conversation, said while the turn was running. */
 const stash = computed(() => (sid.value === null ? [] : sync.stashes.get(sid.value) ?? []))
 
-/**
- * True between asking for the stash back and hearing what was in it.
- *
- * The answer cannot be guessed: a withdrawal races the injection, and refilling the box on
- * optimism would sometimes hand back words the model had already read, ready to be sent twice. So
- * the composer locks instead — the lock is the feedback, and it lasts one round trip.
- */
-const withdrawing = ref(false)
-
 function onQueue(parts: Part[]) {
   if (sid.value === null) return
   // Shown before it is acknowledged. The box empties the instant the key is pressed, and with
@@ -431,7 +422,6 @@ function onWithdraw() {
   // ask for the same words again instead. Safe either way — the bar should go whether the
   // withdrawal won or the injection did.
   sync.stashes.delete(sid.value)
-  withdrawing.value = true
   sync.send({ type: 'interject.withdraw', conversation_id: sid.value })
 }
 
@@ -441,7 +431,6 @@ function onWithdraw() {
  */
 watch(() => sync.withdrawn, (answer) => {
   if (!answer || answer.conversationId !== sid.value) return
-  withdrawing.value = false
   if (answer.parts.length === 0) return
   composer.value?.restore?.(answer.parts)
 }, { deep: true })
@@ -564,7 +553,7 @@ ResizablePanelGroup(direction="horizontal" class="h-full")
       Composer(
         ref="composer" :streaming="streaming" :connected="sync.status === 'open'"
         :can-send="canSend" :hint="sendHint" :replaced="pendingToolCall !== null"
-        :stash="stash" :locked="withdrawing"
+        :stash="stash"
         @send="onSend" @stop="onStop" @queue="onQueue" @interrupt="onInterrupt" @withdraw="onWithdraw")
         template(#replacement)
           .oc-scroll.flex.max-h-96.flex-col.overflow-y-auto(class="md:max-h-[60vh]")
