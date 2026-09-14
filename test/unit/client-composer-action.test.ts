@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { createApp, h } from 'vue'
+import { createApp, h, nextTick, ref } from 'vue'
 import { createPinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { afterEach, expect, it } from 'vitest'
@@ -135,4 +135,36 @@ it('ignores Escape when nothing is generating', async () => {
   const { host, fired } = mount({ streaming: false })
   await press(host, 'Escape')
   expect(fired).toMatchObject({ stop: 0, interrupt: [], withdraw: 0 })
+})
+
+it('withdraws then stops when Escape is pressed twice', async () => {
+  // The parent empties the stash as soon as it asks for it back, so the second press reads a
+  // composer with nothing waiting. Left to the round trip, it would ask for the same words twice.
+  const host = document.createElement('div')
+  document.body.append(host)
+  const fired: Fired = { send: [], queue: [], interrupt: [], stop: 0, withdraw: 0 }
+  const stash = ref<Part[]>([{ type: 'text', text: 'earlier' }])
+  const app = createApp({
+    setup: () => () => h(TooltipProvider, null, { default: () => h(Composer, {
+      streaming: true,
+      connected: true,
+      canSend: true,
+      stash: stash.value,
+      onSend: (parts: Part[]) => fired.send.push(parts),
+      onQueue: (parts: Part[]) => fired.queue.push(parts),
+      onInterrupt: (parts: Part[]) => fired.interrupt.push(parts),
+      onStop: () => { fired.stop += 1 },
+      onWithdraw: () => { fired.withdraw += 1; stash.value = [] },
+    }) }),
+  }).use(createPinia()).use(createRouter({
+    history: createMemoryHistory(),
+    routes: [{ path: '/', component: { template: '<div />' } }],
+  }))
+  app.mount(host)
+  cleanup = () => app.unmount()
+
+  await press(host, 'Escape')
+  await nextTick()
+  await press(host, 'Escape')
+  expect(fired).toMatchObject({ withdraw: 1, stop: 1 })
 })

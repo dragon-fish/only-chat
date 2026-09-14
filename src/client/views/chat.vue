@@ -409,7 +409,13 @@ function onInterrupt(parts: Part[]) {
 }
 
 function onWithdraw() {
-  if (sid.value !== null) sync.send({ type: 'interject.withdraw', conversation_id: sid.value })
+  if (sid.value === null) return
+  // Cleared here rather than waiting for the broadcast. Two presses of Escape mean "take it back,
+  // then stop", and the second one reads this: still holding a stash a round trip later, it would
+  // ask for the same words again instead. Safe either way — the bar should go whether the
+  // withdrawal won or the injection did.
+  sync.stashes.delete(sid.value)
+  sync.send({ type: 'interject.withdraw', conversation_id: sid.value })
 }
 
 /**
