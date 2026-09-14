@@ -697,6 +697,45 @@ async function continueFromToolMessage(hub: Hub, messageId: number): Promise<voi
   await generate(hub, target, shell, message.id)
 }
 
+/**
+ * Stop the turn and say the stash straight away.
+ *
+ * An abort and an ordinary send, in that order. Interrupting creates the position the message
+ * needs — a turn that has ended is a place a user message may follow — so nothing here has to
+ * invent a way to put one somewhere the API would refuse it. The alternative, folding it into the
+ * message that was just abandoned, would have the transcript claim the model read something it was
+ * cut off before reaching.
+ *
+ * The stash is taken before the abort: a withdrawal arriving in between must find it already gone,
+ * or the same words would be both taken back and sent.
+ */
+export async function runInterjectInterrupt(
+  hub: Hub,
+  cmd: Extract<WsCommand, { type: 'interject.interrupt' }>,
+): Promise<void> {
+  const conversation = await getConversation(hub.db, cmd.conversation_id, hub.userId)
+  if (!conversation) throw new Error('conversation not found')
+  const job = hub.inflight().find(entry => entry.conversationId === cmd.conversation_id)
+  if (!job) throw new Error('nothing is generating in this conversation')
+
+  const parts = hub.takeStash(job.message.id)
+  if (parts.length === 0) throw new Error('nothing was waiting to be said')
+  await hub.broadcast({ type: 'interject.stash', conversation_id: cmd.conversation_id, parts: [] })
+
+  // `stop` waits for the job to settle, so by the time the send resolves its parent the aborted
+  // message is terminal and the conversation head is where the new turn should hang from.
+  await hub.stop(cmd.conversation_id)
+  await runSend(hub, {
+    type: 'send',
+    request_id: cmd.request_id,
+    conversation_id: cmd.conversation_id,
+    parent_id: null,
+    parts,
+    provider_id: cmd.provider_id,
+    model_id: cmd.model_id,
+  })
+}
+
 export async function runToolRespond(hub: Hub, cmd: Extract<WsCommand, { type: 'tool.respond' }>): Promise<void> {
   const { message } = await ownedTerminalToolMessage(hub, cmd.message_id)
   const call = toolCallFor(message.parts, cmd.call_id)

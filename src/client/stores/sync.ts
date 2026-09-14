@@ -614,6 +614,14 @@ export const useSyncStore = defineStore('sync', () => {
   const messages = reactive(new Map<number, Map<number, Message>>())
   const loadedMessageConversations = reactive(new Set<number>())
   const streamingIds = reactive(new Set<number>())
+  /**
+   * What is waiting to be said in each conversation, as the server holds it.
+   *
+   * Mirrored, never owned: the hub decides whether a withdrawal beat the injection, so this only
+   * ever follows what it broadcasts. Keeping a local copy authoritative would sometimes show a
+   * message as taken back after the model had already read it.
+   */
+  const stashes = reactive(new Map<number, Part[]>())
   const forkResult = ref<{ request_id: string, conversation_id: number } | null>(null)
   /** `title` is null when the service model could not produce one; the caller says so and stops. */
   const titleSuggestion = ref<{ request_id: string, conversation_id: number, title: string | null } | null>(null)
@@ -774,6 +782,16 @@ export const useSyncStore = defineStore('sync', () => {
         while (parts.length <= e.part_index) parts.push({ type: e.kind, text: '' } as Part)
         const p = parts[e.part_index]!
         if (p.type === 'text' || p.type === 'reasoning') p.text += e.delta
+        break
+      }
+      case 'interject.stash': {
+        if (e.parts.length === 0) stashes.delete(e.conversation_id)
+        else stashes.set(e.conversation_id, e.parts as Part[])
+        break
+      }
+      case 'interject.withdrawn': {
+        stashes.delete(e.conversation_id)
+        withdrawn.value = { requestId: e.request_id, conversationId: e.conversation_id, parts: e.parts as Part[] }
         break
       }
       case 'message.part': {
@@ -942,6 +960,12 @@ export const useSyncStore = defineStore('sync', () => {
    * on the floor and no `error` event will ever arrive to explain it. Callers that latch UI state
    * on a round trip must unlatch it themselves (spec §9).
    */
+  /**
+   * The last withdrawal the server answered, for the composer to refill itself from. Empty parts
+   * mean the injection won and there was nothing left to take back.
+   */
+  const withdrawn = ref<{ requestId: string, conversationId: number, parts: Part[] } | null>(null)
+
   function send(cmd: WsCommand): boolean {
     if (!client.value) return false
     client.value.send(cmd)
@@ -949,7 +973,7 @@ export const useSyncStore = defineStore('sync', () => {
   }
 
   return {
-    status, snapshotSeq, conversations, projects, messages, streamingIds, forkResult, titleSuggestion, settings, pluginConfig, lastError, projectsLoaded, conversationsLoaded, settingsLoaded,
+    status, snapshotSeq, conversations, projects, messages, streamingIds, stashes, withdrawn, forkResult, titleSuggestion, settings, pluginConfig, lastError, projectsLoaded, conversationsLoaded, settingsLoaded,
     optimisticMutations, toolProgress,
     conversationsError, projectsError, settingsError, loadedMessageConversations, conversationList, imageConversationList, projectList,
     applyEvent, ingestConversations, ingestMessages, conversationsInProject, pathFor, siblingsOf, leafOf, isStreaming, loadConversations, loadProjects, loadSettings, loadMessages, connect, reset, send, onPluginEvent,

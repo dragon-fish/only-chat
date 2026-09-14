@@ -16,7 +16,7 @@ import { parseConversationPluginSettings } from '@/shared/plugins'
 import { pluginManifests } from '@/shared/plugin-manifests'
 import { createProject, deleteProject, getProject, listProjectConversations, updateProject, validateProjectIcon } from './projects'
 import { SeqAllocator } from './seq'
-import { runEdit, runRegenerate, runSend, runToolContinue, runToolRespond } from './generation'
+import { runEdit, runInterjectInterrupt, runRegenerate, runSend, runToolContinue, runToolRespond } from './generation'
 import { parseAuthUserId } from '../auth/user-id'
 import { AUTH_REVOKED_CLOSE_CODE, hasActiveAuthSession, type SocketAttachment } from './identity'
 
@@ -196,6 +196,7 @@ export class Hub extends Service {
       case 'tool.continue': return runToolContinue(this, cmd)
       case 'interject': return this.interject(cmd.conversation_id, cmd.parts)
       case 'interject.withdraw': return this.withdrawInterjection(cmd.request_id ?? '', cmd.conversation_id)
+      case 'interject.interrupt': return runInterjectInterrupt(this, cmd)
       case 'plugin.command': return this.app.pluginChannel.dispatch(cmd.plugin, cmd.payload, this)
     }
   }

@@ -158,6 +158,21 @@ export const InterjectCommandSchema = z.object({
   conversation_id: z.number().int(),
   parts: PartsSchema,
 })
+/**
+ * Stop the turn and say it now, rather than waiting for a boundary that may be far off.
+ *
+ * Interrupting creates the position it needs: a turn that ends is a place a user message may
+ * follow. So this is an abort and an ordinary send, which is what someone would do by hand — done
+ * atomically, and without the stash being lost in between.
+ */
+export const InterjectInterruptCommandSchema = z.object({
+  type: z.literal('interject.interrupt'),
+  ...base,
+  conversation_id: z.number().int(),
+  /** The turn this starts is a turn like any other, and needs a model the same way `send` does. */
+  provider_id: z.number().int(),
+  model_id: z.string().min(1),
+})
 /** Take it back, if the model has not been told yet. The reply carries what was held. */
 export const InterjectWithdrawCommandSchema = z.object({
   type: z.literal('interject.withdraw'),
@@ -190,6 +205,7 @@ export const WsCommandSchema = z.discriminatedUnion('type', [
   ToolRespondCommandSchema,
   ToolContinueCommandSchema,
   InterjectCommandSchema,
+  InterjectInterruptCommandSchema,
   InterjectWithdrawCommandSchema,
   PluginCommandSchema,
 ])
