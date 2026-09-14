@@ -113,6 +113,97 @@ interface Step {
   calls?: Array<{ name: string, input: string }>
   /** `/slow` means a paced paragraph of filler, not a paragraph of the word "300". */
   filler?: boolean
+  /** Emit `body` exactly as written, rather than a delta per word. */
+  verbatim?: boolean
+}
+
+/**
+ * The directives, as data.
+ *
+ * A table rather than a chain of name comparisons, so `/help` can be generated from the same thing
+ * that parses them. Written as a chain, help is a second list that drifts from the first — and a
+ * mock nobody can remember the syntax of is a mock nobody uses.
+ */
+interface Directive {
+  name: string
+  usage: string
+  summary: string
+  /** Returns the step, or null when the line is malformed and should be dropped. */
+  parse: (body: string, delayMs: number) => Step | null
+}
+
+const DIRECTIVES: Directive[] = [
+  {
+    name: 'reasoning',
+    usage: '/reasoning[@毫秒] <词数 | 文字>',
+    summary: '一段思考。给数字就是词数，给文字就用这些文字。',
+    parse: (body, delayMs) => ({ kind: 'reasoning', body, delayMs }),
+  },
+  {
+    name: 'content',
+    usage: '/content[@毫秒] <词数 | 文字>',
+    summary: '一段正文，同样接受词数或文字。',
+    parse: (body, delayMs) => ({ kind: 'content', body, delayMs }),
+  },
+  {
+    name: 'tool_call',
+    usage: '/tool_call[@毫秒] <工具名> <JSON 参数>',
+    summary: '调用一个工具。调用会结束本轮，宏从下一行继续。',
+    parse: (body, delayMs) => {
+      const [tool, input] = splitHead(body)
+      if (!tool || parseJson(input) === undefined) return null
+      return { kind: 'tool', body, delayMs, calls: [{ name: tool, input }] }
+    },
+  },
+  {
+    name: 'parallel',
+    usage: '/parallel[@毫秒] [{"name":"工具名","args":{}}, …]',
+    summary: '一次发起多个工具调用。',
+    parse: (body, delayMs) => {
+      const parsed = parseJson(body)
+      if (!Array.isArray(parsed)) return null
+      const calls = parsed.flatMap((entry) => {
+        if (typeof entry !== 'object' || entry === null) return []
+        const { name: tool, args } = entry as { name?: unknown, args?: unknown }
+        return typeof tool === 'string' ? [{ name: tool, input: JSON.stringify(args ?? {}) }] : []
+      })
+      return calls.length === 0 ? null : { kind: 'tool', body, delayMs, calls }
+    },
+  },
+  {
+    name: 'error',
+    usage: '/error <消息>',
+    summary: '让这一轮以上游失败收场。',
+    parse: (body, delayMs) => ({ kind: 'error', body, delayMs }),
+  },
+  {
+    name: 'slow',
+    usage: '/slow <毫秒>',
+    summary: '一段限速的填充正文，等同 /content@毫秒 40。',
+    parse: (body) => {
+      const ms = Number.parseInt(body, 10)
+      return { kind: 'content', body: '40', delayMs: Number.isFinite(ms) && ms > 0 ? ms : 200, filler: true }
+    },
+  },
+  {
+    name: 'help',
+    usage: '/help',
+    summary: '列出所有指令。',
+    parse: (_body, delayMs) => ({ kind: 'content', body: helpText(), delayMs, verbatim: true }),
+  },
+]
+
+function helpText(): string {
+  const rows = DIRECTIVES.map(directive => `| \`${directive.usage}\` | ${directive.summary} |`)
+  return [
+    'Mock 指令表。每个以 `/` 开头的行是一步，从上往下依次执行；不以 `/` 开头的行会被忽略，可以当注释写。',
+    '',
+    '| 用法 | 说明 |',
+    '| --- | --- |',
+    ...rows,
+    '',
+    '`@毫秒` 给这一步限速，例如 `/reasoning@150`。限速是逐步的，慢思考后面可以跟快正文。',
+  ].join('\n')
 }
 
 function parseSteps(text: string): Step[] {
@@ -125,29 +216,9 @@ function parseSteps(text: string): Step[] {
     const paced = Number.parseInt(pace ?? '', 10)
     const delayMs = Number.isFinite(paced) && paced > 0 ? paced : 0
 
-    if (name === 'reasoning' || name === 'content') {
-      steps.push({ kind: name, body, delayMs })
-    } else if (name === 'slow') {
-      // Predates the macro and stays: fewer keystrokes than `/content@300 40`.
-      const ms = Number.parseInt(body, 10)
-      steps.push({ kind: 'content', body: '40', delayMs: Number.isFinite(ms) && ms > 0 ? ms : 200, filler: true })
-    } else if (name === 'error') {
-      steps.push({ kind: 'error', body, delayMs })
-    } else if (name === 'tool_call') {
-      const [tool, input] = splitHead(body)
-      if (!tool || parseJson(input) === undefined) continue
-      steps.push({ kind: 'tool', body, delayMs, calls: [{ name: tool, input }] })
-    } else if (name === 'parallel') {
-      const parsed = parseJson(body)
-      if (!Array.isArray(parsed)) continue
-      const calls = parsed.flatMap((entry) => {
-        if (typeof entry !== 'object' || entry === null) return []
-        const { name: tool, args } = entry as { name?: unknown, args?: unknown }
-        return typeof tool === 'string' ? [{ name: tool, input: JSON.stringify(args ?? {}) }] : []
-      })
-      if (calls.length === 0) continue
-      steps.push({ kind: 'tool', body, delayMs, calls })
-    }
+    const directive = DIRECTIVES.find(entry => entry.name === name)
+    const step = directive?.parse(body, delayMs)
+    if (step) steps.push(step)
   }
   return steps
 }
@@ -200,6 +271,16 @@ export function buildMockScript(prompt: string, options: MockScriptOptions = {})
       continue
     }
     if (step.kind === 'content') {
+      if (step.verbatim) {
+        // One delta. Splitting on whitespace would join the help table's rows into a paragraph.
+        textWords += 1
+        push([
+          { type: 'text-start', id: `t${blockId}` },
+          { type: 'text-delta', id: `t${blockId}`, delta: step.body },
+          { type: 'text-end', id: `t${blockId}` },
+        ], step.delayMs)
+        continue
+      }
       const words = step.filler ? sentence(40) : bodyWords(step.body, 24)
       textWords += words.length
       push(textParts(words, `t${blockId}`), step.delayMs)

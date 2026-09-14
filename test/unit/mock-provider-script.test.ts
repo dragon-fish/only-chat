@@ -142,4 +142,27 @@ describe('mock provider script', () => {
         .toHaveLength(1)
     })
   })
+
+  describe('/help', () => {
+    const helpOf = () => buildMockScript('/help').parts
+      .filter(part => part.type === 'text-delta')
+      .map(part => (part as { delta: string }).delta)
+      .join('')
+
+    it('lists every directive, generated from the same table that parses them', () => {
+      const help = helpOf()
+      // Named individually on purpose: a directive added without a line here is one nobody can
+      // discover, which is the drift a generated help exists to prevent.
+      for (const name of ['reasoning', 'content', 'tool_call', 'parallel', 'error', 'slow', 'help']) {
+        expect(help).toContain(`/${name}`)
+      }
+    })
+
+    it('arrives whole, so its table is a table', () => {
+      // Split a delta per word, the rows would be joined into one paragraph.
+      const deltas = buildMockScript('/help').parts.filter(part => part.type === 'text-delta')
+      expect(deltas).toHaveLength(1)
+      expect(helpOf()).toContain('\n')
+    })
+  })
 })
