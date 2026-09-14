@@ -109,6 +109,18 @@ it('stops on Escape when nothing is waiting to be said', async () => {
   expect(fired.withdraw).toBe(0)
 })
 
+it('stops on Escape even with something typed, as long as nothing is waiting', async () => {
+  // Escape reads the stash, never the box. What is typed decides between sending and queueing.
+  const { host, fired } = mount({ streaming: true })
+  const box = host.querySelector('textarea')!
+  box.value = 'half a thought'
+  box.dispatchEvent(new Event('input', { bubbles: true }))
+  await Promise.resolve()
+  await press(host, 'Escape')
+  expect(fired.stop).toBe(1)
+  expect(fired.withdraw).toBe(0)
+})
+
 it('takes the stash back on Escape rather than stopping', async () => {
   // Innermost first: what is waiting is nearer than the turn, and undoing it should not also end
   // the work. Sending it now is the orange button's job, not something to reach with Escape.
