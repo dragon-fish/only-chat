@@ -57,6 +57,19 @@ const segments = computed(() => messageSegments(props.message.parts))
 const activeSegmentKey = computed(() => (streaming.value ? segments.value.at(-1)?.key ?? null : null))
 /** Steps fold into collapsibles; speech and output never do. */
 const blocks = computed(() => turnBlocks(segments.value))
+
+/**
+ * A settled assistant turn that produced nothing at all.
+ *
+ * Ending a turn on a tool call is normal, but the hub always asks the model again once the tool
+ * answers, and that turn can come back empty — a macro that ends on a call always does, and any
+ * provider is free to. Drawn anyway it was an avatar and a name hanging beside nothing. A failure
+ * or a stop still has something to say, so only silence is hidden.
+ */
+const emptyTurn = computed(() => props.message.role === 'assistant'
+  && !streaming.value
+  && segments.value.length === 0
+  && props.message.status === 'done')
 const canContinueTools = computed(() => canContinueToolMessage(
   props.message,
   [...(sync.messages.get(props.message.conversation_id)?.values() ?? [])],
@@ -84,6 +97,7 @@ function regenerate() {
 
 <template lang="pug">
 MessageRoot(
+  v-if="!emptyTurn"
   :align="message.role === 'user' ? 'end' : 'start'"
   :data-optimistic="optimistic || undefined" :class="cn(optimistic && 'opacity-70')")
   MessageAvatar(v-if="message.role === 'assistant'" class="self-start group-has-data-[slot=message-footer]/message:translate-y-0")
