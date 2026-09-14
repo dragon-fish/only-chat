@@ -487,7 +487,8 @@ describe('rolling back to somewhere legal', () => {
     expect(out.map(m => m.role)).toEqual(['user', 'assistant', 'tool', 'user'])
     const answer = (out[2] as { content: Array<{ toolCallId: string, output: { value: unknown } }> }).content[0]!
     expect(answer.toolCallId).toBe('never')
-    expect(answer.output.value).toMatchObject({ error: 'no_result' })
+    // Not an error: an error is a tool that ran and failed, and this one never ran at all.
+    expect(answer.output.value).toMatchObject({ interrupted: true })
   })
 
   it('leaves an answered call exactly as it was', () => {

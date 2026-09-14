@@ -120,6 +120,10 @@ function assistantMessages(
    * on. What it gets is the call it made and an outcome that is true of every reason there might
    * be — interrupted, never dispatched, still running somewhere nobody is listening.
    *
+   * Not called an error. An error is a tool that ran and failed, and none of these did: they were
+   * cut short. Told the tool failed, a model concludes the tool is unreliable and stops choosing
+   * it, which is the wrong lesson from a turn its own user ended.
+   *
    * Written nowhere. That is what makes a late result simple: a tool that could not be aborted and
    * finishes anyway is stored as an ordinary result, the next assembly uses it instead of this,
    * and there is no race over which of the two owns the row because only one of them was ever in
@@ -166,7 +170,10 @@ function assistantMessages(
             type: 'tool-result',
             toolCallId: p.id,
             toolName: p.name,
-            output: { type: 'json', value: { error: 'no_result', message: '这次调用没有拿到结果。' } as never },
+            output: { type: 'json', value: {
+              interrupted: true,
+              message: '这次调用没有完成，没有结果可用。可能是用户中途终止了这一轮，也可能是它根本没被派发出去。',
+            } as never },
           })
         }
         break
