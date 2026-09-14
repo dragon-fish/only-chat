@@ -15,7 +15,7 @@ function message(error: unknown): string {
  * Names the reset condition rather than saying "this turn": an agent reading 「本轮」 cannot tell
  * whether that means this reply or the whole conversation, and guesses the expensive way.
  */
-const RESET_CLAUSE = '额度在用户下次发言后重置'
+const RESET_CLAUSE = 'the budget resets after the user speaks again'
 
 /**
  * Rides along with every success so the agent plans against the budget instead of hitting it, and
@@ -24,13 +24,13 @@ const RESET_CLAUSE = '额度在用户下次发言后重置'
  * actually gone, which is the only time it is actionable.
  */
 function budgetNote(tool: string, left: number, cap: number): string {
-  const remaining = `${tool} 剩余 ${left}/${cap} 次`
+  const remaining = `${tool} has ${left}/${cap} calls left`
   return left > 0 ? `${remaining}。` : `${remaining}，${RESET_CLAUSE}。`
 }
 
-/** Attached to a call that was turned away — the one place 「耗尽」 describes what just happened. */
+/** Attached to a call that was turned away — the one place "exhausted" describes what just happened. */
 function budgetRefusal(tool: string, cap: number): string {
-  return `${tool} 调用次数耗尽（0/${cap}），${RESET_CLAUSE}。`
+  return `${tool} is out of calls (0/${cap}); ${RESET_CLAUSE}.`
 }
 
 /**
@@ -64,7 +64,7 @@ export async function runWebSearch(
     const results = await client.search({ query: input.query, maxResults })
     return { query: input.query, results, note: budgetNote('web_search', callsLeft, cap) }
   } catch (error) {
-    return { error: `web_search 失败：${message(error)}` }
+    return { error: `web_search failed: ${message(error)}` }
   }
 }
 
@@ -81,6 +81,6 @@ export async function runWebExtract(
   try {
     return { ...await client.extract(input.urls), note: budgetNote('web_extract', callsLeft, cap) }
   } catch (error) {
-    return { error: `web_extract 失败：${message(error)}` }
+    return { error: `web_extract failed: ${message(error)}` }
   }
 }

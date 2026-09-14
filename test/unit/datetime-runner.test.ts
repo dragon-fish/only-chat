@@ -20,7 +20,8 @@ describe('runCurrentTime', () => {
   })
 
   it('rejects a zone Intl does not know, rather than guessing one', () => {
-    expect(runCurrentTime({ timezone: 'Mars/Olympus' }, instant))
-      .toEqual({ error: '未知时区：Mars/Olympus。请使用 IANA 名称，如 Asia/Shanghai。' })
+    // The error, not its wording: what it says is a decision, and pinning it here would only make
+    // the test ring when someone rewrites the sentence.
+    expect(runCurrentTime({ timezone: 'Mars/Olympus' })).toMatchObject({ error: expect.any(String) })
   })
 })

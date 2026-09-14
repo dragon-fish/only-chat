@@ -798,7 +798,7 @@ describe('generation', () => {
       message_id: waiting.id,
       part: {
         type: 'tool_result', call_id: 'still-waiting', name: 'ask_user',
-        content: { status: 'cancelled', message: '用户跳过了问题并继续回复' },
+        content: { status: 'cancelled' },
       },
     })
     expect(await c.next('message.done')).toMatchObject({ status: 'done' })
@@ -853,7 +853,7 @@ describe('generation', () => {
     await updateConversation(db, conversation.id, 1, { head_message_id: waiting.id })
     const skipped = [...waiting.parts, {
       type: 'tool_result' as const, call_id: 'race-call', name: 'ask_user',
-      content: { status: 'cancelled', message: '用户跳过了问题并继续回复' },
+      content: { status: 'cancelled' },
     }]
     expect(await appendToolResult(db, waiting.id, 1, conversation.id, {
       type: 'tool_result', call_id: 'race-call', name: 'ask_user',
@@ -875,7 +875,7 @@ describe('generation', () => {
     await updateConversation(db, conversation.id, 1, { head_message_id: waiting.id })
     const skipped = [...waiting.parts, {
       type: 'tool_result' as const, call_id: 'race-call', name: 'ask_user',
-      content: { status: 'cancelled', message: '用户跳过了问题并继续回复' },
+      content: { status: 'cancelled' },
     }]
     expect(await replaceMessagePartsIfCurrentHead(db, waiting, 1, skipped)).toBe(true)
     expect(await appendToolResult(db, waiting.id, 1, conversation.id, {

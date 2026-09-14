@@ -136,22 +136,22 @@ export const BROWSER_USE_CONTRACT = `export async function run(ctx: {
 }): Promise<string | object>                // your return value is the tool result (objects are JSON-encoded)`
 
 export const BROWSER_USE_DESCRIPTION = [
-  '在这个会话专属的浏览器里执行你写的 Playwright 代码。浏览器在多次调用之间保持标签页、cookie 和登录状态。',
-  '代码是一个 ES module，必须导出 run：',
+  'Runs Playwright code you write in a browser that belongs to this conversation. Tabs, cookies and logins persist between calls.',
+  'The code is an ES module and must export run:',
   '```ts',
   BROWSER_USE_CONTRACT,
   '```',
-  '读页面：await ctx.page.goto(url) 之后用 await ctx.page.locator("body").ariaSnapshot() 拿结构化文本，比截图省得多；只在需要看布局时 await ctx.screenshot()。',
-  '操作页面：page.getByRole / getByText / locator 加 click / fill / press；page.evaluate 可用。',
-  '限制：代码本身没有网络访问（fetch 会抛错），不能启动第二个浏览器，一次调用有时限，超时会返回已有日志。',
-  '遇到登录、验证码、二次验证或任何你做不了的步骤，不要反复尝试，改调 browser_handoff 请用户接管。',
-  '返回值、日志、截图和最终页面的 URL、标题会一起作为结果返回；日志超长会截断并标记。',
+  'To read a page: after await ctx.page.goto(url), use await ctx.page.locator("body").ariaSnapshot() for structured text, which costs far less than a screenshot. Call await ctx.screenshot() only when the layout is what matters.',
+  'To drive a page: page.getByRole / getByText / locator with click / fill / press. page.evaluate is available.',
+  'Limits: the code itself has no network access (fetch throws), a second browser cannot be started, and a call has a time limit — on timeout the logs so far come back.',
+  'For a login, a captcha, a second factor or any step you cannot do, call browser_handoff and let the user take over rather than retrying.',
+  'The return value, the logs, the screenshots and the final page URL and title all come back together. Logs over the budget are truncated and marked.',
 ].join('\n')
 
 export const BROWSER_HANDOFF_DESCRIPTION = [
-  '请用户在实时浏览器里接手一步你做不了的操作：登录、验证码、二次验证、敏感信息输入，或者需要人来确认的动作。',
-  '说明要写清楚用户该做什么、做到哪一步交还给你。用户完成后会告诉你成功还是失败，然后你在同一个浏览器里继续。',
-  '一次只请求一件事；能自动做的不要请求接管。',
+  'Asks the user to take over one step in the live browser that you cannot do: a login, a captcha, a second factor, sensitive input, or an action a person has to confirm.',
+  'State what the user should do and the point at which they hand control back. They report success or failure, and you continue in the same browser.',
+  'Ask for one thing at a time. Do not ask for a handoff on anything you can do yourself.',
 ].join('\n')
 
 // ---- pure helpers shared by server and tests
@@ -168,5 +168,5 @@ export function truncateLogs(logs: string, maxBytes: number = MAX_RESULT_LOG_BYT
   if (encoder.encode(logs).byteLength <= maxBytes) return { logs, truncated: false }
   let kept = logs
   while (encoder.encode(kept).byteLength > maxBytes) kept = kept.slice(Math.floor(kept.length / 4))
-  return { logs: `…[前面的日志已截断]\n${kept}`, truncated: true }
+  return { logs: `…[earlier logs truncated]\n${kept}`, truncated: true }
 }

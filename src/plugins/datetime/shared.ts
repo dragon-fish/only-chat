@@ -2,7 +2,7 @@ import { z } from 'zod'
 
 export const CurrentTimeInputSchema = z.object({
   timezone: z.string().optional()
-    .describe('IANA 时区名，如 Asia/Shanghai、Europe/London。省略则使用 UTC'),
+    .describe('An IANA timezone name such as Asia/Shanghai or Europe/London. Omit it for UTC.'),
 })
 
 export const CurrentTimeOutputSchema = z.object({

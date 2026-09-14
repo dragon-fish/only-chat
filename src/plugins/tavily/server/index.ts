@@ -18,27 +18,27 @@ function clientOf(config: TavilyConfig): TavilyClient {
 }
 
 /**
- * Says when the budget resets rather than calling it a "turn": an agent reading 「本轮」 cannot
+ * Says when the budget resets rather than calling it a "turn": a model reading "this turn" cannot
  * tell whether that means this reply or the whole conversation, and guesses the expensive way.
  * Carries no configured number, so it stays constant and costs no prompt cache.
  */
-const TURN_LIMIT_TIP = '本工具存在调用次数限制，额度在每次用户发言后重置；剩余次数见调用结果。'
+const TURN_LIMIT_TIP = 'This tool has a call limit. The budget resets each time the user speaks; the remaining count comes back with every result.'
 
 const SEARCH_DESCRIPTION = [
-  '联网搜索，返回标题、URL 与摘要片段。',
-  '何时调：时效信息（最近的新闻、价格、赛事、版本）、训练截止之后的事实、小众专业话题、用户明确要求搜索。',
-  '何时别调：稳定的事实性常识、闲聊、上下文或对话历史已经能回答的问题。',
-  '结果不对就换关键词重搜（加年份、换语言、换平台名）。次数用完仍未找到，就告诉用户没查到，不要拆分 query 绕开限制。',
-  '摘要不够时，挑 1-3 个最相关的 URL 一次性传给 web_extract，不要每个 URL 单独调。',
+  'Searches the web and returns titles, URLs and excerpts.',
+  'Use when the answer depends on current information (recent news, prices, results, releases), on facts from after the training cutoff, on a niche specialist topic, or when the user asks for a search.',
+  'Do not use for stable general knowledge, for small talk, or for anything the context and conversation history already answer.',
+  'When the results are wrong, search again with different keywords: add the year, switch language, name the platform. When the budget runs out and nothing was found, tell the user it was not found; do not split the query to get around the limit.',
+  'When the excerpts are not enough, pass the 1-3 most relevant URLs to web_extract in a single call rather than one call per URL.',
   TURN_LIMIT_TIP,
 ].join('\n')
 
 const EXTRACT_DESCRIPTION = [
-  `抓取 ${MAX_EXTRACT_URLS} 个以内网页的正文（markdown）。比 web_search 更慢更贵，只在摘要不足时用。`,
-  '典型流程：web_search → 挑 1-3 个最相关 URL → 一次性传给本工具。',
-  '何时调：搜索摘要缺少具体数字、步骤或完整说明，或用户明确要求读某篇文章。',
-  '何时别调：摘要已经够回答、URL 来源不可信（既非搜索结果也非用户提供）。',
-  '单个 URL 失败会被单独标注，不要因为一个失败就放弃整批。',
+  `Fetches the body text of up to ${MAX_EXTRACT_URLS} pages as markdown. Slower and more expensive than web_search; use it only when the excerpts fall short.`,
+  'The usual path is web_search, then the 1-3 most relevant URLs, passed here in one call.',
+  'Use when the search excerpts lack a specific number, step or full explanation, or when the user names an article to read.',
+  'Do not use when the excerpts already answer the question, or when the URL came from neither a search result nor the user.',
+  'A URL that fails is marked on its own; one failure does not void the rest of the batch.',
   TURN_LIMIT_TIP,
 ].join('\n')
 

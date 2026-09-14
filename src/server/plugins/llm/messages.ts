@@ -147,7 +147,7 @@ function assistantMessages(
             toolName: p.name,
             output: { type: 'json', value: {
               interrupted: true,
-              message: '这次调用没有完成，没有结果可用。可能是用户中途终止了这一轮，也可能是它根本没被派发出去。',
+              message: '[Request interrupted by user for tool use]',
             } as never },
           })
         }

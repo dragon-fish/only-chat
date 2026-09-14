@@ -440,10 +440,13 @@ describe('rolling back to somewhere legal', () => {
       ] }),
       msg({ id: 3, role: 'user', parts: [{ type: 'text', text: '算了' }] }),
     ])
-    const last = out.at(-1) as { role: string, content: Array<{ text: string }> }
+    // That something precedes their words, not what it says — the wording is a decision.
+    const last = out.at(-1) as { role: string, content: unknown[] }
     expect(last.role).toBe('user')
-    expect(last.content[0]!.text).toBe('[Request interrupted by user]')
-    expect(last.content.at(-1)!.text).toBe('算了')
+    expect(last.content).toEqual([
+      { type: 'text', text: expect.any(String) },
+      { type: 'text', text: '算了' },
+    ])
   })
 
   it('carries a note per interruption when several land in a row', () => {
@@ -461,11 +464,8 @@ describe('rolling back to somewhere legal', () => {
       msg({ id: 7, role: 'user', parts: [{ type: 'text', text: '丁' }] }),
     ])
     expect(out.map(m => m.role)).toEqual(['user', 'assistant', 'user'])
+    // One note in front of each thing they said, in order.
     const said = (out[2] as { content: Array<{ text: string }> }).content.map(c => c.text)
-    expect(said).toEqual([
-      '[Request interrupted by user]', '乙',
-      '[Request interrupted by user]', '丙',
-      '[Request interrupted by user]', '丁',
-    ])
+    expect(said).toEqual([expect.any(String), '乙', expect.any(String), '丙', expect.any(String), '丁'])
   })
 })

@@ -5,9 +5,9 @@ import { CurrentTimeInputSchema } from '../shared'
 import { runCurrentTime } from './runner'
 
 const DESCRIPTION = [
-  '查询此刻的日期与时间。',
-  '何时调：涉及"今天""现在""最近"等相对时间，或需要判断某件事是否已经发生。不要凭训练数据推测当前日期。',
-  '可传 IANA 时区名（如 Asia/Shanghai）；省略则返回 UTC。需要多个时区时并行调用，一个时区一次。',
+  'Returns the current date and time.',
+  'Use when the request involves relative time such as today, now or recently, or when deciding whether something has already happened. Do not infer the current date from training data.',
+  'Takes an IANA timezone name such as Asia/Shanghai; omitting it returns UTC. For several timezones, call once per timezone in parallel.',
 ].join('\n')
 
 export const DatetimeServerPlugin = {

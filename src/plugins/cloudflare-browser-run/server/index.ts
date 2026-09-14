@@ -18,7 +18,7 @@ import { storeGeneratedAttachment } from './attachments'
 import { BrowserRateLimited } from './browser-api'
 import { BrowserSessions, probedSession, type StoredSession } from './sessions'
 
-const SKIPPED_MESSAGE = '用户没有处理这次接管就继续了对话'
+const SKIPPED_MESSAGE = 'The user continued the conversation without taking over.'
 
 interface RunScratch {
   lines: string[]
@@ -125,7 +125,7 @@ function buildOutput(result: RunResult, scratch: RunScratch): BrowserUseOutput |
   if (result.ok) {
     return { result: result.result ?? '', logs, logs_truncated: truncated, screenshots, url: result.url, title: result.title }
   }
-  const detail = result.error ? [result.error.message, result.error.stack].filter(Boolean).join('\n') : '未知错误'
+  const detail = result.error ? [result.error.message, result.error.stack].filter(Boolean).join('\n') : 'unknown error'
   return { error: detail, timed_out: result.timedOut, logs, logs_truncated: truncated, screenshots, url: result.url }
 }
 
@@ -135,7 +135,7 @@ function browserUseTool(ctx: Context, toolCtx: ToolContext): Tool<BrowserUseInpu
     const config = BROWSER_RUN_CONFIG_SCHEMA.parse(toolCtx.config)
     const conversation = BROWSER_RUN_CONVERSATION_CONFIG_SCHEMA.parse(toolCtx.conversationConfig)
     if (new TextEncoder().encode(input.code).byteLength > MAX_CODE_BYTES) {
-      return { error: `代码超过 ${MAX_CODE_BYTES} 字节的上限，拆成几次调用。` }
+      return { error: `Code exceeds the ${MAX_CODE_BYTES} byte limit. Split it across several calls.` }
     }
     const timeoutMs = Math.min(input.timeout_ms ?? config.default_timeout_ms, MAX_TIMEOUT_MS)
     const scope = { profile: conversation.browser_profile, projectId: toolCtx.projectId }
@@ -148,11 +148,11 @@ function browserUseTool(ctx: Context, toolCtx: ToolContext): Tool<BrowserUseInpu
         if (error instanceof BrowserRateLimited) {
           const wait = error.retryAfterSeconds
           return {
-            refused: `浏览器额度暂时用尽${wait ? `，${wait} 秒后再试` : ''}。先把已有的信息告诉用户。`,
+            refused: `The browser quota is exhausted${wait ? `; retry in ${wait} seconds` : ''}. Tell the user what you have so far.`,
             ...(wait ? { retry_after_s: wait } : {}),
           }
         }
-        return { error: `无法打开浏览器：${message(error)}` }
+        return { error: `Could not open the browser: ${message(error)}` }
       }
       const storageState = ensured.fresh ? await state.loadProfile(scope) : null
       const scratch = state.begin(toolCallId)
@@ -164,7 +164,7 @@ function browserUseTool(ctx: Context, toolCtx: ToolContext): Tool<BrowserUseInpu
         })
       } catch (error) {
         state.scratch.delete(toolCallId)
-        return { error: `浏览器执行环境失败：${message(error)}`, logs: scratch.lines.join('\n') }
+        return { error: `The browser runtime failed: ${message(error)}`, logs: scratch.lines.join('\n') }
       }
       if (result.storageState) await state.saveProfile(scope, result.storageState)
       const session = { ...ensured.session, liveView: result.liveView ?? ensured.session.liveView }

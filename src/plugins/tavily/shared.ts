@@ -5,14 +5,14 @@ export const DEFAULT_SEARCH_RESULTS = 5
 export const MAX_EXTRACT_URLS = 5
 
 export const WebSearchInputSchema = z.object({
-  query: z.string().trim().min(1).describe('搜索关键词或自然语言查询，中英文均可'),
+  query: z.string().trim().min(1).describe('Search keywords or a natural-language query, in any language.'),
   max_results: z.number().int().min(1).max(MAX_SEARCH_RESULTS).optional()
-    .describe(`返回结果条数，1-${MAX_SEARCH_RESULTS}，默认 ${DEFAULT_SEARCH_RESULTS}`),
+    .describe(`How many results to return, 1-${MAX_SEARCH_RESULTS}. Defaults to ${DEFAULT_SEARCH_RESULTS}.`),
 })
 
 export const WebExtractInputSchema = z.object({
   urls: z.array(z.string().url()).min(1).max(MAX_EXTRACT_URLS)
-    .describe(`要抓取的网页 URL 列表（1-${MAX_EXTRACT_URLS} 个，推荐 1-3）`),
+    .describe(`The page URLs to fetch, 1-${MAX_EXTRACT_URLS} of them. Three or fewer is usual.`),
 })
 
 export const WebSearchResultSchema = z.object({

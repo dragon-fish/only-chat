@@ -32,7 +32,7 @@ export class TavilyClient implements WebSearchClient, WebExtractClient {
       body: JSON.stringify(body),
     })
     // The body may quote the request back; surface the status only so a key cannot reach a log.
-    if (!response.ok) throw new Error(`Tavily ${endpoint} 请求失败（HTTP ${response.status}）`)
+    if (!response.ok) throw new Error(`Tavily ${endpoint} request failed (HTTP ${response.status})`)
     return await response.json() as T
   }
 

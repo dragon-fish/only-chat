@@ -2,7 +2,7 @@ import { tool } from 'ai'
 import { ASK_USER_PLUGIN_ID, ASK_USER_TOOL_ID } from '@/shared/plugins'
 import { AskUserInputSchema, AskUserResultSchema, validateAskUserResult } from '../shared'
 
-const SKIPPED_MESSAGE = '用户跳过了问题并继续回复'
+const SKIPPED_MESSAGE = 'The user moved on without answering and said something else.'
 
 /** The missing `execute` is deliberate: this tool pauses for a durable human response. */
 export const AskUserServerPlugin = {

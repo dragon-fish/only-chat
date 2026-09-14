@@ -21,7 +21,7 @@ export function runCurrentTime(
     weekday = new Intl.DateTimeFormat('zh-CN', { timeZone: timezone, weekday: 'long' }).format(now)
   } catch {
     // Intl is the only authority on what a zone name means; never keep a list of our own to drift.
-    return { error: `未知时区：${timezone}。请使用 IANA 名称，如 Asia/Shanghai。` }
+    return { error: `Unknown timezone: ${timezone}. Use an IANA name such as Asia/Shanghai.` }
   }
   return { timezone, iso: now.toISOString(), local, weekday }
 }
