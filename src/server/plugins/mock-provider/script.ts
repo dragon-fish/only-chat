@@ -101,60 +101,72 @@ export interface MockScriptOptions {
 export function buildMockScript(prompt: string, options: MockScriptOptions = {}): MockScript {
   const text = prompt.trim()
   if (!text.startsWith('/')) return proseScript()
-  const [directive, body] = splitHead(text.slice(1))
+  const [head, body] = splitHead(text.slice(1))
+  // `/reasoning@300` — any shape, throttled. Streaming is the part of the UI worth looking at and
+  // it is over before the eye arrives; `/slow` only ever governed prose.
+  const [directive, pace] = head.split('@')
+  const paced = Number.parseInt(pace ?? '', 10)
+  const throttle = (script: MockScript): MockScript => (
+    Number.isFinite(paced) && paced > 0 ? { ...script, delayMs: paced } : script
+  )
 
   if (directive === 'tool_call' || directive === 'parallel') {
-    if (options.toolsAlreadyRan) return proseScript(18)
+    if (options.toolsAlreadyRan) return throttle(proseScript(18))
   }
 
   if (directive === 'tool_call') {
     const [name, input] = splitHead(body)
-    if (!name || parseJson(input) === undefined) return proseScript()
-    return toolCallScript([{ name, input }])
+    if (!name || parseJson(input) === undefined) return throttle(proseScript())
+    return throttle(toolCallScript([{ name, input }]))
   }
 
   if (directive === 'parallel') {
     const parsed = parseJson(body)
-    if (!Array.isArray(parsed)) return proseScript()
+    if (!Array.isArray(parsed)) return throttle(proseScript())
     const calls = parsed.flatMap((entry) => {
       if (typeof entry !== 'object' || entry === null) return []
       const { name, args } = entry as { name?: unknown, args?: unknown }
       return typeof name === 'string' ? [{ name, input: JSON.stringify(args ?? {}) }] : []
     })
-    return calls.length > 0 ? toolCallScript(calls) : proseScript()
+    return throttle(calls.length > 0 ? toolCallScript(calls) : proseScript())
   }
 
   if (directive === 'reasoning') {
-    const thought = body || sentence(12).join(' ')
-    return {
+    const words = (body || sentence(12).join(' ')).split(/\s+/).filter(Boolean)
+    return throttle({
       parts: [
         ...start(),
         { type: 'reasoning-start', id: 'r1' },
-        { type: 'reasoning-delta', id: 'r1', delta: thought },
+        // One delta per word, like prose. Sent as a single blob the block was already finished by
+        // the time it appeared, so nothing on screen ever showed thinking in progress.
+        ...words.map((word, index): LanguageModelV4StreamPart => (
+          { type: 'reasoning-delta', id: 'r1', delta: index === 0 ? word : ` ${word}` }
+        )),
         { type: 'reasoning-end', id: 'r1' },
         ...prose(24),
         { type: 'finish', finishReason: { unified: 'stop', raw: 'stop' }, usage: usage(24, 12) },
       ],
       delayMs: 0,
-    }
+    })
   }
 
   if (directive === 'error') {
     const message = body || 'mock provider failure'
-    return {
+    return throttle({
       parts: [
         ...start(),
         { type: 'error', error: new Error(message) },
         { type: 'finish', finishReason: { unified: 'error', raw: 'error' }, usage: usage(0) },
       ],
       delayMs: 0,
-    }
+    })
   }
 
+  // Kept: `/slow 300` is fewer keystrokes than `/prose@300` for the common case.
   if (directive === 'slow') {
     const ms = Number.parseInt(body, 10)
     return proseScript(40, Number.isFinite(ms) && ms > 0 ? ms : 200)
   }
 
-  return proseScript()
+  return throttle(proseScript())
 }

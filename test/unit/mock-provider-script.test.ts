@@ -67,4 +67,17 @@ describe('mock provider script', () => {
     expect(types('/tool_call ask_user {not json}')).toContain('text-delta')
     expect(types('/nope whatever')).toContain('text-delta')
   })
+
+  it('paces any shape with @ms, not just prose', () => {
+    // Streaming is the part of the UI worth watching, and it is over before the eye arrives.
+    expect(buildMockScript('/reasoning@300 想一会儿').delayMs).toBe(300)
+    expect(buildMockScript('/tool_call@120 ask_user {}').delayMs).toBe(120)
+    expect(buildMockScript('/reasoning 想一会儿').delayMs).toBe(0)
+  })
+
+  it('streams a thought word by word, so the thinking state lasts long enough to see', () => {
+    const deltas = buildMockScript('/reasoning one two three').parts
+      .filter(part => part.type === 'reasoning-delta')
+    expect(deltas.length).toBe(3)
+  })
 })
