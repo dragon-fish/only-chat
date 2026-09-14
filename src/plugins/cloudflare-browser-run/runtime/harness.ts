@@ -85,7 +85,11 @@ export function createRunner(env: HarnessEnv, userRun: UserRun | undefined) {
     }
 
     try {
-      browser = await connect(env.BROWSER, args.sessionId)
+      // `persistent` is what keeps the session's tabs across connections. Without it Browser Run
+      // hands every new client a fresh about:blank and drops the previous page — seen in production
+      // as the tab resetting before each call. The fork's own connectOverCDP wrapper sets it too; the
+      // option is not in its type declarations, hence the cast.
+      browser = await connect(env.BROWSER, { sessionId: args.sessionId, persistent: true } as Parameters<typeof connect>[1])
       context = await pickContext(browser, args.storageState)
       page = context.pages().at(-1) ?? await context.newPage()
       result.liveView = await liveViewOf(context, page, args.liveViewTtlMs)
