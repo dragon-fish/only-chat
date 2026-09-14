@@ -210,31 +210,23 @@ async function poll(runId: number) {
 async function submit() {
   const model = parseModel()
   if (!model || !canSubmit.value) return
+  // Kept, and the box goes read-only instead. Emptying it on the press would be right if something
+  // took its place — the runs list only gains a row once the server answers, so the prompt would
+  // simply vanish, which reads as lost rather than sent. Read-only rather than disabled: disabling
+  // a focused field blurs it, and the caret does not come back.
   submitting.value = true
-  // Emptied on the press rather than on the reply. Left to the round trip the prompt sits there
-  // looking unsent, which is how the same prompt gets submitted twice. Held so a failure can put
-  // it back — and the previews are only revoked once the request has actually been accepted,
-  // because restoring an image whose object URL is already gone restores a broken thumbnail.
-  const said = prompt.value
-  const used = references.value
-  prompt.value = ''
-  references.value = []
   try {
     const created = await api.createImageRun(buildImageRunInput({
-      model, ...(props.conversationId === null ? {} : { conversationId: props.conversationId }), prompt: said,
-      references: used.map(item => item.attachmentId), count: count.value, customSize: customSize.value,
+      model, ...(props.conversationId === null ? {} : { conversationId: props.conversationId }), prompt: prompt.value,
+      references: references.value.map(item => item.attachmentId), count: count.value, customSize: customSize.value,
       width: width.value, height: height.value, quality: quality.value, background: background.value as '' | 'transparent' | 'opaque',
       outputFormat: outputFormat.value as '' | 'png' | 'webp' | 'jpeg',
     }))
-    for (const image of used) URL.revokeObjectURL(image.preview)
+    prompt.value = ''
+    releaseReferences()
     if (props.conversationId === null) await router.replace(`/images/s/${created.conversation_id}`)
     else await poll(created.run_id)
-  } catch (error) {
-    prompt.value = said
-    references.value = used
-    submitting.value = false
-    toast.error(error instanceof Error ? error.message : String(error))
-  }
+  } catch (error) { submitting.value = false; toast.error(error instanceof Error ? error.message : String(error)) }
 }
 async function cancel() {
   if (!latestRun.value) return
@@ -326,7 +318,7 @@ onBeforeUnmount(() => { clearTimeout(pollTimer); releaseReferences() })
             <Card v-for="(image, index) in references" :key="image.attachmentId" class="relative overflow-hidden py-0"><CardContent class="p-0"><img :src="image.preview" alt="参考图" class="size-20 object-cover" /></CardContent><Button size="icon-xs" variant="secondary" class="absolute right-1 top-1" aria-label="移除参考图" @click="removeReference(index)"><XIcon /></Button></Card>
           </div>
           <InputGroup class="rounded-xl">
-            <InputGroupTextarea v-model="prompt" rows="2" class="max-h-[35vh] text-base md:text-sm" placeholder="描述你想生成或修改的图片…" @keydown.enter.exact.prevent="submit" />
+            <InputGroupTextarea v-model="prompt" rows="2" :readonly="submitting" class="max-h-[35vh] text-base md:text-sm" placeholder="描述你想生成或修改的图片…" @keydown.enter.exact.prevent="submit" />
             <InputGroupAddon align="block-end">
               <input ref="fileInput" type="file" accept="image/*" multiple class="hidden" @change="onFiles" />
               <InputGroupButton size="icon-sm" class="lg:hidden" aria-label="添加参考图" :disabled="!referenceAllowed" @click="chooseFiles"><ImagePlusIcon /></InputGroupButton>
