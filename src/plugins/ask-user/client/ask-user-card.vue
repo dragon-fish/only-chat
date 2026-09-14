@@ -179,19 +179,20 @@ Card(v-else-if="terminal" size="sm" class="my-2 w-full")
   CardFooter(v-if="terminal.status === 'answered' && canContinue" class="justify-end")
     Button(size="sm" :disabled="busy" @click="emit('continue')") 继续
 template(v-else)
-  //- Its own strip above the card, and nowhere near the X. Sharing the header put a small target
-  //- for "put this aside" next to a small target for "throw it away".
-  .flex.justify-center(v-if="!collapsed")
+  //- Its own strip, and nowhere near the X: sharing the header put a small target for "put this
+  //- aside" beside a small target for "throw it away". Sitting on the card rather than floating
+  //- above it — same surface, top corners only, no ring of its own — leaves no seam between them.
+  .flex.justify-center.pt-2(v-if="!collapsed")
     Button(
       variant="ghost" size="sm"
-      class="min-h-10 w-48 max-w-full gap-1 text-xs text-muted-foreground md:min-h-7"
+      class="bg-card hover:bg-accent min-h-10 w-48 max-w-full gap-1 rounded-b-none rounded-t-xl text-xs text-muted-foreground md:min-h-7"
       aria-label="暂时收起" :aria-expanded="true" @click="collapsed = true")
       ChevronDownIcon(class="size-3.5")
       | 暂时收起
   //- Collapsing is deliberate and gets its own control; expanding is someone coming back to answer,
   //- so anywhere on the card will do. The X stops the click so it never expands on its way out.
   Card(
-    size="sm" class="my-2 w-full" :class="collapsed ? 'cursor-pointer hover:bg-accent/40' : undefined"
+    size="sm" :class="[collapsed ? 'my-2 cursor-pointer hover:bg-accent/40' : 'mb-2', 'w-full']"
     @keydown.escape="cancelOnEscape" @click="expandOnClick")
     CardHeader
       CardTitle.flex.items-center.gap-2.text-sm
