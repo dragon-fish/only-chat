@@ -59,14 +59,14 @@ describe('mock provider script', () => {
     expect(paceOf('/slow 250', 'text-delta')).toBe(250)
   })
 
-  it('answers in prose once the turn already ran its tools', () => {
-    // The hub loops while the model emits tool calls. Without this the same directive would be
-    // replayed on every step, up to the step cap.
+  it('says nothing once the turn already ran its tools', () => {
+    // The hub loops while the model emits tool calls. Segmenting is what stops the same directive
+    // being replayed on every step, up to the step cap.
     const directive = '/tool_call ask_user {\'questions\':[]}'.replace(/\'/g, String.fromCharCode(34))
     expect(toolCalls(directive)).toHaveLength(1)
     const after = buildMockScript(directive, { toolResults: 1 })
     expect(after.parts.some(part => part.type === 'tool-call')).toBe(false)
-    expect(after.parts.map(part => part.type)).toContain('text-delta')
+    expect(after.parts.map(part => part.type)).not.toContain('text-delta')
     expect(after.parts.at(-1)).toMatchObject({ type: 'finish', finishReason: { unified: 'stop' } })
   })
 
@@ -122,10 +122,11 @@ describe('mock provider script', () => {
       expect(third.parts.at(-1)).toMatchObject({ finishReason: { unified: 'stop' } })
     })
 
-    it('answers in prose once the macro has run out of steps', () => {
+    it('says nothing once the macro has run out of steps', () => {
+      // A macro that ends on a tool call ends there; a closing paragraph nobody wrote is noise.
       const spent = buildMockScript(MACRO, { toolResults: 9 })
       expect(spent.parts.some(part => part.type === 'tool-call')).toBe(false)
-      expect(spent.parts.map(part => part.type)).toContain('text-delta')
+      expect(spent.parts.map(part => part.type)).not.toContain('text-delta')
     })
 
     it('reads a bare number as a word count', () => {

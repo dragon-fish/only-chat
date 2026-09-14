@@ -249,9 +249,14 @@ export function buildMockScript(prompt: string, options: MockScriptOptions = {})
   if (steps.length === 0) return proseScript()
 
   const segment = segmentAt(steps, options.toolResults ?? 0)
-  // The macro is spent. Answering in prose is what a real model does once its tools have reported,
-  // and it is what keeps the hub's tool loop from running to its step cap.
-  if (segment === null) return proseScript(18)
+  // The macro is spent, so the turn says nothing. Filler here used to stand in for a closing
+  // remark, but a macro that ends on a tool call ends there on purpose, and a paragraph of lorem
+  // after it is noise in the one place the shape was being read. Segmenting is what keeps the
+  // hub's loop from replaying the macro to the step cap; the prose was never doing that.
+  if (segment === null) {
+    const parts = [...start(), { type: 'finish' as const, finishReason: { unified: 'stop' as const, raw: 'stop' }, usage: usage(0) }]
+    return { parts, delays: parts.map(() => 0) }
+  }
 
   const parts: LanguageModelV4StreamPart[] = [...start()]
   const delays: number[] = parts.map(() => 0)
