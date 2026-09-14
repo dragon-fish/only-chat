@@ -168,3 +168,43 @@ it('withdraws then stops when Escape is pressed twice', async () => {
   await press(host, 'Escape')
   expect(fired).toMatchObject({ withdraw: 1, stop: 1 })
 })
+
+it('ignores a second press while the abort is still landing', async () => {
+  // Stopping is not instant. A control that still looks ready is one that gets pressed again, and
+  // the second press used to be another command on its way to a turn that was already ending.
+  const { host, fired } = mount({ streaming: true })
+  const button = host.querySelector<HTMLElement>('[aria-label="停止生成"]')!
+  button.click()
+  await nextTick()
+  button.click()
+  await nextTick()
+  expect(fired.stop).toBe(1)
+  expect(button.getAttribute('aria-disabled')).toBe('true')
+})
+
+it('comes back to life once the turn has actually ended', async () => {
+  // Tied to the turn ending rather than to a guess at how long an abort takes.
+  const host = document.createElement('div')
+  document.body.append(host)
+  const fired: Fired = { send: [], queue: [], interrupt: [], stop: 0, withdraw: 0 }
+  const streaming = ref(true)
+  const app = createApp({
+    setup: () => () => h(TooltipProvider, null, { default: () => h(Composer, {
+      streaming: streaming.value,
+      connected: true,
+      canSend: true,
+      onSend: (parts: Part[]) => fired.send.push(parts),
+      onStop: () => { fired.stop += 1; streaming.value = false },
+    }) }),
+  }).use(createPinia()).use(createRouter({
+    history: createMemoryHistory(),
+    routes: [{ path: '/', component: { template: '<div />' } }],
+  }))
+  app.mount(host)
+  cleanup = () => app.unmount()
+
+  host.querySelector<HTMLElement>('[aria-label="停止生成"]')!.click()
+  await nextTick()
+  await typeAndEnter(host, 'after')
+  expect(fired.send).toEqual([[{ type: 'text', text: 'after' }]])
+})

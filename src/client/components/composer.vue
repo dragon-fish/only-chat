@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, reactive, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { ArrowUp, Clock3, ImagePlus, Send, Square, X, Zap } from '@lucide/vue'
 import { Attachment, AttachmentAction, AttachmentActions, AttachmentGroup, AttachmentMedia } from '@/client/ui/attachment'
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } from '@/client/ui/input-group'
@@ -45,6 +45,16 @@ const busy = computed(() => pending.value > 0 || props.locked === true)
 /** The two reasons the box is inert say different things, so they are told apart here. */
 const uploading = computed(() => pending.value > 0)
 const hasContent = computed(() => text.value.trim() !== '' || images.value.some((image) => image.state === 'done'))
+/**
+ * Set the moment stopping or interrupting is asked for, cleared when the turn actually ends.
+ *
+ * Neither is instant, and a control that still looks ready is one that gets pressed again. The
+ * turn ending is the honest signal that it is over, so the spinner is tied to that rather than to
+ * a guess at how long an abort takes.
+ */
+const acting = ref(false)
+watch(() => props.streaming, (still) => { if (!still) acting.value = false })
+
 const stashed = computed(() => props.stash ?? [])
 /** One line, however much is waiting: the bar is a reminder, not a second transcript. */
 const stashPreview = computed(() => {
@@ -189,13 +199,13 @@ function takeBox(): Part[] {
 }
 
 function act() {
-  if (props.locked) return
+  if (props.locked || acting.value) return
   // Read once. `action` is derived from what is in the box, and `takeBox` empties it — read again
   // afterwards it reports the state of a composer that has already been cleared, which turned
   // every queue into an interrupt: the turn was aborted by the act of typing into it.
   const doing = action.value
   if (doing === 'send') { void submit(); return }
-  if (doing === 'stop') { emit('stop'); return }
+  if (doing === 'stop') { acting.value = true; emit('stop'); return }
   // Whatever is still typed goes with it either way; leaving it behind would lose the sentence the
   // operator was in the middle of when they decided to act.
   const box = takeBox()
@@ -203,6 +213,7 @@ function act() {
     if (box.length > 0) emit('queue', box)
     return
   }
+  acting.value = true
   emit('interrupt', box)
 }
 
@@ -227,10 +238,10 @@ function onKeydown(e: KeyboardEvent) {
   // said is nearer than the turn itself, so it comes back before anything is stopped — and it comes
   // back rather than going out, because sending it now is the orange button's job and not a thing
   // to reach by pressing Escape. Bound to the box, so it only answers to someone looking at it.
-  if (props.locked) return
+  if (props.locked || acting.value) return
   if (e.key === 'Escape' && !e.isComposing) {
     if (stashed.value.length > 0) { e.preventDefault(); emit('withdraw'); return }
-    if (props.streaming) { e.preventDefault(); emit('stop') }
+    if (props.streaming) { e.preventDefault(); acting.value = true; emit('stop') }
     return
   }
   if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return
@@ -334,8 +345,9 @@ onBeforeUnmount(() => { releasePreviews(images.value); dropSent() })
               size="icon-sm" :variant="action === 'stop' ? 'destructive' : 'default'"
               :class="actionClass"
               :aria-label="actionLabel"
-              :aria-disabled="action === 'send' && sendBlockedReason !== null" @click="act")
-              Square(v-if="action === 'stop'" data-icon="inline-start")
+              :aria-disabled="acting || (action === 'send' && sendBlockedReason !== null)" @click="act")
+              Spinner(v-if="acting" class="size-4")
+              Square(v-else-if="action === 'stop'" data-icon="inline-start")
               ArrowUp(v-else-if="action === 'queue'" data-icon="inline-start")
               Zap(v-else-if="action === 'interrupt'" data-icon="inline-start")
               Send(v-else data-icon="inline-start")
