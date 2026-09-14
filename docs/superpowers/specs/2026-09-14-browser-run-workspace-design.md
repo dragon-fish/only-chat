@@ -185,7 +185,8 @@ cached isolate.
   nothing server-side extends it. The model's own CDP commands count as activity, so a session
   outlives a turn by at most 10 minutes. A mounted Live View frame also counts as activity, so
   the client unmounts it after `LIVE_VIEW_IDLE_MS` (10 minutes) without a person touching the
-  panel — clicks in the panel, focus inside the frame, or a session event — and whenever the
+  panel — a click or key in the panel, focus entering the frame, the pointer crossing the
+  frame's edge, or a session event; each counts once, never as a standing state — and whenever the
   page is hidden. The tab shows the countdown and a 恢复画面 button; resuming sends `state`, which
   either mints a fresh link or reports the session gone. Each device keeps its own timer, so a
   session lives while any device is using it and is reclaimed at most 20 minutes after the last.

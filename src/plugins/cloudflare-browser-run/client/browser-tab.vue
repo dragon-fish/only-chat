@@ -46,12 +46,16 @@ function touch() { lastActivityAt.value = Date.now() }
 // A session event means the model or another device just used the browser.
 watch(state, touch)
 
-// The frame is cross-origin, so clicks inside it are invisible; focus resting on it is the one
-// signal that gets out, and while it rests there the person is treated as busy.
-function tick() {
-  now.value = Date.now()
-  if (frame.value && document.activeElement === frame.value) lastActivityAt.value = now.value
+// The frame is cross-origin, so what happens inside it is invisible. What does reach us: focus
+// entering it (the window blurs) and the pointer crossing its edge. Each counts once, never as a
+// standing state — focus left resting on the frame by someone who walked away must still idle out.
+function onWindowBlur() {
+  if (frame.value && document.activeElement === frame.value) touch()
 }
+onMounted(() => window.addEventListener('blur', onWindowBlur))
+onBeforeUnmount(() => window.removeEventListener('blur', onWindowBlur))
+
+function tick() { now.value = Date.now() }
 let ticker: ReturnType<typeof setInterval> | undefined
 watch(active, (on) => {
   if (ticker !== undefined) clearInterval(ticker)
@@ -146,7 +150,8 @@ function refreshView() {
         Button(size="sm" class="min-h-9" :disabled="busy" @click="finish('done')") 完成
         Button(size="sm" variant="outline" class="min-h-9" :disabled="busy" @click="finish('failed')") 失败
   iframe.min-h-0.flex-1.border-0.bg-background(
-    v-if="showFrame" ref="frame" :src="liveViewUrl ?? undefined" title="实时浏览器" allow="clipboard-read; clipboard-write")
+    v-if="showFrame" ref="frame" :src="liveViewUrl ?? undefined" title="实时浏览器" allow="clipboard-read; clipboard-write"
+    @pointerenter="touch" @pointerleave="touch")
   Empty(v-else-if="active && liveViewUrl" class="min-h-0 flex-1")
     EmptyHeader
       PauseIcon(class="size-6 text-muted-foreground")
