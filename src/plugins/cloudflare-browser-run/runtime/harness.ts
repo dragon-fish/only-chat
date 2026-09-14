@@ -140,13 +140,13 @@ export function createRunner(env: HarnessEnv, userRun: UserRun | undefined) {
       try { result.storageState = await context.storageState({ indexedDB: true }) }
       catch { /* A closed context has no state to save. */ }
     }
-    if (browser) {
-      // A browser obtained by `connect` is disconnected by `close`, which keeps the session alive
-      // for the next call; only an explicit close ends it.
-      try {
-        if (args.close) await closeSession(browser)
-        else await browser.close()
-      } catch { /* Already gone. */ }
+    // No `browser.close()` on the way out. Playwright's close on a connected browser tears down the
+    // pages it touched before dropping the socket — observed in production as the tab reverting to
+    // about:blank after every call. Simply returning lets the isolate end and the socket drop with
+    // it, which leaves the session and its tabs exactly as the code left them. Only an explicit
+    // close ends the session, and that goes through CDP, not Playwright.
+    if (browser && args.close) {
+      try { await closeSession(browser) } catch { /* Already gone. */ }
     }
     return result
   }
