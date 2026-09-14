@@ -39,14 +39,14 @@ HoverCard(:open-delay="150" :close-delay="100" :enable-touch="true")
         span.text-xs.text-muted-foreground 模型生成统计
       .grid.grid-cols-3.gap-2
         .rounded-lg.border.bg-muted.p-2(class="bg-muted/45")
-          .text-xs.text-muted-foreground 输入
-          .mt-1.text-sm.font-medium.tabular-nums {{ tokenCount(usage.prompt) }}
+          .text-xs.text-muted-foreground 输入 (tokens)
+          .mt-1.text-base.font-semibold.tabular-nums {{ count(usage.prompt) }}
         .rounded-lg.border.bg-muted.p-2(class="bg-muted/45")
-          .text-xs.text-muted-foreground 输出
-          .mt-1.text-sm.font-medium.tabular-nums {{ tokenCount(usage.completion) }}
+          .text-xs.text-muted-foreground 输出 (tokens)
+          .mt-1.text-base.font-semibold.tabular-nums {{ count(usage.completion) }}
         .rounded-lg.border.bg-muted.p-2(class="bg-muted/45")
-          .text-xs.text-muted-foreground 模型生成 TPS
-          .mt-1.text-sm.font-medium.tabular-nums {{ metrics.tokensPerSecond === null ? '未报告' : rate(metrics.tokensPerSecond) }}
+          .text-xs.text-muted-foreground 生成 (TPS)
+          .mt-1.text-base.font-semibold.tabular-nums {{ metrics.tokensPerSecond === null ? '未报告' : count(metrics.tokensPerSecond) }}
       Separator
       dl.grid.grid-cols-2.gap-x-6.gap-y-3.text-xs
         div
