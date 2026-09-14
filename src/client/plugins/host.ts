@@ -1,4 +1,5 @@
 import type { PluginManifest } from '@/shared/plugins'
+import type { WsCommand } from '@/shared/ws'
 
 /** Kept framework-neutral so lazy host behavior is testable without mounting Vue. */
 export type ToolRenderer = unknown
@@ -26,6 +27,16 @@ export interface ClientPluginContext {
    * quota. Client surfaces are namespaced by plugin id the same way routes are.
    */
   settingsPanel: { register(component: SettingsPanelRenderer): () => void }
+  /**
+   * This plugin's own realtime channel to its server half, routed by plugin id and opaque to the
+   * core. Nothing is buffered: an event that arrives before this plugin was loaded is gone, so a
+   * plugin that needs the current state on load asks for it with `send`.
+   */
+  events: {
+    on(handler: (payload: unknown) => void): () => void
+    /** False when no socket is available to carry the command. */
+    send(payload: unknown): boolean
+  }
 }
 
 export type ClientPluginSetup = (ctx: ClientPluginContext) => void | (() => void)
@@ -46,6 +57,8 @@ export class ClientPluginHost {
   private readonly configRenderers = new Map<string, ConfigRenderer>()
   private readonly messageFooters = new Map<string, MessageFooterRenderer>()
   private readonly settingsPanels = new Map<string, SettingsPanelRenderer>()
+  private readonly eventListeners = new Map<string, Set<(payload: unknown) => void>>()
+  private sender: ((command: WsCommand) => boolean) | null = null
   private readonly pending = new Map<string, Promise<void>>()
   private readonly disposers = new Map<string, () => void>()
 
@@ -75,6 +88,19 @@ export class ClientPluginHost {
 
   settingsPanel(pluginId: string): SettingsPanelRenderer | undefined {
     return this.settingsPanels.get(pluginId)
+  }
+
+  /** The socket that carries plugin commands; wired by the app once the sync store exists. */
+  setSender(sender: ((command: WsCommand) => boolean) | null): void {
+    this.sender = sender
+  }
+
+  /** A `plugin.event` frame from the server, handed to the plugin it names and nobody else. */
+  dispatchEvent(pluginId: string, payload: unknown): void {
+    for (const listener of this.eventListeners.get(pluginId) ?? []) {
+      try { listener(payload) }
+      catch (error) { console.error(`plugin ${pluginId} event listener failed`, error) }
+    }
   }
 
   /** Historical settings pages use this path even when the plugin is now globally disabled. */
@@ -140,6 +166,20 @@ export class ClientPluginHost {
             registrations.push(unregister)
             return unregister
           },
+        },
+        events: {
+          on: (handler) => {
+            let listeners = this.eventListeners.get(pluginId)
+            if (!listeners) {
+              listeners = new Set()
+              this.eventListeners.set(pluginId, listeners)
+            }
+            listeners.add(handler)
+            const unregister = () => { this.eventListeners.get(pluginId)?.delete(handler) }
+            registrations.push(unregister)
+            return unregister
+          },
+          send: payload => this.sender?.({ type: 'plugin.command', plugin: pluginId, payload }) ?? false,
         },
         config: {
           register: (component) => {

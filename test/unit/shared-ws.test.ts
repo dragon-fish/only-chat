@@ -145,4 +145,12 @@ describe('ws protocol', () => {
     expect(WsEventSchema.parse({ type: 'project.updated', project })).toEqual({ type: 'project.updated', project })
     expect(WsEventSchema.parse({ type: 'project.deleted', project_id: 1 })).toEqual({ type: 'project.deleted', project_id: 1 })
   })
+
+  it('carries plugin frames opaquely in both directions', () => {
+    expect(parseCommand(JSON.stringify({ type: 'plugin.command', plugin: 'browser', payload: { kind: 'state' } })))
+      .toEqual({ type: 'plugin.command', plugin: 'browser', payload: { kind: 'state' } })
+    expect(() => parseCommand(JSON.stringify({ type: 'plugin.command', payload: {} }))).toThrow()
+    expect(WsEventSchema.parse({ type: 'plugin.event', plugin: 'browser', payload: [1, 2] }))
+      .toEqual({ type: 'plugin.event', plugin: 'browser', payload: [1, 2] })
+  })
 })

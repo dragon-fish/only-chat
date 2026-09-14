@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, watch } from 'vue'
+import { computed, inject, onBeforeUnmount, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
 import 'vue-sonner/style.css'
@@ -10,6 +10,7 @@ import { useConfigStore } from '@/client/stores/config'
 import { useAuthStore } from '@/client/stores/auth'
 import { authClient } from '@/client/lib/auth-client'
 import { Toaster } from '@/client/ui/sonner'
+import type { ClientPluginHost } from '@/client/plugins/host'
 
 const sync = useSyncStore()
 const config = useConfigStore()
@@ -52,7 +53,14 @@ watch(authKey, async key => {
   await Promise.allSettled([sync.loadSettings(), sync.loadConversations(), sync.loadProjects(), config.load()])
 }, { immediate: true, flush: 'sync' })
 
+// The plugin host is created before any store exists, so its two ends of the socket are tied here.
+const pluginHost = inject<ClientPluginHost | null>('clientPluginHost', null)
+pluginHost?.setSender(command => sync.send(command))
+const stopPluginEvents = sync.onPluginEvent((plugin, payload) => pluginHost?.dispatchEvent(plugin, payload))
+
 onBeforeUnmount(() => {
+  stopPluginEvents()
+  pluginHost?.setSender(null)
   sync.reset()
   config.reset()
 })

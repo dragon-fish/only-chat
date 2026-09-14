@@ -9,6 +9,7 @@ import type { ApiApp, PluginApi } from './plugins/api'
 import type { ModelCatalog } from './plugins/model-catalog'
 import type { ToolRegistry } from './plugins/tools'
 import type { PluginConfig } from './plugins/plugin-config'
+import type { PluginChannel } from './plugins/plugin-channel'
 import type { Message, Project, Conversation } from '@/shared/models'
 
 declare module 'cordis' {
@@ -24,6 +25,7 @@ declare module 'cordis' {
     modelCatalog: ModelCatalog
     tools: ToolRegistry
     pluginConfig: PluginConfig
+    pluginChannel: PluginChannel
   }
 }
 

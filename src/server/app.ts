@@ -8,6 +8,7 @@ import { ApiPlugin } from './plugins/api'
 import { ModelCatalog } from './plugins/model-catalog'
 import { ToolRegistryPlugin } from './plugins/tools'
 import { PluginConfigPlugin } from './plugins/plugin-config'
+import { PluginChannelPlugin } from './plugins/plugin-channel'
 import { AskUserServerPlugin } from '@/plugins/ask-user/server'
 import { TavilyServerPlugin } from '@/plugins/tavily/server'
 import { DatetimeServerPlugin } from '@/plugins/datetime/server'
@@ -49,6 +50,8 @@ export async function createApp(options: AppOptions): Promise<Context> {
     if (options.side === 'hub') {
       await ctx.plugin(ToolRegistryPlugin)
       if (!ctx.get('tools')) throw new Error('ToolRegistryPlugin loaded but ctx.tools is unavailable')
+      await ctx.plugin(PluginChannelPlugin)
+      if (!ctx.get('pluginChannel')) throw new Error('PluginChannelPlugin loaded but ctx.pluginChannel is unavailable')
       await ctx.plugin(AskUserServerPlugin)
       await ctx.plugin(TavilyServerPlugin)
       await ctx.plugin(DatetimeServerPlugin)

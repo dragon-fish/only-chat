@@ -620,6 +620,8 @@ export const useSyncStore = defineStore('sync', () => {
   // needs the other: an enabled plugin whose credential is missing must not offer its tools.
   const pluginConfig = ref<PluginConfigStatusMap>({})
   const lastError = ref<string | null>(null)
+  /** Plugin frames are handed straight to whoever wired the plugin host in; the store keeps none. */
+  const pluginEventListeners = new Set<(plugin: string, payload: unknown) => void>()
   // Whether the Projects list has been fetched. Before it has, a Project id from a route cannot be
   // judged missing — only absent — and must not be silently dropped.
   const projectsLoaded = ref(false)
@@ -813,7 +815,15 @@ export const useSyncStore = defineStore('sync', () => {
         if (e.request_id) rejectOptimistic(e.request_id)
         lastError.value = e.message
         break
+      case 'plugin.event':
+        for (const listener of pluginEventListeners) listener(e.plugin, e.payload)
+        break
     }
+  }
+
+  function onPluginEvent(listener: (plugin: string, payload: unknown) => void): () => void {
+    pluginEventListeners.add(listener)
+    return () => { pluginEventListeners.delete(listener) }
   }
 
   function pathFor(conversationId: number): Message[] {
@@ -930,7 +940,7 @@ export const useSyncStore = defineStore('sync', () => {
     status, snapshotSeq, conversations, projects, messages, streamingIds, forkResult, titleSuggestion, settings, pluginConfig, lastError, projectsLoaded, conversationsLoaded, settingsLoaded,
     optimisticMutations,
     conversationsError, projectsError, settingsError, loadedMessageConversations, conversationList, imageConversationList, projectList,
-    applyEvent, ingestConversations, ingestMessages, conversationsInProject, pathFor, siblingsOf, leafOf, isStreaming, loadConversations, loadProjects, loadSettings, loadMessages, connect, reset, send,
+    applyEvent, ingestConversations, ingestMessages, conversationsInProject, pathFor, siblingsOf, leafOf, isStreaming, loadConversations, loadProjects, loadSettings, loadMessages, connect, reset, send, onPluginEvent,
     beginOptimistic, confirmOptimistic, rejectOptimistic, abandonOptimistic, optimisticToolResult, optimisticToolCallIds,
   }
 })

@@ -66,4 +66,30 @@ describe('ClientPluginHost', () => {
     await host.ensurePlugin('ask_user')
     expect(host.renderer('ask_user')).toEqual({ attempt: 2 })
   })
+
+  it('routes plugin events to their own plugin and commands through the sender', async () => {
+    const received: Array<[string, unknown]> = []
+    const sent: unknown[] = []
+    const manifest = (id: string) => ({ id, name: id, description: id, tools: [{ id: `${id}_tool`, name: id, description: id }] })
+    const host = new ClientPluginHost({
+      manifests: [manifest('alpha'), manifest('beta')],
+      loaders: {
+        alpha: async () => ({ setup: ctx => ctx.events.on(payload => received.push(['alpha', payload])) }),
+        beta: async () => ({ setup: (ctx) => {
+          ctx.events.on(payload => received.push(['beta', payload]))
+          ctx.events.send({ hello: 'server' })
+        } }),
+      },
+    })
+    host.setSender((command) => { sent.push(command); return true })
+    await host.ensurePlugin('alpha')
+    await host.ensurePlugin('beta')
+    host.dispatchEvent('alpha', { n: 1 })
+    host.dispatchEvent('gamma', { n: 2 })
+    expect(received).toEqual([['alpha', { n: 1 }]])
+    expect(sent).toEqual([{ type: 'plugin.command', plugin: 'beta', payload: { hello: 'server' } }])
+    host.disposePlugin('alpha')
+    host.dispatchEvent('alpha', { n: 3 })
+    expect(received).toHaveLength(1)
+  })
 })

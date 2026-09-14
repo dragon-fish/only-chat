@@ -44,7 +44,7 @@ const ALARM_WATCHDOG_MS = 60_000
 
 export class Hub extends Service {
   static readonly provide = 'hub'
-  static readonly inject = ['env', 'doState', 'db', 'assets', 'llm', 'tools']
+  static readonly inject = ['env', 'doState', 'db', 'assets', 'llm', 'tools', 'pluginChannel']
 
   /** Owning context (this.ctx inside methods is the caller's context, per cordis semantics). */
   readonly app: Context
@@ -82,6 +82,11 @@ export class Hub extends Service {
     // Keep a rejected delivery visible to its caller without blocking subsequent broadcasts.
     this._broadcastTail = sending.catch(() => {})
     return sending
+  }
+
+  /** A plugin's own event to every device of this user; see `PluginChannel`. */
+  broadcastPlugin(pluginId: string, payload: unknown): Promise<void> {
+    return this.broadcast({ type: 'plugin.event', plugin: pluginId, payload })
   }
 
   private async _deliverBroadcast(raw: string): Promise<void> {
@@ -154,6 +159,7 @@ export class Hub extends Service {
       case 'project.delete': return this.projectDelete(cmd.project_id)
       case 'tool.respond': return runToolRespond(this, cmd)
       case 'tool.continue': return runToolContinue(this, cmd)
+      case 'plugin.command': return this.app.pluginChannel.dispatch(cmd.plugin, cmd.payload, this)
     }
   }
 
