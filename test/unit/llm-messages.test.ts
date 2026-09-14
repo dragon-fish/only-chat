@@ -467,3 +467,53 @@ describe('interrupted turns', () => {
     expect(said.content[0]?.text).toBe('再问')
   })
 })
+
+describe('rolling back to somewhere legal', () => {
+  const build = (path: Message[]) => buildModelMessages({
+    protocol: 'chat-completions', systemPrompt: null, path, attachments: new Map(),
+  })
+
+  it('drops a call nothing ever answered, wherever it came from', () => {
+    // A tool_use with no result beside it cannot be followed by a user message, so replaying one
+    // makes the request itself illegal. Assembling the prompt is the last place that can decide
+    // what is legal, and it would rather lose a step than be unable to speak at all.
+    const out = build([
+      msg({ id: 1, role: 'user', parts: [{ type: 'text', text: '查' }] }),
+      msg({ id: 2, role: 'assistant', parts: [
+        { type: 'text', text: '这就去' },
+        { type: 'tool_call', id: 'never', name: 'lookup', args: {} },
+      ] }),
+      msg({ id: 3, role: 'user', parts: [{ type: 'text', text: '算了' }] }),
+    ])
+    expect(out.map(m => m.role)).toEqual(['user', 'assistant', 'user'])
+    const said = out[1] as { content: Array<{ type: string }> }
+    expect(said.content.map(part => part.type)).toEqual(['text'])
+  })
+
+  it('keeps the call that was answered and drops only the one that was not', () => {
+    const out = build([
+      msg({ id: 1, role: 'user', parts: [{ type: 'text', text: '查两个' }] }),
+      msg({ id: 2, role: 'assistant', parts: [
+        { type: 'tool_call', id: 'ok', name: 'lookup', args: {} },
+        { type: 'tool_call', id: 'never', name: 'lookup', args: {} },
+        { type: 'tool_result', call_id: 'ok', name: 'lookup', content: { ok: true } },
+      ] }),
+      msg({ id: 3, role: 'user', parts: [{ type: 'text', text: '够了' }] }),
+    ])
+    const calls = (out[1] as { content: Array<{ type: string, toolCallId?: string }> }).content
+    expect(calls).toMatchObject([{ type: 'tool-call', toolCallId: 'ok' }])
+    expect(out.map(m => m.role)).toEqual(['user', 'assistant', 'tool', 'user'])
+  })
+
+  it('leaves nothing between two user messages when the whole turn was unusable', () => {
+    // Nothing the hub does or fails to do can produce an illegal prompt from here.
+    const out = build([
+      msg({ id: 1, role: 'user', parts: [{ type: 'text', text: '第一句' }] }),
+      msg({ id: 2, role: 'assistant', status: 'aborted', parts: [
+        { type: 'tool_call', id: 'never', name: 'lookup', args: {} },
+      ] }),
+      msg({ id: 3, role: 'user', parts: [{ type: 'text', text: '第二句' }] }),
+    ])
+    expect(out.map(m => m.role)).toEqual(['user'])
+  })
+})

@@ -6,7 +6,7 @@ import type { OpenResponsesLanguageModelOptions } from '@ai-sdk/open-responses'
 import type { OpenAICompatibleProviderOptions } from '@ai-sdk/openai-compatible'
 import type { Message, InterfaceProtocol, ReasoningEffort, ConversationParams } from '@/shared/models'
 import type { ModelMetadata } from '@/shared/model-metadata'
-import type { InterjectionPart, Part, ProviderOptions } from '@/shared/parts'
+import type { InterjectionPart, Part, ProviderOptions, ToolResultPart } from '@/shared/parts'
 import { RESPONSES_PROVIDER_NAME, responsesReasoningReplayOptions } from './responses-reasoning'
 
 export const COMPAT_PROVIDER_NAME = 'compat'
@@ -110,6 +110,18 @@ function assistantMessages(
   attachments: ReadonlyMap<number, AttachmentInput>,
 ): Array<AssistantModelMessage | ToolModelMessage | UserModelMessage> {
   const out: Array<AssistantModelMessage | ToolModelMessage | UserModelMessage> = []
+  /**
+   * Calls this message answered. A `tool_use` with no result beside it cannot be followed by a
+   * user message, so replaying one would make the request itself illegal — whatever the hub meant
+   * to do about it, and whether or not the hub was even running when the row was written.
+   *
+   * Dropped rather than repaired. Assembling a prompt is the last place that can decide what is
+   * legal, so it rolls back to somewhere it can speak from and leaves behind whatever it cannot
+   * use. A turn missing a step is a smaller loss than a conversation that cannot be continued.
+   */
+  const answered = new Set(
+    parts.filter((part): part is ToolResultPart => part.type === 'tool_result').map(part => part.call_id),
+  )
   let assistant: AssistantPart[] = []
   let tool: ToolPart[] = []
   const flushAssistant = () => {
@@ -140,6 +152,7 @@ function assistantMessages(
         break
       }
       case 'tool_call':
+        if (!answered.has(p.id)) break
         appendAssistant(withOptions({ type: 'tool-call', toolCallId: p.id, toolName: p.name, input: p.args }, options))
         break
       case 'tool_result':
