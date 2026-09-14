@@ -447,7 +447,7 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
   // Every call this turn cannot answer, whatever its own outcome. A message carrying one is a
   // conversation that can never be written to again, and the ways to acquire one are ordinary:
   // arguments repair could not fix, or a tool the model named that is not in its set.
-  await closeUnanswerableCalls(hub, shell.id, shell.conversation_id, acc.parts)
+  await closeUnanswerableCalls(hub, shell.id, shell.conversation_id, acc.parts, status)
 }
 
 /**
@@ -467,6 +467,7 @@ async function closeUnanswerableCalls(
   messageId: number,
   conversationId: number,
   parts: readonly Part[],
+  outcome: PersistedStatus,
 ): Promise<void> {
   const answered = new Set(parts.filter(part => part.type === 'tool_result').map(part => part.call_id))
   type Closing = { call: ToolCallPart, content: unknown }
@@ -474,11 +475,14 @@ async function closeUnanswerableCalls(
     if (part.type !== 'tool_call' || answered.has(part.id)) return []
     const human = hub.app.tools.human(part.name)
     if (!human) {
-      // A server tool answers within the turn that called it, so one still outstanding here was
-      // never run: the model named a tool that is not in its set, or named nothing that exists.
+      // A server tool answers within the turn that called it, so one still outstanding here did
+      // not run. Why it did not run depends on how the turn ended, and saying the wrong one is
+      // worse than saying nothing: told a working tool does not exist, the model stops using it.
       return [{
         call: part,
-        content: { error: 'tool_unavailable', message: `没有可用的工具叫 ${part.name}，这次调用没有执行。` },
+        content: outcome === 'done'
+          ? { error: 'tool_unavailable', message: `没有可用的工具叫 ${part.name}，这次调用没有执行。` }
+          : { error: 'interrupted', message: `这次 ${part.name} 调用没有跑完，本轮被中断了。工具本身没有问题。` },
       }]
     }
     if (part.name !== ASK_USER_TOOL_ID) return []

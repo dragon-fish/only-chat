@@ -189,6 +189,27 @@ export function requiredAttachmentIds(path: readonly Message[]): Set<number> {
 }
 
 /**
+ * What an interruption looks like from the model's side.
+ *
+ * Two shapes, and the difference is whether the abandoned turn left anything usable behind.
+ *
+ * It usually does — a tool had answered, or a sentence was already being written — and that work
+ * is kept. Rolling back to before it would contradict the screen, which still shows the reply
+ * stopping partway, and would throw away effort the model had already spent. What it needs is to
+ * be told that the stop was deliberate, or it reads its own truncated paragraph as something it
+ * chose to end there.
+ *
+ * Interrupted early enough and the turn has nothing to show. Then it is not a turn at all: the two
+ * user messages around it belong together, and are joined with a note between them. They cannot be
+ * left as two — Anthropic requires the roles to alternate, so a silent turn between them is an
+ * error rather than an oddity.
+ */
+const INTERRUPTED_NOTE = '上面那轮回复没有说完，是用户在生成途中主动打断的，不是模型自己停在那里的。'
+  + '已经做完的部分仍然有效，下面是用户接着说的话。'
+
+const RESENT_NOTE = '（用户在这里打断了一次生成，紧接着又说了下面这些。两段是连着发的，中间没有模型的回复。）'
+
+/**
  * Pure. Same input → byte-identical output, whether the parts came from memory or from D1.
  * Nothing request-specific may ever be added here (see spec §7.2).
  *
@@ -208,16 +229,40 @@ export function buildModelMessages(input: BuildInput): ModelMessage[] {
   }
 
   const lastUserIndex = path.map((m) => m.role).lastIndexOf('user')
+  /** Carried onto the next user message: a note about the turn that came before it. */
+  let pending: string | null = null
+  /** Set when the turn in between said nothing, so the user messages around it are one message. */
+  let joinToPrevious = false
 
   path.forEach((m, i) => {
     if (m.role === 'user') {
-      const content = userParts(m.parts, attachments)
+      const said = userParts(m.parts, attachments)
+      const content: UserPart[] = pending === null ? said : [{ type: 'text', text: pending }, ...said]
+      pending = null
+
+      const previous = joinToPrevious ? out.at(-1) : undefined
+      joinToPrevious = false
+      if (previous && previous.role === 'user' && Array.isArray(previous.content)) {
+        previous.content = [...previous.content, ...content]
+        if (cache && i === lastUserIndex) previous.providerOptions = ANTHROPIC_CACHE
+        return
+      }
+
       out.push(cache && i === lastUserIndex
         ? { role: 'user', content, providerOptions: ANTHROPIC_CACHE }
         : { role: 'user', content })
       return
     }
-    out.push(...assistantMessages(m.parts, protocol, attachments))
+
+    const said = assistantMessages(m.parts, protocol, attachments)
+    if (said.length === 0) {
+      // Interrupted before it could say anything. There is no turn here to put between two user
+      // messages, and leaving a gap would break the alternation Anthropic insists on.
+      if (m.status === 'aborted') { pending = RESENT_NOTE; joinToPrevious = true }
+      return
+    }
+    out.push(...said)
+    if (m.status === 'aborted') pending = INTERRUPTED_NOTE
   })
 
   return out

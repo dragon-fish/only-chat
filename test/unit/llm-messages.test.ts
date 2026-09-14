@@ -419,3 +419,51 @@ describe('interjections', () => {
     expect(requiredAttachmentIds(interrupted)).toEqual(new Set([7]))
   })
 })
+
+describe('interrupted turns', () => {
+  const build = (path: Message[]) => buildModelMessages({
+    protocol: 'chat-completions', systemPrompt: null, path, attachments: new Map(),
+  })
+
+  it('keeps what an interrupted turn managed to do, and says it was interrupted', () => {
+    // The screen still shows the reply stopping partway. Rolling back to before it would
+    // contradict that, and throw away work the model had already done.
+    const out = build([
+      msg({ id: 1, role: 'user', parts: [{ type: 'text', text: '查一下' }] }),
+      msg({ id: 2, role: 'assistant', status: 'aborted', parts: [
+        { type: 'tool_call', id: 'c1', name: 'lookup', args: {} },
+        { type: 'tool_result', call_id: 'c1', name: 'lookup', content: { ok: true } },
+        { type: 'text', text: '我查到了一半' },
+      ] }),
+      msg({ id: 3, role: 'user', parts: [{ type: 'text', text: '算了，换个方向' }] }),
+    ])
+    expect(out.map(m => m.role)).toEqual(['user', 'assistant', 'tool', 'assistant', 'user'])
+    const said = out.at(-1) as { content: Array<{ text?: string }> }
+    expect(said.content[0]?.text).toContain('主动打断')
+    expect(said.content[1]?.text).toBe('算了，换个方向')
+  })
+
+  it('joins the two user messages when the turn between them said nothing', () => {
+    // Anthropic requires the roles to alternate, so a silent turn between two user messages is an
+    // error rather than an oddity.
+    const out = build([
+      msg({ id: 1, role: 'user', parts: [{ type: 'text', text: '第一句' }] }),
+      msg({ id: 2, role: 'assistant', status: 'aborted', parts: [] }),
+      msg({ id: 3, role: 'user', parts: [{ type: 'text', text: '第二句' }] }),
+    ])
+    expect(out.map(m => m.role)).toEqual(['user'])
+    const said = out[0] as { content: Array<{ text?: string }> }
+    expect(said.content.map(part => part.text)).toEqual(['第一句', expect.stringContaining('打断'), '第二句'])
+  })
+
+  it('says nothing extra about a turn that ended on its own', () => {
+    const out = build([
+      msg({ id: 1, role: 'user', parts: [{ type: 'text', text: '问' }] }),
+      msg({ id: 2, role: 'assistant', parts: [{ type: 'text', text: '答' }] }),
+      msg({ id: 3, role: 'user', parts: [{ type: 'text', text: '再问' }] }),
+    ])
+    const said = out.at(-1) as { content: Array<{ text?: string }> }
+    expect(said.content).toHaveLength(1)
+    expect(said.content[0]?.text).toBe('再问')
+  })
+})
