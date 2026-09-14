@@ -21,7 +21,7 @@ import type { ClientPluginHost } from '@/client/plugins/host'
 import { defaultToolsForSettings, conversationToolBlockReason } from '@/client/components/tool-selector'
 import { pendingHumanCalls } from '@/client/components/tool-part-renderer'
 import { pluginManifests } from '@/client/plugins/loaders'
-import { projectPresentation, conversationPath } from '@/client/lib/ui-models'
+import { projectPresentation, conversationPath, latestAssistantContextUsage } from '@/client/lib/ui-models'
 import {
   choiceFromParams, DISCONNECTED_MESSAGE, effectiveModelFor, modelOverrideAfterPick, nextSendState,
   optimisticUserMessage, paramsFromFields, sendCommandFor, conversationFormFrom, conversationSettingSources, useSyncStore,
@@ -156,11 +156,10 @@ const effective = computed(() => effectiveModelFor(override.value, project.value
 const entry = computed(() => config.modelFor(effective.value.model))
 const contextUsage = computed(() => {
   const model = effective.value.model
-  const latest = [...path.value].reverse().find(message => message.role === 'assistant')
   const limit = entry.value?.model.metadata.limit?.context
-  if (!model || !latest?.usage || limit === undefined) return null
-  if (latest.provider_id !== model.provider_id || latest.model_id !== model.model_id) return null
-  return { usage: latest.usage, limit }
+  if (!model || limit === undefined) return null
+  const usage = latestAssistantContextUsage(path.value, model)
+  return usage ? { usage, limit } : null
 })
 // While the config is still loading nothing is known to be unavailable, so sending stays possible.
 const modelAvailable = computed(() => !config.loaded || config.isAvailable(effective.value.model))

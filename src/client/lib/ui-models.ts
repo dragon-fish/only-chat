@@ -1,5 +1,5 @@
-import type { CatalogProviderSummary } from '@/shared/api'
-import type { ModelListItem, ModelQuery, Project, ProviderWithInterfaces, Conversation, Usage } from '@/shared/models'
+import type { CatalogProviderSummary, ModelRef } from '@/shared/api'
+import type { ModelListItem, ModelQuery, Project, ProviderWithInterfaces, Conversation, Message, Usage } from '@/shared/models'
 
 export type EnabledModelEntry = {
   provider: ProviderWithInterfaces
@@ -135,6 +135,18 @@ export function messageUsageMetrics(usage: Usage): { cachedPercent: number | nul
       ? usage.completion / usage.generation_duration_ms * 1000
       : null,
   }
+}
+
+/** Keep the previous turn's known context visible while the same model is producing its successor. */
+export function latestAssistantContextUsage(path: readonly Message[], model: ModelRef): Usage | null {
+  const assistants = [...path].reverse().filter(message => message.role === 'assistant')
+  const latest = assistants[0]
+  if (!latest || latest.provider_id !== model.provider_id || latest.model_id !== model.model_id) return null
+  if (latest.usage) return latest.usage
+  if (latest.status !== 'streaming') return null
+  const previous = assistants[1]
+  if (!previous || previous.provider_id !== model.provider_id || previous.model_id !== model.model_id) return null
+  return previous.usage
 }
 
 export function messageContextUsage(usage: Usage, limit: number): { used: number, limit: number, percent: number } | null {
