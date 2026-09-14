@@ -56,6 +56,11 @@ const collapsedPreview = computed(() => {
 })
 const parsedResult = computed(() => props.result ? AskUserResultSchema.safeParse(props.result.content) : null)
 const terminal = computed(() => parsedResult.value?.success ? parsedResult.value.data : null)
+const terminalLabel = computed(() => {
+  if (terminal.value?.status === 'cancelled') return '已取消回答'
+  if (terminal.value?.status === 'invalid') return '问题未能提出'
+  return '已回答'
+})
 const definitions = computed<QuestionnaireItemDefinition[]>(() => input.value?.questions.map(question => ({
   name: question.id,
   required: question.required,
@@ -159,11 +164,13 @@ Card(v-else-if="terminal" size="sm" class="my-2 w-full")
   CardHeader
     CardTitle.flex.items-center.gap-2.text-sm
       CircleHelpIcon
-      span {{ terminal.status === 'cancelled' ? '已取消回答' : '已回答' }}
+      span {{ terminalLabel }}
   CardContent(v-if="terminal.status === 'answered'" class="flex flex-col gap-3")
     .flex.flex-col.gap-1(v-for="question in input?.questions" :key="question.id")
       span.text-xs.text-muted-foreground {{ question.header }}
       span.text-sm {{ answerLabel(question.id) }}
+  //- The question never reached anyone, so saying it was cancelled would blame the wrong party.
+  CardContent(v-else-if="terminal.status === 'invalid'" class="text-sm text-muted-foreground") {{ terminal.message }}
   CardContent(v-else class="text-sm text-muted-foreground") 用户取消了回答。
   CardFooter(v-if="terminal.status === 'answered' && canContinue" class="justify-end")
     Button(size="sm" :disabled="busy" @click="emit('continue')") 继续

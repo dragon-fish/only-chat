@@ -369,9 +369,6 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
         continue
       }
       for (const ev of acc.apply(part)) {
-        if (part.type === 'tool-call' && ev.kind === 'part' && ev.part.type === 'tool_call' && ev.part.name === ASK_USER_TOOL_ID) {
-          AskUserInputSchema.parse(ev.part.args)
-        }
         if (ev.kind === 'delta') {
           if (firstTokenAt === null && ev.delta.length > 0) firstTokenAt = performance.now()
           await hub.broadcastGeneration({ type: 'message.delta', message_id: shell.id, part_index: ev.part_index, kind: ev.part_kind, delta: ev.delta })
@@ -415,6 +412,64 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
     await hub.untrackInflight(shell.id)
   }
   if (finalizeFailure) throw finalizeFailure.err
+
+  // After the message is settled and untracked, so the result lands on a terminal message and the
+  // continuation starts from one — the same state a person answering would have left behind.
+  // Whatever the turn's own outcome: repairAskUserInput gives the model three tries and then gives
+  // up, and the SDK rethrows, so this most often runs on a turn that ended in error.
+  await answerMalformed(hub, shell.id, shell.conversation_id, acc.parts)
+}
+
+/**
+ * Hand a malformed ask_user call back to the model with the reason it could not be asked.
+ *
+ * Recorded as an ordinary tool result and nothing more. Resuming from it looked right — the model
+ * would see the reason and write a correct call — but repairToolCall has already given it that
+ * chance, and a model that emits the same bad arguments again gets asked again, forever: the loop
+ * ran 226 seconds in a test before anything stopped it. Left as a result, the conversation is
+ * writable again and the reason is in the transcript for the next turn to read.
+ *
+ * Best effort on purpose: failing here must not turn a turn that otherwise finished into an error,
+ * and the operator can still write to the conversation either way.
+ */
+async function answerMalformed(
+  hub: Hub,
+  messageId: number,
+  conversationId: number,
+  parts: readonly Part[],
+): Promise<void> {
+  const answered = new Set(parts.filter(part => part.type === 'tool_result').map(part => part.call_id))
+  const calls = parts.flatMap((part) => {
+    if (part.type !== 'tool_call' || part.name !== ASK_USER_TOOL_ID || answered.has(part.id)) return []
+    const parsed = AskUserInputSchema.safeParse(part.args)
+    if (parsed.success) return []
+    const reason = parsed.error.issues.map(issue => `${issue.path.join('.') || 'questions'}: ${issue.message}`).join('; ')
+    return [{ callId: part.id, reason }]
+  })
+  if (calls.length === 0) return
+
+  try {
+    for (const { callId, reason } of calls) {
+      const part = {
+        type: 'tool_result' as const,
+        call_id: callId,
+        name: ASK_USER_TOOL_ID,
+        content: {
+          status: 'invalid' as const,
+          message: `这些问题没有展示给用户，因为调用参数不合法：${reason}。修正后可以重新提问。`,
+        },
+      }
+      const appended = await appendToolResult(hub.db, messageId, hub.userId, conversationId, part)
+      if (!appended) continue
+      const updated = await getMessage(hub.db, messageId, hub.userId)
+      if (!updated) return
+      await hub.broadcast({
+        type: 'message.part', message_id: messageId, part_index: updated.parts.length - 1, part: updated.parts.at(-1)!,
+      })
+    }
+  } catch (err) {
+    console.error('could not answer a malformed ask_user call', err)
+  }
 }
 
 // ---- entry points
@@ -430,7 +485,12 @@ async function resolveSendParent(hub: Hub, conversation: ConversationRow, parent
   const results = new Set(parent.parts.filter(part => part.type === 'tool_result').map(part => part.call_id))
   const pending = parent.parts.filter((part): part is ToolCallPart => part.type === 'tool_call' && !results.has(part.id))
   if (pending.length === 0) return parent
-  if (parent.role !== 'assistant' || parent.status !== 'done' || hub.inflight().some(job => job.message.id === parent.id)) {
+  // Only whether it is still running, which `inflight` is the one thing that knows. A persisted
+  // message is already terminal — its status is done, error or aborted, never streaming — so
+  // demanding `done` here only ever rejected turns that had finished badly, and a turn that errored
+  // while holding an unanswered call left the conversation unwritable for good: no message could be
+  // sent, and nothing in the UI offered a way out.
+  if (parent.role !== 'assistant' || hub.inflight().some(job => job.message.id === parent.id)) {
     throw new Error('cannot skip tool calls on an incomplete message')
   }
 

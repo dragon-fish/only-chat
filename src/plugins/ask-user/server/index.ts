@@ -24,6 +24,9 @@ export const AskUserServerPlugin = {
       respond: (input, result) => validateAskUserResult(AskUserInputSchema.parse(input), AskUserResultSchema.parse(result)),
       // Not parsed: a person walking away from a malformed question must not be told they cannot.
       skip: () => ({ status: 'cancelled', message: SKIPPED_MESSAGE }),
+      // `invalid` is not a skip. A skip is a person deciding not to answer, and generation waits
+      // for them to say something next; a malformed call is the model's own mistake, and it should
+      // be handed straight back so the turn can carry on and get it right.
       skipped: content => AskUserResultSchema.parse(content).status === 'cancelled',
     })
   },

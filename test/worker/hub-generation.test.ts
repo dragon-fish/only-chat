@@ -279,6 +279,52 @@ describe('generation', () => {
     expect(created[0]!.doGenerateCalls[0]!.tools).toBeUndefined()
   })
 
+  it('hands a call back to the model when repair could not fix it, instead of ending the turn', async () => {
+    // Throwing here used to leave an unanswered call on a message no longer eligible to be skipped,
+    // and the conversation could never be written to again.
+    const providerId = await seedProvider('unrepairable-provider', 'unrepairable-model', false, { tool_call: true })
+    const db = createDb(env.DB)
+    await db.update(users).set({ settings: { plugins: { ask_user: true } } }).where(eq(users.id, 1))
+    const invalidStream: StreamPart[] = [
+      { type: 'stream-start', warnings: [] },
+      { type: 'tool-call', toolCallId: 'bad-call', toolName: 'ask_user', input: JSON.stringify({ questions: [] }) },
+      {
+        type: 'finish', finishReason: { unified: 'tool-calls', raw: 'tool_calls' },
+        usage: {
+          inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 },
+          outputTokens: { total: 1, text: 1, reasoning: 0 }, raw: {},
+        },
+      },
+    ] as StreamPart[]
+    await installMock(() => new MockLanguageModelV4({
+      doStream: async () => ({ stream: simulateReadableStream({ chunks: invalidStream, chunkDelayInMs: null, initialDelayInMs: null }) }),
+      // Repair answers with prose, so the arguments stay unusable.
+      doGenerate: {
+        content: [{ type: 'text', text: 'sorry, no idea' }],
+        finishReason: { unified: 'stop', raw: 'stop' },
+        usage: {
+          inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 },
+          outputTokens: { total: 1, text: 1, reasoning: 0 }, raw: {},
+        },
+        warnings: [],
+      },
+    }))
+    const c = await connect(await seedTestUser())
+    c.ws.send(JSON.stringify({
+      type: 'send', conversation_id: null, parent_id: null, parts: [{ type: 'text', text: 'bad ask' }],
+      provider_id: providerId, model_id: 'unrepairable-model', tools: ['ask_user'],
+    }))
+    // The answer is appended once the turn has settled, so it lands just after `message.done`.
+    expect(await c.next('message.done')).toMatchObject({ status: 'done', error: null })
+    let answer: unknown
+    for (let attempt = 0; attempt < 40 && answer === undefined; attempt++) {
+      const rows = await listMessages(db, conversationIdOf(c), 1)
+      answer = rows[1]?.parts.find(part => part.type === 'tool_result')
+      if (answer === undefined) await new Promise(resolve => setTimeout(resolve, 25))
+    }
+    expect(answer).toMatchObject({ call_id: 'bad-call', name: 'ask_user', content: { status: 'invalid' } })
+  })
+
   it('generates without tools on a model that lacks tool-call support, keeping the snapshot', async () => {
     const providerId = await seedProvider('no-tools-provider', 'no-tools-model', false, {})
     const db = createDb(env.DB)

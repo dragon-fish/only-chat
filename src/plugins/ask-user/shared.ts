@@ -57,9 +57,19 @@ export const AskUserAnswerSchema = z.strictObject({
 })
 export type AskUserAnswer = z.infer<typeof AskUserAnswerSchema>
 
+/**
+ * Three outcomes, not two. `invalid` is the questionnaire that was never put in front of anyone
+ * because its own arguments did not describe one — a question missing its header renders as
+ * nothing, so asking it is not an option.
+ *
+ * It is deliberately not folded into `cancelled`. That would tell the model a person declined to
+ * answer, which is false and is the kind of false that makes it give up and move on. What it needs
+ * to hear is that the call was malformed, in enough detail to write a correct one.
+ */
 export const AskUserResultSchema = z.discriminatedUnion('status', [
   z.strictObject({ status: z.literal('answered'), answers: z.array(AskUserAnswerSchema).min(1).max(3) }),
   z.strictObject({ status: z.literal('cancelled'), message: z.string().trim().min(1).max(2_000) }),
+  z.strictObject({ status: z.literal('invalid'), message: z.string().trim().min(1).max(2_000) }),
 ])
 export type AskUserResult = z.infer<typeof AskUserResultSchema>
 
@@ -68,7 +78,7 @@ export type AskUserResult = z.infer<typeof AskUserResultSchema>
  * requires the original, persisted tool-call arguments. Choice labels are guidance, not a whitelist.
  */
 export function validateAskUserResult(input: AskUserInput, result: AskUserResult): AskUserResult {
-  if (result.status === 'cancelled') return result
+  if (result.status === 'cancelled' || result.status === 'invalid') return result
   if (result.answers.length !== input.questions.length) throw new Error('every question must have one answer entry')
   for (const [index, answer] of result.answers.entries()) {
     const question = input.questions[index]!
