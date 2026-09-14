@@ -36,6 +36,11 @@ function mount(options: { streaming: boolean, stash?: Part[] }) {
   return { host, fired }
 }
 
+function press(host: HTMLElement, key: string) {
+  host.querySelector('textarea')!.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }))
+  return Promise.resolve()
+}
+
 /** Type into the box and press Enter, the way the keyboard path is actually used. */
 async function typeAndEnter(host: HTMLElement, value: string) {
   const box = host.querySelector('textarea')!
@@ -94,4 +99,26 @@ it('interrupts from the button once something is waiting', async () => {
   await Promise.resolve()
   expect(fired.interrupt).toEqual([[]])
   expect(fired.stop).toBe(0)
+})
+
+it('stops on Escape, whatever is typed', async () => {
+  // Escape calls it off. What is in the box decides between sending and queueing, not between
+  // carrying on and stopping.
+  const { host, fired } = mount({ streaming: true })
+  await typeAndEnter(host, 'queued first')
+  await press(host, 'Escape')
+  expect(fired.stop).toBe(1)
+})
+
+it('interrupts on Escape once something is waiting', async () => {
+  const { host, fired } = mount({ streaming: true, stash: [{ type: 'text', text: 'earlier' }] })
+  await press(host, 'Escape')
+  expect(fired.interrupt).toEqual([[]])
+  expect(fired.stop).toBe(0)
+})
+
+it('ignores Escape when nothing is generating', async () => {
+  const { host, fired } = mount({ streaming: false })
+  await press(host, 'Escape')
+  expect(fired).toMatchObject({ stop: 0, interrupt: [] })
 })

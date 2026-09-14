@@ -80,11 +80,11 @@ const actionLabel = computed(() => ({
 
 const actionHint = computed(() => {
   if (action.value === 'send') return sendBlockedReason.value ?? '发送消息'
-  if (action.value === 'stop') return '停止生成'
+  if (action.value === 'stop') return '停止生成（Esc）'
   if (action.value === 'queue') {
     return stashed.value.length > 0 ? '继续排队，与已排队的消息一并送出' : '排队此消息，模型能听时再说'
   }
-  return '打断当前生成，立即把已排队的消息从最近的合法位置插入对话'
+  return '打断当前生成，立即把已排队的消息从最近的合法位置插入对话（Esc）'
 })
 
 const sendBlockedReason = computed(() => {
@@ -217,6 +217,15 @@ function restore(parts: Part[]) {
 }
 
 function onKeydown(e: KeyboardEvent) {
+  // Escape is the gesture for calling it off, and it means that whatever is typed: what is in the
+  // box decides between sending and queueing, not between carrying on and stopping. Bound to the
+  // box, so it only ever answers to someone who is looking at it.
+  if (e.key === 'Escape' && !e.isComposing && props.streaming) {
+    e.preventDefault()
+    if (stashed.value.length > 0) emit('interrupt', takeBox())
+    else emit('stop')
+    return
+  }
   if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return
   e.preventDefault()
   // Enter is the gesture for sending, so with nothing to send it does nothing. Stopping and
