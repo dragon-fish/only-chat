@@ -225,7 +225,9 @@ export const BrowserRunServerPlugin = {
       if (!scope) throw new Error('conversation not found')
       switch (command.kind) {
         case 'state': {
-          const session = await state.sessions.alive(command.conversation_id)
+          // A stored Live View link may point at a tab that no longer exists; a mount always gets
+          // a link minted against the page that is there now, or learns the session is gone.
+          const session = await state.probe(command.conversation_id, { close: false })
           await state.publish(command.conversation_id, scope.profile, session)
           return
         }

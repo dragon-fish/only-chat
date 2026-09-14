@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { CircleHelpIcon, GlobeIcon, XIcon } from '@lucide/vue'
+import { CircleHelpIcon, GlobeIcon, RefreshCwIcon, XIcon } from '@lucide/vue'
 import { pendingHumanCalls } from '@/client/components/tool-part-renderer'
 import { DISCONNECTED_MESSAGE, useSyncStore } from '@/client/stores/sync'
 import { Alert, AlertDescription, AlertTitle } from '@/client/ui/alert'
@@ -91,6 +91,11 @@ function finish(status: 'done' | 'failed') {
 function closeBrowser() {
   if (props.conversationId !== null) sendCommand({ kind: 'close', conversation_id: props.conversationId })
 }
+
+/** The Live View frame cannot tell us it lost its tab; the person can, with one press. */
+function refreshView() {
+  if (props.conversationId !== null) sendCommand({ kind: 'refresh_live_view', conversation_id: props.conversationId })
+}
 </script>
 
 <template lang="pug">
@@ -117,7 +122,10 @@ function closeBrowser() {
     GlobeIcon(class="size-3.5 shrink-0")
     span {{ elapsed }}
     Badge(v-if="state?.profile" variant="secondary") {{ PROFILE_LABELS[state.profile] }}
-    Button(variant="ghost" size="sm" class="ml-auto h-7 px-2" title="关闭浏览器" @click="closeBrowser")
+    Button(variant="ghost" size="sm" class="ml-auto h-7 px-2" title="重新获取实时画面" @click="refreshView")
+      RefreshCwIcon(data-icon="inline-start")
+      | 刷新画面
+    Button(variant="ghost" size="sm" class="h-7 px-2" title="关闭浏览器" @click="closeBrowser")
       XIcon(data-icon="inline-start")
       | 关闭浏览器
 </template>
