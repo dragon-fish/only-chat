@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { joinStash } from '@/server/plugins/hub/index'
+import { joinStash } from '@/shared/stash'
 import type { Part } from '@/shared/parts'
 
 const text = (t: string): Part => ({ type: 'text', text: t })

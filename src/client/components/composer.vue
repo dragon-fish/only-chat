@@ -23,6 +23,8 @@ const props = defineProps<{
   replaced?: boolean
   /** What the server is holding for this conversation, said while the turn ran. */
   stash?: Part[]
+  /** Waiting on an answer that decides what the box should contain; do not let it be edited. */
+  locked?: boolean
 }>()
 const emit = defineEmits<{
   send: [parts: Part[]]
@@ -39,7 +41,9 @@ const text = ref('')
 const images = ref<Attached[]>([])
 // A counter, not a flag: concurrent uploads must not let the first one to finish clear `busy`.
 const pending = ref(0)
-const busy = computed(() => pending.value > 0)
+const busy = computed(() => pending.value > 0 || props.locked === true)
+/** The two reasons the box is inert say different things, so they are told apart here. */
+const uploading = computed(() => pending.value > 0)
 const hasContent = computed(() => text.value.trim() !== '' || images.value.some((image) => image.state === 'done'))
 const stashed = computed(() => props.stash ?? [])
 /** One line, however much is waiting: the bar is a reminder, not a second transcript. */
@@ -88,7 +92,8 @@ const actionHint = computed(() => {
 })
 
 const sendBlockedReason = computed(() => {
-  if (busy.value) return '图片上传完成后即可发送'
+  if (props.locked) return '正在取回已排队的消息…'
+  if (uploading.value) return '图片上传完成后即可发送'
   if (!props.connected) return '未连接'
   if (!props.canSend) return props.hint ?? '当前无法发送'
   if (!hasContent.value) return '输入消息或添加图片'
@@ -184,6 +189,7 @@ function takeBox(): Part[] {
 }
 
 function act() {
+  if (props.locked) return
   // Read once. `action` is derived from what is in the box, and `takeBox` empties it — read again
   // afterwards it reports the state of a composer that has already been cleared, which turned
   // every queue into an interrupt: the turn was aborted by the act of typing into it.
@@ -221,6 +227,7 @@ function onKeydown(e: KeyboardEvent) {
   // said is nearer than the turn itself, so it comes back before anything is stopped — and it comes
   // back rather than going out, because sending it now is the orange button's job and not a thing
   // to reach by pressing Escape. Bound to the box, so it only answers to someone looking at it.
+  if (props.locked) return
   if (e.key === 'Escape' && !e.isComposing) {
     if (stashed.value.length > 0) { e.preventDefault(); emit('withdraw'); return }
     if (props.streaming) { e.preventDefault(); emit('stop') }
@@ -300,7 +307,7 @@ onBeforeUnmount(() => { releasePreviews(images.value); dropSent() })
           AttachmentAction(class="size-10 md:size-6" title="移除" aria-label="移除图片" @click="removeImage(i)")
             X(data-icon="inline-start")
     InputGroupTextarea(
-      ref="box" v-model="text" rows="2" placeholder="输入消息…"
+      ref="box" v-model="text" rows="2" :disabled="locked" :placeholder="locked ? '正在取回…' : '输入消息…'"
       class="max-h-[40vh] text-base md:text-sm"
       @keydown="onKeydown" @paste="onPaste" @input="autoGrow")
     //- `align="block-end"` is what makes InputGroup lay out as a column with this row last.

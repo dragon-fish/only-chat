@@ -16,28 +16,12 @@ import { parseConversationPluginSettings } from '@/shared/plugins'
 import { pluginManifests } from '@/shared/plugin-manifests'
 import { createProject, deleteProject, getProject, listProjectConversations, updateProject, validateProjectIcon } from './projects'
 import { SeqAllocator } from './seq'
+import { joinStash } from '@/shared/stash'
 import { runEdit, runInterjectInterrupt, runRegenerate, runSend, runToolContinue, runToolRespond } from './generation'
 import { parseAuthUserId } from '../auth/user-id'
 import { AUTH_REVOKED_CLOSE_CODE, hasActiveAuthSession, type SocketAttachment } from './identity'
 
 type GenerationEvent = Extract<WsEvent, { type: 'message.delta' | 'message.part' | 'message.done' | 'tool.progress' }>
-
-/**
- * Fold new parts into what is already waiting.
- *
- * Adjacent text is joined with a blank line rather than kept as separate parts: someone typing
- * three sentences while they wait is composing one remark, and delivering it as three would read
- * to the model as being interrupted three times. Images keep their own parts, in the order sent.
- */
-export function joinStash(held: readonly Part[], added: readonly Part[]): Part[] {
-  const out = [...held]
-  for (const part of added) {
-    const last = out.at(-1)
-    if (part.type === 'text' && last?.type === 'text') out[out.length - 1] = { ...last, text: `${last.text}\n${part.text}` }
-    else out.push(part)
-  }
-  return out
-}
 
 export interface InflightJob {
   message: Message
