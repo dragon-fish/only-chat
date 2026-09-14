@@ -66,6 +66,17 @@ describe('messageSegments', () => {
     expect(messageSegments([text('before'), image, text('after')]).map(s => s.kind))
       .toEqual(['text', 'image', 'text'])
   })
+
+  it('gives an interjection a segment of its own, where it was said', () => {
+    // It lives inside the assistant message for reasons of prompt shape, but an unknown kind
+    // produces no segment at all — so it rendered as nothing while the model saw it perfectly.
+    const parts: Part[] = [
+      call('a'), result('a'),
+      { type: 'interjection', parts: [{ type: 'text', text: '等一下' }] },
+      text('好的'),
+    ]
+    expect(messageSegments(parts).map(segment => segment.kind)).toEqual(['tool', 'interjection', 'text'])
+  })
 })
 
 describe('turnBlocks', () => {
@@ -106,6 +117,16 @@ describe('turnBlocks', () => {
   it('still folds a call that came with thinking, which is a sequence', () => {
     expect(shape([reasoning('deciding'), call('q', 'ask_user'), result('q', 'ask_user')]))
       .toEqual(['process(2)'])
+  })
+
+  it('breaks the run so what the operator said is never folded away', () => {
+    // It arrived between two steps and belongs between them on screen too — but outside the
+    // collapsible, because a message hidden behind a chevron is a message nobody sees.
+    expect(shape([
+      reasoning('planning'), call('a'), result('a'),
+      { type: 'interjection', parts: [{ type: 'text', text: '等一下' }] },
+      reasoning('adjusting'), call('b'), result('b'), text('好了'),
+    ])).toEqual(['process(2)', 'interjection', 'process(2)', 'text'])
   })
 
   it('keeps images visible as output rather than folding them into the steps', () => {

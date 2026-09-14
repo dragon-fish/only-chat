@@ -1,10 +1,11 @@
-import type { ImagePart, Part, ToolCallPart, ToolResultPart } from '@/shared/parts'
+import type { ImagePart, InterjectionPart, Part, ToolCallPart, ToolResultPart } from '@/shared/parts'
 
 export type MessageSegment =
   | { kind: 'reasoning'; key: string; text: string; durationMs: number | null }
   | { kind: 'text'; key: string; markdown: string }
   | { kind: 'tool'; key: string; call: ToolCallPart; result: ToolResultPart | null }
   | { kind: 'image'; key: string; part: ImagePart }
+  | { kind: 'interjection'; key: string; part: InterjectionPart }
 
 /**
  * `parts` is already in the order the model produced it — the accumulator gives every kind/id pair
@@ -49,6 +50,13 @@ export function messageSegments(parts: readonly Part[]): MessageSegment[] {
             durationMs: part.duration_ms ?? null,
           })
         }
+        break
+      }
+      case 'interjection': {
+        // Said mid-turn, and shown where it was said. It lives inside the assistant message for
+        // reasons of prompt shape, but it is the operator speaking and reads as nothing at all if
+        // the walk skips it — which it did, silently, because an unknown kind produces no segment.
+        segments.push({ kind: 'interjection', key: `interjection:${index}`, part })
         break
       }
       case 'tool_call': {
