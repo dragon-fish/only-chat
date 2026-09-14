@@ -239,7 +239,9 @@ export async function appendToolResult(
      WHERE id = ?
        AND conversation_id = ?
        AND role = 'assistant'
-       AND status = 'done'
+       -- Terminal, not successful. A turn that errored or was interrupted is just as finished, and
+       -- a result that arrives for one still belongs on it.
+       AND status <> 'streaming'
        AND EXISTS (SELECT 1 FROM conversations WHERE id = messages.conversation_id AND user_id = ?)
        AND NOT EXISTS (
          SELECT 1 FROM json_each(parts)
@@ -266,7 +268,9 @@ export async function replaceMessagePartsIfCurrentHead(
      WHERE id = ?
        AND conversation_id = ?
        AND role = 'assistant'
-       AND status = 'done'
+       -- Terminal, not successful. A turn that errored or was interrupted is just as finished, and
+       -- a result that arrives for one still belongs on it.
+       AND status <> 'streaming'
        AND json(parts) = json(?)
        AND EXISTS (
          SELECT 1 FROM conversations WHERE id = ? AND head_message_id = ? AND user_id = ?

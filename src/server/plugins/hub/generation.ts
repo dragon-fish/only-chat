@@ -274,6 +274,8 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
   await hub.trackInflight(job)
   const tracked = job as InflightJob
 
+  /** False once the stream is no longer being read, which is when a result counts as late. */
+  let consuming = true
   let status: PersistedStatus = 'done'
   let error: string | null = null
   let usage: Usage | null = null
@@ -312,13 +314,25 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
       acceptsImages: target.model.metadata_resolved.modalities?.input.includes('image') ?? false,
     }))
 
+    // Interrupting is best effort. The abort reaches a tool that is already running, and plenty of
+    // them cannot be stopped at all — a search over the network is away and billed the moment it
+    // leaves, so `execute` finishes its work honestly and the charge stands either way. Dropping
+    // that result would mean paying for it twice to get it again, and the call would be closed out
+    // as "did not run", which is a lie the model would act on.
+    //
+    // Kept, then. But the loop stops there: a turn the operator ended does not get to carry on
+    // because a tool happened to come back.
+    const late = keepLateResults(tools, () => consuming, async (name, callId, output) => {
+      await recordLateResult(hub, shell.id, target.conversation.id, name, callId, output)
+    })
+
     const requestStartedAt = performance.now()
     let firstTokenAt: number | null = null
     const stepPerformance: GenerationStepPerformance[] = []
     const result = streamText({
       model,
       messages,
-      tools,
+      tools: late,
       // Without a stop condition the SDK runs one step, so an executing tool would produce a result
       // the model never gets to answer from. The second condition is not optional: a tool with no
       // `execute` still yields a tool-error output, which satisfies the SDK's own continue check —
@@ -426,6 +440,7 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
   // therefore captured and rethrown only at the very end. `untrackInflight` resolves the promise
   // `hub.stop()` awaits, so it comes last: by the time `stop()` (and thus `conversationDelete`) returns,
   // every socket already has the terminal event.
+  consuming = false
   let finalizeFailure: { err: unknown } | null = null
   try {
     await finalizeMessage(hub.db, shell.id, hub.userId, { parts: acc.parts, usage, status, error })
@@ -448,6 +463,57 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
   // conversation that can never be written to again, and the ways to acquire one are ordinary:
   // arguments repair could not fix, or a tool the model named that is not in its set.
   await closeUnanswerableCalls(hub, shell.id, shell.conversation_id, acc.parts, status)
+}
+
+/**
+ * Wrap each tool so a result landing after the turn stopped is still recorded.
+ *
+ * The SDK's stream is gone by then, so nothing else would ever see it — and what is thrown away is
+ * not only effort but money, for any tool that bills per call. `isLive` reports whether the stream
+ * is still being read; while it is, the wrapper stands aside.
+ */
+export function keepLateResults(
+  tools: ToolSet,
+  isLive: () => boolean,
+  record: (name: string, callId: string, output: unknown) => Promise<void>,
+): ToolSet {
+  const wrapped: ToolSet = {}
+  for (const [name, entry] of Object.entries(tools)) {
+    const run = entry.execute
+    if (!run) { wrapped[name] = entry; continue }
+    wrapped[name] = {
+      ...entry,
+      execute: async (input: never, options: never) => {
+        const output = await (run as (i: never, o: never) => unknown)(input, options)
+        if (!isLive()) {
+          const callId = (options as { toolCallId?: string }).toolCallId ?? ''
+          await record(name, callId, output).catch(err => console.error('late tool result lost', err))
+        }
+        return output
+      },
+    } as typeof entry
+  }
+  return wrapped
+}
+
+/** Put a late result on the message that asked for it, without resuming anything. */
+async function recordLateResult(
+  hub: Hub,
+  messageId: number,
+  conversationId: number,
+  name: string,
+  callId: string,
+  output: unknown,
+): Promise<void> {
+  if (!callId) return
+  const part = { type: 'tool_result' as const, call_id: callId, name, content: output }
+  // Loses to whatever closed the call out first; the row guard makes that decision once.
+  if (!(await appendToolResult(hub.db, messageId, hub.userId, conversationId, part))) return
+  const updated = await getMessage(hub.db, messageId, hub.userId)
+  if (!updated) return
+  await hub.broadcast({
+    type: 'message.part', message_id: messageId, part_index: updated.parts.length - 1, part: updated.parts.at(-1)!,
+  })
 }
 
 /**
@@ -482,7 +548,7 @@ async function closeUnanswerableCalls(
         call: part,
         content: outcome === 'done'
           ? { error: 'tool_unavailable', message: `没有可用的工具叫 ${part.name}，这次调用没有执行。` }
-          : { error: 'interrupted', message: `这次 ${part.name} 调用没有跑完，本轮被中断了。工具本身没有问题。` },
+          : { error: 'interrupted', message: `用户中途终止了这轮生成，这次 ${part.name} 调用没有拿到结果。工具本身没有问题。` },
       }]
     }
     if (part.name !== ASK_USER_TOOL_ID) return []
