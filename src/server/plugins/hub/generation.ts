@@ -415,13 +415,14 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
 
   // After the message is settled and untracked, so the result lands on a terminal message and the
   // continuation starts from one — the same state a person answering would have left behind.
-  // Whatever the turn's own outcome: repairAskUserInput gives the model three tries and then gives
-  // up, and the SDK rethrows, so this most often runs on a turn that ended in error.
-  await answerMalformed(hub, shell.id, shell.conversation_id, acc.parts)
+  // Every call this turn cannot answer, whatever its own outcome. A message carrying one is a
+  // conversation that can never be written to again, and the ways to acquire one are ordinary:
+  // arguments repair could not fix, or a tool the model named that is not in its set.
+  await closeUnanswerableCalls(hub, shell.id, shell.conversation_id, acc.parts)
 }
 
 /**
- * Hand a malformed ask_user call back to the model with the reason it could not be asked.
+ * Close out every call this turn left that nothing will ever answer.
  *
  * Recorded as an ordinary tool result and nothing more. Resuming from it looked right — the model
  * would see the reason and write a correct call — but repairToolCall has already given it that
@@ -432,33 +433,43 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
  * Best effort on purpose: failing here must not turn a turn that otherwise finished into an error,
  * and the operator can still write to the conversation either way.
  */
-async function answerMalformed(
+async function closeUnanswerableCalls(
   hub: Hub,
   messageId: number,
   conversationId: number,
   parts: readonly Part[],
 ): Promise<void> {
   const answered = new Set(parts.filter(part => part.type === 'tool_result').map(part => part.call_id))
-  const calls = parts.flatMap((part) => {
-    if (part.type !== 'tool_call' || part.name !== ASK_USER_TOOL_ID || answered.has(part.id)) return []
+  type Closing = { call: ToolCallPart, content: unknown }
+  const calls = parts.flatMap((part): Closing[] => {
+    if (part.type !== 'tool_call' || answered.has(part.id)) return []
+    const human = hub.app.tools.human(part.name)
+    if (!human) {
+      // A server tool answers within the turn that called it, so one still outstanding here was
+      // never run: the model named a tool that is not in its set, or named nothing that exists.
+      return [{
+        call: part,
+        content: { error: 'tool_unavailable', message: `没有可用的工具叫 ${part.name}，这次调用没有执行。` },
+      }]
+    }
+    if (part.name !== ASK_USER_TOOL_ID) return []
     const parsed = AskUserInputSchema.safeParse(part.args)
+    // A well-formed question is waiting on a person, which is not the same as waiting on nobody.
     if (parsed.success) return []
     const reason = parsed.error.issues.map(issue => `${issue.path.join('.') || 'questions'}: ${issue.message}`).join('; ')
-    return [{ callId: part.id, reason }]
+    return [{
+      call: part,
+      content: {
+        status: 'invalid' as const,
+        message: `这些问题没有展示给用户，因为调用参数不合法：${reason}。修正后可以重新提问。`,
+      },
+    }]
   })
   if (calls.length === 0) return
 
   try {
-    for (const { callId, reason } of calls) {
-      const part = {
-        type: 'tool_result' as const,
-        call_id: callId,
-        name: ASK_USER_TOOL_ID,
-        content: {
-          status: 'invalid' as const,
-          message: `这些问题没有展示给用户，因为调用参数不合法：${reason}。修正后可以重新提问。`,
-        },
-      }
+    for (const { call, content } of calls) {
+      const part = { type: 'tool_result' as const, call_id: call.id, name: call.name, content }
       const appended = await appendToolResult(hub.db, messageId, hub.userId, conversationId, part)
       if (!appended) continue
       const updated = await getMessage(hub.db, messageId, hub.userId)
@@ -468,7 +479,7 @@ async function answerMalformed(
       })
     }
   } catch (err) {
-    console.error('could not answer a malformed ask_user call', err)
+    console.error('could not close out an unanswerable tool call', err)
   }
 }
 
@@ -494,10 +505,19 @@ async function resolveSendParent(hub: Hub, conversation: ConversationRow, parent
     throw new Error('cannot skip tool calls on an incomplete message')
   }
 
+  // A turn closes out its own unanswerable calls, so what reaches here is a human tool waiting on
+  // a person. Messages written before that did are still out there, though, and one of them must
+  // not be the reason a conversation can never be written to again.
   const skipped = pending.map((call) => {
     const human = hub.app.tools.human(call.name)
-    if (!human) throw new Error(`cannot skip unsupported tool: ${call.name}`)
-    return { type: 'tool_result' as const, call_id: call.id, name: call.name, content: human.skip(call.args) }
+    return {
+      type: 'tool_result' as const,
+      call_id: call.id,
+      name: call.name,
+      content: human
+        ? human.skip(call.args)
+        : { error: 'tool_unavailable', message: `没有可用的工具叫 ${call.name}，这次调用没有执行。` },
+    }
   })
   const nextParts: Part[] = [...parent.parts, ...skipped]
   if (!(await replaceMessagePartsIfCurrentHead(hub.db, parent, hub.userId, nextParts))) {

@@ -325,6 +325,42 @@ describe('generation', () => {
     expect(answer).toMatchObject({ call_id: 'bad-call', name: 'ask_user', content: { status: 'invalid' } })
   })
 
+  it('closes out a call to a tool the model was never given', async () => {
+    // A wrong tool name is an ordinary model mistake. Left unanswered it was a conversation that
+    // could never be written to again, because nothing existed that could answer or skip it.
+    const providerId = await seedProvider('absent-tool-provider', 'absent-tool-model', false, { tool_call: true })
+    const db = createDb(env.DB)
+    await db.update(users).set({ settings: { plugins: { ask_user: true } } }).where(eq(users.id, 1))
+    const strayStream: StreamPart[] = [
+      { type: 'stream-start', warnings: [] },
+      { type: 'tool-call', toolCallId: 'stray', toolName: 'list_files', input: '{}' },
+      {
+        type: 'finish', finishReason: { unified: 'tool-calls', raw: 'tool_calls' },
+        usage: {
+          inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 },
+          outputTokens: { total: 1, text: 1, reasoning: 0 }, raw: {},
+        },
+      },
+    ] as StreamPart[]
+    await installMock(() => new MockLanguageModelV4({
+      doStream: async () => ({ stream: simulateReadableStream({ chunks: strayStream, chunkDelayInMs: null, initialDelayInMs: null }) }),
+    }))
+    const c = await connect(await seedTestUser())
+    c.ws.send(JSON.stringify({
+      type: 'send', conversation_id: null, parent_id: null, parts: [{ type: 'text', text: 'go' }],
+      provider_id: providerId, model_id: 'absent-tool-model', tools: ['ask_user'],
+    }))
+    await c.next('message.done')
+
+    let answer: unknown
+    for (let attempt = 0; attempt < 40 && answer === undefined; attempt++) {
+      const rows = await listMessages(db, conversationIdOf(c), 1)
+      answer = rows[1]?.parts.find(part => part.type === 'tool_result')
+      if (answer === undefined) await new Promise(resolve => setTimeout(resolve, 25))
+    }
+    expect(answer).toMatchObject({ call_id: 'stray', name: 'list_files', content: { error: 'tool_unavailable' } })
+  })
+
   it('generates without tools on a model that lacks tool-call support, keeping the snapshot', async () => {
     const providerId = await seedProvider('no-tools-provider', 'no-tools-model', false, {})
     const db = createDb(env.DB)
