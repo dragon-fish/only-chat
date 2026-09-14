@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
-import { CircleHelpIcon, CircleXIcon, XIcon } from '@lucide/vue'
+import { ChevronRightIcon, CircleHelpIcon, CircleXIcon, XIcon } from '@lucide/vue'
 import { Alert, AlertDescription, AlertTitle } from '@/client/ui/alert'
 import { Button } from '@/client/ui/button'
 import { Card, CardAction, CardContent, CardFooter, CardHeader, CardTitle } from '@/client/ui/card'
@@ -34,11 +34,26 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{ respond: [result: AskUserResult]; continue: [] }>()
 const questionnaire = ref<{ $el?: HTMLFormElement } | null>(null)
+/**
+ * Folded out of the way, for a questionnaire that is taller than the screen it is being read on.
+ *
+ * Deliberately local and unsaved: it is somewhere to put the question while looking at what is
+ * above it, not an answer to it. A reload brings it back open, which is the right default for
+ * something still waiting on a person.
+ */
+const collapsed = ref(false)
 const parsedInput = computed(() => AskUserInputSchema.safeParse(props.call.args))
 const input = computed(() => parsedInput.value.success ? parsedInput.value.data : null)
 const answers = reactive(input.value ? initialAnswers(input.value) : {})
 const otherAnswers = reactive<Record<string, string>>({})
 const activeQuestionId = ref(input.value?.questions[0]?.id)
+const questionCount = computed(() => input.value?.questions.length ?? 0)
+/** The question being answered, so a folded card still says which one is waiting. */
+const collapsedPreview = computed(() => {
+  const questions = input.value?.questions ?? []
+  const current = questions.find(question => question.id === activeQuestionId.value) ?? questions[0]
+  return current?.question ?? null
+})
 const parsedResult = computed(() => props.result ? AskUserResultSchema.safeParse(props.result.content) : null)
 const terminal = computed(() => parsedResult.value?.success ? parsedResult.value.data : null)
 const definitions = computed<QuestionnaireItemDefinition[]>(() => input.value?.questions.map(question => ({
@@ -156,13 +171,25 @@ Card(v-else size="sm" class="my-2 w-full" @keydown.escape="cancelOnEscape")
   CardHeader
     CardTitle.flex.items-center.gap-2.text-sm
       CircleHelpIcon
-      span 需要你的回答
-    CardAction
+      span.shrink-0 需要你的回答
+      //- Collapsed, the header is all there is, so it has to say what is behind it.
+      span.min-w-0.truncate.font-normal.text-xs(
+        v-if="collapsed && collapsedPreview" class="text-muted-foreground") {{ collapsedPreview }}
+    CardAction.flex.items-center.gap-1
+      Button(
+        variant="ghost" size="icon-xs" class="size-10 md:size-6"
+        :title="collapsed ? '展开继续回答' : '暂时收起'"
+        :aria-label="collapsed ? '展开继续回答' : '暂时收起'" :aria-expanded="!collapsed"
+        @click="collapsed = !collapsed")
+        ChevronRightIcon(:class="['size-4 transition-transform', collapsed ? '' : 'rotate-90']")
       Button(
         variant="ghost" size="icon-xs" class="size-10 md:size-6" :disabled="busy"
         title="取消回答（Esc）" aria-label="取消回答" @click="cancel")
         XIcon
-  CardContent
+  CardContent(v-if="collapsed" class="text-muted-foreground text-sm")
+    Button(variant="secondary" size="sm" class="min-h-10 md:min-h-7" @click="collapsed = false")
+      | 展开继续回答{{ questionCount > 1 ? `（${questionCount} 个问题）` : '' }}
+  CardContent(v-else)
     Questionnaire(
       ref="questionnaire" v-model:item="activeQuestionId"
       :items="definitions" shortcuts="numbers" @submit="submit")
