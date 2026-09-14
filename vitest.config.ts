@@ -10,6 +10,7 @@ export default defineConfig({
       {
         plugins: [
           cloudflareTest(async () => ({
+            remoteBindings: false,
             wrangler: { configPath: './wrangler.jsonc' },
             miniflare: {
               d1Databases: ['DB', 'TEST_LEGACY_DB'],
