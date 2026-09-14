@@ -4,13 +4,13 @@ import { MockLanguageModelV4, simulateReadableStream } from 'ai/test'
 import { eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
 import { createDb } from '@/server/db/client'
-import { models, providerInterfaces, providers, users, workspaceFileVersions, workspaceFiles } from '@/server/db/schema'
+import { models, pluginConfigs, providerInterfaces, providers, users, workspaceFileVersions, workspaceFiles } from '@/server/db/schema'
 import { encryptSecret } from '@/server/plugins/llm/crypto'
 import type { UserHub } from '@/server/index'
 import type { ToolCallPart, ToolResultPart } from '@/shared/parts'
 import { listMessages } from '@/server/plugins/hub/conversations'
 import { hasToolResult } from '@/server/plugins/mock-provider'
-import { ensureTestUser as seedTestUser } from './auth-helper'
+import { ensureTestUser as seedTestUser, workerFetch } from './auth-helper'
 import { connect } from './ws-helper'
 
 type StreamPart = Awaited<ReturnType<MockLanguageModelV4['doStream']>>['stream'] extends ReadableStream<infer P> ? P : never
@@ -101,7 +101,7 @@ async function callTool(providerId: number, toolName: string, input: unknown, co
     provider_id: providerId, model_id: 'files-model',
     // Conversation-init fields are only accepted while creating one; the hub rejects the whole
     // command if they reappear later. The tool snapshot is already stored on the conversation.
-    ...(conversationId === undefined ? { tools: ['list_files', 'read_file', 'write_file'] } : {}),
+    ...(conversationId === undefined ? { tools: ['list_files', 'read_file', 'write_file', 'preview_file'] } : {}),
   }))
   await c.next('message.done')
   const created = c.events.filter(e => e.type === 'message.created') as Array<{ message: { id: number, conversation_id: number, role: string } }>
@@ -184,5 +184,66 @@ describe('workspace file tools', () => {
     await installModel()
     const { result } = await callTool(providerId, 'write_file', { path: '/conversation/../project/x.md', content: 'x' })
     expect(result?.content).toMatchObject({ error: 'INVALID_PATH' })
+  })
+})
+
+describe('preview_file', () => {
+  /** The setting is off by default; turning it on is what makes a page serve as a page. */
+  async function enableHtmlPreview() {
+    const db = createDb(env.DB)
+    await db.delete(pluginConfigs)
+    await db.insert(pluginConfigs).values({
+      user_id: 1, plugin_id: 'workspace_files', key: 'html_preview', value: 'true', updated_at: Date.now(),
+    })
+  }
+
+  it('hands back a URL the preview route actually serves the file from', async () => {
+    const providerId = await seedProvider()
+    await installModel()
+    const { conversationId } = await callTool(providerId, 'write_file', {
+      path: '/conversation/page.html', content: '<p>hi</p>',
+    })
+    const { result } = await callTool(providerId, 'preview_file', { path: '/conversation/page.html' }, conversationId)
+    const out = result?.content as { url: string }
+
+    // Absolute, because the model may hand it to a browser that is not on this origin.
+    expect(out.url).toMatch(/^https?:\/\//)
+    const served = await workerFetch(new URL(out.url).pathname)
+    expect(served.status).toBe(200)
+    expect(await served.text()).toBe('<p>hi</p>')
+  })
+
+  it('says whether the link will render or only show source', async () => {
+    const providerId = await seedProvider()
+    await installModel()
+    const { conversationId } = await callTool(providerId, 'write_file', {
+      path: '/conversation/page.html', content: '<p>hi</p>',
+    })
+
+    const off = await callTool(providerId, 'preview_file', { path: '/conversation/page.html' }, conversationId)
+    expect(off.result?.content).toMatchObject({ renders: 'text' })
+
+    await enableHtmlPreview()
+    const on = await callTool(providerId, 'preview_file', { path: '/conversation/page.html' }, conversationId)
+    expect(on.result?.content).toMatchObject({ renders: 'page' })
+  })
+
+  it('reports an unknown file as a fact rather than a malfunction', async () => {
+    const providerId = await seedProvider()
+    await installModel()
+    const { result } = await callTool(providerId, 'preview_file', { path: '/conversation/missing.html' })
+    expect(result?.content).toMatchObject({ error: 'FILE_NOT_FOUND' })
+  })
+})
+
+describe('write_file previewability', () => {
+  it('marks a file the model could preview, and leaves the rest alone', async () => {
+    const providerId = await seedProvider()
+    await installModel()
+    const page = await callTool(providerId, 'write_file', { path: '/conversation/a.html', content: '<p>x</p>' })
+    expect(page.result?.content).toMatchObject({ previewable: true })
+
+    const notes = await callTool(providerId, 'write_file', { path: '/conversation/a.md', content: 'x' }, page.conversationId)
+    expect(notes.result?.content).toMatchObject({ previewable: false })
   })
 })

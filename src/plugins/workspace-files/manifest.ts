@@ -1,7 +1,7 @@
 import type { PluginManifest } from '@/shared/plugins'
 import {
-  DELETE_FILE_TOOL_ID, LIST_FILES_TOOL_ID, READ_FILE_TOOL_ID, RENAME_FILE_TOOL_ID,
-  RESTORE_FILE_TOOL_ID, WORKSPACE_FILES_PLUGIN_ID, WRITE_FILE_TOOL_ID,
+  DELETE_FILE_TOOL_ID, LIST_FILES_TOOL_ID, PREVIEW_FILE_TOOL_ID, READ_FILE_TOOL_ID,
+  RENAME_FILE_TOOL_ID, RESTORE_FILE_TOOL_ID, WORKSPACE_FILES_PLUGIN_ID, WRITE_FILE_TOOL_ID,
 } from '@/shared/plugins'
 import { WORKSPACE_FILES_CONFIG_SCHEMA } from './shared'
 
@@ -34,6 +34,11 @@ const manifest = {
       id: RENAME_FILE_TOOL_ID,
       name: '重命名文件',
       description: '改名、移动，或整个目录一起搬，历史版本跟着走。',
+    },
+    {
+      id: PREVIEW_FILE_TOOL_ID,
+      name: '预览文件',
+      description: '拿到一个能在浏览器里打开该文件的短时效链接。是否按网页渲染由下面的开关决定。',
     },
     {
       id: DELETE_FILE_TOOL_ID,

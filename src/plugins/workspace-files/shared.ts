@@ -1,8 +1,8 @@
 import { z } from 'zod'
 
 export {
-  DELETE_FILE_TOOL_ID, LIST_FILES_TOOL_ID, READ_FILE_TOOL_ID, RENAME_FILE_TOOL_ID, RESTORE_FILE_TOOL_ID,
-  WRITE_FILE_TOOL_ID, WORKSPACE_FILES_PLUGIN_ID,
+  DELETE_FILE_TOOL_ID, LIST_FILES_TOOL_ID, PREVIEW_FILE_TOOL_ID, READ_FILE_TOOL_ID, RENAME_FILE_TOOL_ID,
+  RESTORE_FILE_TOOL_ID, WRITE_FILE_TOOL_ID, WORKSPACE_FILES_PLUGIN_ID,
 } from '@/shared/plugins'
 
 /**
@@ -90,6 +90,8 @@ export interface ReadFileOutput {
 
 export interface WriteFileOutput {
   path: string
+  /** Whether this file has a preview worth opening; see preview_file. */
+  previewable: boolean
   operation: 'created' | 'updated' | 'replaced'
   fileSize: number
   totalLines: number
@@ -131,5 +133,24 @@ export interface DeleteFileOutput {
 
 export interface WorkspaceToolError {
   error: string
+  message: string
+}
+
+export const PreviewFileInputSchema = z.strictObject({
+  path: PathSchema,
+})
+export type PreviewFileInput = z.infer<typeof PreviewFileInputSchema>
+
+export interface PreviewFileOutput {
+  path: string
+  /** Absolute, so it can be opened by a browser that is not already on this origin. */
+  url: string
+  /**
+   * `page` when the link opens as a rendered page, `text` when it only shows source. Off is the
+   * default, so a link is worth far less than it looks until the operator turns preview on.
+   */
+  renders: 'page' | 'text'
+  /** The link stops working after this. Tickets are deliberately short-lived. */
+  expiresInSeconds: number
   message: string
 }

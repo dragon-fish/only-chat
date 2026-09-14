@@ -2,16 +2,18 @@ import type { Context } from 'cordis'
 import { tool } from 'ai'
 import { WorkspaceFiles, type Result, type WorkspaceError } from '@/server/plugins/workspace-files/service'
 import type { ToolContext } from '@/server/plugins/tools'
+import { parseWorkspacePath } from '@/server/plugins/workspace-files/path'
 import {
-  DELETE_FILE_TOOL_ID, LIST_FILES_TOOL_ID, READ_FILE_TOOL_ID, RENAME_FILE_TOOL_ID,
+  DELETE_FILE_TOOL_ID, LIST_FILES_TOOL_ID, PREVIEW_FILE_TOOL_ID, READ_FILE_TOOL_ID, RENAME_FILE_TOOL_ID,
   RESTORE_FILE_TOOL_ID, WORKSPACE_FILES_PLUGIN_ID, WRITE_FILE_TOOL_ID,
 } from '@/shared/plugins'
 import {
-  DeleteFileInputSchema, ListFilesInputSchema, ReadFileInputSchema, RenameFileInputSchema,
-  RestoreFileInputSchema, WriteFileInputSchema,
-  type DeleteFileOutput, type ListFilesOutput, type ReadFileOutput, type RenameFileOutput,
-  type RestoreFileOutput, type WriteFileOutput, type WorkspaceToolError,
+  DeleteFileInputSchema, ListFilesInputSchema, PreviewFileInputSchema, ReadFileInputSchema,
+  RenameFileInputSchema, RestoreFileInputSchema, WriteFileInputSchema,
+  type DeleteFileOutput, type ListFilesOutput, type PreviewFileOutput, type ReadFileOutput,
+  type RenameFileOutput, type RestoreFileOutput, type WriteFileOutput, type WorkspaceToolError,
 } from '../shared'
+import { absolutePreviewUrl, PREVIEW_TICKET_TTL_SECONDS, previewTypeFor, previewUrlFor } from './preview'
 
 /** Each expected failure reads as a fact the model can act on, never as a malfunction. */
 const MESSAGES: Record<WorkspaceError, string> = {
@@ -50,7 +52,7 @@ function servicesFor(runtime: ToolContext) {
 
 export const WorkspaceFilesServerPlugin = {
   name: 'workspace-files',
-  inject: ['tools', 'db', 'assets'] as const,
+  inject: ['tools', 'db', 'assets', 'env', 'pluginConfig'] as const,
   apply(ctx: Context) {
     // A fork inherits `project_id`, so `/project` needs nothing; `/conversation` is keyed on the
     // conversation itself and would otherwise be empty under messages that talk about its files.
@@ -138,6 +140,7 @@ export const WorkspaceFilesServerPlugin = {
           : null
         runtime.turn.set(readVersionKey(path), version)
 
+        const previewable = previewTypeFor(path) !== undefined
         const size = `${fileSize.toLocaleString('en-US')} bytes, ${totalLines.toLocaleString('en-US')} lines`
         const message = operation === 'created'
           ? `Created ${size}`
@@ -146,7 +149,59 @@ export const WorkspaceFilesServerPlugin = {
             : staleReadVersion === null
               ? `Saved ${size}. Replaced v${replacedVersion}, still restorable with restore_file.`
               : `Saved ${size}. Replaced v${replacedVersion}, which was written after you read v${staleReadVersion} — you never saw it. Restore it with restore_file if that content mattered.`
-        return { path, operation, fileSize, totalLines, version, replacedVersion, staleReadVersion, message }
+        // Said here rather than minted here: a ticket per write would spend one on every draft,
+        // and only the last of them is ever looked at.
+        const hint = previewable ? ' This one can be opened in a browser — preview_file gives you the link.' : ''
+        return {
+          path, operation, previewable, fileSize, totalLines, version, replacedVersion, staleReadVersion,
+          message: message + hint,
+        }
+      },
+    }))
+
+    ctx.tools.register(WORKSPACE_FILES_PLUGIN_ID, PREVIEW_FILE_TOOL_ID, runtime => tool({
+      description: [
+        'Get a link that opens a workspace file in a browser — yours, or the operator\'s.',
+        'Use it after writing something meant to be looked at rather than read as text: a page, a stylesheet, an SVG. write_file says which files those are.',
+        'The result says whether the link renders as a page or only shows source. Rendering is a setting the operator controls and it is off by default, so do not promise a rendered page unless the result says renders: page.',
+        'The link expires, so fetch it when you are about to use it rather than early. Ask again for a fresh one.',
+      ].join(' '),
+      inputSchema: PreviewFileInputSchema,
+      async execute(input): Promise<PreviewFileOutput | WorkspaceToolError> {
+        const { files, scope } = servicesFor(runtime)
+        const parsed = parseWorkspacePath(input.path)
+        if (!parsed.ok || parsed.value.mount === null || parsed.value.relativePath === '') {
+          return { error: 'INVALID_PATH', message: MESSAGES.INVALID_PATH }
+        }
+        const { mount, relativePath } = parsed.value
+
+        // Records only. Reading the file would fetch its bytes from R2 to prove it exists, and the
+        // browser is about to fetch them anyway.
+        const listed = await files.listRecords(mount, scope)
+        if (!listed.ok) return unwrap(listed) as WorkspaceToolError
+        const record = listed.value.find(entry => entry.relativePath === relativePath)
+        if (!record) return { error: 'FILE_NOT_FOUND', message: MESSAGES.FILE_NOT_FOUND }
+
+        const path = await previewUrlFor(ctx, runtime.userId, record)
+        if (!path) return { error: 'MOUNT_UNAVAILABLE', message: MESSAGES.MOUNT_UNAVAILABLE }
+
+        const config = await ctx.pluginConfig.read(runtime.userId, WORKSPACE_FILES_PLUGIN_ID)
+        const renders = config.html_preview === true && previewTypeFor(relativePath) !== undefined
+          ? 'page' as const
+          : 'text' as const
+        const minutes = Math.round(PREVIEW_TICKET_TTL_SECONDS / 60)
+        const message = renders === 'page'
+          ? `Opens as a page. The link works for about ${minutes} minutes.`
+          : 'Opens as source text, not as a rendered page — the operator has not turned on HTML preview '
+            + `for the workspace files plugin. The link works for about ${minutes} minutes.`
+
+        return {
+          path: input.path,
+          url: absolutePreviewUrl(ctx.env.BETTER_AUTH_URL, path),
+          renders,
+          expiresInSeconds: PREVIEW_TICKET_TTL_SECONDS,
+          message,
+        }
       },
     }))
 

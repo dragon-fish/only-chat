@@ -10,6 +10,9 @@ import { WorkspaceFiles, type WorkspaceError } from '@/server/plugins/workspace-
 import type { FileRecord } from '@/shared/workspace-files'
 import { authUserId, type ApiEnv } from '@/server/plugins/api/auth'
 import { parseId } from '@/server/plugins/api/params'
+import { PREVIEW_SEGMENT, PREVIEW_TYPES, previewUrlFor, type PreviewTicket } from './preview'
+
+export { PREVIEW_SEGMENT }
 
 /** HTTP status for each expected failure. Everything else throws and becomes a 500. */
 const STATUS: Record<WorkspaceError, 400 | 404 | 409> = {
@@ -23,46 +26,6 @@ const STATUS: Record<WorkspaceError, 400 | 404 | 409> = {
   FILE_TOO_LARGE: 400,
   INVALID_UTF8: 400,
   READ_RANGE_TOO_LARGE: 400,
-}
-
-/**
- * What a browser is told a workspace file is. Only UTF-8 text can be stored, so the list is short
- * and everything unknown is served as text rather than guessed at.
- */
-const PREVIEW_TYPES: Record<string, string> = {
-  html: 'text/html; charset=utf-8',
-  htm: 'text/html; charset=utf-8',
-  css: 'text/css; charset=utf-8',
-  js: 'text/javascript; charset=utf-8',
-  mjs: 'text/javascript; charset=utf-8',
-  json: 'application/json; charset=utf-8',
-  svg: 'image/svg+xml; charset=utf-8',
-}
-
-/**
- * A short-lived ticket standing in for the session cookie. A sandboxed frame has an opaque origin,
- * so every subresource it asks for — the stylesheet beside the page — counts as cross-site and
- * arrives without cookies. The ticket lives in the URL's directory prefix instead, which is exactly
- * what a relative `./style.css` keeps, and it grants read access to one mount for a few minutes.
- */
-const PREVIEW_TICKET_TTL_SECONDS = 600
-
-interface PreviewTicket {
-  userId: number
-  mount: WorkspaceMount
-  scopeId: number
-}
-
-async function previewUrlFor(ctx: Context, userId: number, record: FileRecord): Promise<string | null> {
-  const mount: WorkspaceMount = record.projectId !== null ? 'project' : 'conversation'
-  const scopeId = record.projectId ?? record.conversationId
-  if (scopeId === null) return null
-
-  const token = crypto.randomUUID().replaceAll('-', '')
-  const ticket: PreviewTicket = { userId, mount, scopeId }
-  await ctx.env.KV.put(`workspace-preview:${token}`, JSON.stringify(ticket), { expirationTtl: PREVIEW_TICKET_TTL_SECONDS })
-  const path = record.relativePath.split('/').map(encodeURIComponent).join('/')
-  return `${PLUGIN_API_PREFIX}/${WORKSPACE_FILES_PLUGIN_ID}/${PREVIEW_SEGMENT}/${token}/${path}`
 }
 
 /**
@@ -91,8 +54,6 @@ function archiveName(prefix: string, fallback: string): string {
 }
 
 /** The one public sub-path: its ticket is the credential, because a sandboxed frame sends no cookie. */
-export const PREVIEW_SEGMENT = 'preview'
-
 export function workspacePreviewRoutes(ctx: Context) {
   const r = new Hono<ApiEnv>()
 
