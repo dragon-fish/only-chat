@@ -47,7 +47,6 @@ const input = computed(() => parsedInput.value.success ? parsedInput.value.data 
 const answers = reactive(input.value ? initialAnswers(input.value) : {})
 const otherAnswers = reactive<Record<string, string>>({})
 const activeQuestionId = ref(input.value?.questions[0]?.id)
-const questionCount = computed(() => input.value?.questions.length ?? 0)
 
 /** Anywhere on a folded card brings it back; the X has already stopped its own click. */
 function expandOnClick() {
@@ -209,9 +208,9 @@ template(v-else)
           :disabled="busy" title="不回答（Esc）" aria-label="不回答" @click.stop="cancel")
           | 不回答
           XIcon(class="size-3.5")
-    CardContent(v-if="collapsed" class="text-muted-foreground text-sm")
-      | 点开继续回答{{ questionCount > 1 ? `（${questionCount} 个问题）` : '' }}
-    CardContent(v-else)
+    //- Nothing below the header when folded: the header already names the state and the whole card
+    //- is the target, so a second line saying so again only costs height.
+    CardContent(v-if="!collapsed")
       Questionnaire(
         ref="questionnaire" v-model:item="activeQuestionId"
         :items="definitions" shortcuts="numbers" @submit="submit")
