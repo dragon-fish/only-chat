@@ -39,12 +39,23 @@ function encodeResult(value: unknown): string {
   try { return JSON.stringify(value, null, 2) ?? String(value) } catch { return String(value) }
 }
 
-/** The context that is actually in use, or one seeded from the profile when the browser is fresh. */
+interface StoredState {
+  cookies?: Parameters<BrowserContext['addCookies']>[0]
+}
+
+/**
+ * Always the browser's default context, never one of our own. Playwright closes every context a
+ * client created when that client disconnects, and each call here is a fresh client, so a page in
+ * a created context died the moment its call ended — the tab closed and the Live View went dark.
+ * The default context outlives us. A saved profile is applied to it as cookies; localStorage
+ * from the profile is not restored, since only `newContext` can seed that.
+ */
 async function pickContext(browser: Browser, storageState: unknown | null): Promise<BrowserContext> {
-  const busy = browser.contexts().find(context => context.pages().length > 0)
-  if (busy) return busy
-  if (storageState) return browser.newContext({ storageState: storageState as Parameters<Browser['newContext']>[0] extends { storageState?: infer S } ? S : never })
-  return browser.contexts()[0] ?? browser.newContext()
+  const context = browser.contexts()[0] ?? await browser.newContext()
+  const inUse = context.pages().some(page => page.url() !== 'about:blank')
+  const cookies = (storageState as StoredState | null)?.cookies
+  if (!inUse && cookies?.length) await context.addCookies(cookies).catch(() => {})
+  return context
 }
 
 async function liveViewOf(context: BrowserContext, page: Page, ttlMs: number): Promise<RunResult['liveView']> {
