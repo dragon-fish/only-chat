@@ -2,7 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { api } from '@/client/lib/api'
 import type { AdminSiteSettings } from '@/shared/auth'
-import SettingsBackButton from '@/client/components/layout/settings-back-button.vue'
+import PageBackButton from '@/client/components/layout/page-back-button.vue'
 import { Alert, AlertDescription, AlertTitle } from '@/client/ui/alert'
 import { Badge } from '@/client/ui/badge'
 import { Button } from '@/client/ui/button'
@@ -42,7 +42,7 @@ onMounted(load)
 <template lang="pug">
 .h-full.min-h-0.overflow-hidden
   Teleport(to="#page-header" defer)
-    SettingsBackButton
+    PageBackButton
     span.truncate.text-sm.font-medium 注册设置
   .oc-scroll.h-full.overflow-y-auto
     .mx-auto.flex.w-full.max-w-3xl.flex-col.gap-6.p-4(class="md:p-6 lg:p-8")

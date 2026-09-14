@@ -5,7 +5,7 @@ import { EllipsisIcon, PlusIcon } from '@lucide/vue'
 import { authClient } from '@/client/lib/auth-client'
 import { useAuthStore } from '@/client/stores/auth'
 import { isAuthAdmin, type AuthRole } from '@/shared/auth'
-import SettingsBackButton from '@/client/components/layout/settings-back-button.vue'
+import PageBackButton from '@/client/components/layout/page-back-button.vue'
 import { Alert, AlertDescription, AlertTitle } from '@/client/ui/alert'
 import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/client/ui/alert-dialog'
 import { Badge } from '@/client/ui/badge'
@@ -125,7 +125,7 @@ onMounted(() => load())
 <template lang="pug">
 .h-full.min-h-0.overflow-hidden
   Teleport(to="#page-header" defer)
-    SettingsBackButton
+    PageBackButton
     span.truncate.text-sm.font-medium 用户管理
   .oc-scroll.h-full.overflow-y-auto
     .mx-auto.flex.w-full.max-w-5xl.flex-col.gap-6.p-4(class="md:p-6 lg:p-8")

@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ClockIcon, ImagePlusIcon, ImagesIcon, LoaderCircleIcon, RotateCcwIcon, SlidersHorizontalIcon, SparklesIcon, XIcon } from '@lucide/vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
+import PageBackButton from '@/client/components/layout/page-back-button.vue'
 import { toast } from 'vue-sonner'
 import ImageParameters from '@/client/components/image-parameters.vue'
 import ResponsiveOverlay from '@/client/components/layout/responsive-overlay.vue'
@@ -236,6 +237,9 @@ onBeforeUnmount(() => { clearTimeout(pollTimer); releaseReferences() })
 
 <template>
   <Teleport to="#page-header" defer>
+    <!-- The way out on a phone. Gallery on the right happens to go back, but nothing says so, and
+         every other screen puts the arrow here. -->
+    <PageBackButton to="/images" label="返回图库" />
     <span class="truncate text-sm font-medium">图片 Studio</span>
     <Button as-child variant="ghost" size="sm" class="ml-auto min-h-10 md:min-h-8"><RouterLink to="/images"><ImagesIcon data-icon="inline-start" />Gallery</RouterLink></Button>
     <Button variant="ghost" size="icon-sm" class="min-h-10 min-w-10 lg:hidden" aria-label="生成参数" @click="parametersOpen = true"><SlidersHorizontalIcon /></Button>

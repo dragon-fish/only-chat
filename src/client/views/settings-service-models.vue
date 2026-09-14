@@ -2,7 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { ImagesIcon, SparklesIcon } from '@lucide/vue'
 import { toast } from 'vue-sonner'
-import SettingsBackButton from '@/client/components/layout/settings-back-button.vue'
+import PageBackButton from '@/client/components/layout/page-back-button.vue'
 import { isStudioImageModel } from '@/client/lib/image-studio'
 import { useConfigStore } from '@/client/stores/config'
 import { useSyncStore } from '@/client/stores/sync'
@@ -85,7 +85,7 @@ onMounted(load)
 <template lang="pug">
 .h-full.min-h-0.overflow-hidden
   Teleport(to="#page-header" defer)
-    SettingsBackButton
+    PageBackButton
     span.truncate.text-sm.font-medium 全局服务模型
   .oc-scroll.h-full.overflow-y-auto
     .mx-auto.flex.w-full.max-w-3xl.flex-col.gap-6.p-4(class="md:p-6 lg:p-8")

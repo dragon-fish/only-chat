@@ -8,7 +8,7 @@ import LabAvatar from '@/client/components/lab-avatar.vue'
 import ModelFilterMenu from '@/client/components/model-filter-menu.vue'
 import ModelGroupList from '@/client/components/model-group-list.vue'
 import UnsavedChangesGuard from '@/client/components/unsaved-changes-guard.vue'
-import SettingsBackButton from '@/client/components/layout/settings-back-button.vue'
+import PageBackButton from '@/client/components/layout/page-back-button.vue'
 import { useFormChanges } from '@/client/composables/use-form-changes'
 import { Alert, AlertDescription, AlertTitle } from '@/client/ui/alert'
 import ProviderNavigation from '@/client/components/provider-navigation.vue'
@@ -455,7 +455,7 @@ async function removeModel() {
 <template lang="pug">
 .flex.h-full.min-h-0.overflow-hidden
   Teleport(to="#page-header" defer)
-    SettingsBackButton(to="/settings/providers" label="返回供应商列表")
+    PageBackButton(to="/settings/providers" label="返回供应商列表")
     span.truncate.text-sm.font-medium {{ savedName }}
   ProviderNavigation(:selected-provider-id="providerId" class="hidden w-64 shrink-0 border-r md:flex" @catalog-refreshed="load()")
   .oc-scroll.min-h-0.min-w-0.flex-1.overflow-y-auto

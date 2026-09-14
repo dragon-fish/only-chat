@@ -2,7 +2,7 @@
 import { computed, inject, onMounted, shallowRef } from 'vue'
 import type { Component } from 'vue'
 import { RouterLink } from 'vue-router'
-import SettingsBackButton from '@/client/components/layout/settings-back-button.vue'
+import PageBackButton from '@/client/components/layout/page-back-button.vue'
 import { Alert, AlertDescription, AlertTitle } from '@/client/ui/alert'
 import { Button } from '@/client/ui/button'
 import { Skeleton } from '@/client/ui/skeleton'
@@ -30,7 +30,7 @@ onMounted(async () => {
 <template lang="pug">
 .h-full.min-h-0.overflow-hidden
   Teleport(to="#page-header" defer)
-    SettingsBackButton
+    PageBackButton
     span.truncate.text-sm.font-medium {{ title }}
   .oc-scroll.h-full.overflow-y-auto
     .mx-auto.flex.w-full.max-w-3xl.flex-col.gap-6.p-4(class="md:p-6 lg:p-8")
