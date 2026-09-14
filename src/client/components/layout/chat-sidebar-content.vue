@@ -12,7 +12,6 @@ import ProjectNavRow from '@/client/components/layout/project-nav-row.vue'
 import ConversationNavRow from '@/client/components/layout/conversation-nav-row.vue'
 import { projectPresentation, recentProjects, searchProjects, searchConversations } from '@/client/lib/ui-models'
 import { useSyncStore } from '@/client/stores/sync'
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/client/ui/collapsible'
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel,
   DropdownMenuTrigger,
@@ -210,31 +209,33 @@ function clearSearch() {
           </SidebarGroupContent>
         </SidebarGroup>
 
-        <Collapsible default-open>
-          <SidebarGroup>
-            <CollapsibleTrigger as-child>
-              <SidebarGroupLabel class="min-h-10 cursor-pointer md:min-h-0">{{ query.trim() ? '搜索结果' : '随心聊' }}</SidebarGroupLabel>
-            </CollapsibleTrigger>
-            <CollapsibleContent>
-              <SidebarGroupContent>
-                <CollectionState :loaded="sync.conversationsLoaded" :error="sync.conversationsError" :retry="sync.loadConversations" :empty="outerConversations.length === 0" :empty-title="query ? '没有匹配的对话' : '还没有随心聊'">
-                  <template #empty-action>
-                    <Button v-if="query" variant="outline" class="min-h-10" @click="clearSearch">清除搜索</Button>
-                    <Button v-else as-child variant="outline" class="min-h-10"><RouterLink to="/new">开始对话</RouterLink></Button>
-                  </template>
-                  <SidebarMenu>
-                    <ConversationNavRow
-                      v-for="conversation in outerConversations" :key="conversation.id"
-                      :conversation="conversation"
-                      :projects="sync.projectList"
-                      :active="openConversationId === conversation.id"
-                    />
-                  </SidebarMenu>
-                </CollectionState>
-              </SidebarGroupContent>
-            </CollapsibleContent>
-          </SidebarGroup>
-        </Collapsible>
+        <SidebarGroup>
+          <SidebarGroupLabel>{{ query.trim() ? '搜索结果' : '随心聊' }}</SidebarGroupLabel>
+          <!-- Matching Projects above. The label used to fold the list instead, which is not what a
+               heading looks like it does, and hid the thing it names. -->
+          <SidebarGroupAction v-if="!query.trim()" as-child aria-label="新建随心聊">
+            <RouterLink to="/new">
+              <PlusIcon />
+              <span class="sr-only">新建随心聊</span>
+            </RouterLink>
+          </SidebarGroupAction>
+          <SidebarGroupContent>
+            <CollectionState :loaded="sync.conversationsLoaded" :error="sync.conversationsError" :retry="sync.loadConversations" :empty="outerConversations.length === 0" :empty-title="query ? '没有匹配的对话' : '还没有随心聊'">
+              <template #empty-action>
+                <Button v-if="query" variant="outline" class="min-h-10" @click="clearSearch">清除搜索</Button>
+                <Button v-else as-child variant="outline" class="min-h-10"><RouterLink to="/new">开始对话</RouterLink></Button>
+              </template>
+              <SidebarMenu>
+                <ConversationNavRow
+                  v-for="conversation in outerConversations" :key="conversation.id"
+                  :conversation="conversation"
+                  :projects="sync.projectList"
+                  :active="openConversationId === conversation.id"
+                />
+              </SidebarMenu>
+            </CollectionState>
+          </SidebarGroupContent>
+        </SidebarGroup>
       </ScrollArea>
     </SidebarContent>
 
