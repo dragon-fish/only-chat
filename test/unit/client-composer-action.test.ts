@@ -10,12 +10,12 @@ import type { Part } from '@/shared/parts'
 let cleanup = () => {}
 afterEach(() => { cleanup(); document.body.innerHTML = '' })
 
-interface Fired { send: Part[][], queue: Part[][], interrupt: Part[][], stop: number }
+interface Fired { send: Part[][], queue: Part[][], interrupt: Part[][], stop: number, withdraw: number }
 
 function mount(options: { streaming: boolean, stash?: Part[] }) {
   const host = document.createElement('div')
   document.body.append(host)
-  const fired: Fired = { send: [], queue: [], interrupt: [], stop: 0 }
+  const fired: Fired = { send: [], queue: [], interrupt: [], stop: 0, withdraw: 0 }
   const app = createApp({
     setup: () => () => h(TooltipProvider, null, { default: () => h(Composer, {
       streaming: options.streaming,
@@ -26,6 +26,7 @@ function mount(options: { streaming: boolean, stash?: Part[] }) {
       onQueue: (parts: Part[]) => fired.queue.push(parts),
       onInterrupt: (parts: Part[]) => fired.interrupt.push(parts),
       onStop: () => { fired.stop += 1 },
+      onWithdraw: () => { fired.withdraw += 1 },
     }) }),
   }).use(createPinia()).use(createRouter({
     history: createMemoryHistory(),
@@ -101,24 +102,25 @@ it('interrupts from the button once something is waiting', async () => {
   expect(fired.stop).toBe(0)
 })
 
-it('stops on Escape, whatever is typed', async () => {
-  // Escape calls it off. What is in the box decides between sending and queueing, not between
-  // carrying on and stopping.
+it('stops on Escape when nothing is waiting to be said', async () => {
   const { host, fired } = mount({ streaming: true })
-  await typeAndEnter(host, 'queued first')
   await press(host, 'Escape')
   expect(fired.stop).toBe(1)
+  expect(fired.withdraw).toBe(0)
 })
 
-it('interrupts on Escape once something is waiting', async () => {
+it('takes the stash back on Escape rather than stopping', async () => {
+  // Innermost first: what is waiting is nearer than the turn, and undoing it should not also end
+  // the work. Sending it now is the orange button's job, not something to reach with Escape.
   const { host, fired } = mount({ streaming: true, stash: [{ type: 'text', text: 'earlier' }] })
   await press(host, 'Escape')
-  expect(fired.interrupt).toEqual([[]])
+  expect(fired.withdraw).toBe(1)
   expect(fired.stop).toBe(0)
+  expect(fired.interrupt).toHaveLength(0)
 })
 
 it('ignores Escape when nothing is generating', async () => {
   const { host, fired } = mount({ streaming: false })
   await press(host, 'Escape')
-  expect(fired).toMatchObject({ stop: 0, interrupt: [] })
+  expect(fired).toMatchObject({ stop: 0, interrupt: [], withdraw: 0 })
 })

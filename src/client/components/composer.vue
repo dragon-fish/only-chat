@@ -84,7 +84,7 @@ const actionHint = computed(() => {
   if (action.value === 'queue') {
     return stashed.value.length > 0 ? '继续排队，与已排队的消息一并送出' : '排队此消息，模型能听时再说'
   }
-  return '打断当前生成，立即把已排队的消息从最近的合法位置插入对话（Esc）'
+  return '打断当前生成，立即把已排队的消息从最近的合法位置插入对话'
 })
 
 const sendBlockedReason = computed(() => {
@@ -217,13 +217,13 @@ function restore(parts: Part[]) {
 }
 
 function onKeydown(e: KeyboardEvent) {
-  // Escape is the gesture for calling it off, and it means that whatever is typed: what is in the
-  // box decides between sending and queueing, not between carrying on and stopping. Bound to the
-  // box, so it only ever answers to someone who is looking at it.
-  if (e.key === 'Escape' && !e.isComposing && props.streaming) {
-    e.preventDefault()
-    if (stashed.value.length > 0) emit('interrupt', takeBox())
-    else emit('stop')
+  // Escape undoes the last thing that was committed to, innermost first. Something waiting to be
+  // said is nearer than the turn itself, so it comes back before anything is stopped — and it comes
+  // back rather than going out, because sending it now is the orange button's job and not a thing
+  // to reach by pressing Escape. Bound to the box, so it only answers to someone looking at it.
+  if (e.key === 'Escape' && !e.isComposing) {
+    if (stashed.value.length > 0) { e.preventDefault(); emit('withdraw'); return }
+    if (props.streaming) { e.preventDefault(); emit('stop') }
     return
   }
   if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return
@@ -277,7 +277,7 @@ onBeforeUnmount(() => { releasePreviews(images.value); dropSent() })
       :title="stashPreview" aria-label="撤回排队中的消息" @click="emit('withdraw')")
       Clock3(class="size-3.5 shrink-0")
       span.min-w-0.flex-1.truncate {{ stashPreview }}
-      span.shrink-0.opacity-70 点击撤回
+      span.shrink-0.opacity-70 点击撤回（Esc）
   .mx-auto.w-full.max-w-3xl(v-if="replaced")
     slot(name="replacement")
   InputGroup.mx-auto(v-else class="max-w-3xl rounded-xl")
