@@ -211,18 +211,30 @@ async function submit() {
   const model = parseModel()
   if (!model || !canSubmit.value) return
   submitting.value = true
+  // Emptied on the press rather than on the reply. Left to the round trip the prompt sits there
+  // looking unsent, which is how the same prompt gets submitted twice. Held so a failure can put
+  // it back — and the previews are only revoked once the request has actually been accepted,
+  // because restoring an image whose object URL is already gone restores a broken thumbnail.
+  const said = prompt.value
+  const used = references.value
+  prompt.value = ''
+  references.value = []
   try {
     const created = await api.createImageRun(buildImageRunInput({
-      model, ...(props.conversationId === null ? {} : { conversationId: props.conversationId }), prompt: prompt.value,
-      references: references.value.map(item => item.attachmentId), count: count.value, customSize: customSize.value,
+      model, ...(props.conversationId === null ? {} : { conversationId: props.conversationId }), prompt: said,
+      references: used.map(item => item.attachmentId), count: count.value, customSize: customSize.value,
       width: width.value, height: height.value, quality: quality.value, background: background.value as '' | 'transparent' | 'opaque',
       outputFormat: outputFormat.value as '' | 'png' | 'webp' | 'jpeg',
     }))
-    prompt.value = ''
-    releaseReferences()
+    for (const image of used) URL.revokeObjectURL(image.preview)
     if (props.conversationId === null) await router.replace(`/images/s/${created.conversation_id}`)
     else await poll(created.run_id)
-  } catch (error) { submitting.value = false; toast.error(error instanceof Error ? error.message : String(error)) }
+  } catch (error) {
+    prompt.value = said
+    references.value = used
+    submitting.value = false
+    toast.error(error instanceof Error ? error.message : String(error))
+  }
 }
 async function cancel() {
   if (!latestRun.value) return
