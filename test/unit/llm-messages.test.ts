@@ -442,7 +442,7 @@ describe('rolling back to somewhere legal', () => {
     ])
     const last = out.at(-1) as { role: string, content: Array<{ text: string }> }
     expect(last.role).toBe('user')
-    expect(last.content[0]!.text).toContain('没有说完')
+    expect(last.content[0]!.text).toBe('[Request interrupted by user]')
     expect(last.content.at(-1)!.text).toBe('算了')
   })
 
@@ -463,9 +463,9 @@ describe('rolling back to somewhere legal', () => {
     expect(out.map(m => m.role)).toEqual(['user', 'assistant', 'user'])
     const said = (out[2] as { content: Array<{ text: string }> }).content.map(c => c.text)
     expect(said).toEqual([
-      expect.stringContaining('没有说完'), '乙',
-      expect.stringContaining('中间没有模型的回复'), '丙',
-      expect.stringContaining('中间没有模型的回复'), '丁',
+      '[Request interrupted by user]', '乙',
+      '[Request interrupted by user]', '丙',
+      '[Request interrupted by user]', '丁',
     ])
   })
 })

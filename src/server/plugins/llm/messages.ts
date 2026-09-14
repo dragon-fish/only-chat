@@ -189,30 +189,24 @@ export function requiredAttachmentIds(path: readonly Message[]): Set<number> {
 /**
  * What an interruption looks like from the model's side.
  *
- * Two shapes, and the difference is whether the abandoned turn left anything usable behind.
+ * Verbatim from Claude Code's `INTERRUPT_MESSAGE`, and placed where it places it: text in a user
+ * message, at the point the turn stopped. Plain text because that is what every provider accepts;
+ * a `developer` or `system` block mid-conversation is not.
  *
- * It usually does — a tool had answered, or a sentence was already being written — and that work
- * is kept. Rolling back to before it would contradict the screen, which still shows the reply
- * stopping partway, and would throw away effort the model had already spent. What it needs is to
- * be told that the stop was deliberate, or it reads its own truncated paragraph as something it
- * chose to end there.
+ * Do not translate it and do not explain it. A longer version here spelled out that the reply above
+ * was cut off and which parts still counted; models called it awkward and asked what it meant. Its
+ * whole value is being a string they have seen a great deal of.
  *
- * Interrupted early enough and the turn has nothing to show. Then it is not a turn at all: the two
- * user messages around it belong together, and are joined with a note between them. They cannot be
- * left as two — Anthropic requires the roles to alternate, so a silent turn between them is an
- * error rather than an oddity.
+ * One line covers every ending, because they are the same event:
  *
- * A turn stopped by hand records it in its status. A turn handed off the instant the operator spoke
- * does not — everything it produced is intact, so it is finalised as `done`. It is known by its
- * shape instead: it ends on a `tool_result`. A turn that ran to its own finish never can, because
- * `stopWhen` does not stop on a tool result, it goes round again. So a reply holding an answer it
- * never spoke to is a reply that was taken over. Do not add a column to record this — it is already
- * legible in the parts, and a stored copy would be a second truth to keep in step.
+ * - Stopped with work already done. That work stays; rolling back would contradict the screen.
+ * - Stopped before the turn produced anything. Then it is not a turn, and the user messages either
+ *   side of it become one — Anthropic requires the roles to alternate.
+ * - Taken over the moment the operator spoke. Stored as `done`, so the status says nothing, but it
+ *   ends on a `tool_result` — which a turn that ran to its own finish never does, because
+ *   `stopWhen` goes round again rather than stopping there. No column records this: the parts do.
  */
-const INTERRUPTED_NOTE = '上面那轮回复没有说完，是用户在生成途中主动打断的，不是模型自己停在那里的。'
-  + '已经做完的部分仍然有效，下面是用户接着说的话。'
-
-const RESENT_NOTE = '（用户在这里打断了一次生成，紧接着又说了下面这些。两段是连着发的，中间没有模型的回复。）'
+const INTERRUPT_MESSAGE = '[Request interrupted by user]'
 
 /**
  * The message a handoff has to splice into a run that is already in flight.
@@ -227,7 +221,7 @@ export function interjectedUserMessage(
   said: Part[],
   attachments: ReadonlyMap<number, AttachmentInput>,
 ): ModelMessage {
-  return { role: 'user', content: [{ type: 'text', text: INTERRUPTED_NOTE }, ...userParts(said, attachments)] }
+  return { role: 'user', content: [{ type: 'text', text: INTERRUPT_MESSAGE }, ...userParts(said, attachments)] }
 }
 
 /**
@@ -281,12 +275,12 @@ export function buildModelMessages(input: BuildInput): ModelMessage[] {
       // operator spoke. There is no turn here to put between two user messages, and leaving a gap
       // would break the alternation Anthropic insists on. Judged by what it produced rather than by
       // its status, because a handoff finalises a silent turn as `done` and an abort does not.
-      pending = RESENT_NOTE
+      pending = INTERRUPT_MESSAGE
       joinToPrevious = true
       return
     }
     out.push(...said)
-    if (m.status === 'aborted' || m.parts.at(-1)?.type === 'tool_result') pending = INTERRUPTED_NOTE
+    if (m.status === 'aborted' || m.parts.at(-1)?.type === 'tool_result') pending = INTERRUPT_MESSAGE
   })
 
   return out
