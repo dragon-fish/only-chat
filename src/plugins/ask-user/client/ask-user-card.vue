@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
-import { ChevronRightIcon, CircleHelpIcon, CircleXIcon, XIcon } from '@lucide/vue'
+import { ChevronUpIcon, CircleHelpIcon, CircleXIcon, XIcon } from '@lucide/vue'
 import { Alert, AlertDescription, AlertTitle } from '@/client/ui/alert'
 import { Button } from '@/client/ui/button'
 import { Card, CardAction, CardContent, CardFooter, CardHeader, CardTitle } from '@/client/ui/card'
@@ -48,6 +48,11 @@ const answers = reactive(input.value ? initialAnswers(input.value) : {})
 const otherAnswers = reactive<Record<string, string>>({})
 const activeQuestionId = ref(input.value?.questions[0]?.id)
 const questionCount = computed(() => input.value?.questions.length ?? 0)
+
+/** Anywhere on a folded card brings it back; the X has already stopped its own click. */
+function expandOnClick() {
+  if (collapsed.value) collapsed.value = false
+}
 /** The question being answered, so a folded card still says which one is waiting. */
 const collapsedPreview = computed(() => {
   const questions = input.value?.questions ?? []
@@ -174,57 +179,63 @@ Card(v-else-if="terminal" size="sm" class="my-2 w-full")
   CardContent(v-else class="text-sm text-muted-foreground") 用户取消了回答。
   CardFooter(v-if="terminal.status === 'answered' && canContinue" class="justify-end")
     Button(size="sm" :disabled="busy" @click="emit('continue')") 继续
-Card(v-else size="sm" class="my-2 w-full" @keydown.escape="cancelOnEscape")
-  CardHeader
-    CardTitle.flex.items-center.gap-2.text-sm
-      CircleHelpIcon
-      span.shrink-0 需要你的回答
-      //- Collapsed, the header is all there is, so it has to say what is behind it.
-      span.min-w-0.truncate.font-normal.text-xs(
-        v-if="collapsed && collapsedPreview" class="text-muted-foreground") {{ collapsedPreview }}
-    CardAction.flex.items-center.gap-1
-      Button(
-        variant="ghost" size="icon-xs" class="size-10 md:size-6"
-        :title="collapsed ? '展开继续回答' : '暂时收起'"
-        :aria-label="collapsed ? '展开继续回答' : '暂时收起'" :aria-expanded="!collapsed"
-        @click="collapsed = !collapsed")
-        ChevronRightIcon(:class="['size-4 transition-transform', collapsed ? '' : 'rotate-90']")
-      Button(
-        variant="ghost" size="icon-xs" class="size-10 md:size-6" :disabled="busy"
-        title="取消回答（Esc）" aria-label="取消回答" @click="cancel")
-        XIcon
-  CardContent(v-if="collapsed" class="text-muted-foreground text-sm")
-    Button(variant="secondary" size="sm" class="min-h-10 md:min-h-7" @click="collapsed = false")
-      | 展开继续回答{{ questionCount > 1 ? `（${questionCount} 个问题）` : '' }}
-  CardContent(v-else)
-    Questionnaire(
-      ref="questionnaire" v-model:item="activeQuestionId"
-      :items="definitions" shortcuts="numbers" @submit="submit")
-      QuestionnaireItem(
-        v-for="question in input?.questions" :key="question.id" :name="question.id"
-        :multiple="question.type === 'multiple'" :required="question.required")
-        QuestionnaireTitle {{ question.question }}
-        QuestionnaireDescription(v-if="question.description") {{ question.description }}
-        QuestionnaireChoices(v-if="question.type !== 'text'" class="mt-3")
-          QuestionnaireChoice(
-            v-for="option in question.options ?? []" :key="option.label" :value="option.label"
-            :checked="choiceChecked(question.id, option.label)"
-            @update:checked="setChoice(question.id, option.label, question.type === 'multiple', $event)")
-            span {{ option.label }}
-            QuestionnaireChoiceDescription(v-if="option.description") {{ option.description }}
+template(v-else)
+  //- Its own strip above the card, and nowhere near the X. Sharing the header put a small target
+  //- for "put this aside" next to a small target for "throw it away".
+  .flex.justify-end(v-if="!collapsed")
+    Button(
+      variant="ghost" size="sm" class="min-h-10 gap-1 text-xs text-muted-foreground md:min-h-7"
+      aria-label="暂时收起" :aria-expanded="true" @click="collapsed = true")
+      ChevronUpIcon(class="size-3.5")
+      | 暂时收起
+  //- Collapsing is deliberate and gets its own control; expanding is someone coming back to answer,
+  //- so anywhere on the card will do. The X stops the click so it never expands on its way out.
+  Card(
+    size="sm" class="my-2 w-full" :class="collapsed ? 'cursor-pointer hover:bg-accent/40' : undefined"
+    @keydown.escape="cancelOnEscape" @click="expandOnClick")
+    CardHeader
+      CardTitle.flex.items-center.gap-2.text-sm
+        CircleHelpIcon
+        span.shrink-0 需要你的回答
+        //- Collapsed, the header is all there is, so it has to say what is behind it.
+        span.min-w-0.truncate.font-normal.text-xs(
+          v-if="collapsed && collapsedPreview" class="text-muted-foreground") {{ collapsedPreview }}
+      CardAction
+        Button(
+          variant="ghost" size="icon-xs" class="size-10 md:size-6" :disabled="busy"
+          title="取消回答（Esc）" aria-label="取消回答" @click.stop="cancel")
+          XIcon
+    CardContent(v-if="collapsed" class="text-muted-foreground text-sm")
+      | 点开继续回答{{ questionCount > 1 ? `（${questionCount} 个问题）` : '' }}
+    CardContent(v-else)
+      Questionnaire(
+        ref="questionnaire" v-model:item="activeQuestionId"
+        :items="definitions" shortcuts="numbers" @submit="submit")
+        QuestionnaireItem(
+          v-for="question in input?.questions" :key="question.id" :name="question.id"
+          :multiple="question.type === 'multiple'" :required="question.required")
+          QuestionnaireTitle {{ question.question }}
+          QuestionnaireDescription(v-if="question.description") {{ question.description }}
+          QuestionnaireChoices(v-if="question.type !== 'text'" class="mt-3")
+            QuestionnaireChoice(
+              v-for="option in question.options ?? []" :key="option.label" :value="option.label"
+              :checked="choiceChecked(question.id, option.label)"
+              @update:checked="setChoice(question.id, option.label, question.type === 'multiple', $event)")
+              span {{ option.label }}
+              QuestionnaireChoiceDescription(v-if="option.description") {{ option.description }}
+            QuestionnaireInput(
+              v-if="question.allowOther" :model-value="otherAnswer(question.id)" placeholder="其他…"
+              @update:model-value="setOtherAnswer(question.id, $event, question.type === 'multiple')")
           QuestionnaireInput(
-            v-if="question.allowOther" :model-value="otherAnswer(question.id)" placeholder="其他…"
-            @update:model-value="setOtherAnswer(question.id, $event, question.type === 'multiple')")
-        QuestionnaireInput(
-          v-else :model-value="textAnswer(question.id)" :placeholder="question.placeholder"
-          class="mt-3" @update:model-value="setTextAnswer(question.id, $event)")
-        QuestionnaireError 请填写当前问题。
-      QuestionnaireActions(class="mt-3")
-        .flex.items-center.gap-2
-          QuestionnairePrevious(size="sm") 上一步
-          QuestionnaireProgress
-            template(#default="progress") {{ progress.current }} / {{ progress.total }}
-        QuestionnaireSkip(size="sm" @click="skipCurrentQuestion") 跳过
-        QuestionnaireNext(size="sm") 下一步
-        QuestionnaireSubmit(size="sm" :disabled="busy") 提交
+            v-else :model-value="textAnswer(question.id)" :placeholder="question.placeholder"
+            class="mt-3" @update:model-value="setTextAnswer(question.id, $event)")
+          QuestionnaireError 请填写当前问题。
+        QuestionnaireActions(class="mt-3")
+          .flex.items-center.gap-2
+            QuestionnairePrevious(size="sm") 上一步
+            QuestionnaireProgress
+              template(#default="progress") {{ progress.current }} / {{ progress.total }}
+          QuestionnaireSkip(size="sm" @click="skipCurrentQuestion") 跳过
+          QuestionnaireNext(size="sm") 下一步
+          QuestionnaireSubmit(size="sm" :disabled="busy") 提交
 </template>
