@@ -9,6 +9,7 @@ import { AskUserInputSchema } from '@/plugins/ask-user/shared'
 import { createAskUserToolCallRepair } from '@/plugins/ask-user/server/repair'
 import type { ModelRow, ProviderInterfaceRow, ProviderRow, ConversationRow } from '../../db/schema'
 import { PartAccumulator } from '../llm/accumulator'
+import { logLifecycle, partsBytes } from './lifecycle-log'
 import { buildModelMessages, buildProviderOptions, interjectionContent, requiredAttachmentIds, type AttachmentInput } from '../llm/messages'
 import { generationDurationMs, toUsage, type GenerationStepPerformance } from '../llm/usage'
 import type { Hub, InflightJob } from './index'
@@ -380,8 +381,43 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
       providerOptions: buildProviderOptions(target.providerInterface.protocol, params, target.model.metadata_resolved),
     })
 
+    logLifecycle('generation.started', {
+      conversationId: target.conversation.id, messageId: shell.id, userId: hub.userId,
+      projectId: target.conversation.project_id, providerId: target.provider.id,
+      modelId: target.model.model_id, count: messages.length, bytes: partsBytes(messages),
+    })
+
     let lastFlush = Date.now()
     for await (const part of result.stream) {
+      // The gap this exists for: a turn that produces nothing looks identical to one that never
+      // asked. Whichever chunk arrives first, the request is answered and the model is speaking.
+      if (firstTokenAt === null && part.type !== 'start' && part.type !== 'start-step') {
+        logLifecycle('generation.first_chunk', {
+          conversationId: target.conversation.id, messageId: shell.id,
+          durationMs: performance.now() - requestStartedAt, reason: part.type,
+        })
+      }
+      if (part.type === 'reasoning-start') {
+        logLifecycle('reasoning.started', { conversationId: target.conversation.id, messageId: shell.id })
+      }
+      if (part.type === 'reasoning-end') {
+        logLifecycle('reasoning.ended', {
+          conversationId: target.conversation.id, messageId: shell.id,
+          durationMs: performance.now() - requestStartedAt,
+        })
+      }
+      if (part.type === 'tool-call') {
+        logLifecycle('tool.called', {
+          conversationId: target.conversation.id, messageId: shell.id,
+          toolId: part.toolName, bytes: partsBytes(part.input),
+        })
+      }
+      if (part.type === 'tool-result') {
+        logLifecycle('tool.returned', {
+          conversationId: target.conversation.id, messageId: shell.id,
+          toolId: part.toolName, bytes: partsBytes(part.output),
+        })
+      }
       if (part.type === 'error') throw part.error instanceof Error ? part.error : new Error(String(part.error))
       // An aborted stream ends with `abort` and never emits `finish`, so usage stays null.
       if (part.type === 'abort') { status = 'aborted'; break }
@@ -442,6 +478,10 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
   // every socket already has the terminal event.
   consuming = false
   let finalizeFailure: { err: unknown } | null = null
+  logLifecycle('generation.finished', {
+    conversationId: shell.conversation_id, messageId: shell.id, status, bytes: partsBytes(acc.parts),
+    count: acc.parts.length, ...(error === null ? {} : { reason: error }),
+  })
   try {
     await finalizeMessage(hub.db, shell.id, hub.userId, { parts: acc.parts, usage, status, error })
   } catch (err) {
@@ -642,6 +682,11 @@ export async function runSend(hub: Hub, cmd: SendCommand): Promise<void> {
   const parentId = cmd.conversation_id === null ? null : (cmd.parent_id ?? target.conversation.head_message_id)
   if (parentId !== null) await resolveSendParent(hub, target.conversation, parentId)
   const user = await reserveUserMessage(hub, target.conversation, parentId, cmd.parts)
+  logLifecycle('message.sent', {
+    conversationId: target.conversation.id, messageId: user.id, userId: hub.userId,
+    projectId: target.conversation.project_id, bytes: partsBytes(cmd.parts),
+    ...(cmd.conversation_id === null ? { reason: 'new_conversation' } : {}),
+  })
   const shell = await openReservedAssistantShell(hub, target, user.id)
   await generate(hub, target, shell, user.id)
 }
@@ -779,6 +824,10 @@ export async function runInterjectInterrupt(
 
   const parts = hub.takeStash(job.message.id)
   if (parts.length === 0) throw new Error('nothing was waiting to be said')
+  logLifecycle('interject.sent', {
+    conversationId: cmd.conversation_id, messageId: job.message.id, userId: hub.userId,
+    bytes: partsBytes(parts),
+  })
   await hub.broadcast({ type: 'interject.stash', conversation_id: cmd.conversation_id, parts: [] })
 
   // `stop` waits for the job to settle, so by the time the send resolves its parent the aborted

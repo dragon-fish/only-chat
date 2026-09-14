@@ -17,6 +17,7 @@ import { pluginManifests } from '@/shared/plugin-manifests'
 import { createProject, deleteProject, getProject, listProjectConversations, updateProject, validateProjectIcon } from './projects'
 import { SeqAllocator } from './seq'
 import { joinStash } from '@/shared/stash'
+import { logLifecycle, partsBytes } from './lifecycle-log'
 import { runEdit, runInterjectInterrupt, runRegenerate, runSend, runToolContinue, runToolRespond } from './generation'
 import { parseAuthUserId } from '../auth/user-id'
 import { AUTH_REVOKED_CLOSE_CODE, hasActiveAuthSession, type SocketAttachment } from './identity'
@@ -423,6 +424,10 @@ export class Hub extends Service {
     const job = this.jobFor(conversationId)
     if (!job) throw new Error('nothing is generating in this conversation')
     job.stash = joinStash(job.stash, parts)
+    logLifecycle('interject.queued', {
+      conversationId, messageId: job.message.id, userId: this.userId,
+      bytes: partsBytes(parts), count: job.stash.length,
+    })
     await this.broadcast({ type: 'interject.stash', conversation_id: conversationId, parts: job.stash })
   }
 
@@ -431,6 +436,10 @@ export class Hub extends Service {
     const job = this.jobFor(conversationId)
     const parts = job?.stash ?? []
     if (job) job.stash = []
+    logLifecycle('interject.withdrawn', {
+      conversationId, userId: this.userId, bytes: partsBytes(parts),
+      reason: parts.length === 0 ? 'already_delivered' : 'returned',
+    })
     await this.broadcast({ type: 'interject.withdrawn', conversation_id: conversationId, parts })
     await this.broadcast({ type: 'interject.stash', conversation_id: conversationId, parts: [] })
   }

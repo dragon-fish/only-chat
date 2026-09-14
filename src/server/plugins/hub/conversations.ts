@@ -1,4 +1,5 @@
 import { and, desc, eq, gt, inArray, isNotNull, isNull, sql } from 'drizzle-orm'
+import { logLifecycle } from './lifecycle-log'
 import type { ScopedFilesClient } from '../llm/files/types'
 import { normalizeFilesBaseURL } from '../llm/files/shared'
 import type { DB } from '../../db/client'
@@ -66,6 +67,10 @@ export async function createConversation(db: DB, input: {
     updated_at: now,
     archived_at: null,
   }).returning()
+  logLifecycle('conversation.created', {
+    conversationId: row!.id, userId: input.user_id, projectId: input.project_id ?? null,
+    reason: input.kind ?? 'chat',
+  })
   return row!
 }
 
