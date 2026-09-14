@@ -4,6 +4,7 @@ import {
   RESTORE_FILE_TOOL_ID, WRITE_FILE_TOOL_ID,
 } from '../shared'
 import DeleteFileCard from './delete-file-card.vue'
+import FilesTab from './files-tab.vue'
 import ListFilesCard from './list-files-card.vue'
 import RenameFileCard from './rename-file-card.vue'
 import ReadFileCard from './read-file-card.vue'
@@ -23,4 +24,6 @@ export const setup: ClientPluginSetup = (ctx) => {
   ctx.messageFooter.register(TurnFilesFooter)
   // Files outlive the conversation that wrote them, so managing them belongs on the plugin's page.
   ctx.settingsPanel.register(SettingsPanel)
+  // The files of the open conversation, beside the chat rather than in a dialog over it.
+  ctx.workspacePanel.register(FilesTab)
 }

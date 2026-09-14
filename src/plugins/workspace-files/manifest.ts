@@ -42,6 +42,7 @@ const manifest = {
     },
   ],
   settingsEntry: { label: '工作区文件', description: '模型在 Project 与对话中读写的文本文件' },
+  workspaceTab: { label: '文件' },
   configSchema: WORKSPACE_FILES_CONFIG_SCHEMA,
   config: [
     {

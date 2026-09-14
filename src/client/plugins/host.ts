@@ -6,6 +6,13 @@ export type ToolRenderer = unknown
 export type ConfigRenderer = unknown
 export type MessageFooterRenderer = unknown
 export type SettingsPanelRenderer = unknown
+export type WorkspacePanelRenderer = unknown
+
+/** What a plugin asks of the workspace panel; the shell decides whether to grant it. */
+export interface WorkspaceAttention {
+  /** A handoff or anything else a person must see now; otherwise the shell may decline quietly. */
+  force?: boolean
+}
 
 export interface ClientPluginContext {
   manifests: readonly PluginManifest[]
@@ -27,6 +34,16 @@ export interface ClientPluginContext {
    * quota. Client surfaces are namespaced by plugin id the same way routes are.
    */
   settingsPanel: { register(component: SettingsPanelRenderer): () => void }
+  /**
+   * This plugin's tab in the chat view's workspace panel. The tab itself is declared in the
+   * manifest so the strip needs nothing loaded; this is the component behind it, given
+   * `conversationId` and `projectId`. `attention` asks the shell to show the tab; the shell owns
+   * the policy of when that actually happens.
+   */
+  workspacePanel: {
+    register(component: WorkspacePanelRenderer): () => void
+    attention(request?: WorkspaceAttention): void
+  }
   /**
    * This plugin's own realtime channel to its server half, routed by plugin id and opaque to the
    * core. Nothing is buffered: an event that arrives before this plugin was loaded is gone, so a
@@ -58,6 +75,8 @@ export class ClientPluginHost {
   private readonly messageFooters = new Map<string, MessageFooterRenderer>()
   private readonly settingsPanels = new Map<string, SettingsPanelRenderer>()
   private readonly eventListeners = new Map<string, Set<(payload: unknown) => void>>()
+  private readonly workspacePanels = new Map<string, WorkspacePanelRenderer>()
+  private readonly attentionListeners = new Set<(pluginId: string, request: WorkspaceAttention) => void>()
   private sender: ((command: WsCommand) => boolean) | null = null
   private readonly pending = new Map<string, Promise<void>>()
   private readonly disposers = new Map<string, () => void>()
@@ -88,6 +107,24 @@ export class ClientPluginHost {
 
   settingsPanel(pluginId: string): SettingsPanelRenderer | undefined {
     return this.settingsPanels.get(pluginId)
+  }
+
+  workspacePanel(pluginId: string): WorkspacePanelRenderer | undefined {
+    return this.workspacePanels.get(pluginId)
+  }
+
+  async ensureWorkspacePanel(pluginId: string): Promise<WorkspacePanelRenderer | undefined> {
+    const existing = this.workspacePanel(pluginId)
+    if (existing !== undefined) return existing
+    if (!this.loaders[pluginId]) return undefined
+    await this.ensurePlugin(pluginId)
+    return this.workspacePanel(pluginId)
+  }
+
+  /** The shell listens here; a plugin's `attention` call reaches every mounted shell. */
+  onWorkspaceAttention(listener: (pluginId: string, request: WorkspaceAttention) => void): () => void {
+    this.attentionListeners.add(listener)
+    return () => { this.attentionListeners.delete(listener) }
   }
 
   /** The socket that carries plugin commands; wired by the app once the sync store exists. */
@@ -165,6 +202,20 @@ export class ClientPluginHost {
             }
             registrations.push(unregister)
             return unregister
+          },
+        },
+        workspacePanel: {
+          register: (component) => {
+            if (this.workspacePanels.has(pluginId)) throw new Error(`workspace panel already registered: ${pluginId}`)
+            this.workspacePanels.set(pluginId, component)
+            const unregister = () => {
+              if (this.workspacePanels.get(pluginId) === component) this.workspacePanels.delete(pluginId)
+            }
+            registrations.push(unregister)
+            return unregister
+          },
+          attention: (request = {}) => {
+            for (const listener of this.attentionListeners) listener(pluginId, request)
           },
         },
         events: {

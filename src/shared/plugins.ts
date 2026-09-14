@@ -193,6 +193,22 @@ export function pluginAvailableIn(manifest: PluginManifest, scope: ConversationS
   return manifest.requiresProject !== true || scope.projectId !== null
 }
 
+export interface WorkspaceTabEntry {
+  pluginId: string
+  label: string
+}
+
+/** The workspace panel's tab strip, answerable from manifests alone: enabled plugins that can serve here. */
+export function workspaceTabs(
+  manifests: readonly PluginManifest[],
+  settings: Readonly<Record<string, boolean>>,
+  scope: ConversationScope,
+): WorkspaceTabEntry[] {
+  return manifests
+    .filter(manifest => manifest.workspaceTab !== undefined && settings[manifest.id] === true && pluginAvailableIn(manifest, scope))
+    .map(manifest => ({ pluginId: manifest.id, label: manifest.workspaceTab!.label }))
+}
+
 /** This plugin's per-conversation settings with defaults applied; `{}` when it declares none. */
 export function conversationConfigOf(
   manifest: PluginManifest,

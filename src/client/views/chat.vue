@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, reactive, ref, watch, watchEffect } from 'vue'
+import { computed, inject, nextTick, onBeforeUnmount, reactive, ref, watch, watchEffect } from 'vue'
 import { useMediaQuery } from '@vueuse/core'
 import { RouterLink, useRouter } from 'vue-router'
-import { ArrowLeftIcon, RotateCcwIcon } from '@lucide/vue'
+import { ArrowLeftIcon, PanelRightIcon, RotateCcwIcon } from '@lucide/vue'
 import MessageList from '@/client/components/message-list.vue'
 import Composer from '@/client/components/composer.vue'
 import ModelPicker from '@/client/components/model-picker.vue'
@@ -13,8 +13,11 @@ import ConversationMapDialog from '@/client/components/conversation-map-dialog.v
 import CollectionState from '@/client/components/collection-state.vue'
 import ContextUsageIndicator from '@/client/components/context-usage-indicator.vue'
 import ToolSelector from '@/client/components/tool-selector.vue'
-import WorkspaceFilesDialog from '@/client/components/workspace-files-dialog.vue'
 import ToolPartRenderer from '@/client/components/tool-part-renderer.vue'
+import WorkspacePanel from '@/client/components/workspace-panel.vue'
+import ResponsiveOverlay from '@/client/components/layout/responsive-overlay.vue'
+import { useWorkspacePanel, MAX_PANEL_SIZE, MIN_PANEL_SIZE } from '@/client/composables/use-workspace-panel'
+import type { ClientPluginHost } from '@/client/plugins/host'
 import { defaultToolsForSettings, conversationToolBlockReason } from '@/client/components/tool-selector'
 import { pendingHumanCalls } from '@/client/components/tool-part-renderer'
 import { pluginManifests } from '@/client/plugins/loaders'
@@ -29,9 +32,11 @@ import {
 import { useConfigStore } from '@/client/stores/config'
 import { Button } from '@/client/ui/button'
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from '@/client/ui/empty'
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/client/ui/resizable'
 import type { ModelRef } from '@/shared/api'
 import type { ConversationPluginSettings, Message } from '@/shared/models'
 import type { Part } from '@/shared/parts'
+import { workspaceTabs } from '@/shared/plugins'
 
 const props = withDefaults(defineProps<{ conversationId: number | null; projectId?: number | null }>(), { projectId: null })
 const router = useRouter()
@@ -122,6 +127,17 @@ const configSource = computed<ConversationConfigSource>(() => ({
   params: paramsFromFields(form),
 }))
 const sources = computed(() => conversationSettingSources(configSource.value, project.value))
+
+// ---- workspace panel
+
+const pluginHost = inject<ClientPluginHost | null>('clientPluginHost', null)
+/** Which plugins can show a tab here; a conversation outside a Project sees fewer of them. */
+const tabs = computed(() => workspaceTabs(pluginManifests, sync.settings.plugins, { projectId: project.value?.id ?? null }))
+const workspace = useWorkspacePanel(pluginHost, computed(() => ({
+  conversationId: sid.value,
+  tabs: tabs.value.map(tab => tab.pluginId),
+})))
+const workspaceOpen = computed(() => workspace.open.value && tabs.value.length > 0)
 
 // ---- model and reasoning
 
@@ -443,61 +459,82 @@ function onPluginSettingsChange(pluginId: string, values: Record<string, unknown
 </script>
 
 <template lang="pug">
-.flex.h-full.flex-col
-  Teleport(to="#page-header" defer)
-    .flex.min-w-0.flex-1.items-center.gap-1
-      template(v-if="!isDesktop")
-        Button(as-child variant="ghost" size="icon-sm" class="size-10")
-          RouterLink(:to="backTarget" aria-label="返回聊天")
-            ArrowLeftIcon
-        template(v-if="project")
-          ProjectAvatar(:project="project" size="sm")
-          span.min-w-0.flex-1.truncate.text-sm.font-medium {{ projectTitle }}
-        span.min-w-0.flex-1.truncate.text-sm.font-medium(v-else) 随心聊
-      ModelPicker(:compact="!isDesktop" :model-value="effective.model" @update:model-value="onModelChange")
-      Button(
-        v-if="sources.model === 'conversation'" variant="ghost" size="icon-xs"
-        class="min-h-10 min-w-10 md:min-h-6 md:min-w-6"
-        title="恢复继承模型" aria-label="恢复继承模型" @click="setOverride(null)")
-        RotateCcwIcon
-      .ml-auto.flex.shrink-0.items-center.gap-1
-        ConversationMapDialog(:conversation-id="sid" @locate="onLocateMessage")
-        WorkspaceFilesDialog(mount="conversation" :scope-id="sid")
-        ConversationSettings(
-          :form="form" :sources="sources" :project="project" :has-conversation="sid !== null"
-          :plugin-settings="pluginSettings"
-          @commit="commitSettings" @update-plugin-settings="onPluginSettingsChange")
-  .min-h-0.flex-1
-    CollectionState(:loaded="visiblePath.length > 0 || sid === null || (sync.conversationsLoaded && sync.loadedMessageConversations.has(sid))" :error="messageLoadError || (sid !== null ? sync.conversationsError : null)" :retry="retryChat")
-      MessageList(
-        v-if="visiblePath.length" ref="messageList" :key="sid ?? 'draft'" :messages="visiblePath" :project="project"
-        :effective-model="effective"
-        :optimistic-id="optimisticMessage?.id")
-      Empty(v-else class="h-full")
-        EmptyHeader
-          EmptyTitle 开始一段新对话
-          EmptyDescription 从下方输入消息，开启这次交流。
-        EmptyContent
-          Button(variant="outline" class="min-h-10" @click="focusComposer") 输入消息
-  Composer(
-    ref="composer" :streaming="streaming" :connected="sync.status === 'open'"
-    :can-send="canSend" :hint="sendHint" :replaced="pendingToolCall !== null"
-    @send="onSend" @stop="onStop")
-    template(#replacement)
-      .oc-scroll.flex.max-h-96.flex-col.overflow-y-auto(class="md:max-h-[60vh]")
-        ToolPartRenderer(
-          v-if="pendingToolCall" placement="composer" :message-id="pendingToolCall.messageId"
-          :call="pendingToolCall.call" :result="null" :can-continue="false")
-    template(#left-controls)
-      ToolSelector(
-        :model-value="selectedTools" :plugins="sync.settings.plugins" :plugin-config="sync.pluginConfig" :desktop="isDesktop"
-        :project-id="project?.id ?? null"
-        :supported="toolsSupported" :enabled="toolsEnabled" @update:enabled="onToolsEnabledChange"
-        @update:model-value="onToolsChange")
-    template(#controls)
-      ContextUsageIndicator(v-if="contextUsage" :usage="contextUsage.usage" :limit="contextUsage.limit")
-      ReasoningControl(
-        :metadata="metadata" :active="activeReasoning"
-        :overridden="form.reasoning !== 'inherit'" :no-model="entry === undefined"
-        @update="onReasoningChange")
+//- Desktop splits the view; the panel is a column beside the chat. Mobile keeps the chat whole and
+//- shows the same panel as a full-screen overlay. Both render one WorkspacePanel, never two.
+ResizablePanelGroup(direction="horizontal" class="h-full")
+  ResizablePanel(:default-size="100 - workspace.size.value" :min-size="100 - MAX_PANEL_SIZE" class="min-w-0")
+    .flex.h-full.flex-col
+      Teleport(to="#page-header" defer)
+        .flex.min-w-0.flex-1.items-center.gap-1
+          template(v-if="!isDesktop")
+            Button(as-child variant="ghost" size="icon-sm" class="size-10")
+              RouterLink(:to="backTarget" aria-label="返回聊天")
+                ArrowLeftIcon
+            template(v-if="project")
+              ProjectAvatar(:project="project" size="sm")
+              span.min-w-0.flex-1.truncate.text-sm.font-medium {{ projectTitle }}
+            span.min-w-0.flex-1.truncate.text-sm.font-medium(v-else) 随心聊
+          ModelPicker(:compact="!isDesktop" :model-value="effective.model" @update:model-value="onModelChange")
+          Button(
+            v-if="sources.model === 'conversation'" variant="ghost" size="icon-xs"
+            class="min-h-10 min-w-10 md:min-h-6 md:min-w-6"
+            title="恢复继承模型" aria-label="恢复继承模型" @click="setOverride(null)")
+            RotateCcwIcon
+          .ml-auto.flex.shrink-0.items-center.gap-1
+            ConversationMapDialog(:conversation-id="sid" @locate="onLocateMessage")
+            Button(
+              v-if="tabs.length" variant="ghost" size="icon-xs" class="min-h-10 min-w-10 md:min-h-6 md:min-w-6"
+              title="工作区" aria-label="工作区" :aria-expanded="workspaceOpen" @click="workspace.toggle()")
+              PanelRightIcon
+            ConversationSettings(
+              :form="form" :sources="sources" :project="project" :has-conversation="sid !== null"
+              :plugin-settings="pluginSettings"
+              @commit="commitSettings" @update-plugin-settings="onPluginSettingsChange")
+      .min-h-0.flex-1
+        CollectionState(:loaded="visiblePath.length > 0 || sid === null || (sync.conversationsLoaded && sync.loadedMessageConversations.has(sid))" :error="messageLoadError || (sid !== null ? sync.conversationsError : null)" :retry="retryChat")
+          MessageList(
+            v-if="visiblePath.length" ref="messageList" :key="sid ?? 'draft'" :messages="visiblePath" :project="project"
+            :effective-model="effective"
+            :optimistic-id="optimisticMessage?.id")
+          Empty(v-else class="h-full")
+            EmptyHeader
+              EmptyTitle 开始一段新对话
+              EmptyDescription 从下方输入消息，开启这次交流。
+            EmptyContent
+              Button(variant="outline" class="min-h-10" @click="focusComposer") 输入消息
+      Composer(
+        ref="composer" :streaming="streaming" :connected="sync.status === 'open'"
+        :can-send="canSend" :hint="sendHint" :replaced="pendingToolCall !== null"
+        @send="onSend" @stop="onStop")
+        template(#replacement)
+          .oc-scroll.flex.max-h-96.flex-col.overflow-y-auto(class="md:max-h-[60vh]")
+            ToolPartRenderer(
+              v-if="pendingToolCall" placement="composer" :message-id="pendingToolCall.messageId"
+              :call="pendingToolCall.call" :result="null" :can-continue="false")
+        template(#left-controls)
+          ToolSelector(
+            :model-value="selectedTools" :plugins="sync.settings.plugins" :plugin-config="sync.pluginConfig" :desktop="isDesktop"
+            :project-id="project?.id ?? null"
+            :supported="toolsSupported" :enabled="toolsEnabled" @update:enabled="onToolsEnabledChange"
+            @update:model-value="onToolsChange")
+        template(#controls)
+          ContextUsageIndicator(v-if="contextUsage" :usage="contextUsage.usage" :limit="contextUsage.limit")
+          ReasoningControl(
+            :metadata="metadata" :active="activeReasoning"
+            :overridden="form.reasoning !== 'inherit'" :no-model="entry === undefined"
+            @update="onReasoningChange")
+  template(v-if="isDesktop && workspaceOpen")
+    ResizableHandle(with-handle)
+    ResizablePanel(
+      :default-size="workspace.size.value" :min-size="MIN_PANEL_SIZE" :max-size="MAX_PANEL_SIZE"
+      class="min-w-0" @resize="workspace.resize($event)")
+      WorkspacePanel(
+        :tabs="tabs" :active="workspace.tab.value" :conversation-id="sid" :project-id="project?.id ?? null" closable
+        @update:active="workspace.show($event)" @close="workspace.hide()")
+ResponsiveOverlay(
+  v-if="!isDesktop" mode="dialog" title="工作区" :open="workspaceOpen"
+  @update:open="$event ? workspace.show() : workspace.hide()")
+  WorkspacePanel(
+    :tabs="tabs" :active="workspace.tab.value" :conversation-id="sid" :project-id="project?.id ?? null"
+    @update:active="workspace.show($event)")
 </template>
