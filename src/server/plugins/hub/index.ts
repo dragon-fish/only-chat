@@ -22,6 +22,23 @@ import { AUTH_REVOKED_CLOSE_CODE, hasActiveAuthSession, type SocketAttachment } 
 
 type GenerationEvent = Extract<WsEvent, { type: 'message.delta' | 'message.part' | 'message.done' | 'tool.progress' }>
 
+/**
+ * Fold new parts into what is already waiting.
+ *
+ * Adjacent text is joined with a blank line rather than kept as separate parts: someone typing
+ * three sentences while they wait is composing one remark, and delivering it as three would read
+ * to the model as being interrupted three times. Images keep their own parts, in the order sent.
+ */
+function joinStash(held: readonly Part[], added: readonly Part[]): Part[] {
+  const out = [...held]
+  for (const part of added) {
+    const last = out.at(-1)
+    if (part.type === 'text' && last?.type === 'text') out[out.length - 1] = { ...last, text: `${last.text}\n${part.text}` }
+    else out.push(part)
+  }
+  return out
+}
+
 export interface InflightJob {
   message: Message
   conversationId: number
@@ -30,6 +47,12 @@ export interface InflightJob {
   parts: Part[]
   /** Resolves once the job untracked itself. Assigned by `trackInflight`; awaited by `stop`. */
   settled: Promise<void>
+  /**
+   * What the operator said while this turn was running, waiting for a boundary the model can be
+   * told at. Held here rather than on the client because withdrawing races the injection, and a
+   * client that decided for itself would sometimes take back something already sent.
+   */
+  stash: Part[]
 }
 
 interface StoredInflight {
@@ -171,6 +194,8 @@ export class Hub extends Service {
       case 'project.delete': return this.projectDelete(cmd.project_id)
       case 'tool.respond': return runToolRespond(this, cmd)
       case 'tool.continue': return runToolContinue(this, cmd)
+      case 'interject': return this.interject(cmd.conversation_id, cmd.parts)
+      case 'interject.withdraw': return this.withdrawInterjection(cmd.request_id ?? '', cmd.conversation_id)
       case 'plugin.command': return this.app.pluginChannel.dispatch(cmd.plugin, cmd.payload, this)
     }
   }
@@ -398,6 +423,40 @@ export class Hub extends Service {
     this._inflight.set(tracked.message.id, tracked)
     await this.flushInflight(tracked)
     await this.ensureAlarm()
+  }
+
+  /** The job this conversation is running, if any. One generation per conversation at a time. */
+  private jobFor(conversationId: number): InflightJob | undefined {
+    return [...this._inflight.values()].find(job => job.conversationId === conversationId)
+  }
+
+  /**
+   * Add to the stash. Repeated sends join rather than queue: a turn reads one message, and three
+   * arriving as three would be three interruptions of the same thought.
+   */
+  async interject(conversationId: number, parts: Part[]): Promise<void> {
+    const job = this.jobFor(conversationId)
+    if (!job) throw new Error('nothing is generating in this conversation')
+    job.stash = joinStash(job.stash, parts)
+    await this.broadcast({ type: 'interject.stash', conversation_id: conversationId, parts: job.stash })
+  }
+
+  /** Take the stash back, or report it empty because the model has already been told. */
+  async withdrawInterjection(requestId: string, conversationId: number): Promise<void> {
+    const job = this.jobFor(conversationId)
+    const parts = job?.stash ?? []
+    if (job) job.stash = []
+    await this.broadcast({ type: 'interject.withdrawn', request_id: requestId, conversation_id: conversationId, parts })
+    await this.broadcast({ type: 'interject.stash', conversation_id: conversationId, parts: [] })
+  }
+
+  /** Empty the stash and return what was in it. The drain and a withdrawal cannot both win. */
+  takeStash(messageId: number): Part[] {
+    const job = this._inflight.get(messageId)
+    if (!job || job.stash.length === 0) return []
+    const parts = job.stash
+    job.stash = []
+    return parts
   }
 
   async flushInflight(job: InflightJob): Promise<void> {

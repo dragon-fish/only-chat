@@ -1,7 +1,7 @@
 import { stepCountIs, streamText, type LanguageModel, type StopCondition, type ToolSet } from 'ai'
 import { INFLIGHT_FLUSH_INTERVAL_MS, TOOL_MAX_STEPS } from '@/shared/constants'
 import type { Message, PersistedStatus, ConversationParams, ConversationPluginSettings, Usage } from '@/shared/models'
-import type { Part, ToolCallPart, ToolResultPart } from '@/shared/parts'
+import type { InterjectionPart, Part, ToolCallPart, ToolResultPart } from '@/shared/parts'
 import type { SendCommand, WsCommand } from '@/shared/ws'
 import { ASK_USER_TOOL_ID, parseConversationPluginSettings } from '@/shared/plugins'
 import { pluginManifests } from '@/shared/plugin-manifests'
@@ -9,7 +9,7 @@ import { AskUserInputSchema } from '@/plugins/ask-user/shared'
 import { createAskUserToolCallRepair } from '@/plugins/ask-user/server/repair'
 import type { ModelRow, ProviderInterfaceRow, ProviderRow, ConversationRow } from '../../db/schema'
 import { PartAccumulator } from '../llm/accumulator'
-import { buildModelMessages, buildProviderOptions, requiredAttachmentIds, type AttachmentInput } from '../llm/messages'
+import { buildModelMessages, buildProviderOptions, interjectionContent, requiredAttachmentIds, type AttachmentInput } from '../llm/messages'
 import { generationDurationMs, toUsage, type GenerationStepPerformance } from '../llm/usage'
 import type { Hub, InflightJob } from './index'
 import {
@@ -269,7 +269,7 @@ async function assembleContext(hub: Hub, target: Target, leafMessageId: number):
 async function generate(hub: Hub, target: Target, shell: Message, leafMessageId: number): Promise<void> {
   const controller = new AbortController()
   const acc = new PartAccumulator()
-  const job = { message: shell, conversationId: target.conversation.id, controller, startedAt: Date.now(), parts: acc.parts }
+  const job = { message: shell, conversationId: target.conversation.id, controller, startedAt: Date.now(), parts: acc.parts, stash: [] as Part[] }
   // `trackInflight` assigns `settled` onto this very object, so the reference stays usable.
   await hub.trackInflight(job)
   const tracked = job as InflightJob
@@ -334,6 +334,35 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
       topP: params.top_p,
       maxOutputTokens: params.max_tokens,
       repairToolCall: createAskUserToolCallRepair(model, controller.signal),
+      /**
+       * Where anything said mid-turn is handed to the model.
+       *
+       * Runs between steps, which is the only place a user message may go: the API refuses one
+       * interleaved among tool results. Draining here rather than on arrival is what makes the
+       * stash a stash — it is held exactly until the model can be told.
+       *
+       * The same text is recorded on the message as it goes, so the transcript shows it where it
+       * landed and a later prompt rebuild puts it back in the same place.
+       */
+      prepareStep: async ({ messages: soFar }) => {
+        const said = hub.takeStash(shell.id)
+        if (said.length === 0) return {}
+        const part = { type: 'interjection' as const, parts: said as InterjectionPart['parts'] }
+        acc.append(part)
+        await hub.flushInflight(tracked)
+        await hub.broadcastGeneration({
+          type: 'message.part', message_id: shell.id, part_index: acc.parts.length - 1, part,
+        })
+        await hub.broadcast({ type: 'interject.stash', conversation_id: target.conversation.id, parts: [] })
+        // Images in the stash are resolved now, against this generation's own interface and
+        // credentials — the same path the turn's own attachments took.
+        const ids = new Set(said.flatMap(inner => (inner.type === 'image' ? [inner.attachment_id] : [])))
+        const deps = { db: hub.db, userId: hub.userId, assets: hub.app.assets, llm: hub.app.llm }
+        const bytes = ids.size === 0
+          ? new Map<number, AttachmentInput>()
+          : await resolveAttachmentInputs(deps, target.provider, target.providerInterface, ids)
+        return { messages: [...soFar, { role: 'user' as const, content: interjectionContent(part, bytes) }] }
+      },
       providerOptions: buildProviderOptions(target.providerInterface.protocol, params, target.model.metadata_resolved),
     })
 

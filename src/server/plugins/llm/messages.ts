@@ -6,7 +6,7 @@ import type { OpenResponsesLanguageModelOptions } from '@ai-sdk/open-responses'
 import type { OpenAICompatibleProviderOptions } from '@ai-sdk/openai-compatible'
 import type { Message, InterfaceProtocol, ReasoningEffort, ConversationParams } from '@/shared/models'
 import type { ModelMetadata } from '@/shared/model-metadata'
-import type { Part, ProviderOptions } from '@/shared/parts'
+import type { InterjectionPart, Part, ProviderOptions } from '@/shared/parts'
 import { RESPONSES_PROVIDER_NAME, responsesReasoningReplayOptions } from './responses-reasoning'
 
 export const COMPAT_PROVIDER_NAME = 'compat'
@@ -79,6 +79,31 @@ function targetOptions(protocol: InterfaceProtocol, stored: ProviderOptions | un
   return entries.length > 0 ? Object.fromEntries(entries) : undefined
 }
 
+/**
+ * How an interjection is presented to the model, wherever it is being assembled.
+ *
+ * The note is not decoration. Without it the model meets a user message that appeared in the middle
+ * of its own work with no explanation, and reads it as a new turn — answering it from the top
+ * instead of folding it into what it was already doing.
+ *
+ * Shared by the live injection and by every later rebuild on purpose. Written in only one of those
+ * places, a conversation would replay differently from how it happened, and the difference would
+ * appear a turn later as the model contradicting itself.
+ */
+export function interjectionContent(
+  part: InterjectionPart,
+  attachments: ReadonlyMap<number, AttachmentInput>,
+): UserPart[] {
+  return [
+    {
+      type: 'text',
+      text: '以下是用户在你这一轮工作进行期间发来的消息，它刚刚才进入对话。'
+        + '这不是新的一轮提问：请把它纳入你当前正在做的事，必要时调整方向，然后继续。',
+    },
+    ...userParts(part.parts, attachments),
+  ]
+}
+
 function assistantMessages(
   parts: Part[],
   protocol: InterfaceProtocol,
@@ -130,7 +155,7 @@ function assistantMessages(
         // one that answered it. Both halves flush first, or it would land inside them.
         flushAssistant()
         flushTool()
-        out.push({ role: 'user', content: userParts(p.parts, attachments) })
+        out.push({ role: 'user', content: interjectionContent(p, attachments) })
         break
     }
   }

@@ -145,6 +145,26 @@ export const ToolContinueCommandSchema = z.strictObject({
   request_id: z.string().min(1),
   message_id: z.number().int(),
 })
+/**
+ * Something to say while the turn is still running, held until the model can be told.
+ *
+ * Stashed rather than sent: a user message cannot be interleaved among tool results, so it waits
+ * for the boundary between two steps. The hub owns the stash even though the composer displays it,
+ * because withdrawing races the injection and only one side can be right about which won.
+ */
+export const InterjectCommandSchema = z.object({
+  type: z.literal('interject'),
+  ...base,
+  conversation_id: z.number().int(),
+  parts: PartsSchema,
+})
+/** Take it back, if the model has not been told yet. The reply carries what was held. */
+export const InterjectWithdrawCommandSchema = z.object({
+  type: z.literal('interject.withdraw'),
+  ...base,
+  conversation_id: z.number().int(),
+})
+
 /** A plugin's private frame to its server half; the core only routes it by plugin id. */
 export const PluginCommandSchema = z.object({
   type: z.literal('plugin.command'),
@@ -169,6 +189,8 @@ export const WsCommandSchema = z.discriminatedUnion('type', [
   ProjectDeleteCommandSchema,
   ToolRespondCommandSchema,
   ToolContinueCommandSchema,
+  InterjectCommandSchema,
+  InterjectWithdrawCommandSchema,
   PluginCommandSchema,
 ])
 export type WsCommand = z.infer<typeof WsCommandSchema>
@@ -189,6 +211,22 @@ export const WsEventSchema = z.discriminatedUnion('type', [
     part_index: z.number().int(),
     kind: z.enum(['text', 'reasoning']),
     delta: z.string(),
+  }),
+  /**
+   * What the stash holds now, for every device of this user. Empty means nothing is waiting —
+   * either it was withdrawn, or the model has been told and it is a part of the turn instead.
+   */
+  z.object({
+    type: z.literal('interject.stash'),
+    conversation_id: z.number().int(),
+    parts: PartsSchema,
+  }),
+  /** The stash handed back, because the withdrawal beat the injection. */
+  z.object({
+    type: z.literal('interject.withdrawn'),
+    request_id: z.string().min(1),
+    conversation_id: z.number().int(),
+    parts: PartsSchema,
   }),
   z.object({
     type: z.literal('message.part'),

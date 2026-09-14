@@ -395,9 +395,22 @@ describe('interjections', () => {
     })
     // The model met it after the tool answered and before the next step; so does the replay.
     expect(out.map(m => m.role)).toEqual(['user', 'assistant', 'tool', 'user', 'assistant'])
-    const said = out[3] as { content: Array<{ type: string }> }
-    // The SDK calls an inlined image a file part; what matters is that both survived.
-    expect(said.content.map(part => part.type)).toEqual(['text', 'file'])
+    const said = out[3] as { content: Array<{ type: string, text?: string }> }
+    // A note first, then what was actually said. The SDK calls an inlined image a file part.
+    expect(said.content.map(part => part.type)).toEqual(['text', 'text', 'file'])
+    expect(said.content[1]?.text).toBe('actually, in French')
+  })
+
+  it('tells the model it was interrupted, rather than handing it a bare message', () => {
+    // Unexplained, a user message appearing mid-work reads as a new turn, and the model answers it
+    // from the top instead of folding it into what it was already doing.
+    const out = buildModelMessages({
+      protocol: 'chat-completions', systemPrompt: null, path: interrupted,
+      attachments: new Map([[7, inlinePng]]),
+    })
+    const note = (out[3] as { content: Array<{ text?: string }> }).content[0]?.text ?? ''
+    expect(note).toContain('这一轮工作进行期间')
+    expect(note).toContain('不是新的一轮提问')
   })
 
   it('resolves the images it carries, wherever the message says they live', () => {
