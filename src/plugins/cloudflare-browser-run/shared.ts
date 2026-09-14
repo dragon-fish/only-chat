@@ -14,6 +14,12 @@ export const MAX_SCREENSHOTS_PER_RUN = 8
 export const LIVE_VIEW_TTL_MS = 3_600_000
 /** The client asks for a fresh link this long before the current one expires. */
 export const LIVE_VIEW_REFRESH_MARGIN_MS = 300_000
+/**
+ * A mounted Live View frame is a connected client, and the platform never idles a session with a
+ * client attached. The frame unmounts after this long without a person touching it, so the
+ * platform's own idle timer (keep_alive, at most 10 minutes) can reclaim the browser.
+ */
+export const LIVE_VIEW_IDLE_MS = 600_000
 
 // ---- plugin configuration
 

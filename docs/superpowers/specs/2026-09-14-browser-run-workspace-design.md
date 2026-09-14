@@ -181,6 +181,14 @@ cached isolate.
   fetches, exports the storage state and disconnects. The client sends `refresh_live_view` five
   minutes before expiry. A probe with `close: true` is how 关闭浏览器 and conversation deletion end
   a session.
+- Session lifetime is the platform's idle timer: `keep_alive` is 10 minutes, the maximum, and
+  nothing server-side extends it. The model's own CDP commands count as activity, so a session
+  outlives a turn by at most 10 minutes. A mounted Live View frame also counts as activity, so
+  the client unmounts it after `LIVE_VIEW_IDLE_MS` (10 minutes) without a person touching the
+  panel — clicks in the panel, focus inside the frame, or a session event — and whenever the
+  page is hidden. The tab shows the countdown and a 恢复画面 button; resuming sends `state`, which
+  either mints a fresh link or reports the session gone. Each device keeps its own timer, so a
+  session lives while any device is using it and is reclaimed at most 20 minutes after the last.
 - Cloudflare's own `Cloudflare.handoff` command is not used: its completion event needs a standing
   CDP connection, and the panel already shows instructions and buttons.
 
