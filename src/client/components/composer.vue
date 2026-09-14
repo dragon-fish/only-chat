@@ -217,7 +217,12 @@ function restore(parts: Part[]) {
 }
 
 function onKeydown(e: KeyboardEvent) {
-  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); act() }
+  if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return
+  e.preventDefault()
+  // Enter is the gesture for sending, so with nothing to send it does nothing. Stopping and
+  // interrupting both act on an empty box, and neither is something to hand a stray keypress.
+  if (!hasContent.value) return
+  act()
 }
 function pickFiles() {
   if (busy.value) return

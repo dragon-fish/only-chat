@@ -63,9 +63,17 @@ it('queues rather than interrupting while a turn is running', async () => {
   expect(fired.send).toHaveLength(0)
 })
 
-it('stops only when there is nothing to say', async () => {
+it('does nothing at all when Enter is pressed on an empty box', async () => {
+  // Enter is the gesture for sending. Stopping is not something to hand a stray keypress.
   const { host, fired } = mount({ streaming: true })
   host.querySelector('textarea')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+  await Promise.resolve()
+  expect(fired).toMatchObject({ send: [], queue: [], interrupt: [], stop: 0 })
+})
+
+it('stops when the button is pressed, which is what the button is for', async () => {
+  const { host, fired } = mount({ streaming: true })
+  host.querySelector<HTMLElement>('[aria-label="停止生成"]')!.click()
   await Promise.resolve()
   expect(fired.stop).toBe(1)
 })
@@ -79,10 +87,10 @@ it('keeps queueing while there is something in the box, however much is waiting'
   expect(fired.interrupt).toHaveLength(0)
 })
 
-it('interrupts on an empty box once something is waiting', async () => {
+it('interrupts from the button once something is waiting', async () => {
   // Nothing more to add: send it now rather than waiting for a boundary that may never come.
   const { host, fired } = mount({ streaming: true, stash: [{ type: 'text', text: 'earlier' }] })
-  host.querySelector('textarea')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+  host.querySelector<HTMLElement>('[aria-label="打断并立即送出已排队的消息"]')!.click()
   await Promise.resolve()
   expect(fired.interrupt).toEqual([[]])
   expect(fired.stop).toBe(0)
