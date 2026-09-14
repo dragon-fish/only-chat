@@ -41,13 +41,4 @@ defineProps<{
     img(
       v-else-if="segment.kind === 'image'" class="max-h-80 rounded border"
       :src="api.attachmentUrl(segment.part.attachment_id)")
-    //- The operator, mid-turn. Aligned right and tinted like their own messages, because that is
-    //- whose words these are — the assistant message is only where they had to be stored.
-    .flex.w-full.justify-end(v-else-if="segment.kind === 'interjection'")
-      .flex.flex-col.gap-2.rounded-xl.px-3.py-2(class="bg-muted max-w-[85%] text-sm")
-        template(v-for="(said, i) in segment.part.parts" :key="i")
-          img(
-            v-if="said.type === 'image'" class="max-h-60 rounded border"
-            :src="api.attachmentUrl(said.attachment_id)")
-          p.whitespace-pre-wrap(v-else) {{ said.text }}
 </template>

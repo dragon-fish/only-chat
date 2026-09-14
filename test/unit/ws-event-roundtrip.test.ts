@@ -32,13 +32,4 @@ describe('ws events survive the client parser', () => {
     }).success).toBe(true)
   })
 
-  it('carries an interjection part on a message update', () => {
-    const parsed = roundTrip({
-      type: 'message.part',
-      message_id: 2,
-      part_index: 0,
-      part: { type: 'interjection', parts: [{ type: 'text', text: '等一下' }] },
-    })
-    expect(parsed.success).toBe(true)
-  })
 })

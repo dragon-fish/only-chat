@@ -1560,7 +1560,12 @@ describe('DeepSeek Responses reasoning lifecycle', () => {
     }
     expect(live).toEqual(saved.parts)
     // Tool execution is external to this fixture; complete its persisted result before the next turn.
-    await finalizeMessage(db, saved.id, 1, { parts: [...saved.parts, { type: 'tool_result', call_id: 'call_fixture', name: 'lookup', content: { found: true } }], usage: saved.usage, status: 'done', error: null })
+    // The result goes in front of the reply to it, which is what a finished turn ends on. Appended
+    // instead, this would be a turn that got taken over, and the prompt builder would rightly warn
+    // the model about it.
+    const answered = [...saved.parts]
+    answered.splice(-1, 0, { type: 'tool_result', call_id: 'call_fixture', name: 'lookup', content: { found: true } })
+    await finalizeMessage(db, saved.id, 1, { parts: answered, usage: saved.usage, status: 'done', error: null })
     if (!metadataPresent) await db.update(models).set({ metadata_resolved: {} }).where(eq(models.provider_id, providerId))
     await updateConversation(db, conversationId, 1, { params: { reasoning_enabled: false, reasoning_effort: 'high' } })
     c.ws.send(JSON.stringify({ type: 'send', conversation_id: conversationId, parent_id: null, parts: [{ type: 'text', text: 'next' }], provider_id: providerId, model_id: 'deepseek-fixture' }))
@@ -1570,8 +1575,8 @@ describe('DeepSeek Responses reasoning lifecycle', () => {
       { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'first' }] },
       { type: 'reasoning', id: 'rs_fixture', summary: deepseekReasoningItem.summary, content: deepseekReasoningItem.content, encrypted_content: 'fixture-encrypted-state' },
       { type: 'function_call', id: 'fc_fixture', call_id: 'call_fixture', name: 'lookup', arguments: '{"q":"fixture"}' },
-      { type: 'message', role: 'assistant', id: 'msg_fixture', content: [{ type: 'output_text', text: 'fixture answer' }] },
       { type: 'function_call_output', call_id: 'call_fixture', output: '{"found":true}' },
+      { type: 'message', role: 'assistant', id: 'msg_fixture', content: [{ type: 'output_text', text: 'fixture answer' }] },
       { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'next' }] },
     ])
     expect(untimed((await listMessages(db, conversationId, 1))[3]!.parts)).toEqual(untimed(saved.parts))

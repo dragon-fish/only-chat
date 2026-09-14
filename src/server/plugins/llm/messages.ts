@@ -6,7 +6,7 @@ import type { OpenResponsesLanguageModelOptions } from '@ai-sdk/open-responses'
 import type { OpenAICompatibleProviderOptions } from '@ai-sdk/openai-compatible'
 import type { Message, InterfaceProtocol, ReasoningEffort, ConversationParams } from '@/shared/models'
 import type { ModelMetadata } from '@/shared/model-metadata'
-import type { InterjectionPart, Part, ProviderOptions, ToolResultPart } from '@/shared/parts'
+import type { Part, ProviderOptions, ToolResultPart } from '@/shared/parts'
 import { RESPONSES_PROVIDER_NAME, responsesReasoningReplayOptions } from './responses-reasoning'
 
 export const COMPAT_PROVIDER_NAME = 'compat'
@@ -77,31 +77,6 @@ function targetOptions(protocol: InterfaceProtocol, stored: ProviderOptions | un
   if (!stored) return undefined
   const entries = Object.entries(stored).filter(([namespace]) => METADATA_NAMESPACES[protocol]?.includes(namespace))
   return entries.length > 0 ? Object.fromEntries(entries) : undefined
-}
-
-/**
- * How an interjection is presented to the model, wherever it is being assembled.
- *
- * The note is not decoration. Without it the model meets a user message that appeared in the middle
- * of its own work with no explanation, and reads it as a new turn — answering it from the top
- * instead of folding it into what it was already doing.
- *
- * Shared by the live injection and by every later rebuild on purpose. Written in only one of those
- * places, a conversation would replay differently from how it happened, and the difference would
- * appear a turn later as the model contradicting itself.
- */
-export function interjectionContent(
-  part: InterjectionPart,
-  attachments: ReadonlyMap<number, AttachmentInput>,
-): UserPart[] {
-  return [
-    {
-      type: 'text',
-      text: '以下是用户在你这一轮工作进行期间发来的消息，它刚刚才进入对话。'
-        + '这不是新的一轮提问：请把它纳入你当前正在做的事，必要时调整方向，然后继续。',
-    },
-    ...userParts(part.parts, attachments),
-  ]
 }
 
 function assistantMessages(
@@ -185,13 +160,6 @@ function assistantMessages(
         // Generated images are not replayed to the model in MVP. `requiredAttachmentIds` below is
         // the other half of that decision: it must skip exactly what this branch drops.
         break
-      case 'interjection':
-        // Back where the model met it: after the step that was running when it arrived, before the
-        // one that answered it. Both halves flush first, or it would land inside them.
-        flushAssistant()
-        flushTool()
-        out.push({ role: 'user', content: interjectionContent(p, attachments) })
-        break
     }
   }
   flushAssistant()
@@ -212,13 +180,8 @@ function assistantMessages(
 export function requiredAttachmentIds(path: readonly Message[]): Set<number> {
   const ids = new Set<number>()
   for (const m of path) {
-    for (const p of m.parts) {
-      if (m.role === 'user' && p.type === 'image') ids.add(p.attachment_id)
-      // An interjection is the operator speaking, whichever message carries it.
-      if (p.type === 'interjection') {
-        for (const inner of p.parts) if (inner.type === 'image') ids.add(inner.attachment_id)
-      }
-    }
+    if (m.role !== 'user') continue
+    for (const p of m.parts) if (p.type === 'image') ids.add(p.attachment_id)
   }
   return ids
 }
@@ -238,6 +201,13 @@ export function requiredAttachmentIds(path: readonly Message[]): Set<number> {
  * user messages around it belong together, and are joined with a note between them. They cannot be
  * left as two — Anthropic requires the roles to alternate, so a silent turn between them is an
  * error rather than an oddity.
+ *
+ * A turn stopped by hand records it in its status. A turn handed off the instant the operator spoke
+ * does not — everything it produced is intact, so it is finalised as `done`. It is known by its
+ * shape instead: it ends on a `tool_result`. A turn that ran to its own finish never can, because
+ * `stopWhen` does not stop on a tool result, it goes round again. So a reply holding an answer it
+ * never spoke to is a reply that was taken over. Do not add a column to record this — it is already
+ * legible in the parts, and a stored copy would be a second truth to keep in step.
  */
 const INTERRUPTED_NOTE = '上面那轮回复没有说完，是用户在生成途中主动打断的，不是模型自己停在那里的。'
   + '已经做完的部分仍然有效，下面是用户接着说的话。'
@@ -291,13 +261,16 @@ export function buildModelMessages(input: BuildInput): ModelMessage[] {
 
     const said = assistantMessages(m.parts, protocol, attachments)
     if (said.length === 0) {
-      // Interrupted before it could say anything. There is no turn here to put between two user
-      // messages, and leaving a gap would break the alternation Anthropic insists on.
-      if (m.status === 'aborted') { pending = RESENT_NOTE; joinToPrevious = true }
+      // A turn that said nothing, however it ended — stopped by hand, or handed off the moment the
+      // operator spoke. There is no turn here to put between two user messages, and leaving a gap
+      // would break the alternation Anthropic insists on. Judged by what it produced rather than by
+      // its status, because a handoff finalises a silent turn as `done` and an abort does not.
+      pending = RESENT_NOTE
+      joinToPrevious = true
       return
     }
     out.push(...said)
-    if (m.status === 'aborted') pending = INTERRUPTED_NOTE
+    if (m.status === 'aborted' || m.parts.at(-1)?.type === 'tool_result') pending = INTERRUPTED_NOTE
   })
 
   return out

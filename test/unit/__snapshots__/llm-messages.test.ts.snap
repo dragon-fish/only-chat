@@ -81,6 +81,15 @@ exports[`buildModelMessages > matches the golden snapshot (anthropic) 1`] = `
   {
     "content": [
       {
+        "text": "yes, a cat",
+        "type": "text",
+      },
+    ],
+    "role": "assistant",
+  },
+  {
+    "content": [
+      {
         "text": "and now?",
         "type": "text",
       },
@@ -175,6 +184,15 @@ exports[`buildModelMessages > matches the golden snapshot (chat-completions) 1`]
   {
     "content": [
       {
+        "text": "yes, a cat",
+        "type": "text",
+      },
+    ],
+    "role": "assistant",
+  },
+  {
+    "content": [
+      {
         "text": "and now?",
         "type": "text",
       },
@@ -254,6 +272,15 @@ exports[`buildModelMessages > matches the golden snapshot (responses) 1`] = `
       },
     ],
     "role": "tool",
+  },
+  {
+    "content": [
+      {
+        "text": "yes, a cat",
+        "type": "text",
+      },
+    ],
+    "role": "assistant",
   },
   {
     "content": [
@@ -341,6 +368,15 @@ exports[`buildModelMessages > matches the golden snapshot (vertex-compatible) 1`
       },
     ],
     "role": "tool",
+  },
+  {
+    "content": [
+      {
+        "text": "yes, a cat",
+        "type": "text",
+      },
+    ],
+    "role": "assistant",
   },
   {
     "content": [

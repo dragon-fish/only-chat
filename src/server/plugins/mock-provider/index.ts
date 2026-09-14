@@ -37,15 +37,21 @@ export function hasToolResult(prompt: LanguageModelV4Prompt): boolean {
   return toolResultCount(prompt) > 0
 }
 
-/** The directive lives in the newest user turn; earlier ones are history the mock ignores. */
+/**
+ * The directive lives in the newest thing the operator said; earlier turns are history the mock
+ * ignores.
+ *
+ * The last text part, not all of them joined: the prompt builder prefixes a note to a user message
+ * that followed an interruption, and joining would put that note where the macro should start.
+ * Interruptions also merge several user messages into one, and only the newest carries the
+ * directive.
+ */
 export function lastUserText(prompt: LanguageModelV4Prompt): string {
   for (let index = prompt.length - 1; index >= 0; index--) {
     const message = prompt[index]!
     if (message.role !== 'user') continue
-    return message.content
-      .filter((part): part is { type: 'text', text: string } => part.type === 'text')
-      .map(part => part.text)
-      .join('')
+    const texts = message.content.filter((part): part is { type: 'text', text: string } => part.type === 'text')
+    return texts.at(-1)?.text ?? ''
   }
   return ''
 }

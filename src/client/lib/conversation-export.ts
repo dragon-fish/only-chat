@@ -10,13 +10,6 @@ function partMarkdown(message: Message, attachmentUrl: (id: number) => string): 
     if (part.type === 'reasoning') return `<details>\n<summary>思考过程</summary>\n\n${part.text}\n\n</details>`
     if (part.type === 'image') return `![图片](${attachmentUrl(part.attachment_id)})`
     if (part.type === 'tool_call') return `**工具调用：${part.name}**\n\n\`\`\`json\n${typeof part.args === 'string' ? part.args : JSON.stringify(part.args, null, 2)}\n\`\`\``
-    // Said mid-turn, so it is quoted where it was said rather than hoisted into its own section.
-    if (part.type === 'interjection') {
-      const said = part.parts
-        .map(inner => (inner.type === 'text' ? inner.text : `![图片](${attachmentUrl(inner.attachment_id)})`))
-        .join('\n\n')
-      return `> **用户插话**\n>\n${said.split('\n').map(line => `> ${line}`).join('\n')}`
-    }
     return `**工具结果：${part.name}**\n\n\`\`\`json\n${typeof part.content === 'string' ? part.content : JSON.stringify(part.content, null, 2)}\n\`\`\``
   }).join('\n\n')
 }

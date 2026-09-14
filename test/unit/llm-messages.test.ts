@@ -24,6 +24,9 @@ const path: Message[] = [
     { type: 'text', text: 'a cat', providerOptions: { google: { thoughtSignature: 'TS_TEXT' } } },
     { type: 'tool_call', id: 'call_1', name: 'lookup', args: { q: 'cat' }, providerOptions: { google: { thoughtSignature: 'TS_TOOL' } } },
     { type: 'tool_result', call_id: 'call_1', name: 'lookup', content: { ok: true } },
+    // A reply that ran to its own finish ends on text. Do not drop this: ending on a `tool_result`
+    // is the mark of a turn that was taken over, and the fixture would then be that instead.
+    { type: 'text', text: 'yes, a cat' },
   ] }),
   msg({ id: 3, role: 'user', parts: [{ type: 'text', text: 'and now?' }] }),
 ]
@@ -376,98 +379,6 @@ describe('buildProviderOptions', () => {
   })
 })
 
-describe('interjections', () => {
-  const interrupted: Message[] = [
-    msg({ id: 1, role: 'user', parts: [{ type: 'text', text: 'start' }] }),
-    msg({ id: 2, role: 'assistant', parts: [
-      { type: 'text', text: 'working on it' },
-      { type: 'tool_call', id: 'c1', name: 'lookup', args: {} },
-      { type: 'tool_result', call_id: 'c1', name: 'lookup', content: { ok: true } },
-      { type: 'interjection', parts: [{ type: 'text', text: 'actually, in French' }, { type: 'image', attachment_id: 7 }] },
-      { type: 'text', text: 'voilà' },
-    ] }),
-  ]
-
-  it('replays it as a user message between the steps it arrived between', () => {
-    const out = buildModelMessages({
-      protocol: 'chat-completions', systemPrompt: null, path: interrupted,
-      attachments: new Map([[7, inlinePng]]),
-    })
-    // The model met it after the tool answered and before the next step; so does the replay.
-    expect(out.map(m => m.role)).toEqual(['user', 'assistant', 'tool', 'user', 'assistant'])
-    const said = out[3] as { content: Array<{ type: string, text?: string }> }
-    // A note first, then what was actually said. The SDK calls an inlined image a file part.
-    expect(said.content.map(part => part.type)).toEqual(['text', 'text', 'file'])
-    expect(said.content[1]?.text).toBe('actually, in French')
-  })
-
-  it('tells the model it was interrupted, rather than handing it a bare message', () => {
-    // Unexplained, a user message appearing mid-work reads as a new turn, and the model answers it
-    // from the top instead of folding it into what it was already doing.
-    const out = buildModelMessages({
-      protocol: 'chat-completions', systemPrompt: null, path: interrupted,
-      attachments: new Map([[7, inlinePng]]),
-    })
-    const note = (out[3] as { content: Array<{ text?: string }> }).content[0]?.text ?? ''
-    expect(note).toContain('这一轮工作进行期间')
-    expect(note).toContain('不是新的一轮提问')
-  })
-
-  it('resolves the images it carries, wherever the message says they live', () => {
-    // requiredAttachmentIds and the builder have to agree, or bytes are fetched for parts that are
-    // never sent — or worse, a part is sent with nothing to send.
-    expect(requiredAttachmentIds(interrupted)).toEqual(new Set([7]))
-  })
-})
-
-describe('interrupted turns', () => {
-  const build = (path: Message[]) => buildModelMessages({
-    protocol: 'chat-completions', systemPrompt: null, path, attachments: new Map(),
-  })
-
-  it('keeps what an interrupted turn managed to do, and says it was interrupted', () => {
-    // The screen still shows the reply stopping partway. Rolling back to before it would
-    // contradict that, and throw away work the model had already done.
-    const out = build([
-      msg({ id: 1, role: 'user', parts: [{ type: 'text', text: '查一下' }] }),
-      msg({ id: 2, role: 'assistant', status: 'aborted', parts: [
-        { type: 'tool_call', id: 'c1', name: 'lookup', args: {} },
-        { type: 'tool_result', call_id: 'c1', name: 'lookup', content: { ok: true } },
-        { type: 'text', text: '我查到了一半' },
-      ] }),
-      msg({ id: 3, role: 'user', parts: [{ type: 'text', text: '算了，换个方向' }] }),
-    ])
-    expect(out.map(m => m.role)).toEqual(['user', 'assistant', 'tool', 'assistant', 'user'])
-    const said = out.at(-1) as { content: Array<{ text?: string }> }
-    expect(said.content[0]?.text).toContain('主动打断')
-    expect(said.content[1]?.text).toBe('算了，换个方向')
-  })
-
-  it('joins the two user messages when the turn between them said nothing', () => {
-    // Anthropic requires the roles to alternate, so a silent turn between two user messages is an
-    // error rather than an oddity.
-    const out = build([
-      msg({ id: 1, role: 'user', parts: [{ type: 'text', text: '第一句' }] }),
-      msg({ id: 2, role: 'assistant', status: 'aborted', parts: [] }),
-      msg({ id: 3, role: 'user', parts: [{ type: 'text', text: '第二句' }] }),
-    ])
-    expect(out.map(m => m.role)).toEqual(['user'])
-    const said = out[0] as { content: Array<{ text?: string }> }
-    expect(said.content.map(part => part.text)).toEqual(['第一句', expect.stringContaining('打断'), '第二句'])
-  })
-
-  it('says nothing extra about a turn that ended on its own', () => {
-    const out = build([
-      msg({ id: 1, role: 'user', parts: [{ type: 'text', text: '问' }] }),
-      msg({ id: 2, role: 'assistant', parts: [{ type: 'text', text: '答' }] }),
-      msg({ id: 3, role: 'user', parts: [{ type: 'text', text: '再问' }] }),
-    ])
-    const said = out.at(-1) as { content: Array<{ text?: string }> }
-    expect(said.content).toHaveLength(1)
-    expect(said.content[0]?.text).toBe('再问')
-  })
-})
-
 describe('rolling back to somewhere legal', () => {
   const build = (path: Message[]) => buildModelMessages({
     protocol: 'chat-completions', systemPrompt: null, path, attachments: new Map(),
@@ -509,10 +420,52 @@ describe('rolling back to somewhere legal', () => {
     // answered, and a turn that contributed nothing joins the messages around it.
     const roles = build([
       msg({ id: 1, role: 'user', parts: [{ type: 'text', text: '第一句' }] }),
-      msg({ id: 2, role: 'assistant', status: 'aborted', parts: [] }),
+      // `done`, not `aborted`: a handoff finalises the silent half of a turn as finished.
+      msg({ id: 2, role: 'assistant', parts: [] }),
       msg({ id: 3, role: 'user', parts: [{ type: 'text', text: '第二句' }] }),
     ]).map(m => m.role)
     expect(roles).toEqual(['user'])
     expect(roles.filter((role, i) => role === 'user' && roles[i + 1] === 'user')).toEqual([])
+  })
+
+  it('tells the model a reply ending on a tool result was taken over, not finished', () => {
+    // A handoff keeps everything the half-turn produced, so it is stored as `done` — the status
+    // says nothing. Without this, the model reads its own unanswered lookup as a turn it chose to
+    // end, and the operator's words as a fresh topic rather than an interruption.
+    const out = build([
+      msg({ id: 1, role: 'user', parts: [{ type: 'text', text: '搜一下' }] }),
+      msg({ id: 2, role: 'assistant', status: 'done', parts: [
+        { type: 'tool_call', id: 'c', name: 'lookup', args: {} },
+        { type: 'tool_result', call_id: 'c', name: 'lookup', content: { ok: true } },
+      ] }),
+      msg({ id: 3, role: 'user', parts: [{ type: 'text', text: '算了' }] }),
+    ])
+    const last = out.at(-1) as { role: string, content: Array<{ text: string }> }
+    expect(last.role).toBe('user')
+    expect(last.content[0]!.text).toContain('没有说完')
+    expect(last.content.at(-1)!.text).toBe('算了')
+  })
+
+  it('carries a note per interruption when several land in a row', () => {
+    // Stop it, say something, stop it again, say something else. Each turn that died before
+    // producing anything folds into the message before it, so one user message can end up holding
+    // several notes: one at the front for the turn that left work behind, one in front of every
+    // sentence that followed a silent one.
+    const out = build([
+      msg({ id: 1, role: 'user', parts: [{ type: 'text', text: '甲' }] }),
+      msg({ id: 2, role: 'assistant', status: 'aborted', parts: [{ type: 'text', text: '写到一半' }] }),
+      msg({ id: 3, role: 'user', parts: [{ type: 'text', text: '乙' }] }),
+      msg({ id: 4, role: 'assistant', status: 'aborted', parts: [] }),
+      msg({ id: 5, role: 'user', parts: [{ type: 'text', text: '丙' }] }),
+      msg({ id: 6, role: 'assistant', status: 'done', parts: [] }),
+      msg({ id: 7, role: 'user', parts: [{ type: 'text', text: '丁' }] }),
+    ])
+    expect(out.map(m => m.role)).toEqual(['user', 'assistant', 'user'])
+    const said = (out[2] as { content: Array<{ text: string }> }).content.map(c => c.text)
+    expect(said).toEqual([
+      expect.stringContaining('没有说完'), '乙',
+      expect.stringContaining('中间没有模型的回复'), '丙',
+      expect.stringContaining('中间没有模型的回复'), '丁',
+    ])
   })
 })

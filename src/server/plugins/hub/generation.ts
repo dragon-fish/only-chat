@@ -1,7 +1,7 @@
 import { stepCountIs, streamText, type LanguageModel, type StopCondition, type ToolSet } from 'ai'
 import { INFLIGHT_FLUSH_INTERVAL_MS, TOOL_MAX_STEPS } from '@/shared/constants'
 import type { Message, PersistedStatus, ConversationParams, ConversationPluginSettings, Usage } from '@/shared/models'
-import type { InterjectionPart, Part, ToolCallPart, ToolResultPart } from '@/shared/parts'
+import type { Part, ToolCallPart, ToolResultPart } from '@/shared/parts'
 import type { SendCommand, WsCommand } from '@/shared/ws'
 import { ASK_USER_TOOL_ID, parseConversationPluginSettings } from '@/shared/plugins'
 import { pluginManifests } from '@/shared/plugin-manifests'
@@ -10,7 +10,7 @@ import { createAskUserToolCallRepair } from '@/plugins/ask-user/server/repair'
 import type { ModelRow, ProviderInterfaceRow, ProviderRow, ConversationRow } from '../../db/schema'
 import { PartAccumulator } from '../llm/accumulator'
 import { logLifecycle, partsBytes } from './lifecycle-log'
-import { buildModelMessages, buildProviderOptions, interjectionContent, requiredAttachmentIds, type AttachmentInput } from '../llm/messages'
+import { buildModelMessages, buildProviderOptions, requiredAttachmentIds, type AttachmentInput } from '../llm/messages'
 import { generationDurationMs, toUsage, type GenerationStepPerformance } from '../llm/usage'
 import type { Hub, InflightJob } from './index'
 import {
@@ -269,11 +269,13 @@ async function assembleContext(hub: Hub, target: Target, leafMessageId: number):
 
 async function generate(hub: Hub, target: Target, shell: Message, leafMessageId: number): Promise<void> {
   const controller = new AbortController()
-  const acc = new PartAccumulator()
+  // Rotated by `handOff` when the operator speaks mid-turn: what they said becomes a real user
+  // message, so the reply above it has to end and a new one has to begin.
+  let acc = new PartAccumulator()
   const job = { message: shell, conversationId: target.conversation.id, controller, startedAt: Date.now(), parts: acc.parts, stash: [] as Part[] }
   // `trackInflight` assigns `settled` onto this very object, so the reference stays usable.
   await hub.trackInflight(job)
-  const tracked = job as InflightJob
+  let tracked = job as InflightJob
 
   /** False once the stream is no longer being read, which is when a result counts as late. */
   let consuming = true
@@ -359,27 +361,62 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
        * The same text is recorded on the message as it goes, so the transcript shows it where it
        * landed and a later prompt rebuild puts it back in the same place.
        */
-      prepareStep: async ({ messages: soFar }) => {
+      /**
+       * Where anything said mid-turn reaches the model.
+       *
+       * Between steps, which is the only place a user message may go: the API refuses one
+       * interleaved among tool results. What they said becomes a real user message — the reply so
+       * far is finalized, their words are stored as their own, and a fresh reply begins under
+       * them. Anything else would put the operator's sentence inside the assistant's record, where
+       * neither the tree nor the screen has any use for it.
+       */
+      prepareStep: async () => {
         const said = hub.takeStash(shell.id)
         if (said.length === 0) return {}
-        const part = { type: 'interjection' as const, parts: said as InterjectionPart['parts'] }
-        acc.append(part)
-        await hub.flushInflight(tracked)
-        await hub.broadcastGeneration({
-          type: 'message.part', message_id: shell.id, part_index: acc.parts.length - 1, part,
-        })
-        await hub.broadcast({ type: 'interject.stash', conversation_id: target.conversation.id, parts: [] })
-        // Images in the stash are resolved now, against this generation's own interface and
-        // credentials — the same path the turn's own attachments took.
-        const ids = new Set(said.flatMap(inner => (inner.type === 'image' ? [inner.attachment_id] : [])))
-        const deps = { db: hub.db, userId: hub.userId, assets: hub.app.assets, llm: hub.app.llm }
-        const bytes = ids.size === 0
-          ? new Map<number, AttachmentInput>()
-          : await resolveAttachmentInputs(deps, target.provider, target.providerInterface, ids)
-        return { messages: [...soFar, { role: 'user' as const, content: interjectionContent(part, bytes) }] }
+        await handOff(said)
+        return {}
       },
       providerOptions: buildProviderOptions(target.providerInterface.protocol, params, target.model.metadata_resolved),
     })
+
+    /**
+     * End the reply here, store what the operator said as their own message, and begin a new reply
+     * under it.
+     *
+     * Queueing is sugar over what someone would otherwise do by hand: stop the reply, then say the
+     * thing. The only difference is that they do not have to watch for the moment — they say it
+     * whenever it occurs to them and the server picks the moment. So it leaves the same records
+     * behind: a reply, their message, another reply.
+     *
+     * Called only from `prepareStep`, which is to say between two steps. That matters for the
+     * accumulator: blocks opened by the step just finished are closed, so a fresh one starts on a
+     * clean slate rather than meeting deltas whose openings it never saw.
+     *
+     * The stream is not restarted. The SDK keeps its own message list and carries on; all that
+     * moves is which row the parts are written to, which is why usage for the whole run lands on
+     * the last message rather than being split — a smaller wrong than either half of a turn
+     * claiming all of it.
+     */
+    const handOff = async (said: Part[]): Promise<void> => {
+      await finalizeMessage(hub.db, shell.id, hub.userId, { parts: acc.parts, usage: null, status: 'done', error: null })
+      await hub.broadcastGeneration({ type: 'message.done', message_id: shell.id, status: 'done', usage: null, error: null })
+      await hub.untrackInflight(shell.id)
+      logLifecycle('generation.handoff', {
+        conversationId: target.conversation.id, messageId: shell.id, bytes: partsBytes(said),
+      })
+
+      const interjection = await reserveUserMessage(hub, target.conversation, shell.id, said)
+      await hub.broadcast({ type: 'interject.stash', conversation_id: target.conversation.id, parts: [] })
+
+      shell = await openReservedAssistantShell(hub, target, interjection.id)
+      acc = new PartAccumulator()
+      const next = {
+        message: shell, conversationId: target.conversation.id, controller,
+        startedAt: Date.now(), parts: acc.parts, stash: [] as Part[],
+      }
+      await hub.trackInflight(next)
+      tracked = next as InflightJob
+    }
 
     logLifecycle('generation.started', {
       conversationId: target.conversation.id, messageId: shell.id, userId: hub.userId,
