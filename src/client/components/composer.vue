@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, reactive, ref } from 'vue'
-import { ImagePlus, Send, Square, X } from '@lucide/vue'
+import { ArrowUp, Clock3, ImagePlus, Send, Square, X, Zap } from '@lucide/vue'
 import { Attachment, AttachmentAction, AttachmentActions, AttachmentGroup, AttachmentMedia } from '@/client/ui/attachment'
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } from '@/client/ui/input-group'
 import { Spinner } from '@/client/ui/spinner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/client/ui/tooltip'
 import { uploadImage } from '@/client/lib/image-prep'
 import { mergeRestoredText } from '@/client/stores/sync'
+import { api } from '@/client/lib/api'
 import type { Part } from '@/shared/parts'
 
 interface Attached { attachment_id: number; preview: string; state: 'uploading' | 'error' | 'done' }
@@ -20,8 +21,19 @@ const props = defineProps<{
   hint?: string | null
   /** Replaces the editor surface while a tool needs focused user interaction. */
   replaced?: boolean
+  /** What the server is holding for this conversation, said while the turn ran. */
+  stash?: Part[]
 }>()
-const emit = defineEmits<{ send: [parts: Part[]]; stop: [] }>()
+const emit = defineEmits<{
+  send: [parts: Part[]]
+  stop: []
+  /** Hold these until the model can be told, at the next boundary between steps. */
+  queue: [parts: Part[]]
+  /** Stop the turn and say everything held, including whatever is still in the box. */
+  interrupt: [parts: Part[]]
+  /** Take the stash back; the parent refills the box from the server's answer. */
+  withdraw: []
+}>()
 
 const text = ref('')
 const images = ref<Attached[]>([])
@@ -29,6 +41,48 @@ const images = ref<Attached[]>([])
 const pending = ref(0)
 const busy = computed(() => pending.value > 0)
 const hasContent = computed(() => text.value.trim() !== '' || images.value.some((image) => image.state === 'done'))
+const stashed = computed(() => props.stash ?? [])
+/** One line, however much is waiting: the bar is a reminder, not a second transcript. */
+const stashPreview = computed(() => {
+  const said = stashed.value
+    .map(part => (part.type === 'text' ? part.text : part.type === 'image' ? '[图片]' : ''))
+    .filter(Boolean)
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return said || '已排队的消息'
+})
+
+/**
+ * What the right-hand control does, which is three different things while a turn is running.
+ *
+ * Ordered by what the operator has already committed to. Words waiting on the server outrank words
+ * still in the box: they are the ones that will be acted on, and the control should be about them.
+ */
+type Action = 'send' | 'stop' | 'queue' | 'interrupt'
+const action = computed<Action>(() => {
+  if (!props.streaming) return 'send'
+  if (stashed.value.length > 0) return 'interrupt'
+  return hasContent.value ? 'queue' : 'stop'
+})
+
+/** Pug attribute values cannot span lines, so the conditional classes are assembled here. */
+const actionClass = computed(() => [
+  'size-10 rounded-full aria-disabled:opacity-50 md:size-8',
+  action.value === 'interrupt' ? 'bg-amber-500 text-black hover:bg-amber-400' : '',
+])
+
+const actionLabel = computed(() => ({
+  send: '发送消息', stop: '停止生成', queue: '排队此消息', interrupt: '打断并立即插入',
+}[action.value]))
+
+const actionHint = computed(() => {
+  if (action.value === 'send') return sendBlockedReason.value ?? '发送消息'
+  if (action.value === 'stop') return '停止生成'
+  if (action.value === 'queue') return '排队此消息，模型能听时再说'
+  return '打断当前生成，立即从最近的合法位置把这条消息插入对话'
+})
+
 const sendBlockedReason = computed(() => {
   if (busy.value) return '图片上传完成后即可发送'
   if (!props.connected) return '未连接'
@@ -113,8 +167,49 @@ async function submit() {
   await nextTick()
   autoGrow()
 }
+/** Everything in the box, as parts, leaving it empty. Shared by queueing and interrupting. */
+function takeBox(): Part[] {
+  const parts: Part[] = images.value.filter(i => i.state === 'done').map(i => ({ type: 'image', attachment_id: i.attachment_id }))
+  if (text.value.trim()) parts.push({ type: 'text', text: text.value })
+  if (parts.length === 0) return []
+  dropSent()
+  sent.value = { text: text.value, images: images.value }
+  text.value = ''
+  images.value = []
+  return parts
+}
+
+function act() {
+  if (action.value === 'send') { void submit(); return }
+  if (action.value === 'stop') { emit('stop'); return }
+  // Whatever is still typed goes with it either way; leaving it behind would lose the sentence the
+  // operator was in the middle of when they decided to act.
+  const box = takeBox()
+  if (action.value === 'queue') {
+    if (box.length > 0) emit('queue', box)
+    return
+  }
+  emit('interrupt', box)
+}
+
+/**
+ * Put a withdrawn stash back in the box, so taking it back means getting it back.
+ *
+ * Appends rather than replaces: the operator may have started typing again while it was still
+ * waiting, and dropping that would be a second, worse surprise.
+ */
+function restore(parts: Part[]) {
+  const said = parts.filter(part => part.type === 'text').map(part => part.text).join('\n')
+  if (said) text.value = text.value.trim() ? `${said}\n${text.value}` : said
+  for (const part of parts) {
+    if (part.type !== 'image') continue
+    images.value.push({ attachment_id: part.attachment_id, preview: api.attachmentUrl(part.attachment_id), state: 'done' })
+  }
+  void nextTick().then(autoGrow)
+}
+
 function onKeydown(e: KeyboardEvent) {
-  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); void submit() }
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); act() }
 }
 function pickFiles() {
   if (busy.value) return
@@ -145,13 +240,22 @@ async function restoreSend() {
   await nextTick()
   autoGrow()
 }
-defineExpose({ confirmSend, restoreSend })
+defineExpose({ confirmSend, restoreSend, restore })
 
 onBeforeUnmount(() => { releasePreviews(images.value); dropSent() })
 </script>
 
 <template lang="pug">
 .p-3(@drop="onDrop" @dragover.prevent)
+  //- Sits on the box the way the fold tab sits on its card: same surface, bottom corners square,
+  //- so the two read as one control rather than a notice floating above one.
+  .mx-auto.flex.justify-center(v-if="stashed.length" class="max-w-3xl px-2")
+    button.flex.w-full.items-center.gap-2.rounded-t-xl.border-b-0.px-3.py-2.text-left.text-xs(
+      type="button" class="bg-muted text-muted-foreground hover:bg-accent"
+      :title="stashPreview" aria-label="撤回排队中的消息" @click="emit('withdraw')")
+      Clock3(class="size-3.5 shrink-0")
+      span.min-w-0.flex-1.truncate {{ stashPreview }}
+      span.shrink-0.opacity-70 点击撤回
   .mx-auto.w-full.max-w-3xl(v-if="replaced")
     slot(name="replacement")
   InputGroup.mx-auto(v-else class="max-w-3xl rounded-xl")
@@ -193,21 +297,18 @@ onBeforeUnmount(() => { releasePreviews(images.value); dropSent() })
         slot(name="left-controls")
       .ml-auto.flex.items-center.gap-1
         slot(name="controls")
-        Tooltip(v-if="streaming")
-          TooltipTrigger(as-child)
-            InputGroupButton(
-              size="icon-sm" variant="destructive" class="size-10 rounded-full md:size-8"
-              aria-label="停止生成" @click="emit('stop')")
-              Square(data-icon="inline-start")
-          TooltipContent 停止生成
-        Tooltip(v-else)
+        Tooltip
           TooltipTrigger(as-child)
             //- The tooltip must remain reachable while blocked, so this one control uses
-            //- `aria-disabled`; `submit` keeps the same hard guard as the keyboard path.
+            //- `aria-disabled`; `act` keeps the same hard guard as the keyboard path.
             InputGroupButton(
-              size="icon-sm" variant="default"
-              class="size-10 rounded-full aria-disabled:opacity-50 md:size-8"
-              aria-label="发送消息" :aria-disabled="sendBlockedReason !== null" @click="submit")
-              Send(data-icon="inline-start")
-          TooltipContent {{ sendBlockedReason ?? '发送消息' }}
+              size="icon-sm" :variant="action === 'stop' ? 'destructive' : 'default'"
+              :class="actionClass"
+              :aria-label="actionLabel"
+              :aria-disabled="action === 'send' && sendBlockedReason !== null" @click="act")
+              Square(v-if="action === 'stop'" data-icon="inline-start")
+              ArrowUp(v-else-if="action === 'queue'" data-icon="inline-start")
+              Zap(v-else-if="action === 'interrupt'" data-icon="inline-start")
+              Send(v-else data-icon="inline-start")
+          TooltipContent {{ actionHint }}
 </template>

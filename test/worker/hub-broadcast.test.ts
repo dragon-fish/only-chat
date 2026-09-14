@@ -121,7 +121,7 @@ describe('Hub broadcast ordering', () => {
         return true
       })
       const message = { id: 9001, conversation_id: 100, parent_id: null, seq: 1, role: 'assistant' as const, parts: [], provider_id: null, model_id: null, usage: null, status: 'streaming' as const, error: null, created_at: 0 }
-      const job = { message, conversationId: 100, controller: new AbortController(), startedAt: Date.now(), parts: [] }
+      const job = { message, conversationId: 100, controller: new AbortController(), startedAt: Date.now(), parts: [], stash: [] }
       await hub.trackInflight(job)
       const sending = hub.broadcast(older)
       await blocked.promise

@@ -69,7 +69,7 @@ describe('UserHub DO', () => {
         id: 4242, conversation_id: 99, parent_id: null, seq: 1, role: 'assistant', parts: [],
         provider_id: null, model_id: null, usage: null, status: 'streaming', error: null, created_at: 0,
       }
-      const job = { message, conversationId: 99, controller: new AbortController(), startedAt: Date.now(), parts: [] }
+      const job = { message, conversationId: 99, controller: new AbortController(), startedAt: Date.now(), parts: [], stash: [] }
       await hub.trackInflight(job)
 
       let settled = false

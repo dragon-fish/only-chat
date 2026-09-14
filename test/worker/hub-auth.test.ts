@@ -258,7 +258,7 @@ describe('authenticated UserHub', () => {
     await runInDurableObject(env.USER_HUB.getByName(String(userId)), async (instance: UserHub) => {
       const hub = instance.app.hub
       const message = { id: 7001, conversation_id: 100, parent_id: null, seq: 1, role: 'assistant' as const, parts: [], provider_id: null, model_id: null, usage: null, status: 'streaming' as const, error: null, created_at: 0 }
-      const first = { message, conversationId: 100, controller: new AbortController(), startedAt: Date.now(), parts: [] }
+      const first = { message, conversationId: 100, controller: new AbortController(), startedAt: Date.now(), parts: [], stash: [] }
       const second = { ...first, message: { ...message, id: 7002, conversation_id: 101 }, conversationId: 101, controller: new AbortController() }
       await hub.trackInflight(first)
       await hub.trackInflight(second)

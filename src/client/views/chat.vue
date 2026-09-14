@@ -386,6 +386,41 @@ function onStop() {
   if (sid.value !== null) sync.send({ type: 'stop', conversation_id: sid.value })
 }
 
+/** What the server is holding for this conversation, said while the turn was running. */
+const stash = computed(() => (sid.value === null ? [] : sync.stashes.get(sid.value) ?? []))
+
+function onQueue(parts: Part[]) {
+  if (sid.value !== null) sync.send({ type: 'interject', conversation_id: sid.value, parts })
+}
+
+function onInterrupt(parts: Part[]) {
+  if (sid.value === null) return
+  const model = effective.value.model
+  if (!model) return
+  // Whatever is still typed joins the stash first, so the interruption says everything the
+  // operator meant by it rather than only the part they had already committed.
+  if (parts.length > 0) sync.send({ type: 'interject', conversation_id: sid.value, parts })
+  sync.send({
+    type: 'interject.interrupt',
+    conversation_id: sid.value,
+    provider_id: model.provider_id,
+    model_id: model.model_id,
+  })
+}
+
+function onWithdraw() {
+  if (sid.value !== null) sync.send({ type: 'interject.withdraw', conversation_id: sid.value })
+}
+
+/**
+ * Refill the box from whatever the server handed back. Empty means the injection won the race, and
+ * the words are already part of the turn — putting them back would offer to say them twice.
+ */
+watch(() => sync.withdrawn, (answer) => {
+  if (!answer || answer.conversationId !== sid.value || answer.parts.length === 0) return
+  composer.value?.restore?.(answer.parts)
+}, { deep: true })
+
 /** The whole form is the conversation's own overrides, so a restored field simply stops being sent. */
 function commitSettings() {
   if (sid.value === null) return
@@ -504,7 +539,8 @@ ResizablePanelGroup(direction="horizontal" class="h-full")
       Composer(
         ref="composer" :streaming="streaming" :connected="sync.status === 'open'"
         :can-send="canSend" :hint="sendHint" :replaced="pendingToolCall !== null"
-        @send="onSend" @stop="onStop")
+        :stash="stash"
+        @send="onSend" @stop="onStop" @queue="onQueue" @interrupt="onInterrupt" @withdraw="onWithdraw")
         template(#replacement)
           .oc-scroll.flex.max-h-96.flex-col.overflow-y-auto(class="md:max-h-[60vh]")
             ToolPartRenderer(
