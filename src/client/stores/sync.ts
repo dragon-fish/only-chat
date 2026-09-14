@@ -791,7 +791,8 @@ export const useSyncStore = defineStore('sync', () => {
       }
       case 'interject.withdrawn': {
         stashes.delete(e.conversation_id)
-        withdrawn.value = { requestId: e.request_id, conversationId: e.conversation_id, parts: e.parts as Part[] }
+        // A new object each time, so two withdrawals in a row both reach the watcher.
+        withdrawn.value = { at: Date.now(), conversationId: e.conversation_id, parts: e.parts as Part[] }
         break
       }
       case 'message.part': {
@@ -964,7 +965,7 @@ export const useSyncStore = defineStore('sync', () => {
    * The last withdrawal the server answered, for the composer to refill itself from. Empty parts
    * mean the injection won and there was nothing left to take back.
    */
-  const withdrawn = ref<{ requestId: string, conversationId: number, parts: Part[] } | null>(null)
+  const withdrawn = ref<{ at: number, conversationId: number, parts: Part[] } | null>(null)
 
   function send(cmd: WsCommand): boolean {
     if (!client.value) return false

@@ -237,10 +237,15 @@ export const WsEventSchema = z.discriminatedUnion('type', [
     conversation_id: z.number().int(),
     parts: PartsSchema,
   }),
-  /** The stash handed back, because the withdrawal beat the injection. */
+  /**
+   * The stash handed back, because the withdrawal beat the injection. Empty means it did not, and
+   * the words are already part of the turn.
+   *
+   * No request id: a conversation has one stash, so there is nothing to correlate, and requiring
+   * one only created a field the sender had to remember to fill.
+   */
   z.object({
     type: z.literal('interject.withdrawn'),
-    request_id: z.string().min(1),
     conversation_id: z.number().int(),
     parts: PartsSchema,
   }),

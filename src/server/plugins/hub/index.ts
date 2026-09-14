@@ -29,7 +29,7 @@ type GenerationEvent = Extract<WsEvent, { type: 'message.delta' | 'message.part'
  * three sentences while they wait is composing one remark, and delivering it as three would read
  * to the model as being interrupted three times. Images keep their own parts, in the order sent.
  */
-function joinStash(held: readonly Part[], added: readonly Part[]): Part[] {
+export function joinStash(held: readonly Part[], added: readonly Part[]): Part[] {
   const out = [...held]
   for (const part of added) {
     const last = out.at(-1)
@@ -195,7 +195,7 @@ export class Hub extends Service {
       case 'tool.respond': return runToolRespond(this, cmd)
       case 'tool.continue': return runToolContinue(this, cmd)
       case 'interject': return this.interject(cmd.conversation_id, cmd.parts)
-      case 'interject.withdraw': return this.withdrawInterjection(cmd.request_id ?? '', cmd.conversation_id)
+      case 'interject.withdraw': return this.withdrawInterjection(cmd.conversation_id)
       case 'interject.interrupt': return runInterjectInterrupt(this, cmd)
       case 'plugin.command': return this.app.pluginChannel.dispatch(cmd.plugin, cmd.payload, this)
     }
@@ -443,11 +443,11 @@ export class Hub extends Service {
   }
 
   /** Take the stash back, or report it empty because the model has already been told. */
-  async withdrawInterjection(requestId: string, conversationId: number): Promise<void> {
+  async withdrawInterjection(conversationId: number): Promise<void> {
     const job = this.jobFor(conversationId)
     const parts = job?.stash ?? []
     if (job) job.stash = []
-    await this.broadcast({ type: 'interject.withdrawn', request_id: requestId, conversation_id: conversationId, parts })
+    await this.broadcast({ type: 'interject.withdrawn', conversation_id: conversationId, parts })
     await this.broadcast({ type: 'interject.stash', conversation_id: conversationId, parts: [] })
   }
 
