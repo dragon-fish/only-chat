@@ -180,12 +180,16 @@ function takeBox(): Part[] {
 }
 
 function act() {
-  if (action.value === 'send') { void submit(); return }
-  if (action.value === 'stop') { emit('stop'); return }
+  // Read once. `action` is derived from what is in the box, and `takeBox` empties it — read again
+  // afterwards it reports the state of a composer that has already been cleared, which turned
+  // every queue into an interrupt: the turn was aborted by the act of typing into it.
+  const doing = action.value
+  if (doing === 'send') { void submit(); return }
+  if (doing === 'stop') { emit('stop'); return }
   // Whatever is still typed goes with it either way; leaving it behind would lose the sentence the
   // operator was in the middle of when they decided to act.
   const box = takeBox()
-  if (action.value === 'queue') {
+  if (doing === 'queue') {
     if (box.length > 0) emit('queue', box)
     return
   }
