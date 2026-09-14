@@ -10,7 +10,7 @@ import { createAskUserToolCallRepair } from '@/plugins/ask-user/server/repair'
 import type { ModelRow, ProviderInterfaceRow, ProviderRow, ConversationRow } from '../../db/schema'
 import { PartAccumulator } from '../llm/accumulator'
 import { buildModelMessages, buildProviderOptions, requiredAttachmentIds, type AttachmentInput } from '../llm/messages'
-import { toUsage } from '../llm/usage'
+import { generationDurationMs, toUsage, type GenerationStepPerformance } from '../llm/usage'
 import type { Hub, InflightJob } from './index'
 import {
   resolveEffectiveConfig,
@@ -314,6 +314,7 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
 
     const requestStartedAt = performance.now()
     let firstTokenAt: number | null = null
+    const stepPerformance: GenerationStepPerformance[] = []
     const result = streamText({
       model,
       messages,
@@ -341,8 +342,20 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
       if (part.type === 'error') throw part.error instanceof Error ? part.error : new Error(String(part.error))
       // An aborted stream ends with `abort` and never emits `finish`, so usage stays null.
       if (part.type === 'abort') { status = 'aborted'; break }
+      if (part.type === 'finish-step') {
+        stepPerformance.push({
+          outputTokens: part.usage.outputTokens,
+          outputTokensPerSecond: part.performance.outputTokensPerSecond,
+        })
+        continue
+      }
       if (part.type === 'finish') {
-        usage = toUsage(part.totalUsage, { requestStartedAt, firstTokenAt, finishedAt: performance.now() })
+        usage = toUsage(part.totalUsage, {
+          requestStartedAt,
+          firstTokenAt,
+          finishedAt: performance.now(),
+          generationDurationMs: generationDurationMs(stepPerformance),
+        })
         console.info(JSON.stringify({ event: 'llm.generation.usage', ...trace, usage, rawUsage: part.totalUsage.raw ?? null }))
         continue
       }

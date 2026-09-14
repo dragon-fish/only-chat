@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { toUsage } from '@/server/plugins/llm/usage'
+import { generationDurationMs, toUsage } from '@/server/plugins/llm/usage'
 
 describe('toUsage', () => {
   it('maps the nested AI SDK usage to the flat shape', () => {
@@ -28,21 +28,29 @@ describe('toUsage', () => {
     expect(toUsage(undefined)).toBeNull()
   })
 
-  it('records server-observed first-token and generation durations', () => {
+  it('keeps wall-clock total separate from active model output time', () => {
     expect(toUsage({
       inputTokens: 200,
       inputTokenDetails: { noCacheTokens: 150, cacheReadTokens: 50, cacheWriteTokens: undefined },
       outputTokens: 100,
       outputTokenDetails: { textTokens: 70, reasoningTokens: 30 },
       totalTokens: 300,
-    }, { requestStartedAt: 1_000, firstTokenAt: 1_400, finishedAt: 5_400 })).toEqual({
+    }, { requestStartedAt: 1_000, firstTokenAt: 1_400, finishedAt: 15_400, generationDurationMs: 4_000 })).toEqual({
       prompt: 200,
       completion: 100,
       cached: 50,
       reasoning: 30,
       time_to_first_token_ms: 400,
       generation_duration_ms: 4_000,
-      total_duration_ms: 4_400,
+      total_duration_ms: 14_400,
     })
+  })
+
+  it('adds only active model output time across steps', () => {
+    expect(generationDurationMs([
+      { outputTokens: 100, outputTokensPerSecond: 50 },
+      { outputTokens: 50, outputTokensPerSecond: 25 },
+    ])).toBe(4_000)
+    expect(generationDurationMs([{ outputTokens: 1, outputTokensPerSecond: undefined }])).toBeUndefined()
   })
 })

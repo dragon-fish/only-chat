@@ -10,6 +10,7 @@ const metrics = computed(() => messageUsageMetrics(props.usage))
 const numbers = new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 })
 
 function count(value: number | undefined) { return value === undefined ? '未报告' : numbers.format(value) }
+function tokenCount(value: number | undefined) { return value === undefined ? '未报告' : `${numbers.format(value)} Tokens` }
 function percent(value: number) { return `${numbers.format(value)}%` }
 function rate(value: number) { return `${numbers.format(value)} toks/s` }
 function duration(value: number | undefined) {
@@ -19,7 +20,7 @@ function duration(value: number | undefined) {
 </script>
 
 <template lang="pug">
-HoverCard(:open-delay="150" :close-delay="100")
+HoverCard(:open-delay="150" :close-delay="100" :enable-touch="true")
   HoverCardTrigger(as-child)
     button.flex.min-h-6.items-center.gap-1.rounded.px-1.tabular-nums.transition-colors(
       type="button" class="hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -31,28 +32,39 @@ HoverCard(:open-delay="150" :close-delay="100")
         span.hidden(class="md:inline") ({{ percent(metrics.cachedPercent) }} cached)
       template(v-if="metrics.tokensPerSecond !== null")
         span.hidden(class="md:inline") · {{ rate(metrics.tokensPerSecond) }}
-  HoverCardContent(align="start" class="w-72")
+  HoverCardContent(align="start" class="w-[22rem] max-w-[calc(100vw-1rem)] p-3")
     .flex.flex-col.gap-3
-      h4.text-sm.font-medium 本轮用量
-      dl.grid.grid-cols-2.gap-x-4.gap-y-1.text-xs
-        dt.text-muted-foreground 输入 Token
-        dd.text-right.tabular-nums {{ count(usage.prompt) }}
-        dt.text-muted-foreground 输出 Token
-        dd.text-right.tabular-nums {{ count(usage.completion) }}
-        dt.text-muted-foreground 思考 Token
-        dd.text-right.tabular-nums {{ count(usage.reasoning) }}
-        dt.text-muted-foreground 缓存读取
-        dd.text-right.tabular-nums {{ count(usage.cached) }}
-        dt.text-muted-foreground 缓存占比
-        dd.text-right.tabular-nums {{ metrics.cachedPercent === null ? '未报告' : percent(metrics.cachedPercent) }}
+      .flex.items-center.justify-between
+        h4.text-sm.font-medium 本轮用量
+        span.text-xs.text-muted-foreground 模型生成统计
+      .grid.grid-cols-3.gap-2
+        .rounded-lg.border.bg-muted.p-2(class="bg-muted/45")
+          .text-xs.text-muted-foreground 输入
+          .mt-1.text-sm.font-medium.tabular-nums {{ tokenCount(usage.prompt) }}
+        .rounded-lg.border.bg-muted.p-2(class="bg-muted/45")
+          .text-xs.text-muted-foreground 输出
+          .mt-1.text-sm.font-medium.tabular-nums {{ tokenCount(usage.completion) }}
+        .rounded-lg.border.bg-muted.p-2(class="bg-muted/45")
+          .text-xs.text-muted-foreground 模型生成 TPS
+          .mt-1.text-sm.font-medium.tabular-nums {{ metrics.tokensPerSecond === null ? '未报告' : rate(metrics.tokensPerSecond) }}
       Separator
-      dl.grid.grid-cols-2.gap-x-4.gap-y-1.text-xs
-        dt.text-muted-foreground 首 Token 延迟
-        dd.text-right.tabular-nums {{ duration(usage.time_to_first_token_ms) }}
-        dt.text-muted-foreground 生成耗时
-        dd.text-right.tabular-nums {{ duration(usage.generation_duration_ms) }}
-        dt.text-muted-foreground 总耗时
-        dd.text-right.tabular-nums {{ duration(usage.total_duration_ms) }}
-        dt.text-muted-foreground 生成速度
-        dd.text-right.tabular-nums {{ metrics.tokensPerSecond === null ? '未报告' : rate(metrics.tokensPerSecond) }}
+      dl.grid.grid-cols-2.gap-x-6.gap-y-3.text-xs
+        div
+          dt.text-muted-foreground 思考 Token
+          dd.mt-1.tabular-nums {{ tokenCount(usage.reasoning) }}
+        div
+          dt.text-muted-foreground 缓存读取
+          dd.mt-1.tabular-nums {{ tokenCount(usage.cached) }}
+        div
+          dt.text-muted-foreground 缓存占比
+          dd.mt-1.tabular-nums {{ metrics.cachedPercent === null ? '未报告' : percent(metrics.cachedPercent) }}
+        div
+          dt.text-muted-foreground 首 Token 延迟
+          dd.mt-1.tabular-nums {{ duration(usage.time_to_first_token_ms) }}
+        div
+          dt.text-muted-foreground 模型生成耗时
+          dd.mt-1.tabular-nums {{ duration(usage.generation_duration_ms) }}
+        div
+          dt.text-muted-foreground 本轮总耗时
+          dd.mt-1.tabular-nums {{ duration(usage.total_duration_ms) }}
 </template>
