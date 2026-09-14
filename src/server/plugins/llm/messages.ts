@@ -112,12 +112,19 @@ function assistantMessages(
   const out: Array<AssistantModelMessage | ToolModelMessage | UserModelMessage> = []
   /**
    * Calls this message answered. A `tool_use` with no result beside it cannot be followed by a
-   * user message, so replaying one would make the request itself illegal — whatever the hub meant
+   * user message, so left alone it would make the request itself illegal — whatever the hub meant
    * to do about it, and whether or not the hub was even running when the row was written.
    *
-   * Dropped rather than repaired. Assembling a prompt is the last place that can decide what is
-   * legal, so it rolls back to somewhere it can speak from and leaves behind whatever it cannot
-   * use. A turn missing a step is a smaller loss than a conversation that cannot be continued.
+   * Answered here instead of dropped. Dropping is legal too, but it hides the attempt: the model
+   * would not see that it had reached for something and got nothing, which is context it can act
+   * on. What it gets is the call it made and an outcome that is true of every reason there might
+   * be — interrupted, never dispatched, still running somewhere nobody is listening.
+   *
+   * Written nowhere. That is what makes a late result simple: a tool that could not be aborted and
+   * finishes anyway is stored as an ordinary result, the next assembly uses it instead of this,
+   * and there is no race over which of the two owns the row because only one of them was ever in
+   * it. The cost is a prefix cache that rebuilds from this point, which is the cheaper half of the
+   * trade by a wide margin.
    */
   const answered = new Set(
     parts.filter((part): part is ToolResultPart => part.type === 'tool_result').map(part => part.call_id),
@@ -152,8 +159,16 @@ function assistantMessages(
         break
       }
       case 'tool_call':
-        if (!answered.has(p.id)) break
         appendAssistant(withOptions({ type: 'tool-call', toolCallId: p.id, toolName: p.name, input: p.args }, options))
+        if (!answered.has(p.id)) {
+          flushAssistant()
+          tool.push({
+            type: 'tool-result',
+            toolCallId: p.id,
+            toolName: p.name,
+            output: { type: 'json', value: { error: 'no_result', message: '这次调用没有拿到结果。' } as never },
+          })
+        }
         break
       case 'tool_result':
         flushAssistant()

@@ -473,10 +473,9 @@ describe('rolling back to somewhere legal', () => {
     protocol: 'chat-completions', systemPrompt: null, path, attachments: new Map(),
   })
 
-  it('drops a call nothing ever answered, wherever it came from', () => {
-    // A tool_use with no result beside it cannot be followed by a user message, so replaying one
-    // makes the request itself illegal. Assembling the prompt is the last place that can decide
-    // what is legal, and it would rather lose a step than be unable to speak at all.
+  it('answers a call nothing ever answered, rather than hiding it', () => {
+    // A tool_use with no result beside it cannot be followed by a user message. Dropping it would
+    // be legal too, but the model would not see that it reached for something and got nothing.
     const out = build([
       msg({ id: 1, role: 'user', parts: [{ type: 'text', text: '查' }] }),
       msg({ id: 2, role: 'assistant', parts: [
@@ -485,35 +484,34 @@ describe('rolling back to somewhere legal', () => {
       ] }),
       msg({ id: 3, role: 'user', parts: [{ type: 'text', text: '算了' }] }),
     ])
-    expect(out.map(m => m.role)).toEqual(['user', 'assistant', 'user'])
-    const said = out[1] as { content: Array<{ type: string }> }
-    expect(said.content.map(part => part.type)).toEqual(['text'])
+    expect(out.map(m => m.role)).toEqual(['user', 'assistant', 'tool', 'user'])
+    const answer = (out[2] as { content: Array<{ toolCallId: string, output: { value: unknown } }> }).content[0]!
+    expect(answer.toolCallId).toBe('never')
+    expect(answer.output.value).toMatchObject({ error: 'no_result' })
   })
 
-  it('keeps the call that was answered and drops only the one that was not', () => {
+  it('leaves an answered call exactly as it was', () => {
     const out = build([
       msg({ id: 1, role: 'user', parts: [{ type: 'text', text: '查两个' }] }),
       msg({ id: 2, role: 'assistant', parts: [
         { type: 'tool_call', id: 'ok', name: 'lookup', args: {} },
-        { type: 'tool_call', id: 'never', name: 'lookup', args: {} },
         { type: 'tool_result', call_id: 'ok', name: 'lookup', content: { ok: true } },
       ] }),
       msg({ id: 3, role: 'user', parts: [{ type: 'text', text: '够了' }] }),
     ])
-    const calls = (out[1] as { content: Array<{ type: string, toolCallId?: string }> }).content
-    expect(calls).toMatchObject([{ type: 'tool-call', toolCallId: 'ok' }])
-    expect(out.map(m => m.role)).toEqual(['user', 'assistant', 'tool', 'user'])
+    const answers = (out[2] as { content: Array<{ output: { value: unknown } }> }).content
+    expect(answers[0]!.output.value).toMatchObject({ ok: true })
   })
 
-  it('leaves nothing between two user messages when the whole turn was unusable', () => {
-    // Nothing the hub does or fails to do can produce an illegal prompt from here.
-    const out = build([
+  it('never leaves two user messages adjacent, whatever the turn between them held', () => {
+    // Nothing the hub does or fails to do can produce an illegal prompt from here: every call is
+    // answered, and a turn that contributed nothing joins the messages around it.
+    const roles = build([
       msg({ id: 1, role: 'user', parts: [{ type: 'text', text: '第一句' }] }),
-      msg({ id: 2, role: 'assistant', status: 'aborted', parts: [
-        { type: 'tool_call', id: 'never', name: 'lookup', args: {} },
-      ] }),
+      msg({ id: 2, role: 'assistant', status: 'aborted', parts: [] }),
       msg({ id: 3, role: 'user', parts: [{ type: 'text', text: '第二句' }] }),
-    ])
-    expect(out.map(m => m.role)).toEqual(['user'])
+    ]).map(m => m.role)
+    expect(roles).toEqual(['user'])
+    expect(roles.filter((role, i) => role === 'user' && roles[i + 1] === 'user')).toEqual([])
   })
 })

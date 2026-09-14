@@ -540,17 +540,11 @@ async function closeUnanswerableCalls(
   const calls = parts.flatMap((part): Closing[] => {
     if (part.type !== 'tool_call' || answered.has(part.id)) return []
     const human = hub.app.tools.human(part.name)
-    if (!human) {
-      // A server tool answers within the turn that called it, so one still outstanding here did
-      // not run. Why it did not run depends on how the turn ended, and saying the wrong one is
-      // worse than saying nothing: told a working tool does not exist, the model stops using it.
-      return [{
-        call: part,
-        content: outcome === 'done'
-          ? { error: 'tool_unavailable', message: `没有可用的工具叫 ${part.name}，这次调用没有执行。` }
-          : { error: 'interrupted', message: `用户中途终止了这轮生成，这次 ${part.name} 调用没有拿到结果。工具本身没有问题。` },
-      }]
-    }
+    // Nothing is written for a server tool that never answered. Guessing why it did not — missing,
+    // interrupted, still running somewhere — put a sentence in the transcript that was sometimes
+    // false, and being told a working tool does not exist is a thing the model acts on. The prompt
+    // builder drops the call instead, which is true of every case at once.
+    if (!human) return []
     if (part.name !== ASK_USER_TOOL_ID) return []
     const parsed = AskUserInputSchema.safeParse(part.args)
     // A well-formed question is waiting on a person, which is not the same as waiting on nobody.
@@ -604,19 +598,14 @@ async function resolveSendParent(hub: Hub, conversation: ConversationRow, parent
     throw new Error('cannot skip tool calls on an incomplete message')
   }
 
-  // A turn closes out its own unanswerable calls, so what reaches here is a human tool waiting on
-  // a person. Messages written before that did are still out there, though, and one of them must
-  // not be the reason a conversation can never be written to again.
-  const skipped = pending.map((call) => {
+  // Only a human tool has a skip worth recording — a person deciding not to answer is a fact about
+  // the conversation. Anything else left unanswered needs nothing written for it: the prompt
+  // builder drops a call with no result, so it can never be the reason a message cannot be sent.
+  const skipped = pending.flatMap((call) => {
     const human = hub.app.tools.human(call.name)
-    return {
-      type: 'tool_result' as const,
-      call_id: call.id,
-      name: call.name,
-      content: human
-        ? human.skip(call.args)
-        : { error: 'tool_unavailable', message: `没有可用的工具叫 ${call.name}，这次调用没有执行。` },
-    }
+    return human
+      ? [{ type: 'tool_result' as const, call_id: call.id, name: call.name, content: human.skip(call.args) }]
+      : []
   })
   const nextParts: Part[] = [...parent.parts, ...skipped]
   if (!(await replaceMessagePartsIfCurrentHead(hub.db, parent, hub.userId, nextParts))) {

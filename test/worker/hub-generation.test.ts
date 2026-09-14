@@ -325,9 +325,11 @@ describe('generation', () => {
     expect(answer).toMatchObject({ call_id: 'bad-call', name: 'ask_user', content: { status: 'invalid' } })
   })
 
-  it('closes out a call to a tool the model was never given', async () => {
-    // A wrong tool name is an ordinary model mistake. Left unanswered it was a conversation that
-    // could never be written to again, because nothing existed that could answer or skip it.
+  it('leaves a call to an absent tool alone rather than inventing an outcome for it', async () => {
+    // Nothing is written for it. Guessing why it did not run — missing, interrupted, still going
+    // somewhere nobody is listening — put a sentence in the transcript that was sometimes false,
+    // and being told a working tool does not exist is a thing the model acts on. Legality belongs
+    // to the prompt builder, which answers the call as it assembles; see llm-messages.
     const providerId = await seedProvider('absent-tool-provider', 'absent-tool-model', false, { tool_call: true })
     const db = createDb(env.DB)
     await db.update(users).set({ settings: { plugins: { ask_user: true } } }).where(eq(users.id, 1))
@@ -352,13 +354,10 @@ describe('generation', () => {
     }))
     await c.next('message.done')
 
-    let answer: unknown
-    for (let attempt = 0; attempt < 40 && answer === undefined; attempt++) {
-      const rows = await listMessages(db, conversationIdOf(c), 1)
-      answer = rows[1]?.parts.find(part => part.type === 'tool_result')
-      if (answer === undefined) await new Promise(resolve => setTimeout(resolve, 25))
-    }
-    expect(answer).toMatchObject({ call_id: 'stray', name: 'list_files', content: { error: 'tool_unavailable' } })
+    const assistant = (await listMessages(db, conversationIdOf(c), 1))[1]!
+    expect(assistant.parts.filter(part => part.type === 'tool_call')).toHaveLength(1)
+    // Storage keeps only what happened. A result that turns up later has nothing to overwrite.
+    expect(assistant.parts.some(part => part.type === 'tool_result')).toBe(false)
   })
 
   it('generates without tools on a model that lacks tool-call support, keeping the snapshot', async () => {
