@@ -12,6 +12,16 @@ export interface StoredSession {
 const KEY_PREFIX = 'browser:'
 
 /**
+ * What a probe leaves stored. A probe that could not even connect means the platform has dropped
+ * the session — the list it was found in lags a little behind — and keeping the record would hand
+ * the panel a Live View link to a browser that is gone.
+ */
+export function probedSession(session: StoredSession, result: { ok: boolean; liveView: StoredSession['liveView'] }): StoredSession | undefined {
+  if (!result.ok) return undefined
+  return { ...session, liveView: result.liveView ?? session.liveView }
+}
+
+/**
  * One browser per conversation, one connection at a time. The lock is what makes the second half
  * true: Browser Run refuses a second client on a session, so a run, a Live View refresh and a
  * profile export must never overlap on the same conversation.

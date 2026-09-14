@@ -16,7 +16,7 @@ import type { HostCall, RunResult } from '../runtime/protocol'
 import type { RunnerArgs } from './entrypoints'
 import { storeGeneratedAttachment } from './attachments'
 import { BrowserRateLimited } from './browser-api'
-import { BrowserSessions, type StoredSession } from './sessions'
+import { BrowserSessions, probedSession, type StoredSession } from './sessions'
 
 const SKIPPED_MESSAGE = '用户没有处理这次接管就继续了对话'
 
@@ -73,11 +73,11 @@ class BrowserRunState {
         code: null, sessionId: session.sessionId, storageState: null, timeoutMs: 0, liveViewTtlMs: LIVE_VIEW_TTL_MS, close: options.close,
       })
       if (profile && result.storageState) await this.saveProfile(profile, result.storageState)
-      if (options.close) {
+      const next = options.close ? undefined : probedSession(session, result)
+      if (!next) {
         await this.sessions.forget(conversationId)
         return undefined
       }
-      const next = { ...session, liveView: result.liveView ?? session.liveView }
       await this.sessions.put(conversationId, next)
       return next
     })

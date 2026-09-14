@@ -39,7 +39,10 @@ const lastActivityAt = ref(Date.now())
 const pageHidden = ref(typeof document !== 'undefined' && document.visibilityState === 'hidden')
 const frame = ref<HTMLIFrameElement | null>(null)
 const phase = computed(() => liveViewPhase({ hidden: pageHidden.value, lastActivityAt: lastActivityAt.value, now: now.value, idleMs: LIVE_VIEW_IDLE_MS }))
-const showFrame = computed(() => liveViewUrl.value !== null && phase.value === 'shown')
+// After a pause the stored link may point at a browser that is gone; the frame waits for the
+// answer to `state` rather than flashing a stale link that can only say "disconnected".
+const settling = ref(false)
+const showFrame = computed(() => liveViewUrl.value !== null && phase.value === 'shown' && !settling.value)
 const remainingMs = computed(() => lastActivityAt.value + LIVE_VIEW_IDLE_MS - now.value)
 const countdown = computed(() => formatCountdown(remainingMs.value))
 
@@ -52,7 +55,7 @@ watch(warning, (on) => { if (on) void nextTick(() => overlay.value?.focus()) })
 
 function touch() { lastActivityAt.value = Date.now() }
 // A session event means the model or another device just used the browser.
-watch(state, touch)
+watch(state, () => { touch(); settling.value = false })
 
 // The frame is cross-origin, so what happens inside it is invisible. What does reach us: focus
 // entering it (the window blurs) and the pointer crossing its edge. Each counts once, never as a
@@ -75,7 +78,7 @@ onBeforeUnmount(() => { if (ticker !== undefined) clearInterval(ticker) })
 /** Coming back after a pause: the session may be gone, and the link may be stale; `state` settles both. */
 function resume() {
   touch()
-  if (props.conversationId !== null) sendCommand({ kind: 'state', conversation_id: props.conversationId })
+  if (props.conversationId !== null && sendCommand({ kind: 'state', conversation_id: props.conversationId })) settling.value = true
 }
 function onVisibilityChange() {
   pageHidden.value = document.visibilityState === 'hidden'

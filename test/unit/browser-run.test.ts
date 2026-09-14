@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { probedSession } from '../../src/plugins/cloudflare-browser-run/server/sessions'
 import { gatewayAllows } from '@/plugins/cloudflare-browser-run/server/gateway'
 import { BrowserHandoffResultSchema, profileStorageKey, truncateLogs } from '@/plugins/cloudflare-browser-run/shared'
 import { acquireSession, BrowserRateLimited, listSessions } from '@/plugins/cloudflare-browser-run/server/browser-api'
@@ -68,5 +69,18 @@ describe('browser control endpoints', () => {
     await expect(acquireSession(bare, 1)).rejects.toBeInstanceOf(BrowserRateLimited)
     const broken = binding(() => new Response('boom', { status: 500 }))
     await expect(listSessions(broken)).rejects.toThrow(/500/)
+  })
+})
+
+describe('probe outcome', () => {
+  const session = { sessionId: 's', startedAt: 1, keepAliveMs: 600_000, liveView: { url: 'old', expiresAt: 2 } }
+
+  it('drops the session when the probe could not connect, instead of keeping a stale link', () => {
+    expect(probedSession(session, { ok: false, liveView: null })).toBeUndefined()
+  })
+
+  it('takes the fresh link when there is one and keeps the old one otherwise', () => {
+    expect(probedSession(session, { ok: true, liveView: { url: 'new', expiresAt: 3 } })?.liveView?.url).toBe('new')
+    expect(probedSession(session, { ok: true, liveView: null })?.liveView?.url).toBe('old')
   })
 })
