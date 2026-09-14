@@ -20,6 +20,8 @@ export const LIVE_VIEW_REFRESH_MARGIN_MS = 300_000
  * platform's own idle timer (keep_alive, at most 10 minutes) can reclaim the browser.
  */
 export const LIVE_VIEW_IDLE_MS = 600_000
+/** For this long before pausing, an overlay on the frame catches any movement and resets the idle clock. */
+export const LIVE_VIEW_IDLE_WARNING_MS = 60_000
 
 // ---- plugin configuration
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { CircleHelpIcon, GlobeIcon, PauseIcon, PlayIcon, RefreshCwIcon, XIcon } from '@lucide/vue'
 import { pendingHumanCalls } from '@/client/components/tool-part-renderer'
 import { DISCONNECTED_MESSAGE, useSyncStore } from '@/client/stores/sync'
@@ -9,7 +9,7 @@ import { Button } from '@/client/ui/button'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/client/ui/empty'
 import { BROWSER_HANDOFF_TOOL_ID } from '@/shared/plugins'
 import {
-  BrowserHandoffInputSchema, LIVE_VIEW_IDLE_MS, LIVE_VIEW_REFRESH_MARGIN_MS,
+  BrowserHandoffInputSchema, LIVE_VIEW_IDLE_MS, LIVE_VIEW_IDLE_WARNING_MS, LIVE_VIEW_REFRESH_MARGIN_MS,
   type BrowserHandoffResult, type BrowserProfile,
 } from '../shared'
 import { formatCountdown, liveViewPhase } from './live-view-idle'
@@ -40,7 +40,15 @@ const pageHidden = ref(typeof document !== 'undefined' && document.visibilitySta
 const frame = ref<HTMLIFrameElement | null>(null)
 const phase = computed(() => liveViewPhase({ hidden: pageHidden.value, lastActivityAt: lastActivityAt.value, now: now.value, idleMs: LIVE_VIEW_IDLE_MS }))
 const showFrame = computed(() => liveViewUrl.value !== null && phase.value === 'shown')
-const countdown = computed(() => formatCountdown(lastActivityAt.value + LIVE_VIEW_IDLE_MS - now.value))
+const remainingMs = computed(() => lastActivityAt.value + LIVE_VIEW_IDLE_MS - now.value)
+const countdown = computed(() => formatCountdown(remainingMs.value))
+
+// Near the end, an overlay in our own DOM sits on the frame: movement inside the frame is
+// invisible to us, but movement on the overlay is not, and a person still working answers it
+// without noticing. It takes focus so keystrokes reach it too.
+const warning = computed(() => showFrame.value && remainingMs.value <= LIVE_VIEW_IDLE_WARNING_MS)
+const overlay = ref<HTMLElement | null>(null)
+watch(warning, (on) => { if (on) void nextTick(() => overlay.value?.focus()) })
 
 function touch() { lastActivityAt.value = Date.now() }
 // A session event means the model or another device just used the browser.
@@ -149,9 +157,15 @@ function refreshView() {
       .mt-2.flex.gap-2
         Button(size="sm" class="min-h-9" :disabled="busy" @click="finish('done')") 完成
         Button(size="sm" variant="outline" class="min-h-9" :disabled="busy" @click="finish('failed')") 失败
-  iframe.min-h-0.flex-1.border-0.bg-background(
-    v-if="showFrame" ref="frame" :src="liveViewUrl ?? undefined" title="实时浏览器" allow="clipboard-read; clipboard-write"
-    @pointerenter="touch" @pointerleave="touch")
+  .relative.min-h-0.flex-1(v-if="showFrame")
+    iframe.size-full.border-0.bg-background(
+      ref="frame" :src="liveViewUrl ?? undefined" title="实时浏览器" allow="clipboard-read; clipboard-write"
+      @pointerenter="touch" @pointerleave="touch")
+    .absolute.inset-0.flex.flex-col.items-center.justify-center.gap-2.text-center.outline-none.backdrop-blur-sm(
+      v-if="warning" ref="overlay" tabindex="0" role="alert" class="bg-background/80"
+      @pointermove="touch" @pointerdown="touch" @keydown="touch")
+      p.text-base.font-medium 您还在吗？
+      p.text-sm.text-muted-foreground {{ countdown }} 后暂停画面，动一下鼠标或按任意键就继续。
   Empty(v-else-if="active && liveViewUrl" class="min-h-0 flex-1")
     EmptyHeader
       PauseIcon(class="size-6 text-muted-foreground")
