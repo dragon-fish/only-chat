@@ -271,8 +271,9 @@ describe('REST api', () => {
       id: userId, name: 'owner', email: 'owner@example.com', role: 'user', settings: { plugins: {} },
       plugin_config: {
         tavily: { configured: false, values: {}, secrets: { api_key: false } },
-        // Every field has a default, so this plugin is configured before anyone touches it.
+        // Every field has a default, so these plugins are configured before anyone touches them.
         workspace_files: { configured: true, values: {}, secrets: {} },
+        cloudflare_browser_run: { configured: true, values: {}, secrets: {} },
       },
       created_at: stored!.created_at,
     })

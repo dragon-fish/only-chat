@@ -309,6 +309,7 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
       assets: hub.app.assets,
       signal: controller.signal,
       pluginSettings: target.conversation.plugin_settings ?? null,
+      acceptsImages: target.model.metadata_resolved.modalities?.input.includes('image') ?? false,
     }))
 
     const requestStartedAt = performance.now()
@@ -581,7 +582,10 @@ export async function runToolRespond(hub: Hub, cmd: Extract<WsCommand, { type: '
   const human = hub.app.tools.human(call.name)
   if (!human) throw new Error(`unsupported tool: ${call.name}`)
 
-  const part = { type: 'tool_result' as const, call_id: call.id, name: call.name, content: human.respond(call.args, cmd.result) }
+  const content = human.respond(call.args, cmd.result, {
+    userId: hub.userId, conversationId: message.conversation_id, messageId: message.id, callId: call.id,
+  })
+  const part = { type: 'tool_result' as const, call_id: call.id, name: call.name, content }
   const appended = await appendToolResult(hub.db, message.id, hub.userId, message.conversation_id, part)
   if (!appended) {
     const current = await getMessage(hub.db, message.id, hub.userId)

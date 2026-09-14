@@ -100,42 +100,52 @@ continues. On `done` the host exports the browser's storage state (see below).
 
 ## Execution
 
+A Durable Object has no `ctx.exports`, so the Dynamic Worker is loaded by `BrowserRunner`, a
+`WorkerEntrypoint` exported from the Worker and reached from the hub through a self service binding
+(`BROWSER_RUNNER`). The runner is stateless; the hub keeps every fact that outlives a call.
+
 One `browser_use` call:
 
-1. The host validates code size and timeout, and computes `id = sha256(harness + playwright bundle
-   version + code)` for `env.LOADER.get(id, …)`.
-2. The loader callback returns:
-   - `mainModule: "harness.js"`; modules `harness.js` (ours), `user.js` (the model's code),
-     `playwright.js` (the prebuilt bundle read from `env.ASSETS`).
-   - `env: { BROWSER: gatewayStub, HOST: hostStub }`, both loopback stubs from `ctx.exports` with
-     `props` naming the conversation and session.
+1. The hub validates code size and timeout, acquires or verifies the conversation's session, and
+   calls `env.BROWSER_RUNNER.run({ userId, conversationId, messageId, callId, code, sessionId,
+   storageState, timeoutMs, liveViewTtlMs })` under the conversation's lock.
+2. The runner calls `env.LOADER.load(…)` — never `get`: the stubs in `env` carry this run's session
+   and generation, and a cached isolate would keep the previous run's — with:
+   - `mainModule: "main.js"` (a constant class extending `WorkerEntrypoint`), `runtime.js` (the
+     prebuilt harness + Playwright bundle read from `env.ASSETS`), `user.js` (the model's code, or a
+     stub for a probe).
+   - `env: { BROWSER: gatewayStub, HOST: hostStub }`, loopback stubs from the runner's `ctx.exports`
+     with `props` naming the session and the generation.
    - `globalOutbound: null`, `compatibilityDate` matching the Worker, `compatibilityFlags:
      ["nodejs_compat"]`, `limits: { cpuMs }`.
-3. The host calls `worker.getEntrypoint().run({ sessionId, storageState, timeoutMs })` under
-   `AbortSignal.any([generation.signal, AbortSignal.timeout(timeoutMs)])`.
-4. Inside the Dynamic Worker the harness connects through `env.BROWSER`, reuses the existing context
-   or creates one with `storageState`, takes the first page or opens one, sends
-   `Cloudflare.getLiveView` once and reports the URL through `HOST`, then calls the model's `run`.
-   Afterwards it exports `context.storageState({ indexedDB: true })`, disconnects (never closes) and
-   returns `{ result, url, title, storageState }`.
-5. Logs and screenshots arrive through `HOST.log` / `HOST.attach` while the code runs. The host
-   stores screenshots as attachments and forwards log lines to clients as `tool.progress`.
-6. The host assembles the tool result. When the model declares image input, screenshots are attached
-   to the assistant message as image parts; media never travels inside the tool result.
+3. Inside the Dynamic Worker the harness connects through `env.BROWSER`, reuses the context that has
+   pages or creates one with `storageState`, takes the last page or opens one, sends
+   `Cloudflare.getLiveView` once, then races the model's `run` against `timeoutMs`. Afterwards it
+   exports `context.storageState({ indexedDB: true })`, disconnects (never closes unless asked) and
+   returns `{ ok, result | error, timedOut, url, title, storageState, liveView, screenshots }`.
+4. Logs and screenshots arrive through `HOST.log` / `HOST.attach` while the code runs. `BrowserHost`
+   forwards each into the user's Durable Object (`UserHub.pluginHostCall`), which stores screenshots
+   as attachments, appends lines to the call's scratch, and broadcasts `tool.progress`.
+5. The hub assembles the tool result from the runner's answer and the scratch.
+6. Screenshots reach the model through the tool's `toModelOutput`, as media beside the JSON, only
+   when the model declares image input. The persisted result carries attachment ids, never bytes,
+   so later turns resend nothing. This is a deliberate departure from attaching image parts to the
+   assistant message: the generation loop has no hook for a tool to contribute message parts, and
+   building one is a core change of its own.
 
 ### Gateway stub
 
 `BrowserGateway extends WorkerEntrypoint` implements only `fetch`. It forwards a WebSocket upgrade
 to `env.BROWSER` when the request is a `connect` to the session named in `ctx.props.sessionId`,
-and answers 403 to everything else. `launch` happens only on the host. Model code that imports
-Playwright and tries to open its own browser gets 403.
+and answers 403 to everything else. Sessions are acquired only by the hub, through the binding's
+control endpoints. Model code that imports Playwright and tries to open its own browser gets 403.
 
 ### Host stub
 
-`BrowserHost extends WorkerEntrypoint` with `log(line)`, `attach(name, mime, bytes)` and
-`liveView(url, expiresAt)`. `ctx.props` carries user, conversation and assistant message ids, so a
-stub can only write into the generation it was created for. Attachments are capped at 8 per run;
-logs at 16 KiB of what is returned to the model (the UI stream is uncapped).
+`BrowserHost extends WorkerEntrypoint` with `log(line)` and `attach(name, mime, bytes)`. The Live
+View link travels back in the run result. `ctx.props` carries user, conversation, message and call
+ids, so a stub can only write into the generation it was created for. Attachments are capped at 8
+per run; logs at 16 KiB of what is returned to the model (the UI stream is uncapped).
 
 ### Playwright bundle
 
@@ -167,8 +177,10 @@ cached isolate.
   `{ conversation_id, status: "active" | "closed", live_view_url, live_view_expires_at, profile,
   started_at }`. The core does not know any specific payload.
 - Live View URLs are requested with `expiresInMs: 3600000`. During a run the harness fetches one;
-  when idle, the host connects, fetches, disconnects. The client sends `browser.refresh_live_view`
-  five minutes before expiry.
+  when idle, the hub runs a probe (the same Dynamic Worker without model code) that connects,
+  fetches, exports the storage state and disconnects. The client sends `refresh_live_view` five
+  minutes before expiry. A probe with `close: true` is how 关闭浏览器 and conversation deletion end
+  a session.
 - Cloudflare's own `Cloudflare.handoff` command is not used: its completion event needs a standing
   CDP connection, and the panel already shows instructions and buttons.
 
@@ -233,10 +245,12 @@ per-turn call budget: `TOOL_MAX_STEPS` already bounds a turn.
 
 - Plugin config: `keep_alive_ms` (default 600000, max 600000) and `default_timeout_ms`
   (default 120000, max 300000). No secrets; `configured` is always true.
-- `wrangler.jsonc`: `browser: { binding: "BROWSER", remote: true }` and
-  `worker_loaders: [{ binding: "LOADER" }]`. `remote: true` is required for Quick Actions and for a
-  real browser in `vite dev`; local development counts against the account's browser hours.
-- `pnpm build` runs the runtime bundle step before the Vite build.
+- `wrangler.jsonc`: `browser: { binding: "BROWSER", remote: true }`,
+  `worker_loaders: [{ binding: "LOADER" }]`, and a self service binding `BROWSER_RUNNER` to the
+  `BrowserRunner` entrypoint. `remote: true` is required for a real browser in `vite dev`; local
+  development counts against the account's browser hours.
+- `pnpm dev` and `pnpm build` run `scripts/build-browser-runtime.ts` first; its output under
+  `public/browser-runtime/` is generated and ignored by git.
 
 ## Tool naming
 
@@ -268,6 +282,7 @@ and that generated name is what conversations persist and models see.
   with the outcome.
 - Login state survives across conversations of the same Project by default and can be scoped per
   conversation setting.
-- Screenshots reach the model as image parts, never inside a tool result.
+- Screenshots reach the model as media only while the call's generation is running; the persisted
+  result carries attachment ids, never bytes.
 - Every limit is visible in the result; nothing is truncated silently.
 - The files dialog is replaced by the files tab without losing any capability.

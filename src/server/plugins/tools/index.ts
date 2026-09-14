@@ -32,6 +32,8 @@ export interface ToolContext {
   assets: Assets
   /** Aborted when the generation is stopped; long work must give up with it. */
   signal: AbortSignal
+  /** Whether the generating model declares image input, so a tool knows if a picture is worth sending. */
+  acceptsImages: boolean
 }
 
 export type ToolFactory = (ctx: ToolContext) => Tool
@@ -46,9 +48,17 @@ export type ToolResolution = Omit<ToolContext, 'config' | 'conversationConfig'> 
  * How a tool without `execute` is answered by a person. The hub owns the pause and the resume; the
  * plugin owns what an answer looks like, which is the only part that differs between such tools.
  */
+/** Which call a person is answering; identity comes from the runtime, never from the client. */
+export interface HumanToolCall {
+  userId: number
+  conversationId: number
+  messageId: number
+  callId: string
+}
+
 export interface HumanToolProtocol {
   /** Validates the client's answer against the persisted call and returns the result content. */
-  respond(input: unknown, result: unknown): unknown
+  respond(input: unknown, result: unknown, call: HumanToolCall): unknown
   /** The result content recorded when the person moves on (sends a message) without answering. */
   skip(input: unknown): unknown
   /** Whether a recorded result is such a skip, which must not resume the generation on its own. */

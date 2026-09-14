@@ -32,6 +32,7 @@ const resolution = {
   assets: {} as ToolContext['assets'],
   signal: new AbortController().signal,
   pluginSettings: null,
+  acceptsImages: false,
 }
 
 describe('ToolRegistry', () => {

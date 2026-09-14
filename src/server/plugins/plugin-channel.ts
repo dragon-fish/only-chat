@@ -2,6 +2,7 @@ import { Context, Service } from 'cordis'
 import type { Hub } from './hub'
 
 export type PluginCommandHandler = (payload: unknown, hub: Hub) => Promise<void> | void
+export type PluginHostCallHandler = (payload: unknown, hub: Hub) => Promise<unknown> | unknown
 
 /**
  * A plugin's own realtime channel to its client half. Payloads are opaque to the core: the hub
@@ -14,6 +15,7 @@ export class PluginChannel extends Service {
   static readonly provide = 'pluginChannel'
 
   private readonly handlers = new Map<string, PluginCommandHandler>()
+  private readonly hostHandlers = new Map<string, PluginHostCallHandler>()
 
   constructor(ctx: Context) {
     super(ctx, 'pluginChannel')
@@ -34,6 +36,27 @@ export class PluginChannel extends Service {
     const handler = this.handlers.get(pluginId)
     if (!handler) throw new Error(`plugin ${pluginId} accepts no commands`)
     await handler(payload, hub)
+  }
+
+  /**
+   * Calls from the plugin's own trusted server code running outside this Durable Object — a
+   * Worker entrypoint the plugin exports — as opposed to a client command. Kept apart from
+   * `onCommand` so a handler can never mistake a browser for a trusted caller.
+   */
+  onHostCall(pluginId: string, handler: PluginHostCallHandler): () => void {
+    if (this.hostHandlers.has(pluginId)) throw new Error(`plugin ${pluginId} already handles host calls`)
+    return this.ctx.effect(() => {
+      this.hostHandlers.set(pluginId, handler)
+      return () => {
+        if (this.hostHandlers.get(pluginId) === handler) this.hostHandlers.delete(pluginId)
+      }
+    }, `pluginChannel.onHostCall(${pluginId})`) as () => void
+  }
+
+  async dispatchHostCall(pluginId: string, payload: unknown, hub: Hub): Promise<unknown> {
+    const handler = this.hostHandlers.get(pluginId)
+    if (!handler) throw new Error(`plugin ${pluginId} accepts no host calls`)
+    return handler(payload, hub)
   }
 }
 

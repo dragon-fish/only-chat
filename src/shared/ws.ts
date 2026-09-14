@@ -218,6 +218,11 @@ export const WsEventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('error'), request_id: z.string().optional(), message: z.string() }),
   /** The server half of a plugin talking to its client half; opaque to everything in between. */
   z.object({ type: z.literal('plugin.event'), plugin: z.string(), payload: z.unknown() }),
+  /**
+   * Live output of a tool call still running. Never persisted: the finished tool result carries
+   * whatever of it is worth keeping, so a reload shows the outcome and not the ticker.
+   */
+  z.object({ type: z.literal('tool.progress'), message_id: z.number().int(), call_id: z.string(), lines: z.array(z.string()) }),
 ])
 export type WsEvent = z.infer<typeof WsEventSchema>
 export type MessageStatus = z.infer<typeof MessageStatusSchema>

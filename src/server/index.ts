@@ -11,6 +11,7 @@ import { parseAuthUserId } from './plugins/auth/user-id'
 import { AUTH_REVOKED_PATH, hasActiveAuthSession, INTERNAL_AUTH_SESSION_ID_HEADER, INTERNAL_USER_ID_HEADER, USER_ID_STORAGE_KEY, type SocketAttachment } from './plugins/hub/identity'
 import { executeImageRun } from './plugins/artifacts/workflow'
 import type { Conversation } from '@/shared/models'
+export { BrowserGateway, BrowserHost, BrowserRunner } from '@/plugins/cloudflare-browser-run/server/entrypoints'
 
 let workerApp: Promise<Context> | undefined
 
@@ -92,6 +93,16 @@ export class UserHub extends DurableObject<Env> {
       this._app = await createApp({ env: this.env, side: 'hub', doState: this.ctx, userId: parsed })
       return true
     })
+  }
+
+  /**
+   * A plugin's trusted Worker-side code (an exported entrypoint) reaching its Durable Object half.
+   * Identity is asserted by the caller, which is why only code shipped with this Worker may call it.
+   */
+  async pluginHostCall(userId: number, pluginId: string, payload: unknown): Promise<unknown> {
+    const parsed = parseAuthUserId(userId)
+    if (!(await this.ensureOwner(parsed))) throw new Error('Hub identity mismatch')
+    return this.app.pluginChannel.dispatchHostCall(pluginId, payload, this.app.hub)
   }
 
   /** Lets authenticated HTTP/Workflow producers reuse the same realtime stream as chat commands. */

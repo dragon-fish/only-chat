@@ -50,6 +50,12 @@
   ],
   "r2_buckets": [{ "binding": "BUCKET", "bucket_name": "only-chat-attachments" }],
   "images": { "binding": "IMAGES" },
+  // Browser Run for the browser plugin. `remote` gives local dev a real browser; there is no local one.
+  "browser": { "binding": "BROWSER", "remote": true },
+  // Dynamic Workers: the sandbox model-written browser code runs in.
+  "worker_loaders": [{ "binding": "LOADER" }],
+  // The browser plugin's runner lives outside the Durable Object, reached through this self-binding.
+  "services": [{ "binding": "BROWSER_RUNNER", "service": "only-chat", "entrypoint": "BrowserRunner" }],
   "kv_namespaces": [{ "binding": "KV", "id": "cdbd1aa741cb4b77b12564f1e1274bb9" }],
   // Daily catalog refresh and independent expired provider file pointer sweep.
   "triggers": { "crons": ["0 3 * * *"] }

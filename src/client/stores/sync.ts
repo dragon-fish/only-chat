@@ -14,6 +14,8 @@ import type { EditCommand, RegenerateCommand, SendCommand, WsCommand, WsEvent } 
  * The reasoning slider's stops, weakest first (spec §3.3). `off` and `auto` are states rather than
  * strengths: `off` turns reasoning off explicitly, `auto` turns it on without sending an effort.
  */
+const MAX_PROGRESS_LINES = 500
+
 export const REASONING_ORDER = ['off', 'auto', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'] as const
 export type ReasoningStop = (typeof REASONING_ORDER)[number]
 /** `inherit` is not a stop: it writes nothing at all, leaving the field to the layer below. */
@@ -622,6 +624,8 @@ export const useSyncStore = defineStore('sync', () => {
   const lastError = ref<string | null>(null)
   /** Plugin frames are handed straight to whoever wired the plugin host in; the store keeps none. */
   const pluginEventListeners = new Set<(plugin: string, payload: unknown) => void>()
+  /** Live output of running tool calls by call id. Never persisted; the tool result is the record. */
+  const toolProgress = reactive(new Map<string, string[]>())
   // Whether the Projects list has been fetched. Before it has, a Project id from a route cannot be
   // judged missing — only absent — and must not be silently dropped.
   const projectsLoaded = ref(false)
@@ -646,6 +650,7 @@ export const useSyncStore = defineStore('sync', () => {
     loadedMessageConversations.clear()
     streamingIds.clear()
     optimisticMutations.clear()
+    toolProgress.clear()
     forkResult.value = null
     titleSuggestion.value = null
     settings.value = { plugins: {} }
@@ -818,6 +823,13 @@ export const useSyncStore = defineStore('sync', () => {
       case 'plugin.event':
         for (const listener of pluginEventListeners) listener(e.plugin, e.payload)
         break
+      case 'tool.progress': {
+        const lines = toolProgress.get(e.call_id) ?? []
+        lines.push(...e.lines)
+        // Bounded: a chatty tool must not grow the store without limit before it finishes.
+        toolProgress.set(e.call_id, lines.length > MAX_PROGRESS_LINES ? lines.slice(-MAX_PROGRESS_LINES) : lines)
+        break
+      }
     }
   }
 
@@ -938,7 +950,7 @@ export const useSyncStore = defineStore('sync', () => {
 
   return {
     status, snapshotSeq, conversations, projects, messages, streamingIds, forkResult, titleSuggestion, settings, pluginConfig, lastError, projectsLoaded, conversationsLoaded, settingsLoaded,
-    optimisticMutations,
+    optimisticMutations, toolProgress,
     conversationsError, projectsError, settingsError, loadedMessageConversations, conversationList, imageConversationList, projectList,
     applyEvent, ingestConversations, ingestMessages, conversationsInProject, pathFor, siblingsOf, leafOf, isStreaming, loadConversations, loadProjects, loadSettings, loadMessages, connect, reset, send, onPluginEvent,
     beginOptimistic, confirmOptimistic, rejectOptimistic, abandonOptimistic, optimisticToolResult, optimisticToolCallIds,

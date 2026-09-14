@@ -71,6 +71,7 @@ async function fixture(): Promise<Fixture> {
     db,
     assets: assets as never,
     signal: new AbortController().signal,
+    acceptsImages: false,
   }
   const built = await registry.resolve(['read_file', 'write_file'], { workspace_files: true }, { ...runtime, pluginSettings: null })
   return {

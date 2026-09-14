@@ -6,8 +6,8 @@
   "scripts": {
     "auth:reset-user": "tsx scripts/reset-user-credentials.ts",
     "seed:mock": "tsx scripts/seed-mock-provider.ts",
-    "dev": "vite dev",
-    "build": "vite build",
+    "dev": "tsx scripts/build-browser-runtime.ts && vite dev",
+    "build": "tsx scripts/build-browser-runtime.ts && vite build",
     "preview": "vite preview",
     "deploy": "pnpm build && wrangler deploy --experimental-provision=false --experimental-auto-create=false",
     "types": "wrangler types",
@@ -58,6 +58,7 @@
     "zod": "^4.5.4"
   },
   "devDependencies": {
+    "@cloudflare/playwright": "1.3.0",
     "@cloudflare/vite-plugin": "^1.54.4",
     "@cloudflare/vitest-plugin": "^1.1.4",
     "@inquirer/prompts": "^8.7.2",
@@ -69,6 +70,7 @@
     "@vue/language-plugin-pug": "^3.3.11",
     "@vue/tsconfig": "^0.8.1",
     "drizzle-kit": "^0.31.10",
+    "esbuild": "^0.28.2",
     "happy-dom": "^20.14.0",
     "pug": "^3.0.4",
     "sass-embedded": "^1.104.0",
