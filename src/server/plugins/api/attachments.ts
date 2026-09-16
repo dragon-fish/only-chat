@@ -59,15 +59,31 @@ export function attachmentRoutes(ctx: Context) {
     if (id === null) return c.json({ error: 'not found' }, 404)
     const row = await db.query.attachments.findFirst({ where: and(eq(attachments.id, id), eq(attachments.user_id, userId)) })
     if (!row) return c.json({ error: 'not found' }, 404)
+    /**
+     * Bytes are content-addressed and these rows are only ever inserted or deleted, so what an id
+     * serves cannot change and revalidating settles nothing.
+     *
+     * `private` is the load-bearing word: the URL names no user, so a shared cache in front of this
+     * Worker would answer one account's request with another account's picture. Never `public`
+     * without moving an unguessable credential into the URL — and note that even then the URL
+     * becomes a bearer token nobody can revoke, which is why the preview route uses short tickets.
+     *
+     * What remains is the browser's own store, which belongs to the browser and not to the cookie
+     * currently in it. Sign-out sends `Clear-Site-Data: "cache"` for exactly that reason.
+     */
+    const headers = {
+      'cache-control': 'private, max-age=31536000, immutable',
+      etag: `"${row.sha256}"`,
+      vary: 'Cookie',
+      'x-content-type-options': 'nosniff',
+    }
+    // One row read and no object read, which is the whole point of answering it here.
+    if (c.req.header('if-none-match') === headers.etag) return new Response(null, { status: 304, headers })
+
     const stored = await ctx.assets.getStream(row.r2_key)
     if (!stored) return c.json({ error: 'object missing' }, 404)
     return new Response(stored.body, {
-      headers: {
-        'content-type': row.mime,
-        'content-length': String(stored.size),
-        'cache-control': 'no-store',
-        'x-content-type-options': 'nosniff',
-      },
+      headers: { ...headers, 'content-type': row.mime, 'content-length': String(stored.size) },
     })
   })
 

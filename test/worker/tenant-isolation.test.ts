@@ -101,17 +101,20 @@ describe('authenticated REST tenant isolation', () => {
     const sha = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(b => b.toString(16).padStart(2, '0')).join('')
     const upload = (client: typeof bob) => client.request(`/api/attachments/${sha}`, { method: 'PUT', headers: { 'content-type': 'image/png' }, body: bytes })
     const aliceAttachment = await (await upload(alice)).json() as { attachment_id: number }
-    // A private browser HTTP cache belongs to the browser, not to the cookie's current user.
-    const cache = new Map<string, Response>()
-    const browserGet = async (client: typeof bob, path: string) => {
-      if (cache.has(path)) return cache.get(path)!.clone()
-      const response = await client.request(path)
-      if (response.ok && !response.headers.get('cache-control')?.includes('no-store')) cache.set(path, response.clone())
-      return response
-    }
     const path = `/api/attachments/${aliceAttachment.attachment_id}`
-    expect((await browserGet(alice, path)).status).toBe(200)
-    expect((await browserGet(bob, path)).status).toBe(404)
+    const served = await alice.request(path)
+    expect(served.status).toBe(200)
+    expect((await bob.request(path)).status).toBe(404)
+    /**
+     * Attachments are cacheable, and `private` is what keeps that from being a tenancy hole: the
+     * URL names no user, so a shared cache would answer Bob's request from Alice's entry without
+     * this Worker ever being asked. What `private` does not cover is one browser used by two
+     * accounts in turn — that cache belongs to the browser, and reaching Alice's picture through it
+     * takes her machine, her profile, and a deliberate trip through the address bar. We take that
+     * trade for images that survive a reload, and sign-out sends `Clear-Site-Data: "cache"`.
+     */
+    expect(served.headers.get('cache-control')).toContain('private')
+    expect(served.headers.get('cache-control')).not.toContain('public')
     expect.soft(await (await bobRequest('POST', '/attachments/check', { sha256: sha })).json()).toEqual({ exists: false })
     expect.soft((await bob.request(`/api/attachments/${aliceAttachment.attachment_id}`)).status).toBe(404)
     const bobAttachment = await (await upload(bob)).json() as { attachment_id: number }

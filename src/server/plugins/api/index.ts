@@ -51,7 +51,16 @@ export const ApiPlugin = {
       if (schema && !schema.safeParse(await c.req.raw.clone().json().catch(() => null)).success) return c.json({ error: 'Invalid account input' }, 400)
       await next()
     })
-    app.all('/api/auth/*', c => ctx.auth.instance.handler(c.req.raw))
+    app.all('/api/auth/*', async (c) => {
+      const response = await ctx.auth.instance.handler(c.req.raw)
+      // Attachments are cached by the browser for a year, and the HTTP cache belongs to the browser
+      // rather than to the account that filled it. The next account on this machine must not
+      // inherit them, and a page cannot clear that store from script.
+      if (!c.req.path.endsWith('/sign-out') || !response.ok) return response
+      const cleared = new Response(response.body, response)
+      cleared.headers.set('clear-site-data', '"cache"')
+      return cleared
+    })
     app.get('/api/health', (c) => c.json({ ok: true }))
     app.route('/api', publicSiteSettingsRoutes(ctx))
     // Hono copies a sub-app's routes at `route()` time and plugins mount after this point, so the

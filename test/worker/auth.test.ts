@@ -5,7 +5,7 @@ import { createApp } from '@/server/app'
 import { resolveAllowRegister } from '@/server/plugins/auth/site-settings'
 import { registrationPolicy } from '@/server/plugins/auth/policy'
 import { seedTestUser } from './user-fixture'
-import { json, login, registerAndLogin, setAllowRegister, signupBody } from './auth-helper'
+import { ensureTestUser, json, login, registerAndLogin, setAllowRegister, signupBody } from './auth-helper'
 
 describe('registration policy and route protection', () => {
   beforeEach(async () => {
@@ -177,4 +177,13 @@ describe('registration policy and route protection', () => {
     expect((await owner.json('POST', '/api/auth/admin/set-role', { userId: '2', role: 'user' })).status).toBe(200)
     expect((await admin.request('/api/admin/settings')).status).toBe(403)
   })
+})
+
+it('clears the browser cache on sign-out, because attachments outlive the session in it', async () => {
+  const client = await ensureTestUser()
+  const out = await client.json('POST', '/api/auth/sign-out', {})
+  expect(out.status).toBe(200)
+  // Attachments are cached by the browser for a year. Another account on this browser must not
+  // inherit them, and the cache is the one store a page cannot clear from script.
+  expect(out.headers.get('clear-site-data')).toBe('"cache"')
 })

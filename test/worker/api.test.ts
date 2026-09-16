@@ -321,6 +321,27 @@ describe('REST api', () => {
     expect(new Uint8Array(await got.arrayBuffer())).toEqual(bytes)
   })
 
+  it('lets a browser keep an attachment, and never a shared cache', async () => {
+    const bytes = new Uint8Array([9, 9, 9, 1])
+    const sha = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map((b) => b.toString(16).padStart(2, '0')).join('')
+    const up = await authenticatedFetch(new Request(`https://x/api/attachments/${sha}`, { method: 'PUT', headers: { 'content-type': 'image/png' }, body: bytes }))
+    const { attachment_id } = (await up.json()) as { attachment_id: number }
+
+    const got = await authenticatedFetch(new Request(`https://x/api/attachments/${attachment_id}`))
+    // The bytes under an id never change, so revalidating costs a round trip and settles nothing.
+    // `private` is the load-bearing word: the URL names no user, and a shared cache in front of
+    // this Worker would answer one account's request with another account's picture.
+    expect(got.headers.get('cache-control')).toBe('private, max-age=31536000, immutable')
+    expect(got.headers.get('etag')).toBe(`"${sha}"`)
+    expect(got.headers.get('vary')).toBe('Cookie')
+
+    const revalidated = await authenticatedFetch(new Request(`https://x/api/attachments/${attachment_id}`, { headers: { 'if-none-match': `"${sha}"` } }))
+    expect(revalidated.status).toBe(304)
+    expect(await revalidated.text()).toBe('')
+    const changed = await authenticatedFetch(new Request(`https://x/api/attachments/${attachment_id}`, { headers: { 'if-none-match': '"other"' } }))
+    expect(changed.status).toBe(200)
+  })
+
   it('serves a generated attachment through the same authenticated route', async () => {
     // Assistant images reuse the upload route's reader; no public or unauthenticated path exists.
     const db = createDb(env.DB)
