@@ -98,6 +98,18 @@ export interface ReadFileOutput {
   empty: boolean
 }
 
+/**
+ * The answer to reading a file this turn has already read whole and nothing has written to since.
+ * The earlier result is still in context; a second copy of the same bytes is paid for again on
+ * every request the turn makes after it.
+ */
+export interface ReadFileUnchangedOutput {
+  path: string
+  version: number
+  unchanged: true
+  message: string
+}
+
 export interface WriteFileOutput {
   path: string
   /** Whether this file has a preview worth opening; see preview_file. */

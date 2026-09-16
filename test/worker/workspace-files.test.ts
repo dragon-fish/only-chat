@@ -136,6 +136,28 @@ describe('workspace files service', () => {
     expect(after.ok && new TextDecoder().decode(after.value)).toBe('cost: $& $1 $$')
   })
 
+  it('matches text whose quotes are typed the other way', async () => {
+    await f.files.write({ path: '/project/q.ts', content: 'const greeting = \u2018hello\u2019\nsay(greeting)', ...scope(f) })
+
+    // A model reproducing code from a page, a chat log or its own memory routinely straightens
+    // curly quotes. Failing here costs a whole round trip to be told the file still says what the
+    // caller just read.
+    const edited = await f.files.edit({ path: '/project/q.ts', oldText: "const greeting = 'hello'", newText: "const greeting = 'bye'", ...scope(f) })
+    expect(edited).toMatchObject({ ok: true })
+
+    const after = await f.files.readBytes('project', scope(f), 'q.ts')
+    expect(after.ok && new TextDecoder().decode(after.value)).toBe("const greeting = 'bye'\nsay(greeting)")
+  })
+
+  it('counts a quote-insensitive match as a match when deciding it is ambiguous', async () => {
+    await f.files.write({ path: '/project/q.ts', content: 'say(\u2018hi\u2019)\nsay(\'hi\')', ...scope(f) })
+
+    // The two lines differ only in typography. Replacing the first silently would be exactly the
+    // outcome the uniqueness rule exists to prevent.
+    const edited = await f.files.edit({ path: '/project/q.ts', oldText: "say('hi')", newText: 'say("hi")', ...scope(f) })
+    expect(edited).toMatchObject({ ok: false, error: 'AMBIGUOUS_MATCH' })
+  })
+
   it('refuses an edit computed against a version that is no longer current', async () => {
     await f.files.write({ path: '/project/guard.ts', content: 'alpha', ...scope(f) })
     await f.files.write({ path: '/project/guard.ts', content: 'alpha and beta', ...scope(f) })

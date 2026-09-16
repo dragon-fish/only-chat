@@ -32,11 +32,27 @@ export type Result<T> = { ok: true, value: T } | { ok: false, error: WorkspaceEr
 const fail = (error: WorkspaceError): Result<never> => ({ ok: false, error })
 const succeed = <T>(value: T): Result<T> => ({ ok: true, value })
 
-/** Non-overlapping, matching what split/join replaces. */
-function countOccurrences(haystack: string, needle: string): number {
-  let count = 0
-  for (let index = haystack.indexOf(needle); index !== -1; index = haystack.indexOf(needle, index + needle.length)) count += 1
-  return count
+/**
+ * Curly quotes straightened, one character for one.
+ *
+ * Length is what makes this safe to match on: an index found in the normalized text is the same
+ * index in the original, so the replacement still lands on the file's own characters.
+ */
+function normalizeQuotes(value: string): string {
+  return value.replace(/[\u2018\u2019]/gu, "'").replace(/[\u201C\u201D]/gu, '"')
+}
+
+/**
+ * Where the text appears, non-overlapping, without regard to how its quotes were typed — a model
+ * reproducing code from a page or from memory routinely straightens them, and refusing that costs
+ * a round trip to be told the file still says what the caller just read.
+ */
+function matchStarts(content: string, oldText: string): number[] {
+  const haystack = normalizeQuotes(content)
+  const needle = normalizeQuotes(oldText)
+  const starts: number[] = []
+  for (let at = haystack.indexOf(needle); at !== -1; at = haystack.indexOf(needle, at + needle.length)) starts.push(at)
+  return starts
 }
 
 export const MAX_FILE_BYTES = 1024 * 1024
@@ -361,16 +377,18 @@ export class WorkspaceFiles {
     if (!bytes.ok) return bytes
     const content = new TextDecoder().decode(bytes.value)
 
-    const replacements = countOccurrences(content, input.oldText)
-    if (replacements === 0) return fail('NO_MATCH')
+    const starts = matchStarts(content, input.oldText)
+    if (starts.length === 0) return fail('NO_MATCH')
     // Editing the first of several is the one outcome nobody can review: it reads as success.
-    if (replacements > 1 && input.replaceAll !== true) return fail('AMBIGUOUS_MATCH')
+    if (starts.length > 1 && input.replaceAll !== true) return fail('AMBIGUOUS_MATCH')
 
-    // Both forms take the replacement literally. `replace` with a string would expand `$&` and `$1`
-    // in whatever the model wrote; a function replacement never does.
-    const next = input.replaceAll === true
-      ? content.split(input.oldText).join(input.newText)
-      : content.replace(input.oldText, () => input.newText)
+    // Spliced by index, last first so the earlier ones stay valid. Never `replace`, which would
+    // expand `$&` and `$1` in whatever the model wrote.
+    const spans = input.replaceAll === true ? starts : starts.slice(0, 1)
+    let next = content
+    for (const start of [...spans].reverse()) {
+      next = next.slice(0, start) + input.newText + next.slice(start + input.oldText.length)
+    }
 
     const written = await this.write({
       path: input.path,
@@ -382,7 +400,7 @@ export class WorkspaceFiles {
       toolCallId: input.toolCallId,
     })
     if (!written.ok) return written
-    return succeed({ ...written.value, replacements: input.replaceAll === true ? replacements : 1 })
+    return succeed({ ...written.value, replacements: spans.length })
   }
 
   /**

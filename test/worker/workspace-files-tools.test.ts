@@ -171,6 +171,60 @@ describe('edit_file', () => {
   })
 })
 
+describe('read_file repeat and partial views', () => {
+  it('tells the caller nothing changed instead of sending the file twice', async () => {
+    const providerId = await seedProvider()
+    await installModel()
+    const { conversationId } = await callTool(providerId, 'write_file', {
+      path: '/conversation/app.ts', content: 'const PORT = 3000\nstart(PORT)',
+    })
+
+    const { results } = await callTools(providerId, [
+      { name: 'read_file', input: { path: '/conversation/app.ts' } },
+      { name: 'read_file', input: { path: '/conversation/app.ts' } },
+    ], conversationId)
+
+    // The first result is still in context. A second copy buys nothing and is paid for on every
+    // later request of the turn.
+    expect(results[0]?.content).toMatchObject({ content: expect.stringContaining('PORT = 3000') })
+    expect(results[1]?.content).toMatchObject({ unchanged: true, version: 1 })
+    expect(results[1]?.content).not.toHaveProperty('content')
+  })
+
+  it('sends the file again once something has written to it', async () => {
+    const providerId = await seedProvider()
+    await installModel()
+    const { conversationId } = await callTool(providerId, 'write_file', {
+      path: '/conversation/app.ts', content: 'first',
+    })
+
+    // A write leaves the turn holding what it wrote, not a view of the file: for an edit that is
+    // enough, but a read asking for the file has to be answered with the file.
+    const { results } = await callTools(providerId, [
+      { name: 'write_file', input: { path: '/conversation/app.ts', content: 'second' } },
+      { name: 'read_file', input: { path: '/conversation/app.ts' } },
+    ], conversationId)
+    expect(results.at(-1)?.content).toMatchObject({ content: expect.stringContaining('second') })
+  })
+
+  it('refuses to edit against a view that stopped short of the file', async () => {
+    const providerId = await seedProvider()
+    await installModel()
+    // Unique in the file, so nothing but the guard can stop the edit.
+    const lines = ['const PORT = 3000', ...Array.from({ length: 39 }, (_, index) => `filler ${index}`)].join('\n')
+    const { conversationId } = await callTool(providerId, 'write_file', { path: '/conversation/long.ts', content: lines })
+
+    const { results } = await callTools(providerId, [
+      { name: 'read_file', input: { path: '/conversation/long.ts', offset: 1, limit: 5 } },
+      { name: 'edit_file', input: { path: '/conversation/long.ts', oldText: 'PORT = 3000', newText: 'PORT = 8080' } },
+    ], conversationId)
+
+    // Five lines of a forty-line file is not knowing what the file says, even when the text being
+    // named happens to be unique: what makes it unique is the part nobody looked at.
+    expect(results.at(-1)?.content).toMatchObject({ error: 'NOT_READ' })
+  })
+})
+
 describe('turn usage', () => {
   it('records one entry per round trip, so a total is never read as a context size', async () => {
     const providerId = await seedProvider()

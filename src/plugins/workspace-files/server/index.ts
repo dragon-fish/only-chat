@@ -10,7 +10,8 @@ import {
 import {
   DeleteFileInputSchema, EditFileInputSchema, ListFilesInputSchema, PreviewFileInputSchema, ReadFileInputSchema,
   RenameFileInputSchema, RestoreFileInputSchema, WriteFileInputSchema,
-  type DeleteFileOutput, type EditFileOutput, type ListFilesOutput, type PreviewFileOutput, type ReadFileOutput,
+  type DeleteFileOutput, type EditFileOutput, type ListFilesOutput, type PreviewFileOutput,
+  type ReadFileOutput, type ReadFileUnchangedOutput,
   type RenameFileOutput, type RestoreFileOutput, type WriteFileOutput, type WorkspaceToolError,
 } from '../shared'
 import { absolutePreviewUrl, PREVIEW_TICKET_TTL_SECONDS, previewTypeFor, previewUrlFor } from './preview'
@@ -34,7 +35,7 @@ const MESSAGES: Record<WorkspaceError, string> = {
 /** Not a filesystem outcome: the caller skipped a step, and the fix is to take it. */
 const NOT_READ: WorkspaceToolError = {
   error: 'NOT_READ',
-  message: 'Read the file in this turn before editing it. An edit names text you believe is in the file, and read_file is how you know what is there now.',
+  message: 'Read the whole file in this turn before editing it. An edit names text you believe is in the file, and a view that stopped short — or never happened — is not knowing what else the file says.',
 }
 
 function unwrap<T>(result: Result<T>): T | WorkspaceToolError {
@@ -42,13 +43,30 @@ function unwrap<T>(result: Result<T>): T | WorkspaceToolError {
 }
 
 /**
- * Where this turn records the version of each file it read.
+ * What this turn has seen of a file, and how it came to see it.
  *
  * `turn` is shared by every tool built for one generation and dies with it, so this cannot leak
  * between conversations. It exists so a later write can tell "I replaced the version I read" from
- * "I replaced a version I never saw".
+ * "I replaced a version I never saw", so a repeat read need not resend what is already in context,
+ * and so an edit is refused against a view that never covered the file.
  */
-const readVersionKey = (path: string) => `workspace_files:read:${path}`
+interface SeenFile {
+  version: number
+  /** The request that produced it. Absent means the whole file was asked for. */
+  offset?: number
+  limit?: number
+  /** Stopped short, or started below the top: a part of a file cannot stand in for the file. */
+  partial: boolean
+  /** A write leaves the caller holding what it wrote, which is not a view of the file either. */
+  source: 'read' | 'write'
+}
+
+const seenKey = (path: string) => `workspace_files:read:${path}`
+
+function seenThisTurn(runtime: ToolContext, path: string): SeenFile | null {
+  const value = runtime.turn.get(seenKey(path))
+  return typeof value === 'object' && value !== null ? value as SeenFile : null
+}
 
 function servicesFor(runtime: ToolContext) {
   const files = new WorkspaceFiles(runtime.db, runtime.assets, runtime.userId)
@@ -106,16 +124,36 @@ export const WorkspaceFilesServerPlugin = {
         'When the result is truncated, nextOffset tells you where to continue. Nothing is ever dropped silently.',
         'An empty file is reported as empty rather than as a blank line, which is how you tell it from a file holding a single newline.',
         'Keep the version from the result: write_file needs it to replace this file.',
+        'Reading a file this turn already read whole, with nothing written to it since, answers `unchanged` instead of the content — the earlier result is still above you and says what the file holds.',
         'Do not re-read a file immediately after write_file returned its metadata — you already have the version and line count.',
       ].join(' '),
       inputSchema: ReadFileInputSchema,
-      async execute(input): Promise<ReadFileOutput | WorkspaceToolError> {
+      async execute(input): Promise<ReadFileOutput | ReadFileUnchangedOutput | WorkspaceToolError> {
         const { files, scope } = servicesFor(runtime)
         const result = await files.read({ path: input.path, offset: input.offset, limit: input.limit, ...scope })
         if (!result.ok) return unwrap(result) as WorkspaceToolError
         const { updatedAt: _updatedAt, ...output } = result.value
-        runtime.turn.set(readVersionKey(output.path), output.version)
-        return output
+
+        const seen = seenThisTurn(runtime, output.path)
+        // Only against a previous read of the same range: a write's entry records what was written
+        // rather than a view of the file, and answering `unchanged` from it would point the caller
+        // back at content from before its own edit.
+        const repeat = seen !== null && seen.source === 'read' && !seen.partial
+          && seen.version === output.version && seen.offset === input.offset && seen.limit === input.limit
+        runtime.turn.set(seenKey(output.path), {
+          version: output.version,
+          offset: input.offset,
+          limit: input.limit,
+          partial: output.truncated || output.startLine > 1,
+          source: 'read',
+        } satisfies SeenFile)
+        if (!repeat) return output
+        return {
+          path: output.path,
+          version: output.version,
+          unchanged: true,
+          message: `Still v${output.version}, unchanged since you read it earlier in this turn. That result is still above you; read it again only after something writes to this file.`,
+        }
       },
     }))
 
@@ -140,13 +178,13 @@ export const WorkspaceFilesServerPlugin = {
         })
         if (!result.ok) return unwrap(result) as WorkspaceToolError
         const { path, operation, fileSize, totalLines, version, replacedVersion } = result.value
-        const read = runtime.turn.get(readVersionKey(path))
+        const read = seenThisTurn(runtime, path)
         // Older than what was replaced means somebody wrote in between and this write went over
         // content the caller never read.
-        const staleReadVersion = typeof read === 'number' && replacedVersion !== null && read < replacedVersion
-          ? read
+        const staleReadVersion = read !== null && replacedVersion !== null && read.version < replacedVersion
+          ? read.version
           : null
-        runtime.turn.set(readVersionKey(path), version)
+        runtime.turn.set(seenKey(path), { version, partial: false, source: 'write' } satisfies SeenFile)
 
         const previewable = previewTypeFor(path) !== undefined
         const size = `${fileSize.toLocaleString('en-US')} bytes, ${totalLines.toLocaleString('en-US')} lines`
@@ -226,8 +264,10 @@ export const WorkspaceFilesServerPlugin = {
         const parsed = parseWorkspacePath(input.path)
         if (!parsed.ok) return { error: 'INVALID_PATH', message: MESSAGES.INVALID_PATH }
         // The ledger is keyed by the canonical path, which is what read_file and write_file record.
-        const read = runtime.turn.get(readVersionKey(formatWorkspacePath(parsed.value)))
-        if (typeof read !== 'number') return NOT_READ
+        const seen = seenThisTurn(runtime, formatWorkspacePath(parsed.value))
+        // A view that stopped short is not knowing what the file says, even when the text being
+        // named happens to be unique: what makes it unique is the part nobody looked at.
+        if (seen === null || seen.partial) return NOT_READ
 
         const { files, scope } = servicesFor(runtime)
         const result = await files.edit({
@@ -237,14 +277,14 @@ export const WorkspaceFilesServerPlugin = {
           replaceAll: input.replaceAll,
           // What the caller actually looked at this turn. A file that moved since then is a
           // conflict: the patch quotes content that may no longer be the content.
-          expectedVersion: read,
+          expectedVersion: seen.version,
           sourceMessageId: runtime.assistantMessageId,
           toolCallId: options?.toolCallId ?? null,
           ...scope,
         })
         if (!result.ok) return unwrap(result) as WorkspaceToolError
         const { path, fileSize, totalLines, version, replacements } = result.value
-        runtime.turn.set(readVersionKey(path), version)
+        runtime.turn.set(seenKey(path), { version, partial: false, source: 'write' } satisfies SeenFile)
 
         const previewable = previewTypeFor(path) !== undefined
         const places = replacements === 1 ? 'one place' : `${replacements} places`
@@ -313,8 +353,8 @@ export const WorkspaceFilesServerPlugin = {
         // "you replaced a version you never saw" warning honest.
         for (const to of moved) {
           const from = `${fromPath}${to.slice(path.length)}`
-          const read = runtime.turn.get(readVersionKey(from))
-          if (read !== undefined) runtime.turn.set(readVersionKey(to), read)
+          const read = runtime.turn.get(seenKey(from))
+          if (read !== undefined) runtime.turn.set(seenKey(to), read)
         }
         return {
           path,
@@ -340,7 +380,7 @@ export const WorkspaceFilesServerPlugin = {
         const result = await files.deleteByPath({ path: input.path, recursive: input.recursive, ...scope })
         if (!result.ok) return unwrap(result) as WorkspaceToolError
         const { path, deleted } = result.value
-        for (const gone of deleted) runtime.turn.delete(readVersionKey(gone))
+        for (const gone of deleted) runtime.turn.delete(seenKey(gone))
         return {
           path,
           deleted,

@@ -1,20 +1,22 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { FileTextIcon, TriangleAlertIcon } from '@lucide/vue'
+import { FileCheckIcon, FileTextIcon, TriangleAlertIcon } from '@lucide/vue'
 import { Alert, AlertDescription, AlertTitle } from '@/client/ui/alert'
 import { Badge } from '@/client/ui/badge'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/client/ui/collapsible'
 import { Spinner } from '@/client/ui/spinner'
 import type { ToolCallPart, ToolResultPart } from '@/shared/parts'
-import type { ReadFileInput, ReadFileOutput, WorkspaceToolError } from '../shared'
+import type { ReadFileInput, ReadFileOutput, ReadFileUnchangedOutput, WorkspaceToolError } from '../shared'
 import { basename, formatBytes } from './format'
 
 const props = defineProps<{ call: ToolCallPart, result: ToolResultPart | null }>()
 
 const input = computed(() => (typeof props.call.args === 'object' && props.call.args !== null ? props.call.args : {}) as Partial<ReadFileInput>)
-const content = computed(() => props.result?.content as ReadFileOutput | WorkspaceToolError | undefined)
+const content = computed(() => props.result?.content as ReadFileOutput | ReadFileUnchangedOutput | WorkspaceToolError | undefined)
 const output = computed(() => (content.value && 'content' in content.value ? content.value : null))
 const failure = computed(() => (content.value && 'error' in content.value ? content.value : null))
+/** The turn asked for a file it had already read whole; the content it wanted is further up. */
+const unchanged = computed(() => (content.value && 'unchanged' in content.value ? content.value : null))
 const path = computed(() => output.value?.path ?? input.value.path ?? '')
 
 /** What was actually returned, which is not always what was asked for. */
@@ -37,6 +39,10 @@ const range = computed(() => {
     TriangleAlertIcon
     AlertTitle 读取未完成
     AlertDescription {{ failure.message }}
+  .oc-turn-row.text-sm.text-muted-foreground(v-else-if="unchanged" :title="unchanged.path")
+    FileCheckIcon(class="size-4 shrink-0")
+    span.min-w-0.truncate 未变 {{ basename(unchanged.path) }}
+    Badge(variant="secondary" class="ml-auto shrink-0") v{{ unchanged.version }}
   //- Content is collapsed by default: the model already has it, and a long file would bury the reply.
   Collapsible(v-else-if="output")
     CollapsibleTrigger(class="oc-turn-row text-sm hover:bg-accent" :title="output.path")
