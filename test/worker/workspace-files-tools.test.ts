@@ -155,17 +155,18 @@ describe('edit_file', () => {
     expect((read.result?.content as { content: string }).content).toContain('const PORT = 8080')
   })
 
-  it('refuses to edit a file this turn has not read', async () => {
+  it('refuses to edit a file nothing in the conversation has shown', async () => {
     const providerId = await seedProvider()
     await installModel()
     const { conversationId } = await callTool(providerId, 'write_file', {
       path: '/conversation/app.ts', content: 'const PORT = 3000',
     })
 
-    // An edit names text the caller believes is there. Believing it without having looked this turn
-    // is how a patch lands on a file someone else has since rewritten.
+    // An edit names text the caller believes is there. Believing it about a file the conversation
+    // has never been shown is how a patch lands on content nobody looked at — checked before the
+    // file is even resolved, so a guess at a path cannot probe for one either.
     const { result } = await callTool(providerId, 'edit_file', {
-      path: '/conversation/app.ts', oldText: 'PORT = 3000', newText: 'PORT = 8080',
+      path: '/conversation/never-shown.ts', oldText: 'PORT = 3000', newText: 'PORT = 8080',
     }, conversationId)
     expect(result?.content).toMatchObject({ error: 'NOT_READ' })
   })
@@ -222,6 +223,45 @@ describe('read_file repeat and partial views', () => {
     // Five lines of a forty-line file is not knowing what the file says, even when the text being
     // named happens to be unique: what makes it unique is the part nobody looked at.
     expect(results.at(-1)?.content).toMatchObject({ error: 'NOT_READ' })
+  })
+})
+
+describe('what the context has already seen', () => {
+  it('edits a file an earlier turn read, without asking for it again', async () => {
+    const providerId = await seedProvider()
+    await installModel()
+    const { conversationId } = await callTool(providerId, 'write_file', {
+      path: '/conversation/app.ts', content: 'const PORT = 3000\nstart(PORT)',
+    })
+    await callTool(providerId, 'read_file', { path: '/conversation/app.ts' }, conversationId)
+
+    // That read is still in the conversation the model is looking at. Making it read again costs a
+    // whole round trip, which resends everything, to be told what is already on screen.
+    const { result } = await callTool(providerId, 'edit_file', {
+      path: '/conversation/app.ts', oldText: 'PORT = 3000', newText: 'PORT = 8080',
+    }, conversationId)
+    expect(result?.content).toMatchObject({ replacements: 1 })
+  })
+
+  it('answers a repeat read across turns the same way', async () => {
+    const providerId = await seedProvider()
+    await installModel()
+    const { conversationId } = await callTool(providerId, 'write_file', { path: '/conversation/b.ts', content: 'hello' })
+    await callTool(providerId, 'read_file', { path: '/conversation/b.ts' }, conversationId)
+
+    const { result } = await callTool(providerId, 'read_file', { path: '/conversation/b.ts' }, conversationId)
+    expect(result?.content).toMatchObject({ unchanged: true })
+  })
+
+  it('asks for the file again once a later turn changed it', async () => {
+    const providerId = await seedProvider()
+    await installModel()
+    const { conversationId } = await callTool(providerId, 'write_file', { path: '/conversation/c.ts', content: 'one' })
+    await callTool(providerId, 'read_file', { path: '/conversation/c.ts' }, conversationId)
+    await callTool(providerId, 'write_file', { path: '/conversation/c.ts', content: 'two' }, conversationId)
+
+    const { result } = await callTool(providerId, 'read_file', { path: '/conversation/c.ts' }, conversationId)
+    expect(result?.content).toMatchObject({ content: expect.stringContaining('two') })
   })
 })
 

@@ -52,9 +52,6 @@ function unwrap<T>(result: Result<T>): T | WorkspaceToolError {
  */
 interface SeenFile {
   version: number
-  /** The request that produced it. Absent means the whole file was asked for. */
-  offset?: number
-  limit?: number
   /** Stopped short, or started below the top: a part of a file cannot stand in for the file. */
   partial: boolean
   /** A write leaves the caller holding what it wrote, which is not a view of the file either. */
@@ -66,6 +63,49 @@ const seenKey = (path: string) => `workspace_files:read:${path}`
 function seenThisTurn(runtime: ToolContext, path: string): SeenFile | null {
   const value = runtime.turn.get(seenKey(path))
   return typeof value === 'object' && value !== null ? value as SeenFile : null
+}
+
+/** What one finished tool call says the caller was shown, or null when it shows nothing. */
+function seenInResult(name: string, content: unknown, path: string): SeenFile | null {
+  if (name !== READ_FILE_TOOL_ID && name !== WRITE_FILE_TOOL_ID && name !== EDIT_FILE_TOOL_ID) return null
+  if (typeof content !== 'object' || content === null) return null
+  const record = content as Record<string, unknown>
+  // A refusal showed the caller nothing about the file.
+  if (record.error !== undefined || record.path !== path || typeof record.version !== 'number') return null
+  if (name !== READ_FILE_TOOL_ID) return { version: record.version, partial: false, source: 'write' }
+  if (record.unchanged === true) return { version: record.version, partial: false, source: 'read' }
+  return {
+    version: record.version,
+    partial: record.truncated === true || (typeof record.startLine === 'number' && record.startLine > 1),
+    source: 'read',
+  }
+}
+
+/**
+ * What the caller knows about a file, from everything it can see.
+ *
+ * Keeping this per generation made every turn re-read a file the conversation had already been
+ * shown — and a read is not one message but a whole round trip, which resends the conversation to
+ * be told what is already on screen. The messages this generation was built from are that record,
+ * and the version is what says whether it still holds.
+ *
+ * The newest whole view wins over a later partial one: a paged read after a full one does not
+ * un-see the file, and a version that has moved since is refused either way.
+ */
+function seenInContext(runtime: ToolContext, path: string): SeenFile | null {
+  const live = seenThisTurn(runtime, path)
+  if (live !== null) return live
+  let fallback: SeenFile | null = null
+  for (let index = runtime.path.length - 1; index >= 0; index--) {
+    for (const part of [...runtime.path[index]!.parts].reverse()) {
+      if (part.type !== 'tool_result') continue
+      const seen = seenInResult(part.name, part.content, path)
+      if (seen === null) continue
+      if (!seen.partial) return seen
+      fallback ??= seen
+    }
+  }
+  return fallback
 }
 
 function servicesFor(runtime: ToolContext) {
@@ -134,16 +174,15 @@ export const WorkspaceFilesServerPlugin = {
         if (!result.ok) return unwrap(result) as WorkspaceToolError
         const { updatedAt: _updatedAt, ...output } = result.value
 
-        const seen = seenThisTurn(runtime, output.path)
-        // Only against a previous read of the same range: a write's entry records what was written
+        const seen = seenInContext(runtime, output.path)
+        // Only against a previous read of the whole file: a write's entry records what was written
         // rather than a view of the file, and answering `unchanged` from it would point the caller
-        // back at content from before its own edit.
+        // back at content from before its own edit. A ranged request is answered in full, since
+        // what was seen whole says nothing about which lines this call asked for.
         const repeat = seen !== null && seen.source === 'read' && !seen.partial
-          && seen.version === output.version && seen.offset === input.offset && seen.limit === input.limit
+          && seen.version === output.version && input.offset === undefined && input.limit === undefined
         runtime.turn.set(seenKey(output.path), {
           version: output.version,
-          offset: input.offset,
-          limit: input.limit,
           partial: output.truncated || output.startLine > 1,
           source: 'read',
         } satisfies SeenFile)
@@ -178,7 +217,7 @@ export const WorkspaceFilesServerPlugin = {
         })
         if (!result.ok) return unwrap(result) as WorkspaceToolError
         const { path, operation, fileSize, totalLines, version, replacedVersion } = result.value
-        const read = seenThisTurn(runtime, path)
+        const read = seenInContext(runtime, path)
         // Older than what was replaced means somebody wrote in between and this write went over
         // content the caller never read.
         const staleReadVersion = read !== null && replacedVersion !== null && read.version < replacedVersion
@@ -264,7 +303,7 @@ export const WorkspaceFilesServerPlugin = {
         const parsed = parseWorkspacePath(input.path)
         if (!parsed.ok) return { error: 'INVALID_PATH', message: MESSAGES.INVALID_PATH }
         // The ledger is keyed by the canonical path, which is what read_file and write_file record.
-        const seen = seenThisTurn(runtime, formatWorkspacePath(parsed.value))
+        const seen = seenInContext(runtime, formatWorkspacePath(parsed.value))
         // A view that stopped short is not knowing what the file says, even when the text being
         // named happens to be unique: what makes it unique is the part nobody looked at.
         if (seen === null || seen.partial) return NOT_READ

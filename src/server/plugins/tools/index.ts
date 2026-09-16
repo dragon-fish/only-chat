@@ -1,6 +1,6 @@
 import { Context, Service } from 'cordis'
 import type { Tool } from 'ai'
-import type { ConversationPluginSettings } from '@/shared/models'
+import type { ConversationPluginSettings, Message } from '@/shared/models'
 import { conversationConfigOf, pluginAvailableIn, pluginToolGroups, type ConversationScope } from '@/shared/plugins'
 import { findPluginManifest } from '@/shared/plugin-manifests'
 import type { DB } from '../../db/client'
@@ -40,6 +40,13 @@ export interface ToolContext {
    * Null on a hub that has never been connected to, which no link is worth failing a turn over.
    */
   publicOrigin: string | null
+  /**
+   * The messages this generation was built from, root to leaf — what the model can actually see.
+   *
+   * A tool that would ask for something already on screen can look here instead. `turn` holds what
+   * this generation has done since; together they are the whole of what the caller knows.
+   */
+  path: readonly Message[]
 }
 
 export type ToolFactory = (ctx: ToolContext) => Tool

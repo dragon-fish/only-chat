@@ -34,6 +34,7 @@ const resolution = {
   pluginSettings: null,
   acceptsImages: false,
   publicOrigin: 'https://chat.test',
+  path: [],
 }
 
 describe('ToolRegistry', () => {
