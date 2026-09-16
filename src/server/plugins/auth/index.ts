@@ -36,6 +36,12 @@ export class Authentication extends Service {
       advanced: {
         database: { generateId: ({ model }) => model === 'users' || model === 'user' ? false : crypto.randomUUID() },
         ipAddress: { ipAddressHeaders: ['cf-connecting-ip'] },
+        // Cookie names and their Secure attribute are fixed once, at init, from baseURL — which is
+        // deliberately unset above, so they cannot follow the request. Without this, better-auth
+        // falls back to NODE_ENV, and workerd has none, leaving production with a non-Secure
+        // `better-auth.session_token`. Flipping this renames the cookie, which signs everyone out
+        // once; the build mode decides it so http://localhost and a LAN dev host keep working.
+        useSecureCookies: !import.meta.env.DEV,
       },
       emailAndPassword: { enabled: true },
       user: { modelName: 'users', validateUserInfo: registrationPolicy(ctx.db.orm, ctx.env.ALLOW_REGISTER) },
