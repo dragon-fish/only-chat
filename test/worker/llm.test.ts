@@ -382,6 +382,29 @@ describe('chat-completions files', () => {
       } finally { vi.unstubAllGlobals() }
     })
   })
+
+  it('uses DeepSeek\'s flat file_id content part for native references', async () => {
+    await inHub(async ctx => {
+      const deepseek = { ...await provider('k'), models_dev_provider_id: 'deepseek' }
+      const lm = built(await ctx.llm.createModel(deepseek, providerInterface('chat-completions'), model))
+      let requestBody: unknown
+      vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+        requestBody = await new Request(input, init).json()
+        return Response.json({
+          id: 'chat_fixture', object: 'chat.completion', created: 1, model: 'test-model',
+          choices: [{ index: 0, message: { role: 'assistant', content: 'answer' }, finish_reason: 'stop' }],
+        })
+      })
+      try {
+        await lm.doGenerate({ prompt: [{ role: 'user', content: [{
+          type: 'file', mediaType: 'image/png', data: { type: 'reference', reference: { openai: 'file-api-image' } },
+        }] }] })
+        expect(requestBody).toMatchObject({ messages: [{ role: 'user', content: [
+          { type: 'file', file_id: 'file-api-image' },
+        ] }] })
+      } finally { vi.unstubAllGlobals() }
+    })
+  })
 })
 
 describe('chat-completions reasoning', () => {

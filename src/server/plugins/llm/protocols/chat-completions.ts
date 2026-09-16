@@ -7,7 +7,7 @@ import { observedProviderFetch } from '../observability'
 import { createOpenAIImagesClient } from '../images/openai'
 
 export const chatCompletionsAdapter: LlmProtocolAdapter = {
-  createModel(_provider, providerInterface, model, apiKey, trace) {
+  createModel(provider, providerInterface, model, apiKey, trace) {
     const fetch = trace ? observedProviderFetch(trace, apiKey) : undefined
     return createFileAwareChatModel({
       name: COMPAT_PROVIDER_NAME,
@@ -15,7 +15,9 @@ export const chatCompletionsAdapter: LlmProtocolAdapter = {
       apiKey,
       includeUsage: true,
       ...(fetch ? { fetch } : {}),
-    }, model.model_id)
+    }, model.model_id, {
+      fileReferenceStyle: provider.models_dev_provider_id === 'deepseek' ? 'flat' : 'nested',
+    })
   },
   createFiles(provider, providerInterface, apiKey) {
     return createOpenAIFiles({ baseURL: providerInterface.base_url, apiKey, credentialVersion: provider.credential_version })

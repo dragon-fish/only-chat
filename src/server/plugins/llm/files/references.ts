@@ -4,9 +4,15 @@ import type { LanguageModelV4, LanguageModelV4CallOptions, LanguageModelV4Prompt
 import type { FetchFunction } from '@ai-sdk/provider-utils'
 
 type FileReferenceProtocol = 'responses' | 'chat-completions'
+type ChatFileReferenceStyle = 'nested' | 'flat'
 
 /** Only request-local URL markers may become file IDs; an SDK shape change must fail closed. */
-export function restoreOpenAIFileReferences(body: string, references: ReadonlyMap<string, string>, protocol: FileReferenceProtocol): string {
+export function restoreOpenAIFileReferences(
+  body: string,
+  references: ReadonlyMap<string, string>,
+  protocol: FileReferenceProtocol,
+  chatStyle: ChatFileReferenceStyle = 'nested',
+): string {
   const restored = new Set<string>()
   const visit = (value: unknown): unknown => {
     if (Array.isArray(value)) return value.map(visit)
@@ -26,7 +32,8 @@ export function restoreOpenAIFileReferences(body: string, references: ReadonlyMa
       } else {
         delete record.image_url
         record.type = 'file'
-        record.file = { file_id: references.get(marker) }
+        if (chatStyle === 'flat') record.file_id = references.get(marker)
+        else record.file = { file_id: references.get(marker) }
       }
     }
     return record
@@ -43,7 +50,12 @@ export function restoreOpenAIFileReferences(body: string, references: ReadonlyMa
  * public V4 model and fetch interfaces translate just those inputs; output/reasoning use the SDK.
  * Never share the marker map across calls or read/buffer the response body here.
  */
-function withOpenAIFileReferences(createModel: (fetch?: FetchFunction) => LanguageModelV4, protocol: FileReferenceProtocol, originalFetch?: FetchFunction): LanguageModelV4 {
+function withOpenAIFileReferences(
+  createModel: (fetch?: FetchFunction) => LanguageModelV4,
+  protocol: FileReferenceProtocol,
+  originalFetch?: FetchFunction,
+  chatStyle: ChatFileReferenceStyle = 'nested',
+): LanguageModelV4 {
   const sdk = createModel()
   const prepare = (options: LanguageModelV4CallOptions) => {
     const references = new Map<string, string>()
@@ -56,14 +68,14 @@ function withOpenAIFileReferences(createModel: (fetch?: FetchFunction) => Langua
         const url = new URL(`https://only-chat.invalid/files/${crypto.randomUUID()}`)
         references.set(url.toString(), id)
         // Chat accepts URL images but rejects URL documents. The marker's temporary media type
-        // never reaches the provider: every native Chat reference uses the nested file.file_id.
+        // never reaches the provider; the adapter restores the selected provider's file-id shape.
         return { ...part, ...(protocol === 'chat-completions' ? { mediaType: 'image/png' } : {}), data: { type: 'url', url } }
       }) }
     })
     if (references.size === 0) return { model: sdk, options }
     const model = createModel((input, init) => {
       if (typeof init?.body !== 'string') throw new Error('OpenAI file references require a JSON request body')
-      const body = restoreOpenAIFileReferences(init.body, references, protocol)
+      const body = restoreOpenAIFileReferences(init.body, references, protocol, chatStyle)
       return (originalFetch ?? globalThis.fetch)(input, { ...init, body })
     })
     return { model, options: { ...options, prompt } }
@@ -88,6 +100,13 @@ export function createFileAwareResponsesModel(settings: OpenResponsesProviderSet
   return withOpenAIFileReferences(fetch => createOpenResponses({ ...settings, ...(fetch ? { fetch } : {}) })(modelId), 'responses', settings.fetch)
 }
 
-export function createFileAwareChatModel(settings: OpenAICompatibleProviderSettings, modelId: string): LanguageModelV4 {
-  return withOpenAIFileReferences(fetch => createOpenAICompatible({ ...settings, ...(fetch ? { fetch } : {}) }).chatModel(modelId), 'chat-completions', settings.fetch)
+export function createFileAwareChatModel(
+  settings: OpenAICompatibleProviderSettings,
+  modelId: string,
+  options: { fileReferenceStyle?: ChatFileReferenceStyle } = {},
+): LanguageModelV4 {
+  return withOpenAIFileReferences(
+    fetch => createOpenAICompatible({ ...settings, ...(fetch ? { fetch } : {}) }).chatModel(modelId),
+    'chat-completions', settings.fetch, options.fileReferenceStyle,
+  )
 }
