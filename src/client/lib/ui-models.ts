@@ -149,9 +149,20 @@ export function latestAssistantContextUsage(path: readonly Message[], model: Mod
   return previous.usage
 }
 
+/**
+ * How full the conversation is, which is the last round trip and not the turn.
+ *
+ * A turn's totals are the sum over its round trips, each of which resent the whole conversation:
+ * reading them as a context size pins the gauge at several hundred percent and tells the operator
+ * the conversation is full when it has room. Turns recorded before steps were kept have only the
+ * totals, and for a single round trip the two are the same number anyway.
+ */
 export function messageContextUsage(usage: Usage, limit: number): { used: number, limit: number, percent: number } | null {
-  if (usage.prompt === undefined || usage.completion === undefined || limit <= 0) return null
-  const used = usage.prompt + usage.completion
+  const last = usage.steps?.at(-1)
+  const prompt = last?.prompt ?? usage.prompt
+  const completion = last?.completion ?? usage.completion
+  if (prompt === undefined || completion === undefined || limit <= 0) return null
+  const used = prompt + completion
   return { used, limit, percent: used / limit * 100 }
 }
 

@@ -1,6 +1,6 @@
 import { stepCountIs, streamText, type LanguageModel, type StopCondition, type ToolSet } from 'ai'
 import { INFLIGHT_FLUSH_INTERVAL_MS, TOOL_MAX_STEPS } from '@/shared/constants'
-import type { Message, PersistedStatus, ConversationParams, ConversationPluginSettings, Usage } from '@/shared/models'
+import type { Message, PersistedStatus, ConversationParams, ConversationPluginSettings, StepUsage, Usage } from '@/shared/models'
 import type { Part, ToolCallPart, ToolResultPart } from '@/shared/parts'
 import type { SendCommand, WsCommand } from '@/shared/ws'
 import { ASK_USER_TOOL_ID, parseConversationPluginSettings } from '@/shared/plugins'
@@ -11,7 +11,7 @@ import type { ModelRow, ProviderInterfaceRow, ProviderRow, ConversationRow } fro
 import { PartAccumulator } from '../llm/accumulator'
 import { logLifecycle, partsBytes } from './lifecycle-log'
 import { buildModelMessages, buildProviderOptions, INTERJECTED, interjectedUserMessage, requiredAttachmentIds, type AttachmentInput } from '../llm/messages'
-import { generationDurationMs, toUsage, type GenerationStepPerformance } from '../llm/usage'
+import { generationDurationMs, toStepUsage, toUsage, type GenerationStepPerformance } from '../llm/usage'
 import type { Hub, InflightJob } from './index'
 import {
   resolveEffectiveConfig,
@@ -333,6 +333,8 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
     const requestStartedAt = performance.now()
     let firstTokenAt: number | null = null
     const stepPerformance: GenerationStepPerformance[] = []
+    // One entry per round trip. The totals below are their sum, which is a cost and not a context.
+    const stepUsage: StepUsage[] = []
     const result = streamText({
       model,
       messages,
@@ -479,6 +481,7 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
           outputTokens: part.usage.outputTokens,
           outputTokensPerSecond: part.performance.outputTokensPerSecond,
         })
+        stepUsage.push(toStepUsage(part.usage))
         continue
       }
       if (part.type === 'finish') {
@@ -487,7 +490,7 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
           firstTokenAt,
           finishedAt: performance.now(),
           generationDurationMs: generationDurationMs(stepPerformance),
-        })
+        }, stepUsage)
         // The line worth reading at a glance: what the turn cost, summed over every step it took.
         console.info({
           message: [

@@ -1,4 +1,4 @@
-import { expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { latestAssistantContextUsage, messageContextUsage, messageUsageMetrics } from '@/client/lib/ui-models'
 import type { Message } from '@/shared/models'
 
@@ -48,4 +48,26 @@ it('does not reuse context usage across a model change', () => {
     message(2, 'assistant', { provider_id: 8, model_id: 'new', status: 'streaming' }),
   ]
   expect(latestAssistantContextUsage(path, { provider_id: 8, model_id: 'new' })).toBeNull()
+})
+
+describe('context usage across a multi-step turn', () => {
+  it('measures the context by the last round trip, not the turn total', () => {
+    // The totals are what the turn was billed: every step resent the whole conversation, so they
+    // add up to several times the context. Reading them as context pins the gauge at hundreds of
+    // percent and tells the operator their conversation is full when it is not.
+    const usage = {
+      prompt: 1072438, completion: 68112, cached: 1047552,
+      steps: [
+        { prompt: 97800, completion: 24000, cached: 95000 },
+        { prompt: 104000, completion: 30000, cached: 103000 },
+        { prompt: 105400, completion: 4112, cached: 104000 },
+      ],
+    }
+    expect(messageContextUsage(usage, 128000)).toMatchObject({ used: 109512, limit: 128000 })
+    expect(messageContextUsage(usage, 128000)!.percent).toBeCloseTo(85.6, 1)
+  })
+
+  it('falls back to the totals for a turn recorded before steps were kept', () => {
+    expect(messageContextUsage({ prompt: 1000, completion: 200 }, 10000)).toMatchObject({ used: 1200 })
+  })
 })

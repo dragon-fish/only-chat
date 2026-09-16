@@ -21,3 +21,31 @@ it('opens the usage details when a touch pointer taps the trigger', async () => 
 
   expect(document.body.querySelector('[data-slot="hover-card-content"]')).not.toBeNull()
 })
+
+it('shows the context as the last round trip, with the round trips behind a disclosure', async () => {
+  const host = document.createElement('div')
+  document.body.append(host)
+  const app = createApp(MessageUsage, {
+    usage: {
+      prompt: 300, completion: 34, cached: 280,
+      steps: [
+        { prompt: 100, completion: 20, cached: 90 },
+        { prompt: 100, completion: 10, cached: 95 },
+        { prompt: 100, completion: 4, cached: 95 },
+      ],
+    },
+  })
+  app.mount(host)
+  cleanup = () => app.unmount()
+
+  host.querySelector<HTMLButtonElement>('[aria-label="查看本轮用量详情"]')!
+    .dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerType: 'touch' }))
+  await nextTick()
+  const card = document.body.querySelector('[data-slot="hover-card-content"]')!
+
+  // 104, not 334: the totals are three round trips added up, and reading them as a context size is
+  // what pins the gauge past its limit on a conversation with room to spare.
+  expect(card.textContent).toContain('104')
+  expect(card.textContent).toContain('3 次往返')
+  expect(card.textContent).toContain('查看每轮往返（3）')
+})

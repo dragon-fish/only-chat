@@ -171,6 +171,22 @@ describe('edit_file', () => {
   })
 })
 
+describe('turn usage', () => {
+  it('records one entry per round trip, so a total is never read as a context size', async () => {
+    const providerId = await seedProvider()
+    await installModel()
+    const { conversationId, assistantId } = await callTool(providerId, 'list_files', { path: '/' })
+
+    const rows = await listMessages(createDb(env.DB), conversationId, 1)
+    const usage = rows.find(row => row.id === assistantId)!.usage!
+    // Two round trips: the call, then the answer once its result came back. Each resent the whole
+    // conversation, so the totals add up while the context is only ever the last one.
+    expect(usage.steps).toHaveLength(2)
+    expect(usage.prompt).toBe(2)
+    expect(usage.steps!.at(-1)).toMatchObject({ prompt: 1 })
+  })
+})
+
 describe('workspace file tools', () => {
   it('writes a file the model asked for, and records where it came from', async () => {
     const providerId = await seedProvider()

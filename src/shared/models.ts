@@ -9,6 +9,18 @@ export const InterfaceProtocolSchema = z.enum(['responses', 'chat-completions', 
 export type InterfaceProtocol = z.infer<typeof InterfaceProtocolSchema>
 
 /** undefined = provider did not report; 0 = reported zero. Never collapse the two. */
+/**
+ * One round trip to the model. A turn that calls tools makes several, each resending the whole
+ * conversation, so the turn's totals are a cost and never a context size.
+ */
+export const StepUsageSchema = z.object({
+  prompt: z.number().optional(),
+  completion: z.number().optional(),
+  cached: z.number().optional(),
+  reasoning: z.number().optional(),
+})
+export type StepUsage = z.infer<typeof StepUsageSchema>
+
 export const UsageSchema = z.object({
   prompt: z.number().optional(),
   completion: z.number().optional(),
@@ -17,6 +29,8 @@ export const UsageSchema = z.object({
   time_to_first_token_ms: z.number().nonnegative().optional(),
   generation_duration_ms: z.number().nonnegative().optional(),
   total_duration_ms: z.number().nonnegative().optional(),
+  /** Every round trip this turn made, in order. Absent on turns recorded before they were kept. */
+  steps: z.array(StepUsageSchema).optional(),
 })
 export type Usage = z.infer<typeof UsageSchema>
 

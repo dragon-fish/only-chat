@@ -1,5 +1,5 @@
 import type { LanguageModelUsage } from 'ai'
-import type { Usage } from '@/shared/models'
+import type { StepUsage, Usage } from '@/shared/models'
 
 export interface UsageTiming {
   requestStartedAt: number
@@ -27,10 +27,22 @@ export function generationDurationMs(steps: readonly GenerationStepPerformance[]
   return measured ? duration : undefined
 }
 
+/** One round trip's counts, kept in order so a turn's context can be told from its cost. */
+export function toStepUsage(u: LanguageModelUsage | undefined): StepUsage {
+  const out: StepUsage = {}
+  if (!u) return out
+  if (u.inputTokens !== undefined) out.prompt = u.inputTokens
+  if (u.outputTokens !== undefined) out.completion = u.outputTokens
+  if (u.inputTokenDetails?.cacheReadTokens !== undefined) out.cached = u.inputTokenDetails.cacheReadTokens
+  if (u.outputTokenDetails?.reasoningTokens !== undefined) out.reasoning = u.outputTokenDetails.reasoningTokens
+  return out
+}
+
 /** Flattens AI SDK 7's nested usage. Absent keys mean "not reported"; 0 means "reported zero". */
-export function toUsage(u: LanguageModelUsage | undefined, timing?: UsageTiming): Usage | null {
+export function toUsage(u: LanguageModelUsage | undefined, timing?: UsageTiming, steps: readonly StepUsage[] = []): Usage | null {
   if (!u) return null
   const out: Usage = {}
+  if (steps.length > 0) out.steps = [...steps]
   if (u.inputTokens !== undefined) out.prompt = u.inputTokens
   if (u.outputTokens !== undefined) out.completion = u.outputTokens
   if (u.inputTokenDetails?.cacheReadTokens !== undefined) out.cached = u.inputTokenDetails.cacheReadTokens
