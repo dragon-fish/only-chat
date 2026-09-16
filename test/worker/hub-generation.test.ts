@@ -1,7 +1,7 @@
 import { env } from 'cloudflare:workers'
 import { runInDurableObject } from 'cloudflare:test'
 import type { Context } from 'cordis'
-import type { FilesV4, FilesV4UploadFileCallOptions } from '@ai-sdk/provider'
+import { APICallError, type FilesV4, type FilesV4UploadFileCallOptions } from '@ai-sdk/provider'
 import { createOpenResponses } from '@ai-sdk/open-responses'
 import { DefaultGeneratedFile, type GeneratedFile } from 'ai'
 import { MockLanguageModelV4, simulateReadableStream } from 'ai/test'
@@ -1845,19 +1845,40 @@ describe('provider file transport', () => {
     expect(await pointersOf(attachmentId)).toHaveLength(0)
   })
 
+  it.each([400, 404, 405, 501])('falls back to inline bytes when Files upload returns HTTP %s', async statusCode => {
+    const a = await seedProvider(`unsupported-files-${statusCode}`, 'model-a', true)
+    const attachmentId = await seedAttachment()
+    const created = await installMock(streamingMock, () => ({
+      specificationVersion: 'v4',
+      provider: 'mock',
+      uploadFile: async () => { throw new APICallError({
+        message: 'unsupported Files endpoint', url: 'https://mock.example/files', requestBodyValues: undefined, statusCode,
+      }) },
+    }))
+
+    const c = await connect(await seedTestUser())
+    c.ws.send(send({ parts: [{ type: 'text', text: 'look' }, { type: 'image', attachment_id: attachmentId }], provider_id: a, model_id: 'model-a' }))
+    expect(await c.next('message.done')).toMatchObject({ status: 'done', error: null })
+
+    expect(filePartsOf(created[0]!)).toEqual([{ type: 'file', mediaType: 'image/png', data: { type: 'data', data: PNG } }])
+    expect(await pointersOf(attachmentId)).toHaveLength(0)
+  })
+
   it('surfaces auth, rate-limit and server upload failures instead of falling back to inline bytes', async () => {
-    for (const message of ['401 invalid api key', '429 rate limit exceeded', '500 internal server error']) {
-      const a = await seedProvider(`files-${message}`, 'model-a', true)
+    for (const statusCode of [401, 429, 500]) {
+      const a = await seedProvider(`files-${statusCode}`, 'model-a', true)
       const attachmentId = await seedAttachment()
       const created = await installMock(streamingMock, () => ({
         specificationVersion: 'v4',
         provider: 'mock',
-        uploadFile: async () => { throw new Error(message) },
+        uploadFile: async () => { throw new APICallError({
+          message: `HTTP ${statusCode}`, url: 'https://mock.example/files', requestBodyValues: undefined, statusCode,
+        }) },
       }))
 
       const c = await connect(await seedTestUser())
       c.ws.send(send({ parts: [{ type: 'text', text: 'look' }, { type: 'image', attachment_id: attachmentId }], provider_id: a, model_id: 'model-a' }))
-      expect(await c.next('message.done')).toMatchObject({ status: 'error', error: expect.stringContaining(message) })
+      expect(await c.next('message.done')).toMatchObject({ status: 'error', error: expect.stringContaining(`HTTP ${statusCode}`) })
       // A failed upload is a failed turn: nothing was silently downgraded into inline bytes.
       expect(created).toHaveLength(0)
       expect(await pointersOf(attachmentId)).toHaveLength(0)

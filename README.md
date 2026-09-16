@@ -188,6 +188,9 @@ With it on:
   Each upload creates a new row; expired historical references remain available for remote cleanup.
 - Uploads ask for a **seven-day** expiry. If the provider reports its own `expires_at`, that value is
   what gets stored; otherwise the local pointer dies on the deadline the upload asked for.
+- Upload HTTP 400/404/405/501 means the compatible endpoint cannot honor the Files contract, so that
+  request falls back to inline bytes without saving a pointer. Authentication, throttling, network
+  and other server failures still fail the turn instead of being disguised as missing capability.
 - The daily cron (`0 3 * * *`) independently refreshes the catalog and deletes expired remote files.
   Cleanup reads indexed due pointers in pages, with bounded concurrency and a per-run limit.
   Success and HTTP 404/410 remove the pointer. Network errors, SDK-retryable errors (including HTTP
