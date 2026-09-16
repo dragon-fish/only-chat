@@ -20,7 +20,7 @@ import { joinStash } from '@/shared/stash'
 import { logLifecycle, partsBytes } from './lifecycle-log'
 import { runEdit, runInterjectInterrupt, runRegenerate, runSend, runToolContinue, runToolRespond } from './generation'
 import { parseAuthUserId } from '../auth/user-id'
-import { AUTH_REVOKED_CLOSE_CODE, hasActiveAuthSession, type SocketAttachment } from './identity'
+import { AUTH_REVOKED_CLOSE_CODE, hasActiveAuthSession, ORIGIN_STORAGE_KEY, type SocketAttachment } from './identity'
 
 type GenerationEvent = Extract<WsEvent, { type: 'message.delta' | 'message.part' | 'message.done' | 'tool.progress' }>
 
@@ -78,6 +78,7 @@ export class Hub extends Service {
   }
 
   async [Service.init]() {
+    this._publicOrigin = await this.state.storage.get<string>(ORIGIN_STORAGE_KEY) ?? null
     await this._recoverInflight()
   }
 
@@ -90,16 +91,20 @@ export class Hub extends Service {
    * Where the browser reached this deployment, taken from the WebSocket upgrade. A tool that hands
    * out a link needs an absolute one, and the Durable Object has no request of its own to read an
    * origin off. Deliberately not an env var: a worktree runs on whatever port is free, and a pinned
-   * value would point its links at production. Always set by the time a tool runs, because a
-   * generation only starts from a command on an accepted socket.
+   * value would point its links at production.
+   *
+   * Null only until the first connection of a brand-new hub. It must be read from storage rather
+   * than kept in memory alone: a hibernated socket outlives this instance, and the command that
+   * wakes it arrives with no request behind it.
    */
-  get publicOrigin(): string {
-    if (this._publicOrigin === null) throw new Error('hub has no public origin yet')
+  get publicOrigin(): string | null {
     return this._publicOrigin
   }
 
-  rememberPublicOrigin(origin: string): void {
+  async rememberPublicOrigin(origin: string): Promise<void> {
+    if (this._publicOrigin === origin) return
     this._publicOrigin = origin
+    await this.state.storage.put(ORIGIN_STORAGE_KEY, origin)
   }
 
   async broadcast(event: WsEvent): Promise<void> {

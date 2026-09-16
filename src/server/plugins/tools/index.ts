@@ -37,8 +37,9 @@ export interface ToolContext {
   /**
    * Where this deployment is reachable, for a tool handing out a link someone off this origin has
    * to open. Comes from the connection that asked for the generation, never from configuration.
+   * Null on a hub that has never been connected to, which no link is worth failing a turn over.
    */
-  publicOrigin: string
+  publicOrigin: string | null
 }
 
 export type ToolFactory = (ctx: ToolContext) => Tool

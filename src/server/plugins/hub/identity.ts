@@ -5,6 +5,8 @@ import { authSessions, users } from '@/server/db/schema'
 export const INTERNAL_USER_ID_HEADER = 'X-Only-Chat-User-Id'
 export const INTERNAL_AUTH_SESSION_ID_HEADER = 'X-Only-Chat-Auth-Session-Id'
 export const USER_ID_STORAGE_KEY = 'identity:user-id'
+/** Survives hibernation: the in-memory field does not, and a woken DO has no request to re-read. */
+export const ORIGIN_STORAGE_KEY = 'identity:origin'
 export const AUTH_REVOKED_PATH = '/internal/auth-revoked'
 export const AUTH_REVOKED_CLOSE_CODE = 4001
 

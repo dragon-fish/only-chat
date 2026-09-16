@@ -197,7 +197,7 @@ export const WorkspaceFilesServerPlugin = {
 
         return {
           path: input.path,
-          url: absolutePreviewUrl(runtime.publicOrigin, path),
+          url: runtime.publicOrigin === null ? path : absolutePreviewUrl(runtime.publicOrigin, path),
           renders,
           expiresInSeconds: PREVIEW_TICKET_TTL_SECONDS,
           message,

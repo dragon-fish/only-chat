@@ -1,6 +1,7 @@
 import { runInDurableObject } from 'cloudflare:test'
 import { env } from 'cloudflare:workers'
 import { describe, expect, it } from 'vitest'
+import { createApp } from '@/server/app'
 import { createDb } from '@/server/db/client'
 import type { UserHub } from '@/server/index'
 import { ensureTestUser as seedTestUser, authenticatedFetch } from './auth-helper'
@@ -26,6 +27,17 @@ describe('UserHub DO', () => {
   it('accepts a websocket upgrade whose Origin matches the request host', async () => {
     const res = await authenticatedFetch(new Request('https://x/ws', { headers: { Upgrade: 'websocket', Origin: 'https://x' } }))
     expect(res.status).toBe(101)
+  })
+
+  it('keeps the public origin across a hibernation wake, when only storage survives', async () => {
+    await connect(await seedTestUser())
+    await runInDurableObject(env.USER_HUB.getByName('1'), async (instance: UserHub, state: DurableObjectState) => {
+      expect(instance.app.hub.publicOrigin).toBe('https://chat.test')
+      // What waking a hibernated socket does: a fresh app over the same storage, with no request
+      // to read an origin off. An in-memory field alone would come back null and fail the turn.
+      const woken = await createApp({ env, side: 'hub', doState: state, userId: 1 })
+      expect(woken.hub.publicOrigin).toBe('https://chat.test')
+    })
   })
 
   it('updates and deletes a conversation, broadcasting to two sockets', async () => {

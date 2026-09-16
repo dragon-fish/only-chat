@@ -134,7 +134,7 @@ export class UserHub extends DurableObject<Env> {
     }
     // The Worker forwards the browser's own request, so its URL is the public one. Recorded per
     // connection rather than configured, which is what lets a worktree serve links on its own port.
-    this.app.hub.rememberPublicOrigin(new URL(request.url).origin)
+    await this.app.hub.rememberPublicOrigin(new URL(request.url).origin)
     const pair = new WebSocketPair()
     const [client, server] = Object.values(pair) as [WebSocket, WebSocket]
     server.serializeAttachment({ authSessionId: authSessionId! } satisfies SocketAttachment)
