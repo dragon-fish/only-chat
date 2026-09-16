@@ -8,7 +8,7 @@ import { ProviderWithInterfacesSchema } from '@/shared/models'
 import { catalogApp } from './provider-catalog-fixture'
 import { decryptSecret } from '@/server/plugins/llm/crypto'
 import { createApp } from '@/server/app'
-import { ensureTestUser, authenticatedFetch, authenticatedRequest } from './auth-helper'
+import { ensureTestUser, authenticatedFetch, authenticatedRequest, workerFetch } from './auth-helper'
 
 let userId: number
 beforeEach(async () => {
@@ -340,6 +340,18 @@ describe('REST api', () => {
     expect(await revalidated.text()).toBe('')
     const changed = await authenticatedFetch(new Request(`https://x/api/attachments/${attachment_id}`, { headers: { 'if-none-match': '"other"' } }))
     expect(changed.status).toBe(200)
+  })
+
+  it('never lets a refusal be cached, now that a success can be', async () => {
+    // A 404 is cacheable by default where a 401 is not, so the refusal a browser is most likely to
+    // store is the one that says an id is not yours. Stored, it outlives the reason it was given.
+    const missing = await authenticatedFetch(new Request('https://x/api/attachments/99999999'))
+    expect(missing.status).toBe(404)
+    expect(missing.headers.get('cache-control')).toBe('no-store')
+
+    const unauthenticated = await workerFetch('/api/attachments/1')
+    expect(unauthenticated.status).toBe(401)
+    expect(unauthenticated.headers.get('cache-control')).toBe('no-store')
   })
 
   it('serves a generated attachment through the same authenticated route', async () => {

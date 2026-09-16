@@ -115,18 +115,19 @@ export function artifactRoutes(ctx: Context) {
       next_cursor: rows.length > limit && last ? btoa(JSON.stringify({ created_at: last.created_at, id: last.id })) : null,
     })
   })
+  // Successes on this route are cached for a year; a refusal is about who is asking and is not.
   router.get('/artifacts/:id/content', async (c) => {
     const id = parseId(c.req.param('id'))
-    if (id === null) return c.json({ error: 'not found' }, 404)
+    if (id === null) return c.json({ error: 'not found' }, 404, { 'cache-control': 'no-store' })
     const [row] = await ctx.db.orm.select({ attachment: attachments }).from(artifacts)
       .innerJoin(attachments, eq(attachments.id, artifacts.attachment_id))
       .where(and(eq(artifacts.id, id), eq(artifacts.user_id, authUserId(c)), isNull(artifacts.deleted_at))).limit(1)
-    if (!row) return c.json({ error: 'not found' }, 404)
+    if (!row) return c.json({ error: 'not found' }, 404, { 'cache-control': 'no-store' })
     const variant = c.req.query('variant')
     const headers = { 'cache-control': 'private, max-age=31536000, immutable', 'x-content-type-options': 'nosniff' }
     if (variant === 'gallery' || variant === 'preview') {
       const stored = await ctx.assets.getBytes(row.attachment.r2_key)
-      if (!stored) return c.json({ error: 'not found' }, 404)
+      if (!stored) return c.json({ error: 'not found' }, 404, { 'cache-control': 'no-store' })
       const source = ctx.env.IMAGES.input(new Blob([stored.bytes as BlobPart], { type: stored.mime }).stream())
       let transformer: ImageTransformer | undefined
       let result: ImageTransformationResult | undefined
@@ -143,7 +144,7 @@ export function artifactRoutes(ctx: Context) {
       }
     }
     const stored = await ctx.assets.getStream(row.attachment.r2_key)
-    if (!stored) return c.json({ error: 'not found' }, 404)
+    if (!stored) return c.json({ error: 'not found' }, 404, { 'cache-control': 'no-store' })
     return new Response(stored.body, { headers: {
       'content-type': row.attachment.mime, 'content-length': String(stored.size),
       ...headers,

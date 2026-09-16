@@ -55,10 +55,12 @@ export function attachmentRoutes(ctx: Context) {
 
   r.get('/attachments/:id', async (c) => {
     const userId = authUserId(c)
+    // Successes below are cached for a year; a refusal is about who is asking and must not be.
+    const denied = () => c.json({ error: 'not found' }, 404, { 'cache-control': 'no-store' })
     const id = parseId(c.req.param('id'))
-    if (id === null) return c.json({ error: 'not found' }, 404)
+    if (id === null) return denied()
     const row = await db.query.attachments.findFirst({ where: and(eq(attachments.id, id), eq(attachments.user_id, userId)) })
-    if (!row) return c.json({ error: 'not found' }, 404)
+    if (!row) return denied()
     /**
      * Bytes are content-addressed and these rows are only ever inserted or deleted, so what an id
      * serves cannot change and revalidating settles nothing.
@@ -81,7 +83,7 @@ export function attachmentRoutes(ctx: Context) {
     if (c.req.header('if-none-match') === headers.etag) return new Response(null, { status: 304, headers })
 
     const stored = await ctx.assets.getStream(row.r2_key)
-    if (!stored) return c.json({ error: 'object missing' }, 404)
+    if (!stored) return c.json({ error: 'object missing' }, 404, { 'cache-control': 'no-store' })
     return new Response(stored.body, {
       headers: { ...headers, 'content-type': row.mime, 'content-length': String(stored.size) },
     })

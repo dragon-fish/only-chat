@@ -8,7 +8,9 @@ export type ApiEnv = { Bindings: Env; Variables: { authSession: AuthSession } }
 
 export const requireAuth = (ctx: Context) => createMiddleware<ApiEnv>(async (c, next) => {
   const authSession = await ctx.auth.instance.api.getSession({ headers: c.req.raw.headers })
-  if (!authSession || authSession.user.banned) return c.json({ error: 'Unauthorized' }, 401)
+  // A refusal must not outlive its reason in someone's cache. 401 is not cacheable by default and
+  // 404 is, so the rule is stated here rather than left to each status code's defaults.
+  if (!authSession || authSession.user.banned) return c.json({ error: 'Unauthorized' }, 401, { 'cache-control': 'no-store' })
   c.set('authSession', authSession)
   await next()
 })
