@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useMediaQuery } from '@vueuse/core'
-import { SlidersHorizontalIcon, XIcon } from '@lucide/vue'
+import { SearchIcon, SlidersHorizontalIcon, XIcon } from '@lucide/vue'
 import ModelFilterBar from '@/client/components/model-filter-bar.vue'
 import { Badge } from '@/client/ui/badge'
 import { Button } from '@/client/ui/button'
 import { Drawer, DrawerContent, DrawerDescription, DrawerHeader, DrawerTitle, DrawerTrigger } from '@/client/ui/drawer'
-import { Input } from '@/client/ui/input'
+import { InputGroup, InputGroupAddon, InputGroupInput } from '@/client/ui/input-group'
 import { Popover, PopoverContent, PopoverDescription, PopoverHeader, PopoverTitle, PopoverTrigger } from '@/client/ui/popover'
 import type { ModelQuery, ProviderWithInterfaces } from '@/shared/models'
 
@@ -41,19 +41,23 @@ function remove(key: typeof filterKeys[number]) {
 </script>
 
 <template lang="pug">
-.flex.flex-col.gap-2
-  .flex.items-center.gap-2
-    Input(
-      v-if="search" type="search" :model-value="modelValue.search ?? ''"
-      aria-label="搜索模型" placeholder="搜索模型 ID 或名称…" class="min-h-10 min-w-0 flex-1"
-      @update:model-value="updateSearch")
+.flex.flex-col.gap-2(:class="!search && !chips ? 'contents' : undefined")
+  .flex.items-center.gap-2(:class="!search ? 'contents' : undefined")
+    InputGroup(v-if="search" class="min-h-10 min-w-0 flex-1")
+      InputGroupAddon
+        SearchIcon(class="opacity-50")
+      InputGroupInput(
+        type="search" :model-value="modelValue.search ?? ''"
+        aria-label="搜索模型" placeholder="搜索模型 ID 或名称…"
+        @update:model-value="updateSearch")
     component(:is="isDesktop ? Popover : Drawer")
       component(:is="isDesktop ? PopoverTrigger : DrawerTrigger" as-child)
-        Button(type="button" variant="outline" size="icon" class="relative size-10" aria-label="筛选模型")
-          SlidersHorizontalIcon
-          Badge(
-            v-if="activeFilters.length" variant="default"
-            class="absolute -right-1.5 -top-1.5 min-w-4 px-1 text-[0.625rem]") {{ activeFilters.length }}
+        slot(name="trigger" :active-count="activeFilters.length")
+          Button(type="button" variant="outline" size="icon" class="relative size-10" aria-label="筛选模型")
+            SlidersHorizontalIcon
+            Badge(
+              v-if="activeFilters.length" variant="default"
+              class="absolute -right-1.5 -top-1.5 min-w-4 px-1 text-[0.625rem]") {{ activeFilters.length }}
       component(
         :is="isDesktop ? PopoverContent : DrawerContent"
         :align="isDesktop ? 'end' : undefined"

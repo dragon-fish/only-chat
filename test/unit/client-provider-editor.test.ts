@@ -28,10 +28,10 @@ type ModelSource = (providerId: number) => Promise<{ models: ModelWithMetadata[]
 /** Set by mountEditor; tests swap the data behind providerModelSummary without replacing its mock. */
 let setModelSource: (next: ModelSource) => void = () => {}
 
-async function mountEditor(sourceModels: ModelWithMetadata[] = models) {
+async function mountEditor(sourceModels: ModelWithMetadata[] = models, providerRecord: ProviderWithInterfaces = provider) {
   desktop.value = true
   const summaries = new Map<number, ModelWithMetadata[]>()
-  vi.spyOn(api, 'providers').mockResolvedValue([provider])
+  vi.spyOn(api, 'providers').mockResolvedValue([providerRecord])
   let modelSource: ModelSource = async () => ({ models: structuredClone(sourceModels) })
   setModelSource = (next: ModelSource) => { modelSource = next }
   vi.spyOn(api, 'providerModelSummary').mockImplementation(async providerId => {
@@ -68,13 +68,17 @@ async function type(input: HTMLInputElement | HTMLTextAreaElement, value: string
 }
 
 async function openRequestConfig() {
-  ;[...document.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.trim() === '请求配置')!.click()
-  await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')?.textContent).toContain('请求配置'))
+  ;[...document.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.trim() === 'API 地址配置')!.click()
+  await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')?.textContent).toContain('API 地址配置'))
+}
+
+function submitRequestConfig() {
+  ;[...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(button => button.textContent?.trim() === '应用')!.click()
 }
 
 async function applyRequestConfig() {
-  ;[...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(button => button.textContent?.trim() === '应用')!.click()
-  await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull())
+  submitRequestConfig()
+  await vi.waitFor(() => expect(document.querySelector('[data-interface-url]')).toBeNull())
 }
 
 async function openModelMoreSettings() {
@@ -143,8 +147,7 @@ async function pendingAcknowledgementAcrossAssociation() {
   await vi.waitFor(() => expect(config.modelsByRef['1:first-model']?.metadata.description).toBe('Association A'))
   await openRequestConfig()
   await type(document.querySelector<HTMLInputElement>('[data-interface-url]')!, 'https://acme.test/v1')
-  await applyRequestConfig()
-  document.querySelector('#provider-name')!.closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+  submitRequestConfig()
   await vi.waitFor(() => expect(commitProvider).toBeTypeOf('function'))
   await submitModelName()
   await vi.waitFor(() => expect(releaseModel).toBeTypeOf('function'))
@@ -297,12 +300,11 @@ describe('provider model editor', () => {
     })
     vi.mocked(api.providers).mockResolvedValue([{ ...provider, models_dev_provider_source: 'manual', models_dev_provider_id: 'acme' }, { ...provider, id: 2 }])
     await openRequestConfig()
-    document.querySelector<HTMLButtonElement>('#provider-association')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+    document.querySelector<HTMLButtonElement>('#provider-association')!.click()
     await vi.waitFor(() => expect(document.querySelector('[role="option"]')).not.toBeNull())
-    ;[...document.querySelectorAll<HTMLElement>('[role="option"]')].find(option => option.textContent?.trim() === 'Acme')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    ;[...document.querySelectorAll<HTMLElement>('[role="option"]')].find(option => option.textContent?.includes('Acme'))!.click()
     await vi.waitFor(() => expect(document.querySelector('#provider-association')?.textContent).toContain('Acme'))
-    await applyRequestConfig()
-    document.querySelector('#provider-name')!.closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    submitRequestConfig()
     await vi.waitFor(() => expect(acknowledge).toBeTypeOf('function'))
     await type(document.querySelector<HTMLInputElement>('#provider-name')!, 'Newer provider draft')
     document.querySelector<HTMLButtonElement>('[aria-label="编辑 First model"]')!.click()
@@ -645,10 +647,9 @@ describe('provider model editor', () => {
     expect(vi.mocked(api.providerModelSummary)).toHaveBeenCalledTimes(calls)
   })
 
-  it('keeps its saved heading stable while editing interfaces and refreshes catalog metadata without clearing the draft', async () => {
+  it('keeps its saved heading stable and refreshes catalog metadata without clearing the draft', async () => {
     await mountEditor()
     await type(document.querySelector<HTMLInputElement>('#provider-name')!, 'Unsaved new name')
-    await type(document.querySelector<HTMLInputElement>('[data-provider-default-url]')!, 'https://new.test/v1')
     expect(document.querySelector('#page-header')?.textContent).toContain('Example')
     expect(document.querySelector('#page-header')?.textContent).not.toContain('Unsaved new name')
     vi.spyOn(api, 'refreshCatalog').mockResolvedValue({ instanceId: 'catalog-manual-test' })
@@ -658,29 +659,59 @@ describe('provider model editor', () => {
     await vi.waitFor(() => expect(refreshStatus).toHaveBeenCalledWith('catalog-manual-test'))
     await vi.waitFor(() => expect(document.querySelector('[role="status"]')?.textContent).not.toContain('正在刷新'))
     expect(document.querySelector<HTMLInputElement>('#provider-name')?.value).toBe('Unsaved new name')
-    expect(document.querySelector<HTMLInputElement>('[data-provider-default-url]')?.value).toBe('https://new.test/v1')
     const unload = new Event('beforeunload', { cancelable: true })
     window.dispatchEvent(unload)
     expect(unload.defaultPrevented).toBe(true)
   })
 
-  it('keeps common connection fields on the page and stages request configuration in a Sheet', async () => {
+  it('shows configured endpoints as a default-interface radio group instead of an editable URL', async () => {
+    const second = { ...provider, interfaces: [
+      provider.interfaces[0]!,
+      { ...provider.interfaces[0]!, id: 11, protocol: 'responses' as const, base_url: 'https://responses.example.com/a/very/long/path' },
+    ] }
+    await mountEditor(models, second)
+
+    expect(document.querySelector('[data-provider-default-url]')).toBeNull()
+    const choices = [...document.querySelectorAll<HTMLElement>('[data-api-endpoint-choice]')]
+    expect(choices).toHaveLength(2)
+    expect(choices.map(choice => choice.textContent)).toEqual([
+      expect.stringContaining('OpenAI Chat Completions'), expect.stringContaining('OpenAI Responses'),
+    ])
+    expect(choices[1]?.textContent).toContain('https://responses.example.com/a/very/long/path')
+
+    document.querySelector<HTMLButtonElement>('[aria-label="设为默认 OpenAI Responses"]')!.click()
+    await vi.waitFor(() => expect(document.querySelector('[data-provider-save-bar]')?.textContent).toContain('有未保存的更改'))
+  })
+
+  it('keeps common connection fields on the page and saves API address configuration when applied', async () => {
     await mountEditor()
     const update = vi.spyOn(api, 'updateProvider').mockResolvedValue(provider)
     expect(document.querySelector('#provider-key')).not.toBeNull()
-    expect(document.querySelector('[data-provider-default-url]')).not.toBeNull()
+    expect(document.querySelector('[data-provider-default-url]')).toBeNull()
     expect(document.querySelector('[data-interface-url]')).toBeNull()
     expect(document.querySelector('[data-provider-save-bar]')).not.toBeNull()
 
+    await type(document.querySelector<HTMLInputElement>('#provider-name')!, 'Saved with endpoints')
     await openRequestConfig()
     const endpoint = document.querySelector<HTMLInputElement>('[data-interface-url]')!
     await type(endpoint, 'https://changed.test/v1')
     await applyRequestConfig()
-    expect(update).not.toHaveBeenCalled()
-    expect(document.body.textContent).toContain('未保存的更改')
+    await vi.waitFor(() => expect(update).toHaveBeenCalledWith(1, expect.objectContaining({
+      name: 'Saved with endpoints', interfaces: [expect.objectContaining({ base_url: 'https://changed.test/v1' })],
+    }), expect.any(Function)))
+  })
 
-    document.querySelector<HTMLButtonElement>('[data-provider-save-bar] button[type="submit"]')!.click()
-    await vi.waitFor(() => expect(update).toHaveBeenCalledWith(1, expect.objectContaining({ interfaces: [expect.objectContaining({ base_url: 'https://changed.test/v1' })] }), expect.any(Function)))
+  it('keeps API address configuration open and dirty when its immediate save fails', async () => {
+    await mountEditor()
+    vi.spyOn(api, 'updateProvider').mockRejectedValue(new Error('Provider save offline'))
+    await openRequestConfig()
+    const endpoint = document.querySelector<HTMLInputElement>('[data-interface-url]')!
+    await type(endpoint, 'https://retry.test/v1')
+    ;[...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(button => button.textContent?.trim() === '应用')!.click()
+
+    await vi.waitFor(() => expect(api.updateProvider).toHaveBeenCalledOnce())
+    await vi.waitFor(() => expect(document.querySelector<HTMLInputElement>('[data-interface-url]')).not.toBeNull())
+    expect(document.querySelector<HTMLInputElement>('[data-interface-url]')?.value).toBe('https://retry.test/v1')
   })
 
   it('exposes provider-wide bulk model controls and manual provenance', async () => {
@@ -722,7 +753,6 @@ describe('provider model editor', () => {
     document.querySelector<HTMLButtonElement>('[aria-label="设为默认 Vertex 兼容"]')!.click()
     await vi.waitFor(() => expect(document.querySelector<HTMLButtonElement>('[aria-label="默认接口 Vertex 兼容"]')?.disabled).toBe(true))
     await applyRequestConfig()
-    document.querySelector('#provider-name')!.closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
     await vi.waitFor(() => expect(update).toHaveBeenCalledOnce())
     expect(update.mock.calls[0]?.[1]).toMatchObject({ default_protocol: 'vertex-compatible', interfaces: [
       { protocol: 'chat-completions', base_url: 'https://example.com/v1' }, { protocol: 'vertex-compatible', base_url: 'https://vertex.test/v1', native_files: false },

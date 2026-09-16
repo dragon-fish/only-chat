@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from 'vue'
-import { Settings2Icon } from '@lucide/vue'
+import { Settings2Icon, SlidersHorizontalIcon } from '@lucide/vue'
 import LabAvatar from '@/client/components/lab-avatar.vue'
 import CollectionState from '@/client/components/collection-state.vue'
 import ModelFilterMenu from '@/client/components/model-filter-menu.vue'
 import ModelGroupList from '@/client/components/model-group-list.vue'
 import { Button } from '@/client/ui/button'
 import { Badge } from '@/client/ui/badge'
+import { InputGroupButton } from '@/client/ui/input-group'
 import { RouterLink } from 'vue-router'
 import { filterModelEntries, modelBadges, modelName, sortModelEntries, type EnabledModelEntry } from '@/client/lib/ui-models'
 import { useConfigStore } from '@/client/stores/config'
@@ -65,10 +66,15 @@ function onSelect(value: unknown) {
 <template lang="pug">
 .contents(ref="root")
   Command(:key="searchKey" :model-value="currentKey" :should-filter="false" class="min-h-0" @update:model-value="onSelect")
-    .relative
-      CommandInput(placeholder="搜索模型名称或 ID…" class="pr-10" @input="onSearch")
-      .absolute.right-2.top-2.z-10
+    CommandInput(placeholder="搜索模型名称或 ID…" @input="onSearch")
+      template(#inline-end)
         ModelFilterMenu(:model-value="filters" :providers="config.providers" :search="false" :lab="false" :chips="false" @update:model-value="updateFilters")
+          template(#trigger="{ activeCount }")
+            InputGroupButton(type="button" size="icon-xs" class="relative" aria-label="筛选模型")
+              SlidersHorizontalIcon
+              Badge(
+                v-if="activeCount" variant="default"
+                class="absolute -right-1.5 -top-1.5 min-w-4 px-1 text-[0.625rem]") {{ activeCount }}
     CommandList(class="max-h-[min(32rem,65vh)]")
       CollectionState(:loaded="config.loaded && config.pickerLoaded" :error="validationError ?? config.pickerError ?? config.loadError" :retry="loadModels" :empty="entries.length === 0" empty-title="没有可用模型" empty-description="当前筛选条件下没有已启用的模型。")
         template(#empty-action)

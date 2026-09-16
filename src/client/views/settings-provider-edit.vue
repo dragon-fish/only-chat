@@ -13,6 +13,7 @@ import { useFormChanges } from '@/client/composables/use-form-changes'
 import { Alert, AlertDescription, AlertTitle } from '@/client/ui/alert'
 import ProviderNavigation from '@/client/components/provider-navigation.vue'
 import ProviderSettingsForm from '@/client/components/provider-settings-form.vue'
+import SearchableSelect from '@/client/components/searchable-select.vue'
 import { api } from '@/client/lib/api'
 import { providerSettingsDraft } from '@/client/lib/provider-settings'
 import { filterModelEntries, modelBadges, modelName, sortModelEntries } from '@/client/lib/ui-models'
@@ -30,7 +31,6 @@ import { Skeleton } from '@/client/ui/skeleton'
 import { Spinner } from '@/client/ui/spinner'
 import { Switch } from '@/client/ui/switch'
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from '@/client/ui/empty'
-import { NativeSelect, NativeSelectOption } from '@/client/ui/native-select'
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
@@ -62,6 +62,10 @@ const filteredModels = computed(() => {
 const visibleModels = computed(() => filteredModels.value)
 const modelEntries = computed(() => savedProvider.value ? visibleModels.value.map(model => ({ provider: savedProvider.value!, model })) : [])
 const imageModels = computed(() => models.value.filter(model => model.enabled && model.metadata.modalities?.output.includes('image')))
+const providerImageModelOptions = computed(() => [
+  { value: '', label: '跟随全局默认' },
+  ...imageModels.value.map(model => ({ value: model.model_id, label: modelName(model), description: model.model_id })),
+])
 const providerImageModel = computed({
   get: () => form.default_image_model_id ?? '',
   set: (value: string) => { form.default_image_model_id = value || null },
@@ -194,11 +198,11 @@ onBeforeUnmount(() => { loadToken++; modelLoadToken++; editRequestToken++; loadC
 
 function updateProviderForm(value: ProviderWriteInput) { Object.assign(form, value) }
 
-async function save() {
-  if (saving.value || !validProvider.value) return
+async function persistProvider(submitted: ProviderWriteInput) {
+  if (saving.value || !ProviderWriteInputSchema.safeParse(submitted).success) return false
   const id = requireId()
   const token = loadToken
-  const submitted: ProviderWriteInput = JSON.parse(JSON.stringify(form))
+  submitted = JSON.parse(JSON.stringify(submitted)) as ProviderWriteInput
   saving.value = true
   try {
     let responseWarning: string | null = null
@@ -224,8 +228,13 @@ async function save() {
       markSaved(JSON.stringify({ ...submitted, api_key: '' }))
       toast.success('已保存供应商')
     }
-  } catch (error) { report(error) }
+    return true
+  } catch (error) { report(error); return false }
   finally { if (token === loadToken) saving.value = false }
+}
+
+async function save() {
+  await persistProvider(form)
 }
 
 async function remove() {
@@ -485,12 +494,17 @@ async function removeModel() {
             :catalog-providers="catalogProviders"
             :current-catalog-provider-id="savedProvider?.models_dev_provider_id"
             :has-key="hasKey"
-            @update:model-value="updateProviderForm")
+            :disabled="saving"
+            @update:model-value="updateProviderForm"
+            :persist="persistProvider")
           Field
             FieldLabel(for="provider-default-image-model") 默认生图模型
-            NativeSelect#provider-default-image-model(v-model="providerImageModel" class="w-full")
-              NativeSelectOption(value="") 跟随全局默认
-              NativeSelectOption(v-for="model in imageModels" :key="model.id" :value="model.model_id") {{ modelName(model) }}
+            SearchableSelect#provider-default-image-model(
+              v-model="providerImageModel"
+              :options="providerImageModelOptions"
+              placeholder="选择默认生图模型"
+              search-placeholder="搜索模型名称或 ID…"
+              empty-text="没有可用的生图模型")
           p.min-h-5.text-sm.text-muted-foreground(role="status") {{ associationWarning ?? '' }}
         Separator
         section.flex.flex-col.gap-4(aria-labelledby="provider-models-title")

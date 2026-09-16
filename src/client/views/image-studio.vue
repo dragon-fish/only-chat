@@ -53,6 +53,7 @@ const entries = computed(() => config.enabledModels().filter(entry => isStudioIm
 const modelOptions = computed(() => entries.value.map(entry => ({
   key: `${entry.provider.id}:${entry.model.model_id}`,
   label: `${entry.model.metadata.name ?? entry.model.model_id} · ${entry.provider.name}`,
+  description: entry.model.model_id,
 })))
 const selectedEntry = computed(() => entries.value.find(entry => `${entry.provider.id}:${entry.model.model_id}` === modelKey.value))
 const latestRun = computed(() => runs.value[0])

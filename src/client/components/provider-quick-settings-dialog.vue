@@ -41,7 +41,7 @@ async function setOpen(next: boolean) {
   if (next || await leaveGuard.value?.confirmLeave()) emit('update:open', next)
 }
 async function save() {
-  if (!form.value || !valid.value || saving.value || props.providerId === null) return
+  if (!form.value || !valid.value || saving.value || props.providerId === null) return false
   const id = props.providerId
   const submitted: ProviderWriteInput = JSON.parse(JSON.stringify(form.value))
   saving.value = true
@@ -63,8 +63,13 @@ async function save() {
       toast.success('已保存供应商')
       emit('update:open', false)
     }
-  } catch (error) { toast.error(error instanceof Error ? error.message : String(error)) }
+    return true
+  } catch (error) { toast.error(error instanceof Error ? error.message : String(error)); return false }
   finally { saving.value = false }
+}
+async function applySettings(value: ProviderWriteInput) {
+  form.value = value
+  return save()
 }
 async function openFullSettings() {
   if (!await leaveGuard.value?.confirmLeave()) return
@@ -88,7 +93,8 @@ ResponsiveOverlay(:open="open" title="编辑供应商" mode="dialog" @update:ope
       :catalog-providers="config.catalogProviders"
       :current-catalog-provider-id="provider.models_dev_provider_id"
       :has-key="provider.has_key"
-      :disabled="saving")
+      :disabled="saving"
+      :persist="applySettings")
     p.min-h-5.text-sm.text-muted-foreground(role="status") {{ associationWarning ?? '' }}
   p.text-sm.text-muted-foreground(v-else) 找不到这个供应商。
   template(#footer)

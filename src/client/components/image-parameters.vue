@@ -1,10 +1,12 @@
 <script setup lang="ts">
+import { useId } from 'vue'
 import { Input } from '@/client/ui/input'
+import SearchableSelect from '@/client/components/searchable-select.vue'
 import { Field, FieldGroup, FieldLabel } from '@/client/ui/field'
 import { NativeSelect, NativeSelectOption } from '@/client/ui/native-select'
 import { Switch } from '@/client/ui/switch'
 
-defineProps<{ models: Array<{ key: string; label: string }> }>()
+defineProps<{ models: Array<{ key: string; label: string; description?: string }> }>()
 const model = defineModel<string>('model', { required: true })
 const count = defineModel<number>('count', { required: true })
 const customSize = defineModel<boolean>('customSize', { required: true })
@@ -13,16 +15,22 @@ const height = defineModel<number>('height', { required: true })
 const quality = defineModel<string>('quality', { required: true })
 const background = defineModel<string>('background', { required: true })
 const outputFormat = defineModel<string>('outputFormat', { required: true })
+const modelId = useId()
 </script>
 
 <template>
   <FieldGroup>
     <Field>
-      <FieldLabel>模型</FieldLabel>
-      <NativeSelect v-model="model" class="w-full" :disabled="!models.length">
-        <NativeSelectOption value="" disabled>{{ models.length ? '选择生图模型' : '没有可用的生图模型' }}</NativeSelectOption>
-        <NativeSelectOption v-for="item in models" :key="item.key" :value="item.key">{{ item.label }}</NativeSelectOption>
-      </NativeSelect>
+      <FieldLabel :for="modelId">模型</FieldLabel>
+      <SearchableSelect
+        :id="modelId"
+        v-model="model"
+        :options="models.map(item => ({ value: item.key, label: item.label, description: item.description }))"
+        :placeholder="models.length ? '选择生图模型' : '没有可用的生图模型'"
+        search-placeholder="搜索供应商、模型名称或 ID…"
+        empty-text="没有匹配的生图模型"
+        :disabled="!models.length"
+      />
     </Field>
     <Field>
       <FieldLabel for="image-count">数量</FieldLabel>

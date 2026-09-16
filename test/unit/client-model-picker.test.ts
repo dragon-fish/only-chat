@@ -51,6 +51,7 @@ describe('model picker modality', () => {
     host.querySelector<HTMLButtonElement>('button')!.click()
     await vi.waitFor(() => expect(document.querySelector('[role="option"]')).not.toBeNull())
     const input = document.querySelector<HTMLInputElement>('[data-slot="command-input"]')!
+    expect(input.closest('[data-slot="input-group"]')?.querySelector('[aria-label="筛选模型"]')).not.toBeNull()
     input.value = 'remote'
     input.dispatchEvent(new Event('input', { bubbles: true }))
     await vi.waitFor(() => expect(document.querySelector('[role="option"]')?.textContent).toContain('Remote reasoning model'))
@@ -136,6 +137,27 @@ describe('model picker modality', () => {
     await vi.waitFor(() => expect(update).toHaveBeenCalledWith(1, expect.objectContaining({ name: 'Renamed provider', api_key: undefined }), expect.any(Function)))
     await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull())
     expect(host.querySelector('button')?.getAttribute('aria-label')).toContain('Test model')
+  })
+
+  it('saves the whole provider when API address changes are applied from quick settings', async () => {
+    const update = vi.spyOn(api, 'updateProvider').mockResolvedValue(provider)
+    vi.spyOn(api, 'providers').mockResolvedValue([provider])
+    const host = await mountPicker(false, true)
+    host.querySelector<HTMLButtonElement>('button')!.click()
+    await vi.waitFor(() => expect(document.querySelector('[role="option"]')).not.toBeNull())
+    document.querySelector<HTMLButtonElement>('[aria-label="设置供应商 Example"]')!.click()
+    await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')?.textContent).toContain('编辑供应商'))
+    ;[...document.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.trim() === 'API 地址配置')!.click()
+    await vi.waitFor(() => expect(document.querySelector<HTMLInputElement>('[data-interface-url]')).not.toBeNull())
+    const endpoint = document.querySelector<HTMLInputElement>('[data-interface-url]')!
+    endpoint.value = 'https://quick-settings.test/v1'
+    endpoint.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+    ;[...document.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.trim() === '应用')!.click()
+
+    await vi.waitFor(() => expect(update).toHaveBeenCalledWith(1, expect.objectContaining({
+      interfaces: [expect.objectContaining({ base_url: 'https://quick-settings.test/v1' })],
+    }), expect.any(Function)))
   })
 
   it.each([false, true])('opens a mobile Drawer for either trigger appearance (compact=%s)', async (compact) => {

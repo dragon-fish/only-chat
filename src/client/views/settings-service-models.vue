@@ -3,13 +3,13 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { ImagesIcon, SparklesIcon } from '@lucide/vue'
 import { toast } from 'vue-sonner'
 import PageBackButton from '@/client/components/layout/page-back-button.vue'
+import SearchableSelect from '@/client/components/searchable-select.vue'
 import { isStudioImageModel } from '@/client/lib/image-studio'
 import { useConfigStore } from '@/client/stores/config'
 import { useSyncStore } from '@/client/stores/sync'
 import { Button } from '@/client/ui/button'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/client/ui/card'
 import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/client/ui/field'
-import { NativeSelect, NativeSelectOption } from '@/client/ui/native-select'
 import { Spinner } from '@/client/ui/spinner'
 import { Textarea } from '@/client/ui/textarea'
 import type { ModelRef } from '@/shared/model-ref'
@@ -35,6 +35,22 @@ const refOf = (key: string): ModelRef | null => {
 /** Each slot offers only what can do its job: read and write text, or produce an image. */
 const textEntries = computed(() => config.enabledModels().filter(entry => canServeAsServiceModel(entry.model.metadata)))
 const imageEntries = computed(() => config.enabledModels().filter(entry => isStudioImageModel(entry.provider, entry.model)))
+const textOptions = computed(() => [
+  { value: '', label: '不使用', description: '对话沿用开头文字作为名字' },
+  ...textEntries.value.map(entry => ({
+    value: `${entry.provider.id}:${entry.model.model_id}`,
+    label: entry.model.metadata.name || entry.model.model_id,
+    description: `${entry.provider.name} · ${entry.model.model_id}`,
+  })),
+])
+const imageOptions = computed(() => [
+  { value: '', label: '不使用' },
+  ...imageEntries.value.map(entry => ({
+    value: `${entry.provider.id}:${entry.model.model_id}`,
+    label: entry.model.metadata.name || entry.model.model_id,
+    description: `${entry.provider.name} · ${entry.model.model_id}`,
+  })),
+])
 
 const savedText = computed(() => keyOf(sync.settings.service_models?.text))
 const savedImage = computed(() => keyOf(sync.settings.service_models?.image))
@@ -109,12 +125,9 @@ onMounted(load)
             FieldGroup
               Field
                 FieldLabel(for="service-text-model") 模型
-                NativeSelect#service-text-model(v-model="textKey" class="w-full" :disabled="saving")
-                  NativeSelectOption(value="") 不使用（对话沿用开头文字作为名字）
-                  NativeSelectOption(
-                    v-for="entry in textEntries" :key="`${entry.provider.id}:${entry.model.model_id}`"
-                    :value="`${entry.provider.id}:${entry.model.model_id}`")
-                    | {{ entry.provider.name }} · {{ entry.model.metadata.name || entry.model.model_id }}
+                SearchableSelect#service-text-model(
+                  v-model="textKey" :options="textOptions" :disabled="saving"
+                  placeholder="选择文本模型" search-placeholder="搜索供应商、模型名称或 ID…")
                 FieldDescription 只列出能读文本也能写文本的模型。
 
               Field
@@ -135,12 +148,9 @@ onMounted(load)
             FieldGroup
               Field
                 FieldLabel(for="service-image-model") 模型
-                NativeSelect#service-image-model(v-model="imageKey" class="w-full" :disabled="saving")
-                  NativeSelectOption(value="") 不使用
-                  NativeSelectOption(
-                    v-for="entry in imageEntries" :key="`${entry.provider.id}:${entry.model.model_id}`"
-                    :value="`${entry.provider.id}:${entry.model.model_id}`")
-                    | {{ entry.provider.name }} · {{ entry.model.metadata.name || entry.model.model_id }}
+                SearchableSelect#service-image-model(
+                  v-model="imageKey" :options="imageOptions" :disabled="saving"
+                  placeholder="选择生图模型" search-placeholder="搜索供应商、模型名称或 ID…")
 
         Card
           CardFooter.flex.items-center.justify-between.gap-2.pt-6
