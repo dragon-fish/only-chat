@@ -315,6 +315,7 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
       signal: controller.signal,
       pluginSettings: target.conversation.plugin_settings ?? null,
       acceptsImages: target.model.metadata_resolved.modalities?.input.includes('image') ?? false,
+      publicOrigin: hub.publicOrigin,
     }))
 
     // Interrupting is best effort. The abort reaches a tool that is already running, and plenty of

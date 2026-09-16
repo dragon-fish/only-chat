@@ -197,7 +197,7 @@ export const WorkspaceFilesServerPlugin = {
 
         return {
           path: input.path,
-          url: absolutePreviewUrl(ctx.env.BETTER_AUTH_URL, path),
+          url: absolutePreviewUrl(runtime.publicOrigin, path),
           renders,
           expiresInSeconds: PREVIEW_TICKET_TTL_SECONDS,
           message,

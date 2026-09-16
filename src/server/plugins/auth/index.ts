@@ -21,7 +21,12 @@ export class Authentication extends Service {
     super(ctx, 'auth')
     this.instance = betterAuth({
       database: drizzleAdapter(ctx.db.orm, { provider: 'sqlite', schema: authSchema }),
-      baseURL: ctx.env.BETTER_AUTH_URL,
+      // No baseURL on purpose: better-auth then derives the origin from each request, so a worktree
+      // on any free port just works. Do not reintroduce BETTER_AUTH_URL — `nodejs_compat` copies
+      // Worker vars into `process.env`, which better-auth reads before it ever looks at the request,
+      // so one value set for production silently becomes the origin in development too. In
+      // production the custom-domain route is what pins the host, and trustedOrigins follows the
+      // derived origin, leaving the CSRF check as "Origin must equal Host".
       secret: ctx.env.BETTER_AUTH_SECRET,
       // Framework messages and error arguments can contain SQL parameters and credentials.
       logger: { log: level => {

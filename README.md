@@ -17,7 +17,7 @@ Personal AI chat on Cloudflare Workers. Every device sees the same conversations
 
 ## Dev
 
-    cp .dev.vars.example .dev.vars   # set both secrets; keep BETTER_AUTH_URL on this origin
+    cp .dev.vars.example .dev.vars   # set both secrets
     pnpm install
     pnpm db:migrate:local
     pnpm dev                          # http://localhost:7456
@@ -65,8 +65,9 @@ to seed for a user other than `1`. The command is idempotent and local-only.
     pnpm deploy
 
 `wrangler.jsonc` already carries a `database_id`; replace it with the id of the database you
-just created. Set `BETTER_AUTH_URL` to the exact public origin in `wrangler.jsonc`; it is used for
-authentication callback and origin validation. Generate independent random values for
+just created, and point `routes` at your own hostname. The application's public origin is not
+configured anywhere: authentication and the links tools hand out both derive it from the request
+that arrived, so the route binding is what decides it. Generate independent random values for
 `KEY_ENCRYPTION_SECRET` and `BETTER_AUTH_SECRET`; the latter must contain at least 32 characters.
 
 `ALLOW_REGISTER` is a non-secret Worker variable and defaults to `false`. For a new deployment,
@@ -85,9 +86,10 @@ Conversations, Projects, Providers, models, attachments, messages, or settings.
 
 ## Upgrading an existing deployment
 
-Before the schema/code cutover, update `wrangler.jsonc`: set `BETTER_AUTH_URL` to this
-deployment's exact public origin rather than the repository's example origin, and set
-`ALLOW_REGISTER=false`. An absent or invalid `ALLOW_REGISTER` value also closes registration, but
+Before the schema/code cutover, update `wrangler.jsonc`: point `routes` at this deployment's own
+hostname rather than the repository's example, and set `ALLOW_REGISTER=false`. A `BETTER_AUTH_URL`
+left over from an earlier release is now ignored — the origin comes from the request, and the
+variable is no longer read. An absent or invalid `ALLOW_REGISTER` value also closes registration, but
 keeping the explicit `false` makes the upgrade intent clear. Existing MVP `uid=1` data must be
 recovered with `auth:reset-user` below; opening self-registration would create a different user.
 

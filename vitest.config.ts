@@ -18,7 +18,6 @@ export default defineConfig({
                 TEST_MIGRATIONS: await readD1Migrations(path.join(import.meta.dirname, 'migrations')),
                 KEY_ENCRYPTION_SECRET: 'test-secret-do-not-use-in-prod',
                 BETTER_AUTH_SECRET: 'test-auth-secret-32-characters-do-not-use-in-prod',
-                BETTER_AUTH_URL: 'https://chat.test',
                 ALLOW_REGISTER: 'false',
               },
             },

@@ -72,6 +72,7 @@ async function fixture(): Promise<Fixture> {
     assets: assets as never,
     signal: new AbortController().signal,
     acceptsImages: false,
+    publicOrigin: 'https://chat.test',
   }
   const built = await registry.resolve(['read_file', 'write_file'], { workspace_files: true }, { ...runtime, pluginSettings: null })
   return {

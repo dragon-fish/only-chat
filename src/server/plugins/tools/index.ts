@@ -34,6 +34,11 @@ export interface ToolContext {
   signal: AbortSignal
   /** Whether the generating model declares image input, so a tool knows if a picture is worth sending. */
   acceptsImages: boolean
+  /**
+   * Where this deployment is reachable, for a tool handing out a link someone off this origin has
+   * to open. Comes from the connection that asked for the generation, never from configuration.
+   */
+  publicOrigin: string
 }
 
 export type ToolFactory = (ctx: ToolContext) => Tool

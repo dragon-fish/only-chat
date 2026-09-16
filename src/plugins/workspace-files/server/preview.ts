@@ -62,9 +62,10 @@ export async function previewUrlFor(ctx: Context, userId: number, record: FileRe
  * The same path as an absolute URL, for a reader that is not already on this origin — the model
  * quoting it to the operator, or a remote browser told to open it.
  *
- * `BETTER_AUTH_URL` rather than the request: a tool runs inside the Durable Object during
- * generation, where there is no inbound request to read an origin off.
+ * The origin comes from the runtime, which took it from the browser's own connection: a tool runs
+ * inside the Durable Object during generation, where there is no inbound request to read one off.
+ * Never from configuration — a pinned host would send a worktree's links to production.
  */
-export function absolutePreviewUrl(baseUrl: string, path: string): string {
-  return new URL(path, baseUrl).toString()
+export function absolutePreviewUrl(publicOrigin: string, path: string): string {
+  return new URL(path, publicOrigin).toString()
 }

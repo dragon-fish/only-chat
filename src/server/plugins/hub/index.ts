@@ -66,6 +66,7 @@ export class Hub extends Service {
   private readonly _settlers = new Map<number, () => void>()
   private _revoked = false
   private _accessEpoch = 0
+  private _publicOrigin: string | null = null
   private _broadcastTail: Promise<void> = Promise.resolve()
 
   constructor(ctx: Context, config: { userId: number }) {
@@ -84,6 +85,22 @@ export class Hub extends Service {
 
   /** A successful async session read must not outlive a concurrent revocation. */
   get accessEpoch(): number { return this._accessEpoch }
+
+  /**
+   * Where the browser reached this deployment, taken from the WebSocket upgrade. A tool that hands
+   * out a link needs an absolute one, and the Durable Object has no request of its own to read an
+   * origin off. Deliberately not an env var: a worktree runs on whatever port is free, and a pinned
+   * value would point its links at production. Always set by the time a tool runs, because a
+   * generation only starts from a command on an accepted socket.
+   */
+  get publicOrigin(): string {
+    if (this._publicOrigin === null) throw new Error('hub has no public origin yet')
+    return this._publicOrigin
+  }
+
+  rememberPublicOrigin(origin: string): void {
+    this._publicOrigin = origin
+  }
 
   async broadcast(event: WsEvent): Promise<void> {
     return this._enqueueBroadcast(event, true)
