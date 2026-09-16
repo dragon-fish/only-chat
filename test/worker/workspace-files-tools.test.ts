@@ -61,6 +61,8 @@ async function seedProvider(): Promise<number> {
 }
 
 let modelStream: StreamPart[] = []
+/** One entry per step, for a turn that calls several tools in order. Empty falls back to the single-call path. */
+let modelSteps: StreamPart[][] = []
 let installed = false
 
 /** The Durable Object outlives a test, so the model is installed once and its script swapped. */
@@ -79,8 +81,9 @@ async function installModel() {
             // step would now overwrite the file once per step, so stop as soon as a result exists.
             // Only this turn counts: results from an earlier turn must not silence the next call.
             doStream: async ({ prompt }) => {
+              const queued = modelSteps.length > 0 ? modelSteps.shift() ?? DONE_STREAM : null
               return { stream: simulateReadableStream({
-                chunks: hasToolResult(prompt) ? DONE_STREAM : modelStream,
+                chunks: queued ?? (hasToolResult(prompt) ? DONE_STREAM : modelStream),
                 chunkDelayInMs: null,
                 initialDelayInMs: null,
               }) }
@@ -101,7 +104,7 @@ async function callTool(providerId: number, toolName: string, input: unknown, co
     provider_id: providerId, model_id: 'files-model',
     // Conversation-init fields are only accepted while creating one; the hub rejects the whole
     // command if they reappear later. The tool snapshot is already stored on the conversation.
-    ...(conversationId === undefined ? { tools: ['list_files', 'read_file', 'write_file', 'preview_file'] } : {}),
+    ...(conversationId === undefined ? { tools: ['list_files', 'read_file', 'write_file', 'edit_file', 'preview_file'] } : {}),
   }))
   await c.next('message.done')
   const created = c.events.filter(e => e.type === 'message.created') as Array<{ message: { id: number, conversation_id: number, role: string } }>
@@ -112,6 +115,61 @@ async function callTool(providerId: number, toolName: string, input: unknown, co
   const call = message.parts.find((part): part is ToolCallPart => part.type === 'tool_call')
   return { conversationId: assistant.conversation_id, assistantId: assistant.id, result, call }
 }
+
+/** Runs one turn whose model calls several tools in order, and returns every persisted result. */
+async function callTools(providerId: number, calls: Array<{ name: string, input: unknown }>, conversationId?: number) {
+  modelSteps = calls.map(call => toolCallStream(call.name, call.input))
+  const c = await connect(await seedTestUser())
+  c.ws.send(JSON.stringify({
+    type: 'send', conversation_id: conversationId ?? null, parent_id: null, parts: [{ type: 'text', text: 'go' }],
+    provider_id: providerId, model_id: 'files-model',
+    ...(conversationId === undefined ? { tools: ['list_files', 'read_file', 'write_file', 'edit_file', 'preview_file'] } : {}),
+  }))
+  await c.next('message.done')
+  modelSteps = []
+  const created = c.events.filter(e => e.type === 'message.created') as Array<{ message: { id: number, conversation_id: number, role: string } }>
+  const assistant = created.find(event => event.message.role === 'assistant')!.message
+  const rows = await listMessages(createDb(env.DB), assistant.conversation_id, 1)
+  const message = rows.find(row => row.id === assistant.id)!
+  return {
+    conversationId: assistant.conversation_id,
+    results: message.parts.filter((part): part is ToolResultPart => part.type === 'tool_result'),
+  }
+}
+
+describe('edit_file', () => {
+  it('replaces text in a file the same turn read', async () => {
+    const providerId = await seedProvider()
+    await installModel()
+    const { conversationId } = await callTool(providerId, 'write_file', {
+      path: '/conversation/app.ts', content: 'const PORT = 3000\nstart(PORT)',
+    })
+
+    const { results } = await callTools(providerId, [
+      { name: 'read_file', input: { path: '/conversation/app.ts' } },
+      { name: 'edit_file', input: { path: '/conversation/app.ts', oldText: 'PORT = 3000', newText: 'PORT = 8080' } },
+    ], conversationId)
+
+    expect(results.at(-1)?.content).toMatchObject({ replacements: 1, version: 2 })
+    const read = await callTool(providerId, 'read_file', { path: '/conversation/app.ts' }, conversationId)
+    expect((read.result?.content as { content: string }).content).toContain('const PORT = 8080')
+  })
+
+  it('refuses to edit a file this turn has not read', async () => {
+    const providerId = await seedProvider()
+    await installModel()
+    const { conversationId } = await callTool(providerId, 'write_file', {
+      path: '/conversation/app.ts', content: 'const PORT = 3000',
+    })
+
+    // An edit names text the caller believes is there. Believing it without having looked this turn
+    // is how a patch lands on a file someone else has since rewritten.
+    const { result } = await callTool(providerId, 'edit_file', {
+      path: '/conversation/app.ts', oldText: 'PORT = 3000', newText: 'PORT = 8080',
+    }, conversationId)
+    expect(result?.content).toMatchObject({ error: 'NOT_READ' })
+  })
+})
 
 describe('workspace file tools', () => {
   it('writes a file the model asked for, and records where it came from', async () => {

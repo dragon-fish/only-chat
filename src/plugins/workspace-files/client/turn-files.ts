@@ -1,5 +1,5 @@
 import type { Part } from '@/shared/parts'
-import { RESTORE_FILE_TOOL_ID, WRITE_FILE_TOOL_ID } from '../shared'
+import { EDIT_FILE_TOOL_ID, RESTORE_FILE_TOOL_ID, WRITE_FILE_TOOL_ID } from '../shared'
 import type { RestoreFileOutput, WriteFileOutput } from '../shared'
 
 /** What one turn left behind, as the message footer lists it. */
@@ -27,7 +27,8 @@ export function filesWrittenInTurn(parts: readonly Part[]): TurnFile[] {
     if (part.type !== 'tool_result' || isFailure(part.content)) continue
 
     let file: TurnFile | undefined
-    if (part.name === WRITE_FILE_TOOL_ID) {
+    // An edit leaves behind a version like any other write, and its output is a write's output.
+    if (part.name === WRITE_FILE_TOOL_ID || part.name === EDIT_FILE_TOOL_ID) {
       const output = part.content as WriteFileOutput
       if (typeof output?.path !== 'string') continue
       file = {

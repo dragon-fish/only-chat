@@ -24,11 +24,20 @@ export type WorkspaceError =
   | 'FILE_TOO_LARGE'
   | 'INVALID_UTF8'
   | 'READ_RANGE_TOO_LARGE'
+  | 'NO_MATCH'
+  | 'AMBIGUOUS_MATCH'
 
 export type Result<T> = { ok: true, value: T } | { ok: false, error: WorkspaceError }
 
 const fail = (error: WorkspaceError): Result<never> => ({ ok: false, error })
 const succeed = <T>(value: T): Result<T> => ({ ok: true, value })
+
+/** Non-overlapping, matching what split/join replaces. */
+function countOccurrences(haystack: string, needle: string): number {
+  let count = 0
+  for (let index = haystack.indexOf(needle); index !== -1; index = haystack.indexOf(needle, index + needle.length)) count += 1
+  return count
+}
 
 export const MAX_FILE_BYTES = 1024 * 1024
 export const DEFAULT_READ_LINES = 2000
@@ -60,6 +69,21 @@ export interface WriteInput extends WorkspaceScope {
   expectedVersion?: number
   sourceMessageId?: number | null
   toolCallId?: string | null
+}
+
+export interface EditInput extends WorkspaceScope {
+  path: string
+  oldText: string
+  newText: string
+  replaceAll?: boolean
+  /** The version the caller computed this patch against; a mismatch is a conflict, not a rebase. */
+  expectedVersion?: number
+  sourceMessageId?: number | null
+  toolCallId?: string | null
+}
+
+export interface EditResult extends WriteResult {
+  replacements: number
 }
 
 export interface WriteResult {
@@ -306,6 +330,59 @@ export class WorkspaceFiles {
       replacedVersion: claimed ? null : existing.current_version,
       updatedAt: now,
     })
+  }
+
+  /**
+   * A patch named by the text it replaces, so a caller can change one line of a large file without
+   * resending the rest.
+   *
+   * Built on `write`, which is what makes an edit an ordinary version: restorable, and guarded by
+   * the version it was computed from, so a concurrent write is a conflict rather than a silent
+   * clobber. Matching is literal — a regex from a model is a CPU hazard on a megabyte of text, and
+   * the generation it would stall runs in this same Durable Object.
+   */
+  async edit(input: EditInput): Promise<Result<EditResult>> {
+    const parsed = parseWorkspacePath(input.path)
+    if (!parsed.ok) return fail('INVALID_PATH')
+    const { mount, relativePath } = parsed.value
+    if (mount === null || relativePath === '') return fail('INVALID_PATH')
+
+    const target = this.scopeOf(mount, input)
+    if (!target.ok) return target
+    const existing = await this.findFile(target.value, relativePath)
+    if (!existing) return fail('FILE_NOT_FOUND')
+    // The named version may have rewritten the very text this patch quotes, so applying it to a
+    // newer one would edit something the caller never looked at.
+    if (input.expectedVersion !== undefined && input.expectedVersion !== existing.current_version) {
+      return fail('VERSION_CONFLICT')
+    }
+
+    const bytes = await this.readBytes(mount, input, relativePath)
+    if (!bytes.ok) return bytes
+    const content = new TextDecoder().decode(bytes.value)
+
+    const replacements = countOccurrences(content, input.oldText)
+    if (replacements === 0) return fail('NO_MATCH')
+    // Editing the first of several is the one outcome nobody can review: it reads as success.
+    if (replacements > 1 && input.replaceAll !== true) return fail('AMBIGUOUS_MATCH')
+
+    // Both forms take the replacement literally. `replace` with a string would expand `$&` and `$1`
+    // in whatever the model wrote; a function replacement never does.
+    const next = input.replaceAll === true
+      ? content.split(input.oldText).join(input.newText)
+      : content.replace(input.oldText, () => input.newText)
+
+    const written = await this.write({
+      path: input.path,
+      content: next,
+      expectedVersion: existing.current_version,
+      conversationId: input.conversationId,
+      projectId: input.projectId,
+      sourceMessageId: input.sourceMessageId,
+      toolCallId: input.toolCallId,
+    })
+    if (!written.ok) return written
+    return succeed({ ...written.value, replacements: input.replaceAll === true ? replacements : 1 })
   }
 
   /**

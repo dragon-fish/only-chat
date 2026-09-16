@@ -26,6 +26,9 @@ const STATUS: Record<WorkspaceError, 400 | 404 | 409> = {
   FILE_TOO_LARGE: 400,
   INVALID_UTF8: 400,
   READ_RANGE_TOO_LARGE: 400,
+  // Only tools edit by pattern today; these are here because the map is exhaustive by type.
+  NO_MATCH: 400,
+  AMBIGUOUS_MATCH: 409,
 }
 
 /**

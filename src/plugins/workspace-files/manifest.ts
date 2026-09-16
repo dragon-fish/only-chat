@@ -1,6 +1,6 @@
 import type { PluginManifest } from '@/shared/plugins'
 import {
-  DELETE_FILE_TOOL_ID, LIST_FILES_TOOL_ID, PREVIEW_FILE_TOOL_ID, READ_FILE_TOOL_ID,
+  DELETE_FILE_TOOL_ID, EDIT_FILE_TOOL_ID, LIST_FILES_TOOL_ID, PREVIEW_FILE_TOOL_ID, READ_FILE_TOOL_ID,
   RENAME_FILE_TOOL_ID, RESTORE_FILE_TOOL_ID, WORKSPACE_FILES_PLUGIN_ID, WRITE_FILE_TOOL_ID,
 } from '@/shared/plugins'
 import { WORKSPACE_FILES_CONFIG_SCHEMA } from './shared'
@@ -24,6 +24,11 @@ const manifest = {
       id: WRITE_FILE_TOOL_ID,
       name: '写入文件',
       description: '创建或整体替换一个文本文件，每次写入都会保留为一个版本。',
+    },
+    {
+      id: EDIT_FILE_TOOL_ID,
+      name: '修改文件',
+      description: '按原文片段替换文件的一部分，不用整篇重写。同样会保留为一个版本。',
     },
     {
       id: RESTORE_FILE_TOOL_ID,

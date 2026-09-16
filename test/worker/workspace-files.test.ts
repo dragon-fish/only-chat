@@ -19,6 +19,10 @@ async function fixture(): Promise<Fixture> {
   await ensureTestUser(db)
   await db.delete(workspaceFileVersions)
   await db.delete(workspaceFiles)
+  // Object storage below is per-fixture while D1 is not, and published bytes dedupe by hash: a
+  // surviving attachment row would hand this test an id whose bytes live in the previous test's
+  // store, and every read of them would come back empty.
+  await db.delete(attachments)
   const [project] = await db.insert(projects).values({
     user_id: 1, name: 'p', icon_attachment_id: null, system_prompt: null,
     provider_id: null, model_id: null, params: null, created_at: 0, updated_at: 0,
@@ -75,6 +79,79 @@ describe('workspace files service', () => {
     const good = await f.files.write({ path: '/project/a.md', content: 'two', expectedVersion: 1, ...scope(f) })
     expect(good).toMatchObject({ ok: true })
     if (good.ok) expect(good.value).toMatchObject({ operation: 'updated', version: 2, replacedVersion: null })
+  })
+
+  it('replaces the one place the text appears, as a new version', async () => {
+    await f.files.write({ path: '/project/a.ts', content: 'const PORT = 3000\nstart(PORT)', ...scope(f) })
+
+    const edited = await f.files.edit({ path: '/project/a.ts', oldText: 'PORT = 3000', newText: 'PORT = 8080', ...scope(f) })
+    expect(edited).toMatchObject({ ok: true })
+    if (edited.ok) expect(edited.value).toMatchObject({ replacements: 1, version: 2, operation: 'updated' })
+
+    const after = await f.files.read({ path: '/project/a.ts', ...scope(f) })
+    expect(after.ok && after.value.content).toContain('const PORT = 8080')
+  })
+
+  it('refuses an edit whose text appears more than once, rather than guessing', async () => {
+    await f.files.write({ path: '/project/a.ts', content: 'log()\nlog()', ...scope(f) })
+
+    // Editing the first of several is the one outcome nobody can review: it looks like it worked.
+    const edited = await f.files.edit({ path: '/project/a.ts', oldText: 'log()', newText: 'debug()', ...scope(f) })
+    expect(edited).toMatchObject({ ok: false, error: 'AMBIGUOUS_MATCH' })
+
+    const after = await f.files.readBytes('project', scope(f), 'a.ts')
+    expect(after.ok && new TextDecoder().decode(after.value)).toBe('log()\nlog()')
+  })
+
+  it('replaces every occurrence when asked to', async () => {
+    const seeded = await f.files.write({ path: '/project/a.ts', content: 'log()\nlog()', ...scope(f) })
+    expect(seeded).toMatchObject({ ok: true })
+
+    const edited = await f.files.edit({ path: '/project/a.ts', oldText: 'log()', newText: 'debug()', replaceAll: true, ...scope(f) })
+    expect(edited.ok && edited.value.replacements).toBe(2)
+
+    const after = await f.files.readBytes('project', scope(f), 'a.ts')
+    expect(after.ok && new TextDecoder().decode(after.value)).toBe('debug()\ndebug()')
+  })
+
+  it('reports text that is not there instead of writing an unchanged version', async () => {
+    await f.files.write({ path: '/project/a.ts', content: 'one', ...scope(f) })
+
+    const edited = await f.files.edit({ path: '/project/a.ts', oldText: 'two', newText: 'three', ...scope(f) })
+    expect(edited).toMatchObject({ ok: false, error: 'NO_MATCH' })
+
+    const after = await f.files.read({ path: '/project/a.ts', ...scope(f) })
+    expect(after.ok && after.value.version).toBe(1)
+  })
+
+  it('treats $& in the replacement as literal text', async () => {
+    await f.files.write({ path: '/project/a.ts', content: 'cost: 100', ...scope(f) })
+
+    // String.replace reads $&, $1 and friends in the replacement. A model writing a price or a
+    // regex into a file must not have it silently expanded into the text it matched.
+    const edited = await f.files.edit({ path: '/project/a.ts', oldText: '100', newText: '$& $1 $$', ...scope(f) })
+    expect(edited).toMatchObject({ ok: true })
+
+    const after = await f.files.readBytes('project', scope(f), 'a.ts')
+    expect(after.ok && new TextDecoder().decode(after.value)).toBe('cost: $& $1 $$')
+  })
+
+  it('refuses an edit computed against a version that is no longer current', async () => {
+    await f.files.write({ path: '/project/guard.ts', content: 'alpha', ...scope(f) })
+    await f.files.write({ path: '/project/guard.ts', content: 'alpha and beta', ...scope(f) })
+
+    // The caller read v1 and is patching what it saw there. v2 may have rewritten the very text it
+    // names, so applying the patch to v2 would edit something the caller never looked at.
+    const stale = await f.files.edit({ path: '/project/guard.ts', oldText: 'alpha', newText: 'gamma', expectedVersion: 1, ...scope(f) })
+    expect(stale).toMatchObject({ ok: false, error: 'VERSION_CONFLICT' })
+
+    const fresh = await f.files.edit({ path: '/project/guard.ts', oldText: 'alpha', newText: 'gamma', expectedVersion: 2, ...scope(f) })
+    expect(fresh).toMatchObject({ ok: true })
+  })
+
+  it('cannot edit a file that does not exist', async () => {
+    const edited = await f.files.edit({ path: '/project/missing.ts', oldText: 'a', newText: 'b', ...scope(f) })
+    expect(edited).toMatchObject({ ok: false, error: 'FILE_NOT_FOUND' })
   })
 
   it('restores an old version under a new name, leaving both intact', async () => {

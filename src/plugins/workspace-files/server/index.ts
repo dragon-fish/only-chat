@@ -2,15 +2,15 @@ import type { Context } from 'cordis'
 import { tool } from 'ai'
 import { WorkspaceFiles, type Result, type WorkspaceError } from '@/server/plugins/workspace-files/service'
 import type { ToolContext } from '@/server/plugins/tools'
-import { parseWorkspacePath } from '@/server/plugins/workspace-files/path'
+import { formatWorkspacePath, parseWorkspacePath } from '@/server/plugins/workspace-files/path'
 import {
   DELETE_FILE_TOOL_ID, LIST_FILES_TOOL_ID, PREVIEW_FILE_TOOL_ID, READ_FILE_TOOL_ID, RENAME_FILE_TOOL_ID,
-  RESTORE_FILE_TOOL_ID, WORKSPACE_FILES_PLUGIN_ID, WRITE_FILE_TOOL_ID,
+  RESTORE_FILE_TOOL_ID, WORKSPACE_FILES_PLUGIN_ID, WRITE_FILE_TOOL_ID, EDIT_FILE_TOOL_ID,
 } from '@/shared/plugins'
 import {
-  DeleteFileInputSchema, ListFilesInputSchema, PreviewFileInputSchema, ReadFileInputSchema,
+  DeleteFileInputSchema, EditFileInputSchema, ListFilesInputSchema, PreviewFileInputSchema, ReadFileInputSchema,
   RenameFileInputSchema, RestoreFileInputSchema, WriteFileInputSchema,
-  type DeleteFileOutput, type ListFilesOutput, type PreviewFileOutput, type ReadFileOutput,
+  type DeleteFileOutput, type EditFileOutput, type ListFilesOutput, type PreviewFileOutput, type ReadFileOutput,
   type RenameFileOutput, type RestoreFileOutput, type WriteFileOutput, type WorkspaceToolError,
 } from '../shared'
 import { absolutePreviewUrl, PREVIEW_TICKET_TTL_SECONDS, previewTypeFor, previewUrlFor } from './preview'
@@ -27,6 +27,14 @@ const MESSAGES: Record<WorkspaceError, string> = {
   FILE_TOO_LARGE: 'Too large to store. The limit is 1 MiB of UTF-8 text.',
   INVALID_UTF8: 'Content must be valid UTF-8 text.',
   READ_RANGE_TOO_LARGE: 'That range is past the end of the file, or too large to return. Use a smaller offset and limit.',
+  NO_MATCH: 'That text is not in the file. Copy it from read_file exactly, without the line numbers printed in front of each line, and keep the original indentation.',
+  AMBIGUOUS_MATCH: 'That text appears in more than one place, and editing the first of several is the one outcome nobody can review. Include enough surrounding lines to name a single place, or pass replaceAll to change all of them.',
+}
+
+/** Not a filesystem outcome: the caller skipped a step, and the fix is to take it. */
+const NOT_READ: WorkspaceToolError = {
+  error: 'NOT_READ',
+  message: 'Read the file in this turn before editing it. An edit names text you believe is in the file, and read_file is how you know what is there now.',
 }
 
 function unwrap<T>(result: Result<T>): T | WorkspaceToolError {
@@ -93,7 +101,7 @@ export const WorkspaceFilesServerPlugin = {
 
     ctx.tools.register(WORKSPACE_FILES_PLUGIN_ID, READ_FILE_TOOL_ID, runtime => tool({
       description: [
-        'Read a UTF-8 text file from the workspace. Content comes back as numbered lines, 1-based, so you can cite positions back.',
+        'Read a UTF-8 text file from the workspace. Results are returned using cat -n format, with line numbers starting at 1, so you can cite positions back — strip that prefix before passing text to edit_file.',
         'Reads up to 2,000 lines and 100 KiB per call. If you already know which part you need, pass offset and limit rather than reading the whole file — on a large file that is the difference between one cheap call and several expensive ones.',
         'When the result is truncated, nextOffset tells you where to continue. Nothing is ever dropped silently.',
         'An empty file is reported as empty rather than as a blank line, which is how you tell it from a file holding a single newline.',
@@ -113,7 +121,7 @@ export const WorkspaceFilesServerPlugin = {
 
     ctx.tools.register(WORKSPACE_FILES_PLUGIN_ID, WRITE_FILE_TOOL_ID, runtime => tool({
       description: [
-        'Create a workspace file, or replace one completely. This writes the whole file; it is not a patch or pattern edit, and partial edits are not available in this release.',
+        'Create a workspace file, or replace one completely. This writes the whole file, so use edit_file to change part of one that already exists.',
 'Writing over an existing file is allowed and never loses anything: the previous version is kept and the result tells you which one was displaced, so restore_file can bring it back.',
         'Pass expectedVersion only when it matters that nobody else has touched the file meanwhile — it is a guard, not a requirement, and a mismatch means someone else moved it.',
         'Limit is 1 MiB of UTF-8 text. Every successful write stores an immutable version and advances the file to it.',
@@ -201,6 +209,57 @@ export const WorkspaceFilesServerPlugin = {
           renders,
           expiresInSeconds: PREVIEW_TICKET_TTL_SECONDS,
           message,
+        }
+      },
+    }))
+
+    ctx.tools.register(WORKSPACE_FILES_PLUGIN_ID, EDIT_FILE_TOOL_ID, runtime => tool({
+      description: [
+        'Change part of a file by naming the text to replace. Prefer this over write_file for anything but a new file or a rewrite: sending a whole file back to change one line wastes the turn and drifts in the parts you did not mean to touch.',
+        'oldText is matched literally, not as a pattern or a regular expression. It must match the file exactly, including indentation — and without the line numbers read_file prints in front of each line.',
+        'It must match exactly one place, so include enough surrounding lines to be unambiguous; pass replaceAll to change every occurrence instead. An empty newText deletes the matched text.',
+        'Read the file in this turn first. Editing text you have not just looked at is how a patch lands on a file that has since changed; if it did change, the edit is refused rather than applied to content you never saw.',
+        'Like every write, a successful edit stores an immutable version, so restore_file can bring back what it replaced.',
+      ].join(' '),
+      inputSchema: EditFileInputSchema,
+      async execute(input, options): Promise<EditFileOutput | WorkspaceToolError> {
+        const parsed = parseWorkspacePath(input.path)
+        if (!parsed.ok) return { error: 'INVALID_PATH', message: MESSAGES.INVALID_PATH }
+        // The ledger is keyed by the canonical path, which is what read_file and write_file record.
+        const read = runtime.turn.get(readVersionKey(formatWorkspacePath(parsed.value)))
+        if (typeof read !== 'number') return NOT_READ
+
+        const { files, scope } = servicesFor(runtime)
+        const result = await files.edit({
+          path: input.path,
+          oldText: input.oldText,
+          newText: input.newText,
+          replaceAll: input.replaceAll,
+          // What the caller actually looked at this turn. A file that moved since then is a
+          // conflict: the patch quotes content that may no longer be the content.
+          expectedVersion: read,
+          sourceMessageId: runtime.assistantMessageId,
+          toolCallId: options?.toolCallId ?? null,
+          ...scope,
+        })
+        if (!result.ok) return unwrap(result) as WorkspaceToolError
+        const { path, fileSize, totalLines, version, replacements } = result.value
+        runtime.turn.set(readVersionKey(path), version)
+
+        const previewable = previewTypeFor(path) !== undefined
+        const places = replacements === 1 ? 'one place' : `${replacements} places`
+        const hint = previewable ? ' This one can be opened in a browser — preview_file gives you the link.' : ''
+        return {
+          path,
+          previewable,
+          operation: 'updated',
+          fileSize,
+          totalLines,
+          version,
+          replacedVersion: null,
+          staleReadVersion: null,
+          replacements,
+          message: `Changed ${places}, saved as v${version} (${fileSize.toLocaleString('en-US')} bytes, ${totalLines.toLocaleString('en-US')} lines).${hint}`,
         }
       },
     }))

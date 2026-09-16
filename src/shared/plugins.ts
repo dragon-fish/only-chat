@@ -12,6 +12,7 @@ export const WORKSPACE_FILES_PLUGIN_ID = 'workspace_files' as const
 export const LIST_FILES_TOOL_ID = 'list_files' as const
 export const READ_FILE_TOOL_ID = 'read_file' as const
 export const WRITE_FILE_TOOL_ID = 'write_file' as const
+export const EDIT_FILE_TOOL_ID = 'edit_file' as const
 export const RESTORE_FILE_TOOL_ID = 'restore_file' as const
 export const RENAME_FILE_TOOL_ID = 'rename_file' as const
 export const DELETE_FILE_TOOL_ID = 'delete_file' as const
@@ -24,7 +25,7 @@ export const BROWSER_HANDOFF_TOOL_ID = 'browser_handoff' as const
 export type BuiltInPluginId = typeof ASK_USER_PLUGIN_ID | typeof TAVILY_PLUGIN_ID | typeof DATETIME_PLUGIN_ID
   | typeof WORKSPACE_FILES_PLUGIN_ID | typeof BROWSER_RUN_PLUGIN_ID
 export type BuiltInToolId = typeof ASK_USER_TOOL_ID | typeof WEB_SEARCH_TOOL_ID | typeof WEB_EXTRACT_TOOL_ID | typeof CURRENT_TIME_TOOL_ID
-  | typeof LIST_FILES_TOOL_ID | typeof READ_FILE_TOOL_ID | typeof WRITE_FILE_TOOL_ID | typeof RESTORE_FILE_TOOL_ID
+  | typeof LIST_FILES_TOOL_ID | typeof READ_FILE_TOOL_ID | typeof WRITE_FILE_TOOL_ID | typeof EDIT_FILE_TOOL_ID | typeof RESTORE_FILE_TOOL_ID
   | typeof RENAME_FILE_TOOL_ID | typeof DELETE_FILE_TOOL_ID | typeof PREVIEW_FILE_TOOL_ID
   | typeof BROWSER_USE_TOOL_ID | typeof BROWSER_HANDOFF_TOOL_ID
 

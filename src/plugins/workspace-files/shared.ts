@@ -1,8 +1,8 @@
 import { z } from 'zod'
 
 export {
-  DELETE_FILE_TOOL_ID, LIST_FILES_TOOL_ID, PREVIEW_FILE_TOOL_ID, READ_FILE_TOOL_ID, RENAME_FILE_TOOL_ID,
-  RESTORE_FILE_TOOL_ID, WRITE_FILE_TOOL_ID, WORKSPACE_FILES_PLUGIN_ID,
+  DELETE_FILE_TOOL_ID, EDIT_FILE_TOOL_ID, LIST_FILES_TOOL_ID, PREVIEW_FILE_TOOL_ID, READ_FILE_TOOL_ID,
+  RENAME_FILE_TOOL_ID, RESTORE_FILE_TOOL_ID, WRITE_FILE_TOOL_ID, WORKSPACE_FILES_PLUGIN_ID,
 } from '@/shared/plugins'
 
 /**
@@ -40,6 +40,16 @@ export const WriteFileInputSchema = z.strictObject({
     .describe('Optional guard: the version you believe the file is at. Omit to overwrite whatever is there.'),
 })
 export type WriteFileInput = z.infer<typeof WriteFileInputSchema>
+
+export const EditFileInputSchema = z.strictObject({
+  path: PathSchema,
+  oldText: z.string().min(1)
+    .describe('The exact text to replace, copied from the file itself — indentation included, and without the line numbers read_file prints in front of each line.'),
+  newText: z.string().describe('What to put in its place. An empty string deletes the matched text.'),
+  replaceAll: z.boolean().default(false)
+    .describe('Replace every occurrence. Without it, oldText has to appear exactly once.'),
+})
+export type EditFileInput = z.infer<typeof EditFileInputSchema>
 
 export const RestoreFileInputSchema = z.strictObject({
   path: PathSchema.describe('The file whose history holds the version you want.'),
@@ -129,6 +139,11 @@ export interface DeleteFileOutput {
   path: string
   deleted: string[]
   message: string
+}
+
+/** A `write_file` result plus how many places changed; an edit stores an ordinary new version. */
+export interface EditFileOutput extends WriteFileOutput {
+  replacements: number
 }
 
 export interface WorkspaceToolError {

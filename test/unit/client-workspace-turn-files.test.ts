@@ -27,6 +27,21 @@ describe('files a turn produced', () => {
     ])
   })
 
+  it('counts an edited file the same as a written one', () => {
+    const files = filesWrittenInTurn([
+      write('/project/a.md', 1, 'created'),
+      result('edit_file', {
+        path: '/project/a.md', operation: 'updated', version: 2, fileSize: 25, totalLines: 3,
+        replacedVersion: null, staleReadVersion: null, replacements: 1, message: 'ok',
+      }),
+    ])
+    // The footer is about what the turn left behind, and an edit leaves behind a version like any
+    // other write. Listing only whole-file writes would hide the turn's actual output.
+    expect(files).toEqual([
+      { path: '/project/a.md', version: 2, fileSize: 25, totalLines: 3, created: true },
+    ])
+  })
+
   it('counts a restored file and ignores a call that failed', () => {
     const files = filesWrittenInTurn([
       result('write_file', { error: 'VERSION_CONFLICT', message: 'moved' }),

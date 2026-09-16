@@ -1,9 +1,10 @@
 import type { ClientPluginSetup } from '@/client/plugins/host'
 import {
-  DELETE_FILE_TOOL_ID, LIST_FILES_TOOL_ID, PREVIEW_FILE_TOOL_ID, READ_FILE_TOOL_ID,
+  DELETE_FILE_TOOL_ID, EDIT_FILE_TOOL_ID, LIST_FILES_TOOL_ID, PREVIEW_FILE_TOOL_ID, READ_FILE_TOOL_ID,
   RENAME_FILE_TOOL_ID, RESTORE_FILE_TOOL_ID, WRITE_FILE_TOOL_ID,
 } from '../shared'
 import DeleteFileCard from './delete-file-card.vue'
+import EditFileCard from './edit-file-card.vue'
 import FilesTab from './files-tab.vue'
 import ListFilesCard from './list-files-card.vue'
 import PreviewFileCard from './preview-file-card.vue'
@@ -18,6 +19,7 @@ export const setup: ClientPluginSetup = (ctx) => {
   ctx.tools.register(LIST_FILES_TOOL_ID, ListFilesCard)
   ctx.tools.register(READ_FILE_TOOL_ID, ReadFileCard)
   ctx.tools.register(WRITE_FILE_TOOL_ID, WriteFileCard)
+  ctx.tools.register(EDIT_FILE_TOOL_ID, EditFileCard)
   ctx.tools.register(RESTORE_FILE_TOOL_ID, RestoreFileCard)
   ctx.tools.register(RENAME_FILE_TOOL_ID, RenameFileCard)
   ctx.tools.register(DELETE_FILE_TOOL_ID, DeleteFileCard)
