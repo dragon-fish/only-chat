@@ -44,6 +44,13 @@ export class Authentication extends Service {
         useSecureCookies: !import.meta.env.DEV,
       },
       emailAndPassword: { enabled: true },
+      // Defaults to NODE_ENV, which workerd does not define, so it had never been on. Keeps the
+      // built-in rules: 3 sign-in attempts per 10s per IP, 100 other auth requests per 10s.
+      // Storage stays in memory: it is per-isolate, so this raises the cost of password guessing
+      // rather than bounding it — a real bound needs a table or a Durable Object, which this
+      // single-account deployment does not earn. Off in development because the test suite signs
+      // in repeatedly and, with no cf-connecting-ip header, every request shares one bucket.
+      rateLimit: { enabled: !import.meta.env.DEV },
       user: { modelName: 'users', validateUserInfo: registrationPolicy(ctx.db.orm, ctx.env.ALLOW_REGISTER) },
       account: { modelName: 'authAccounts' },
       session: { modelName: 'authSessions' },
