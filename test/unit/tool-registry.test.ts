@@ -5,7 +5,7 @@ import { z } from 'zod'
 import { ToolRegistry, ToolRegistryPlugin, type ToolContext } from '@/server/plugins/tools'
 import { AskUserServerPlugin } from '@/plugins/ask-user/server'
 import { TavilyServerPlugin } from '@/plugins/tavily/server'
-import { TAVILY_PLUGIN_ID } from '@/shared/plugins'
+import { EDIT_FILE_TOOL_ID, READ_FILE_TOOL_ID, TAVILY_PLUGIN_ID, WORKSPACE_FILES_PLUGIN_ID, WRITE_FILE_TOOL_ID } from '@/shared/plugins'
 
 const registeredTool = (description: string) => tool({ description, inputSchema: z.object({}) })
 
@@ -44,6 +44,26 @@ describe('ToolRegistry', () => {
     expect((await registry.resolve(['z', 'a'], { 'plugin-a': true }, resolution)).map(([id]) => id)).toEqual(['a', 'z'])
     await expect(registry.resolve(['missing'], { 'plugin-a': true }, resolution)).rejects.toThrow(/unknown tool/i)
     expect(await registry.resolve(['a'], { 'plugin-a': false }, resolution)).toEqual([])
+  })
+
+  it('resolves a snapshot by group, so a tool added later is not withheld', () => {
+    const registry = new ToolRegistry(contextWith())
+    registry.register(WORKSPACE_FILES_PLUGIN_ID, READ_FILE_TOOL_ID, () => registeredTool('read'))
+    registry.register(WORKSPACE_FILES_PLUGIN_ID, WRITE_FILE_TOOL_ID, () => registeredTool('write'))
+    registry.register(WORKSPACE_FILES_PLUGIN_ID, EDIT_FILE_TOOL_ID, () => registeredTool('edit'))
+
+    // The selector has no per-tool switch: a conversation whose snapshot predates a tool never
+    // deselected it, because it did not exist yet. Withholding it would strand old conversations.
+    const usable = registry.usable([READ_FILE_TOOL_ID], { [WORKSPACE_FILES_PLUGIN_ID]: true }, { projectId: null })
+    expect(usable).toContain(EDIT_FILE_TOOL_ID)
+    expect(usable).toContain(WRITE_FILE_TOOL_ID)
+  })
+
+  it('leaves a plugin that declares no manifest resolving by exact id', () => {
+    const registry = new ToolRegistry(contextWith())
+    registry.register('plugin-a', 'a', () => registeredTool('a'))
+    registry.register('plugin-a', 'b', () => registeredTool('b'))
+    expect(registry.usable(['a'], { 'plugin-a': true }, { projectId: null })).toEqual(['a'])
   })
 
   it('removes registrations through their disposer', async () => {

@@ -1,7 +1,7 @@
 import { Context, Service } from 'cordis'
 import type { Tool } from 'ai'
 import type { ConversationPluginSettings } from '@/shared/models'
-import { conversationConfigOf, pluginAvailableIn, type ConversationScope } from '@/shared/plugins'
+import { conversationConfigOf, pluginAvailableIn, pluginToolGroups, type ConversationScope } from '@/shared/plugins'
 import { findPluginManifest } from '@/shared/plugin-manifests'
 import type { DB } from '../../db/client'
 import type { Assets } from '../assets'
@@ -121,13 +121,36 @@ export class ToolRegistry extends Service {
    *
    * Answers the "does this model support tool calls" check while the target is still being resolved,
    * long before there is an assistant message to build tools against.
+   *
+   * A snapshot stores tool ids, but what the person switched on was a group: the selector offers no
+   * per-tool control, so a tool added to a group later was never deselected — it did not exist yet.
+   * Resolving by group is what lets an existing conversation pick up a tool its plugin grew, instead
+   * of silently withholding it until someone toggles the group off and on again.
    */
   usable(ids: readonly string[], enabledPlugins: Record<string, boolean>, scope: ConversationScope): string[] {
-    return this.normalize(ids).filter((id) => {
+    return this.normalize(this.withGroupSiblings(ids)).filter((id) => {
       const pluginId = this.entries.get(id)!.pluginId
       const manifest = findPluginManifest(pluginId)
       return enabledPlugins[pluginId] === true && (manifest === undefined || pluginAvailableIn(manifest, scope))
     })
+  }
+
+  /** Every registered tool sharing a declared group with one the snapshot named. */
+  private withGroupSiblings(ids: readonly string[]): string[] {
+    const named = new Set(ids)
+    const resolved = new Set(ids)
+    for (const id of named) {
+      const pluginId = this.entries.get(id)?.pluginId
+      // An unknown id is left alone: rejecting it is `normalize`'s job, not this one's.
+      if (pluginId === undefined) continue
+      const manifest = findPluginManifest(pluginId)
+      if (manifest === undefined) continue
+      for (const group of pluginToolGroups(manifest)) {
+        if (!group.tools.some(tool => named.has(tool.id))) continue
+        for (const tool of group.tools) if (this.entries.has(tool.id)) resolved.add(tool.id)
+      }
+    }
+    return [...resolved]
   }
 
   /**
