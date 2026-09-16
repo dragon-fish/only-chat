@@ -1244,6 +1244,24 @@ describe('project inheritance', () => {
     doStream: async () => ({ stream: simulateReadableStream({ chunks: [...STREAM], chunkDelayInMs: null, initialDelayInMs: null }) }),
   })
 
+  it('announces the first chunk once, not once per chunk until text arrives', async () => {
+    const providerId = await seedProvider('first-chunk-provider', 'model-a')
+    await installMock(streamingMock)
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {})
+    const c = await connect(await seedTestUser())
+    c.ws.send(JSON.stringify({
+      type: 'send', conversation_id: null, parent_id: null, parts: [{ type: 'text', text: 'hi' }],
+      provider_id: providerId, model_id: 'model-a',
+    }))
+    await c.next('message.done')
+    const entries = info.mock.calls.map(call => call[0]) as Array<{ event?: string }>
+    info.mockRestore()
+
+    // The flag it read was the time-to-first-token, which only a content delta sets: a turn that
+    // opens with a tool call sets it never, and then every part of the stream logs this line.
+    expect(entries.filter(entry => entry?.event === 'chat.generation.first_chunk')).toHaveLength(1)
+  })
+
   it('inherits the Project prompt, model and params without copying them into the conversation', async () => {
     const projectProvider = await seedProvider('project-provider', 'model-a')
     const commandProvider = await seedProvider('command-provider', 'model-b')

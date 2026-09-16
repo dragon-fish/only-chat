@@ -51,30 +51,53 @@ export async function summarizeProviderRequest(body: string, fingerprintKey: str
   }
 }
 
+/**
+ * The one line a log list shows; everything else is filed away as a filterable attribute.
+ *
+ * Only identifiers, never the request itself — the same line the summary draws.
+ */
+function line(event: string, trace: LlmRequestTrace, extra: Record<string, string | number> = {}): string {
+  const pairs = Object.entries({
+    conversation_id: trace.conversationId, message_id: trace.messageId,
+    provider_id: trace.providerId, model: trace.modelId, ...extra,
+  }).map(([key, value]) => `${key}=${value}`)
+  return [`[${event}]`, ...pairs].join(' ')
+}
+
 /** Logs enough to compare request prefixes without recording prompts, tool arguments, or reasoning. */
 export function observedProviderFetch(trace: LlmRequestTrace, fingerprintKey: string, originalFetch: FetchFunction = globalThis.fetch): FetchFunction {
   return async (input, init) => {
     const startedAt = performance.now()
     if (typeof init?.body === 'string') {
       try {
-        console.info(JSON.stringify({ event: 'llm.provider.request', ...trace, request: await summarizeProviderRequest(init.body, fingerprintKey) }))
+        const request = await summarizeProviderRequest(init.body, fingerprintKey)
+        console.info({
+          message: line('llm.provider.request', trace, { items: request.items.length, chars: init.body.length }),
+          event: 'llm.provider.request', ...trace, request,
+        })
       } catch (error) {
-        console.warn(JSON.stringify({ event: 'llm.provider.request_summary_failed', ...trace, error: error instanceof Error ? error.message : String(error) }))
+        console.warn({
+          message: line('llm.provider.request_summary_failed', trace),
+          event: 'llm.provider.request_summary_failed', ...trace,
+          error: error instanceof Error ? error.message : String(error),
+        })
       }
     }
     try {
       const response = await originalFetch(input, init)
-      console.info(JSON.stringify({
-        event: 'llm.provider.response', ...trace, status: response.status,
-        durationMs: Math.max(0, performance.now() - startedAt),
-      }))
+      const durationMs = Math.round(Math.max(0, performance.now() - startedAt))
+      console.info({
+        message: line('llm.provider.response', trace, { status: response.status, duration_ms: durationMs }),
+        event: 'llm.provider.response', ...trace, status: response.status, durationMs,
+      })
       return response
     } catch (error) {
-      console.error(JSON.stringify({
-        event: 'llm.provider.fetch_failed', ...trace,
-        durationMs: Math.max(0, performance.now() - startedAt),
+      const durationMs = Math.round(Math.max(0, performance.now() - startedAt))
+      console.error({
+        message: line('llm.provider.fetch_failed', trace, { duration_ms: durationMs }),
+        event: 'llm.provider.fetch_failed', ...trace, durationMs,
         error: error instanceof Error ? error.message : String(error),
-      }))
+      })
       throw error
     }
   }

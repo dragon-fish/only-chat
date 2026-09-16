@@ -33,9 +33,33 @@ function tidy(fields: LifecycleFields): LifecycleFields {
   return out
 }
 
+const snake = (key: string) => key.replace(/[A-Z]/gu, letter => `_${letter.toLowerCase()}`)
+
+/**
+ * The one line a log list shows.
+ *
+ * A log platform renders the `message` field and files everything else away as attributes, so an
+ * entry without one is a blank row that has to be opened to be read at all. Absent fields are left
+ * out rather than printed as `undefined`: a field nobody set says nothing about what happened.
+ */
+function readable(event: string, fields: LifecycleFields): string {
+  const pairs = Object.entries(fields)
+    .filter(([, value]) => value !== undefined && value !== null)
+    .map(([key, value]) => `${snake(key)}=${value}`)
+  return [`[${event}]`, ...pairs].join(' ')
+}
+
+/**
+ * Structured, and readable at a glance.
+ *
+ * The object goes out as an object: a pre-encoded string arrives as an opaque blob with nothing to
+ * filter a conversation by, which is how a turn's own history becomes unsearchable.
+ */
 export function logLifecycle(event: string, fields: LifecycleFields): void {
   try {
-    console.info(JSON.stringify({ event: `chat.${event}`, ...tidy(fields) }))
+    const name = `chat.${event}`
+    const tidied = tidy(fields)
+    console.info({ message: readable(name, tidied), event: name, ...tidied })
   } catch {
     // Logging must never be the reason a turn fails.
   }

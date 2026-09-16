@@ -437,10 +437,14 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
     })
 
     let lastFlush = Date.now()
+    // Its own flag, not the time-to-first-token: that one is set by a content delta, which a turn
+    // opening with a tool call never produces — and then every part of the stream logs this line.
+    let announcedFirstChunk = false
     for await (const part of result.stream) {
       // The gap this exists for: a turn that produces nothing looks identical to one that never
       // asked. Whichever chunk arrives first, the request is answered and the model is speaking.
-      if (firstTokenAt === null && part.type !== 'start' && part.type !== 'start-step') {
+      if (!announcedFirstChunk && part.type !== 'start' && part.type !== 'start-step') {
+        announcedFirstChunk = true
         logLifecycle('generation.first_chunk', {
           conversationId: target.conversation.id, messageId: shell.id,
           durationMs: performance.now() - requestStartedAt, reason: part.type,
@@ -484,7 +488,18 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
           finishedAt: performance.now(),
           generationDurationMs: generationDurationMs(stepPerformance),
         })
-        console.info(JSON.stringify({ event: 'llm.generation.usage', ...trace, usage, rawUsage: part.totalUsage.raw ?? null }))
+        // The line worth reading at a glance: what the turn cost, summed over every step it took.
+        console.info({
+          message: [
+            '[llm.generation.usage]',
+            `conversation_id=${trace.conversationId}`, `message_id=${trace.messageId}`,
+            `model=${trace.modelId}`, `steps=${stepPerformance.length}`,
+            `prompt=${usage?.prompt ?? '-'}`, `cached=${usage?.cached ?? '-'}`,
+            `completion=${usage?.completion ?? '-'}`, `reasoning=${usage?.reasoning ?? '-'}`,
+          ].join(' '),
+          event: 'llm.generation.usage', ...trace, steps: stepPerformance.length,
+          usage, rawUsage: part.totalUsage.raw ?? null,
+        })
         continue
       }
       // Awaited before anything else sees the part: the accumulator, the inflight snapshot, D1 and
