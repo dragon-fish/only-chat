@@ -10,7 +10,7 @@ import { createAskUserToolCallRepair } from '@/plugins/ask-user/server/repair'
 import type { ModelRow, ProviderInterfaceRow, ProviderRow, ConversationRow } from '../../db/schema'
 import { PartAccumulator } from '../llm/accumulator'
 import { logLifecycle, partsBytes } from './lifecycle-log'
-import { buildModelMessages, buildProviderOptions, INTERJECTED, interjectedUserMessage, requiredAttachmentIds, type AttachmentInput } from '../llm/messages'
+import { buildModelMessages, buildProviderOptions, carriesToolResultImages, INTERJECTED, interjectedUserMessage, requiredAttachmentIds, type AttachmentInput } from '../llm/messages'
 import { generationDurationMs, toStepUsage, toUsage, type GenerationStepPerformance } from '../llm/usage'
 import type { Hub, InflightJob } from './index'
 import {
@@ -315,6 +315,7 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
       signal: controller.signal,
       pluginSettings: target.conversation.plugin_settings ?? null,
       acceptsImages: target.model.metadata_resolved.modalities?.input.includes('image') ?? false,
+      acceptsToolResultImages: carriesToolResultImages(target.providerInterface.protocol),
       publicOrigin: hub.publicOrigin,
       path: payload.path,
     }))

@@ -72,6 +72,7 @@ async function fixture(): Promise<Fixture> {
     assets: assets as never,
     signal: new AbortController().signal,
     acceptsImages: false,
+    acceptsToolResultImages: false,
     publicOrigin: 'https://chat.test',
     path: [],
   }

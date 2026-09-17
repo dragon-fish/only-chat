@@ -35,6 +35,16 @@ export interface ToolContext {
   /** Whether the generating model declares image input, so a tool knows if a picture is worth sending. */
   acceptsImages: boolean
   /**
+   * Whether a picture survives the trip *inside a tool result*, which is a narrower question than
+   * `acceptsImages` and is answered by the protocol rather than the model.
+   *
+   * Both halves must hold before a tool returns bytes. A protocol that cannot carry them does not
+   * fail loudly: `@ai-sdk/openai-compatible` serializes the whole content output with
+   * `JSON.stringify`, so a 117KB screenshot leaves as 1.33MB of `{"0":255,...}` — measured — and
+   * the model still sees no picture. Send text on that side and say what is missing.
+   */
+  acceptsToolResultImages: boolean
+  /**
    * Where this deployment is reachable, for a tool handing out a link someone off this origin has
    * to open. Comes from the connection that asked for the generation, never from configuration.
    * Null on a hub that has never been connected to, which no link is worth failing a turn over.

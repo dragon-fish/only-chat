@@ -302,6 +302,33 @@ export function buildModelMessages(input: BuildInput): ModelMessage[] {
 const ANTHROPIC_THINKING = { type: 'adaptive', display: 'summarized' } as const
 
 /**
+ * Whether a picture placed *inside a tool result* still reaches the model on this protocol.
+ *
+ * Narrower than "the model reads images", and answered here rather than by the catalog, because
+ * what breaks is the wire format.
+ *
+ * `chat-completions` is the one that cannot: OpenAI's own schema allows only `text` parts in a
+ * tool message (`ChatCompletionRequestToolMessageContentPart`), and `@ai-sdk/openai-compatible`
+ * serializes the whole content output with `JSON.stringify` — a 117KB screenshot leaves as 1.33MB
+ * of `{"0":255,"1":216,...}`, measured, and the model still sees no picture. Some vendors do
+ * extend that message (DeepSeek accepts `image_url` and `file_id` there), but nothing in the spec
+ * makes that portable, and the adapter destroys the bytes before any of them are asked.
+ *
+ * The other three emit real image parts: Anthropic an `image` block, Responses an `input_image`,
+ * Google `inlineData` inside `functionResponse` on both its current and legacy branches.
+ */
+export function carriesToolResultImages(protocol: InterfaceProtocol): boolean {
+  switch (protocol) {
+    case 'anthropic':
+    case 'responses':
+    case 'vertex-compatible':
+      return true
+    case 'chat-completions':
+      return false
+  }
+}
+
+/**
  * Gemini's `thinkingConfig`, reached through the only google-vertex export that carries it:
  * `GoogleVertexImageModelOptions` is declared as `Omit<GoogleLanguageModelOptions,
  * 'responseModalities'>` (@ai-sdk/google-vertex@5.0.75 dist/index.d.ts:37), and `@ai-sdk/google` is

@@ -104,17 +104,6 @@ function runner(env: Env): { run(args: RunnerArgs): Promise<RunResult> } {
 
 type BrowserUseResult = BrowserUseOutput | BrowserUseError | BrowserUseRefusal
 
-const states = new WeakMap<Hub, BrowserRunState>()
-function stateOf(ctx: Context): BrowserRunState {
-  const hub = ctx.hub
-  let state = states.get(hub)
-  if (!state) {
-    state = new BrowserRunState(hub, ctx.env)
-    states.set(hub, state)
-  }
-  return state
-}
-
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
@@ -129,9 +118,24 @@ function buildOutput(result: RunResult, scratch: RunScratch): BrowserUseOutput |
   return { error: detail, timed_out: result.timedOut, logs, logs_truncated: truncated, screenshots, url: result.url }
 }
 
-function browserUseTool(ctx: Context, toolCtx: ToolContext): Tool<BrowserUseInput, BrowserUseResult> {
+/**
+ * What the model is told in place of pictures it cannot be shown.
+ *
+ * Silence would be worse than a sentence: the call still reports `screenshots`, so a model that
+ * hears nothing concludes it was handed pixels and starts describing them.
+ */
+function undeliverableScreenshots(count: number, reason: 'model' | 'protocol'): string {
+  const subject = count === 1 ? '1 screenshot was' : `${count} screenshots were`
+  const why = reason === 'model'
+    ? 'the model answering this conversation does not accept image input'
+    : 'the provider interface this conversation runs on cannot carry an image inside a tool result'
+  return `[${subject} captured and stored, but you were not shown ${count === 1 ? 'it' : 'them'}: ${why}. `
+    + 'Do not guess what the pictures contain. Say so plainly if seeing them would have mattered — '
+    + 'the user can switch the model or the provider interface in settings.]'
+}
+
+function browserUseTool(state: BrowserRunState, toolCtx: ToolContext): Tool<BrowserUseInput, BrowserUseResult> {
   const execute = async (input: BrowserUseInput, { toolCallId }: { toolCallId: string }): Promise<BrowserUseResult> => {
-    const state = stateOf(ctx)
     const config = BROWSER_RUN_CONFIG_SCHEMA.parse(toolCtx.config)
     const conversation = BROWSER_RUN_CONVERSATION_CONFIG_SCHEMA.parse(toolCtx.conversationConfig)
     if (new TextEncoder().encode(input.code).byteLength > MAX_CODE_BYTES) {
@@ -174,20 +178,26 @@ function browserUseTool(ctx: Context, toolCtx: ToolContext): Tool<BrowserUseInpu
     })
   }
   /**
-   * Screenshots reach the model here, as media beside the JSON, and only when it can see them.
-   * The scratch is dropped afterwards: the persisted result keeps attachment ids, not bytes.
+   * Screenshots reach the model here, as media beside the JSON, and only when both the model and
+   * the protocol can carry them. Bytes that cannot travel are replaced by a sentence saying so,
+   * never dropped in silence.
+   *
+   * The scratch is read once and discarded: the persisted result keeps attachment ids, not bytes,
+   * so a later turn rebuilt from the database shows the ids alone by design.
    */
   const toModelOutput: NonNullable<Tool<BrowserUseInput, BrowserUseResult>['toModelOutput']> = ({ toolCallId, output }) => {
-    const state = stateOf(ctx)
     const scratch = state.scratch.get(toolCallId)
     state.scratch.delete(toolCallId)
     const text = JSON.stringify(output)
-    if (!toolCtx.acceptsImages || !scratch || scratch.images.length === 0) return { type: 'text', value: text }
+    const images = scratch?.images ?? []
+    if (images.length === 0) return { type: 'text', value: text }
+    if (!toolCtx.acceptsImages) return { type: 'text', value: `${text}\n${undeliverableScreenshots(images.length, 'model')}` }
+    if (!toolCtx.acceptsToolResultImages) return { type: 'text', value: `${text}\n${undeliverableScreenshots(images.length, 'protocol')}` }
     return {
       type: 'content',
       value: [
         { type: 'text', text },
-        ...scratch.images.map(image => ({ type: 'file' as const, data: { type: 'data' as const, data: image.bytes }, mediaType: image.mime, filename: `${image.name}.jpg` })),
+        ...images.map(image => ({ type: 'file' as const, data: { type: 'data' as const, data: image.bytes }, mediaType: image.mime, filename: `${image.name}.jpg` })),
       ],
     }
   }
@@ -200,7 +210,13 @@ export const BrowserRunServerPlugin = {
   // registry allows because tools are only resolved per generation.
   inject: ['tools', 'pluginChannel', 'env', 'hub'] as const,
   apply(ctx: Context) {
-    ctx.tools.register(BROWSER_RUN_PLUGIN_ID, BROWSER_USE_TOOL_ID, (toolCtx: ToolContext) => browserUseTool(ctx, toolCtx))
+    // Built once and closed over. It cannot be cached against `ctx.hub`: cordis hands out a fresh
+    // traceable Proxy on every service access, so `ctx.hub === ctx.hub` is false and any map keyed
+    // on it misses every time — which silently gave each caller its own empty scratch, losing every
+    // screenshot between `attach` and `toModelOutput` and voiding the per-conversation browser lock.
+    const state = new BrowserRunState(ctx.hub, ctx.env)
+
+    ctx.tools.register(BROWSER_RUN_PLUGIN_ID, BROWSER_USE_TOOL_ID, (toolCtx: ToolContext) => browserUseTool(state, toolCtx))
 
     ctx.tools.register(BROWSER_RUN_PLUGIN_ID, BROWSER_HANDOFF_TOOL_ID, () => tool({
       description: BROWSER_HANDOFF_DESCRIPTION,
@@ -211,7 +227,7 @@ export const BrowserRunServerPlugin = {
         const parsed = BrowserHandoffResultSchema.parse(result)
         if (parsed.status === 'skipped') throw new Error('skipped is not an answer a person gives')
         // Whatever the person did in the browser is worth keeping now, not after the next tool call.
-        void stateOf(ctx).probe(call.conversationId, { close: false }).catch(error => console.error('browser profile export failed', error))
+        void state.probe(call.conversationId, { close: false }).catch(error => console.error('browser profile export failed', error))
         return parsed
       },
       skip: () => ({ status: 'skipped', message: SKIPPED_MESSAGE }),
@@ -220,7 +236,6 @@ export const BrowserRunServerPlugin = {
 
     ctx.pluginChannel.onCommand(BROWSER_RUN_PLUGIN_ID, async (payload) => {
       const command = BrowserPluginCommandSchema.parse(payload)
-      const state = stateOf(ctx)
       const scope = await state.profileOf(command.conversation_id)
       if (!scope) throw new Error('conversation not found')
       switch (command.kind) {
@@ -246,7 +261,6 @@ export const BrowserRunServerPlugin = {
 
     ctx.pluginChannel.onHostCall(BROWSER_RUN_PLUGIN_ID, async (payload) => {
       const call = payload as HostCall
-      const state = stateOf(ctx)
       const scratch = state.scratch.get(call.callId)
       switch (call.kind) {
         case 'log': {
@@ -266,7 +280,6 @@ export const BrowserRunServerPlugin = {
 
     // A deleted conversation must not leave a browser running on the meter.
     ctx.on('conversation/before-purge', async ({ conversationId }) => {
-      const state = stateOf(ctx)
       if (await state.sessions.get(conversationId)) {
         await state.probe(conversationId, { close: true }).catch(error => console.error('browser close on purge failed', error))
       }
