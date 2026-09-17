@@ -2,6 +2,6 @@
 import ImageStudio from '@/client/views/image-studio.vue'
 import { usePageTitle } from '@/client/composables/use-page-title'
 
-usePageTitle('图片创作')
+usePageTitle('图片 Studio')
 </script>
 <template><ImageStudio :conversation-id="null" /></template>

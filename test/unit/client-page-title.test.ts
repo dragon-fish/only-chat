@@ -75,7 +75,7 @@ it('restores the image gallery title after leaving its nested creation page', as
 
   await router.push('/images/new')
   await nextTick()
-  expect(document.title).toBe('图片创作 | Only Chat')
+  expect(document.title).toBe('图片 Studio | Only Chat')
 
   await router.push('/images')
   await nextTick()
