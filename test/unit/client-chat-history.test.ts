@@ -39,7 +39,7 @@ async function mountChat(historyLoaded: boolean, rememberedModel = false, lastMo
     if (historyLoaded) sync.loadedMessageConversations.add(id)
   }
   vi.spyOn(api, 'messages').mockImplementation(id => historyLoaded ? Promise.resolve(histories.get(id)!) : new Promise(() => {}))
-  const sid = ref(1)
+  const sid = ref<number | null>(1)
   const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/:pathMatch(.*)*', component: { template: '<div />' } }] })
   await router.push('/c/1')
   document.body.innerHTML = '<header id="page-header"></header><main id="test-host"></main>'
@@ -49,6 +49,22 @@ async function mountChat(historyLoaded: boolean, rememberedModel = false, lastMo
   await nextTick()
   return { sid, sync }
 }
+
+it('keeps the tab title in sync with the visible chat and returns to the brand title for a draft', async () => {
+  document.title = 'Only Chat'
+  const { sid, sync } = await mountChat(true)
+  expect(document.title).toBe('Chat 1 | Only Chat')
+
+  sync.projects.set(3, { id: 3, user_id: 1, name: '研究', icon_attachment_id: null, system_prompt: null, provider_id: null, model_id: null, params: null, created_at: 1, updated_at: 1 })
+  sync.conversations.get(1)!.project_id = 3
+  sync.conversations.get(1)!.title = '更新后的标题'
+  await nextTick()
+  expect(document.title).toBe('更新后的标题 | 研究 | Only Chat')
+
+  sid.value = null
+  await nextTick()
+  expect(document.title).toBe('Only Chat')
+})
 
 it('retains a remembered model while its off-page lookup is pending', async () => {
   vi.stubGlobal('localStorage', new Storage())

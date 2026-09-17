@@ -4,7 +4,6 @@ import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
 import 'vue-sonner/style.css'
 import AppShell from '@/client/components/app-shell.vue'
-import { usePageTitle } from '@/client/composables/use-page-title'
 import { useTheme } from '@/client/composables/use-theme'
 import { useSyncStore } from '@/client/stores/sync'
 import { useConfigStore } from '@/client/stores/config'
@@ -30,7 +29,6 @@ watch(frameworkAuthSession, state => {
 })
 const route = useRoute()
 const router = useRouter()
-usePageTitle()
 const { resolved: resolvedTheme } = useTheme()
 const guestOnly = computed(() => route.meta.guestOnly === true)
 const authKey = computed(() => {

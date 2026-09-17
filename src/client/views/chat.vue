@@ -16,6 +16,7 @@ import ToolSelector from '@/client/components/tool-selector.vue'
 import ToolPartRenderer from '@/client/components/tool-part-renderer.vue'
 import WorkspacePanel from '@/client/components/workspace-panel.vue'
 import ResponsiveOverlay from '@/client/components/layout/responsive-overlay.vue'
+import { usePageTitle } from '@/client/composables/use-page-title'
 import { useWorkspacePanel, MAX_PANEL_SIZE, MIN_PANEL_SIZE } from '@/client/composables/use-workspace-panel'
 import type { ClientPluginHost } from '@/client/plugins/host'
 import { defaultToolsForSettings, conversationToolBlockReason } from '@/client/components/tool-selector'
@@ -93,6 +94,7 @@ const project = computed(() => {
   return id === null ? undefined : sync.projects.get(id)
 })
 const projectTitle = computed(() => project.value ? projectPresentation(project.value.name).title : '')
+usePageTitle(computed(() => [conversation.value?.title.trim(), projectTitle.value].filter(Boolean).join(' | ')))
 const backTarget = computed(() => {
   const projectId = project.value?.id ?? draftProjectId.value
   return projectId === null ? '/chats' : `/project/${projectId}`
