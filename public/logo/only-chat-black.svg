@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" aria-labelledby="title">
+  <title id="title">Only Chat logo, black on transparent</title>
+  <defs>
+    <mask id="mouth">
+      <rect width="64" height="64" fill="white"/>
+      <path d="M64 24H49c-3.6 0-5.5 3.1-5.5 8s1.9 8 5.5 8h15Z" fill="black"/>
+    </mask>
+  </defs>
+  <path d="M32 9a23 23 0 0 1 0 46c-3.1 0-6.1-.6-8.8-1.8L11 54.5l5.5-7.2A23 23 0 0 1 32 9Z" fill="#000000" mask="url(#mouth)"/>
+</svg>

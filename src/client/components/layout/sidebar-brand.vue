@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { MessageCircleIcon } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 import { SidebarHeader, SidebarMenu, SidebarMenuButton, SidebarMenuItem } from '@/client/ui/sidebar'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/client/ui/tooltip'
@@ -30,7 +29,7 @@ const statusColor = computed(() => ({
         <SidebarMenuButton as-child size="lg" tooltip="Only Chat" class="pr-10">
           <RouterLink to="/new">
             <div class="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
-              <MessageCircleIcon />
+              <img src="/logo/only-chat-white.svg" alt="" class="size-7" />
             </div>
             <span class="font-semibold">Only Chat</span>
           </RouterLink>
