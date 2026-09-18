@@ -123,7 +123,7 @@ describe('authentication entry pages', () => {
   // A disabled public setting must hide the form even though the server still enforces the policy.
   it('replaces registration fields with a closed-registration message', async () => {
     vi.stubGlobal('fetch', async (url: string) => {
-      expect(url).toBe('/api/site-settings')
+      expect(url).toBe('/api/site-config')
       return Response.json({ allowRegister: false })
     })
 

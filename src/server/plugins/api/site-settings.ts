@@ -2,15 +2,26 @@ import type { Context } from 'cordis'
 import { Hono } from 'hono'
 import { eq } from 'drizzle-orm'
 import { siteSettings } from '@/server/db/schema'
-import { AdminSiteSettingsUpdateSchema } from '@/shared/auth'
+import { AdminSiteSettingsUpdateSchema, isAuthOwner, type SiteConfig } from '@/shared/auth'
 import { resolveAllowRegister } from '../auth/site-settings'
+import { isAuditEnabled } from './audit'
 import { requireAdmin, type ApiEnv } from './auth'
 
-export function publicSiteSettingsRoutes(ctx: Context) {
+/**
+ * Everything site-wide the client needs, in one request: it runs before the session guard, so a
+ * guest reads it too. Fields that concern only the owner are added when the session is the owner's.
+ */
+export function publicSiteConfigRoutes(ctx: Context) {
   const r = new Hono<ApiEnv>()
-  r.get('/site-settings', async c => {
-    const setting = await resolveAllowRegister(ctx.db.orm, ctx.env.ALLOW_REGISTER)
-    return c.json({ allowRegister: setting.value })
+  r.get('/site-config', async c => {
+    const [setting, session] = await Promise.all([
+      resolveAllowRegister(ctx.db.orm, ctx.env.ALLOW_REGISTER),
+      ctx.auth.instance.api.getSession({ headers: c.req.raw.headers }),
+    ])
+    const config: SiteConfig = { allowRegister: setting.value }
+    if (session && !session.user.banned && isAuthOwner(session.user)) config.audit = isAuditEnabled(ctx.env.ENABLE_AUDIT)
+    // The body depends on who asks.
+    return c.json(config, 200, { 'cache-control': 'private, no-store' })
   })
   return r
 }

@@ -1,9 +1,13 @@
 import { z } from 'zod'
 
-export const PublicSiteSettingsSchema = z.object({ allowRegister: z.boolean() })
-export type PublicSiteSettings = z.infer<typeof PublicSiteSettingsSchema>
+/** `GET /api/site-config`: every site-wide setting in one response. */
+export interface SiteConfig {
+  allowRegister: boolean
+  /** Present only for the owner: whether the deployment enables the owner audit pages. */
+  audit?: boolean
+}
 
-export const AdminSiteSettingsSchema = PublicSiteSettingsSchema.extend({ source: z.enum(['db', 'env', 'default']) })
+export const AdminSiteSettingsSchema = z.object({ allowRegister: z.boolean(), source: z.enum(['db', 'env', 'default']) })
 export type AdminSiteSettings = z.infer<typeof AdminSiteSettingsSchema>
 export const AdminSiteSettingsUpdateSchema = z.object({ allowRegister: z.boolean().nullable() }).strict()
 export type AdminSiteSettingsUpdate = z.infer<typeof AdminSiteSettingsUpdateSchema>

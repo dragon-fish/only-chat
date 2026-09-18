@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { api } from '@/client/lib/api'
+import { useSiteConfigStore } from '@/client/stores/site-config'
 import type { AdminSiteSettings } from '@/shared/auth'
 import PageBackButton from '@/client/components/layout/page-back-button.vue'
 import { Alert, AlertDescription, AlertTitle } from '@/client/ui/alert'
@@ -11,6 +12,7 @@ import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel } from '@
 import { Spinner } from '@/client/ui/spinner'
 import { Switch } from '@/client/ui/switch'
 
+const siteConfig = useSiteConfigStore()
 const settings = ref<AdminSiteSettings | null>(null)
 const allowRegister = ref(false)
 const pending = ref(false)
@@ -31,7 +33,7 @@ async function save(restore = false) {
   try {
     settings.value = await api.updateAdminSettings({ allowRegister: restore ? null : allowRegister.value })
     allowRegister.value = settings.value.allowRegister
-    await api.siteSettings()
+    await siteConfig.load(true)
     status.value = restore ? '已恢复部署配置' : '注册设置已保存'
   } catch { error.value = '无法保存注册设置，请重试。' }
   finally { pending.value = false }

@@ -1,8 +1,8 @@
-import { computed, onMounted, ref, shallowRef, watch } from 'vue'
+import { computed, onMounted, shallowRef, watch } from 'vue'
 import { useRoute, useRouter, type LocationQueryRaw } from 'vue-router'
-import { api } from '@/client/lib/api'
 import { authClient } from '@/client/lib/auth-client'
 import { useAuthStore } from '@/client/stores/auth'
+import { useSiteConfigStore } from '@/client/stores/site-config'
 import { isAuthOwner } from '@/shared/auth'
 
 export const AUDIT_LIMITS = ['50', '100', '250', '500'] as const
@@ -46,11 +46,8 @@ export function useAuditUsers() {
 /** Whether to offer the audit pages: only to the owner, and only while the deployment enables them. */
 export function useAuditEnabled() {
   const auth = useAuthStore()
-  const enabled = ref(false)
-  watch(() => auth.authUser, user => {
-    enabled.value = false
-    // Nobody but the owner sends the request: for anyone else the answer is already no.
-    if (isAuthOwner(user)) api.auditStatus().then(status => { enabled.value = status.enabled }, () => {})
-  }, { immediate: true })
-  return computed(() => isAuthOwner(auth.authUser) && enabled.value)
+  const site = useSiteConfigStore()
+  // Nobody but the owner is ever told `audit`; for anyone else the field is absent and this is false.
+  watch(() => auth.generation, () => { if (isAuthOwner(auth.authUser)) site.load().catch(() => {}) }, { immediate: true })
+  return computed(() => isAuthOwner(auth.authUser) && site.config?.audit === true)
 }

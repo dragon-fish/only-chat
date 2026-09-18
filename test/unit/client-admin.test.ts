@@ -15,7 +15,7 @@ vi.mock('@/client/lib/auth-client', async importOriginal => ({
 let cleanup = () => {}
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.clearAllMocks(); vi.unstubAllGlobals(); document.body.innerHTML = '' })
 async function mount(component: Component, auditEnabled = false) {
-  if (!vi.isMockFunction(api.auditStatus)) vi.spyOn(api, 'auditStatus').mockResolvedValue({ enabled: auditEnabled })
+  if (!vi.isMockFunction(api.siteConfig)) vi.spyOn(api, 'siteConfig').mockResolvedValue({ allowRegister: false, audit: auditEnabled })
   document.body.innerHTML = '<div id="page-header"></div>'
   const pinia = createPinia()
   const auth = useAuthStore(pinia)
@@ -58,7 +58,7 @@ it('lists the audit pages for the owner only while audit is enabled', async () =
   cleanup()
   vi.restoreAllMocks()
   await mount(view.default, false)
-  await vi.waitFor(() => expect(api.auditStatus).toHaveBeenCalled())
+  await vi.waitFor(() => expect(api.siteConfig).toHaveBeenCalled())
   await nextTick()
   expect(document.querySelector('a[href="/admin/audit/conversations"]')).toBeNull()
 })
@@ -101,7 +101,7 @@ it('saves and restores registration settings then refetches public settings', as
   const requests: Array<{ method: string; body: unknown }> = []
   let overridden = true
   vi.stubGlobal('fetch', async (path: string, init?: RequestInit) => {
-    if (path === '/api/site-settings') return Response.json({ allowRegister: overridden })
+    if (path === '/api/site-config') return Response.json({ allowRegister: overridden })
     if (init?.method === 'PUT') {
       const body = JSON.parse(String(init.body))
       requests.push({ method: 'PUT', body })
@@ -109,7 +109,7 @@ it('saves and restores registration settings then refetches public settings', as
     }
     return Response.json({ allowRegister: overridden, source: overridden ? 'db' : 'default' })
   })
-  const publicSettings = vi.spyOn(api, 'siteSettings')
+  const publicSettings = vi.spyOn(api, 'siteConfig')
   await mount(view.default)
   await vi.waitFor(() => expect(document.querySelector('[data-save-settings]')).not.toBeNull())
   document.querySelector<HTMLButtonElement>('[data-save-settings]')!.click()
@@ -149,7 +149,7 @@ async function openActions() {
 
 it('offers the owner a read-only audit of other accounts only while audit is enabled', async () => {
   await mountUsers(true)
-  await vi.waitFor(() => expect(api.auditStatus).toHaveBeenCalled())
+  await vi.waitFor(() => expect(api.siteConfig).toHaveBeenCalled())
   await openActions()
   expect(document.querySelector('[data-audit-user]')).not.toBeNull()
   cleanup()

@@ -28,7 +28,7 @@ it('tears down Alice and starts Bob when another tab changes the cookie account'
     if (path === '/api/me') return Response.json({ settings: { plugins: { [`user-${currentUser}`]: true } } })
     if (path === '/api/conversations') return Response.json([{ id: currentUser! * 10, user_id: currentUser, title: `Private ${currentUser}`, project_id: null, head_message_id: null, provider_id: null, model_id: null, system_prompt: null, params: null, tools: [], tools_enabled: true, created_at: 0, updated_at: 0, archived_at: null }])
     if (path === '/api/projects' || path === '/api/providers') return Response.json([])
-    if (path === '/api/site-settings') return Response.json({ allowRegister: false })
+    if (path === '/api/site-config') return Response.json({ allowRegister: false })
     throw new Error(`Unexpected request ${path}`)
   })
   // Import after substituting fetch because Better Auth captures the transport on construction.

@@ -1,7 +1,7 @@
-import type { AttachmentCheckResponse, AuditConversationRow, AuditPage, AuditProviderRow, AuditStatus, AuditTranscript, AttachmentUploadResponse, BulkModelStateInput, BulkModelStateResponse, CatalogProviderSummary, CatalogRefreshJobStatus, CatalogRefreshStartResponse, CatalogStatus, FetchModelsResponse, ModelRef, ModelWriteInput, ProviderWriteInput } from '@/shared/api'
+import type { AttachmentCheckResponse, AuditConversationRow, AuditPage, AuditProviderRow, AuditTranscript, AttachmentUploadResponse, BulkModelStateInput, BulkModelStateResponse, CatalogProviderSummary, CatalogRefreshJobStatus, CatalogRefreshStartResponse, CatalogStatus, FetchModelsResponse, ModelRef, ModelWriteInput, ProviderWriteInput } from '@/shared/api'
 import type { Message, ModelListSnapshot, ModelWithMetadata, Project, ProviderWithInterfaces, Conversation, User } from '@/shared/models'
 import type { PresetProvider } from '@/server/plugins/llm/presets'
-import type { AdminSiteSettings, AdminSiteSettingsUpdate, PublicSiteSettings } from '@/shared/auth'
+import type { AdminSiteSettings, AdminSiteSettingsUpdate, SiteConfig } from '@/shared/auth'
 import { useAuthStore } from '@/client/stores/auth'
 import type { ArtifactDto, ArtifactPage, ArtifactRunDto, CreateImageRunInput, CreateImageRunResponse } from '@/shared/artifacts'
 import type { PluginConfigStatusMap } from '@/shared/plugins'
@@ -70,9 +70,8 @@ function queryString(input: Record<string, unknown>): string {
 }
 
 export const api = {
-  siteSettings: () => request<PublicSiteSettings>('GET', '/api/site-settings'),
+  siteConfig: () => request<SiteConfig>('GET', '/api/site-config'),
   adminSettings: () => request<AdminSiteSettings>('GET', '/api/admin/settings'),
-  auditStatus: () => request<AuditStatus>('GET', '/api/admin/audit/status'),
   /** `query` is the listing's URL query, passed through as the page holds it. */
   auditConversations: (query: Record<string, string>) =>
     request<AuditPage<AuditConversationRow>>('GET', `/api/admin/audit/conversations?${new URLSearchParams(query)}`),

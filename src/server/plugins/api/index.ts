@@ -12,7 +12,7 @@ import { CatalogUnavailableError } from '../model-catalog/storage'
 import { authUserId, requireAdmin, requireAuth, type ApiEnv } from './auth'
 import { adminEndpoints } from '../auth/access'
 import { AdminCreateUserSchema, AdminSetRoleSchema } from '@/shared/auth'
-import { adminSiteSettingsRoutes, publicSiteSettingsRoutes } from './site-settings'
+import { adminSiteSettingsRoutes, publicSiteConfigRoutes } from './site-settings'
 import { artifactRoutes } from './artifacts'
 import { auditRoutes } from './audit'
 import { pluginConfigRoutes } from './plugin-config'
@@ -63,7 +63,7 @@ export const ApiPlugin = {
       return cleared
     })
     app.get('/api/health', (c) => c.json({ ok: true }))
-    app.route('/api', publicSiteSettingsRoutes(ctx))
+    app.route('/api', publicSiteConfigRoutes(ctx))
     // Hono copies a sub-app's routes at `route()` time and plugins mount after this point, so the
     // guard cannot be ordered around them. It asks instead, and a plugin path is exempt only while
     // it is in this set — which only `registerPublic` can put it in.

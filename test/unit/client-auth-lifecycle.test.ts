@@ -108,7 +108,7 @@ describe('real App authentication lifecycle', () => {
     const privateRequests: string[] = []
     const fetch = vi.fn(async (input: RequestInfo | URL) => {
       const path = String(input)
-      if (path === '/api/site-settings') return Response.json({ allowRegister: false })
+      if (path === '/api/site-config') return Response.json({ allowRegister: false })
       privateRequests.push(path)
       if (path === '/api/me') return Response.json({ settings: { plugins: {} } })
       if (path === '/api/conversations') return Response.json([conversationFor(1)])
@@ -170,7 +170,7 @@ describe('real App authentication lifecycle', () => {
     const oldConversations = new Promise<Response>(resolve => { finishOldConversations = resolve })
     const fetch = vi.fn(async (input: RequestInfo | URL) => {
       const path = String(input)
-      if (path === '/api/site-settings') return Response.json({ allowRegister: false })
+      if (path === '/api/site-config') return Response.json({ allowRegister: false })
       const requestUser = activeUser
       if (path === '/api/me') return Response.json({ settings: { plugins: { [`user-${requestUser}`]: true } } })
       if (path === '/api/conversations') return requestUser === 1 ? oldConversations : Response.json([conversationFor(2)])

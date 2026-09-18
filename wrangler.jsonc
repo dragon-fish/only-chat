@@ -6,7 +6,11 @@
   "compatibility_flags": ["nodejs_compat"],
   "secrets": { "required": ["KEY_ENCRYPTION_SECRET", "BETTER_AUTH_SECRET"] },
   "vars": {
-    "ALLOW_REGISTER": "false"
+    "ALLOW_REGISTER": "false",
+    // Owner-only read-only audit pages, off unless exactly "true". Keep "false" here so a fork starts
+    // with it off; a deployment turns it on in its build's deploy command
+    // (`wrangler deploy --var ENABLE_AUDIT:true`), locally in `.dev.vars`.
+    "ENABLE_AUDIT": "false"
   },
   "workers_dev": false,
   "preview_urls": false,

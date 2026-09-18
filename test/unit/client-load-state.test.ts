@@ -34,7 +34,7 @@ describe('collection load state', () => {
   it('does not connect or load private collections for a guest', async () => {
     vi.mocked(authClient.getSession).mockResolvedValue({ data: null, error: null } as never)
     const fetch = vi.fn(async path => {
-      if (path === '/api/site-settings') return Response.json({ allowRegister: false })
+      if (path === '/api/site-config') return Response.json({ allowRegister: false })
       throw new Error('private request started')
     })
     vi.stubGlobal('fetch', fetch)
@@ -52,7 +52,7 @@ describe('collection load state', () => {
 
     const sync = useSyncStore(pinia)
     const config = useConfigStore(pinia)
-    expect(fetch.mock.calls.every(([path]) => path === '/api/site-settings')).toBe(true)
+    expect(fetch.mock.calls.every(([path]) => path === '/api/site-config')).toBe(true)
     expect(sync.status).toBe('closed')
     expect(sync.conversationsLoaded).toBe(false)
     expect(sync.projectsLoaded).toBe(false)

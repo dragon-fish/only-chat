@@ -27,11 +27,11 @@ held in the audited user's Durable Object, viewing projects, plugin data or work
 - `src/shared/auth.ts` has `OWNER_USER_ID = '1'` and `isAuthOwner(user)`; `isAuthAdmin`,
   `adminUserIds` and the owner badge in `admin-users.vue` use them.
 - `src/server/plugins/api/auth.ts` has `requireOwner`, which runs after `requireAuth`.
-- `ENABLE_AUDIT` is read fail-closed: only the string `"true"` enables it. It is **not** declared in
-  `wrangler.jsonc` `vars`, because a deploy would overwrite a dashboard value with the declared
-  default. Production sets it with `wrangler secret put ENABLE_AUDIT`; local dev sets it in
-  `.dev.vars`. `.dev.vars.example` documents it as `ENABLE_AUDIT="false"`. Its type lives in
-  `src/server/env.d.ts`.
+- `ENABLE_AUDIT` is read fail-closed: only the string `"true"` enables it. It is declared `"false"`
+  in `wrangler.jsonc` `vars`, so a fork starts with it off. A deployment enables it in its Workers
+  Builds deploy command (`wrangler deploy --var ENABLE_AUDIT:true`), which the next deploy cannot
+  reset the way it resets a dashboard variable; `.dev.vars` overrides it locally. It cannot be a
+  secret: once `secrets.required` is declared, wrangler loads only declared names from `.dev.vars`.
 
 ## Server
 
@@ -39,13 +39,12 @@ held in the audited user's Durable Object, viewing projects, plugin data or work
 
 | Route | Response |
 | --- | --- |
-| `/admin/audit/status` | `{ enabled }` — owner-only, answers even when disabled |
 | `/admin/audit/conversations` | page of `AuditConversationRow` |
 | `/admin/audit/conversations/:id` | `{ conversation, owner, messages }` — every message of every branch |
 | `/admin/audit/providers` | page of `AuditProviderRow` |
 | `/admin/audit/attachments/:id` | any account's attachment bytes, served by the shared `serveAttachment` |
 
-Every route but `status` passes the enabled gate (404) and then `requireOwner` (403), and logs one
+Every route passes the enabled gate (404) and then `requireOwner` (403), and logs one
 line `console.log('audit', { viewer, path })` where `path` includes the query string. No response
 content is logged.
 
@@ -88,8 +87,11 @@ Columns are selected explicitly; `api_key` is never selected, `has_key` is `api_
 
 ## Client
 
+- Whether to show the pages comes from `GET /api/site-config`, the one request that carries every
+  site-wide setting (`allowRegister` today). It is public, and adds `audit` only when the session
+  is the owner's. The client loads it once per session into a store (`stores/site-config.ts`).
 - Entry: 「全站会话」 and 「全站供应商」 in the 站点管理 group of the settings sidebar and of the
-  mobile settings landing page, shown only to the owner while `/admin/audit/status` says enabled.
+  mobile settings landing page, shown only to the owner while `audit` is true.
   The row menu in `admin-users.vue` links to `/admin/audit/conversations?user=<id>`.
 - Router guard: `/admin/audit/**` requires `isAuthOwner`.
 - Both listing pages read and write the URL query. The form has `user` (a select filled from the
@@ -131,7 +133,8 @@ Object and is not fetched.
 
 Worker tests:
 
-- audit disabled: owner gets 404 on data routes and `{ enabled: false }` from status;
+- audit disabled: owner gets 404 on data routes and `audit: false` from site config;
+- site config carries `audit` for the owner only, never for an admin, a user or a guest;
 - audit enabled: a role-`admin` user and a plain user get 403 on every audit route;
 - the provider listing spans users, filters by user, and contains neither the stored ciphertext nor
   an `api_key` field;

@@ -80,6 +80,6 @@ describe('minimal account administration', () => {
     expect((await owner.json('PUT', '/api/admin/settings', { allowRegister: false })).status).toBe(200)
     expect(await (await owner.json('PUT', '/api/admin/settings', { allowRegister: null })).json()).toEqual({ allowRegister: false, source: 'env' })
     expect(await env.DB.prepare("SELECT * FROM site_settings WHERE key = 'auth.allow_register'").first()).toBeNull()
-    expect(await (await json('GET', '/api/site-settings')).json()).toEqual({ allowRegister: false })
+    expect(await (await json('GET', '/api/site-config')).json()).toEqual({ allowRegister: false })
   })
 })

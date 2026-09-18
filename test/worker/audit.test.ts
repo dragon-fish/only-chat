@@ -21,7 +21,7 @@ async function setup(enableAudit: string | undefined) {
   await owner.json('POST', '/api/auth/admin/create-user', { ...signupBody, email: 'admin@example.com', role: 'admin' })
   const admin = await login({ ...signupBody, email: 'admin@example.com' })
   const member = await registerAndLogin({ ...signupBody, name: 'Member', email: 'member@example.com' })
-  const ctx = await createApp({ env: { ...env, ENABLE_AUDIT: enableAudit }, side: 'worker' })
+  const ctx = await createApp({ env: { ...env, ENABLE_AUDIT: enableAudit } as typeof env, side: 'worker' })
   const db = ctx.db.orm
 
   const [provider] = await db.insert(providers).values({ user_id: MEMBER, name: 'Member gateway', api_key: STORED_KEY, created_at: 0 }).returning()
@@ -62,21 +62,27 @@ const json = async <T>(response: Response | Promise<Response>) => await (await r
 describe('owner audit', () => {
   it.each([[undefined], ['false'], ['TRUE']])('is off unless ENABLE_AUDIT is exactly "true" (%s)', async value => {
     const { owner, paths } = await setup(value)
-    expect(await json(owner('/admin/audit/status'))).toEqual({ enabled: false })
+    expect(await json(owner('/site-config'))).toMatchObject({ audit: false })
     for (const path of paths) expect.soft((await owner(path)).status, path).toBe(404)
+  })
+
+  // Only the owner learns whether audit exists; for everyone else the field is simply absent.
+  it('tells the owner alone through the site config', async () => {
+    const { ctx, owner, admin, member } = await setup('true')
+    expect(await json(owner('/site-config'))).toEqual({ allowRegister: true, audit: true })
+    for (const client of [admin, member]) expect.soft(await json(client('/site-config'))).not.toHaveProperty('audit')
+    expect(await json(ctx.api.request('/api/site-config'))).not.toHaveProperty('audit')
   })
 
   it('refuses administrators and ordinary users', async () => {
     const { admin, member, paths } = await setup('true')
     for (const client of [admin, member]) {
-      expect.soft((await client('/admin/audit/status')).status).toBe(403)
       for (const path of paths) expect.soft((await client(path)).status, path).toBe(403)
     }
   })
 
   it('lists every account providers without their credential', async () => {
     const { owner } = await setup('true')
-    expect(await json(owner('/admin/audit/status'))).toEqual({ enabled: true })
     const text = await (await owner('/admin/audit/providers')).text()
     expect(text).not.toContain(STORED_KEY)
     expect(text).not.toContain('api_key')

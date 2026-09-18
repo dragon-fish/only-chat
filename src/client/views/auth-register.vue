@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { CircleAlertIcon } from '@lucide/vue'
-import { api } from '@/client/lib/api'
+import { useSiteConfigStore } from '@/client/stores/site-config'
 import { authClient, authErrorMessage } from '@/client/lib/auth-client'
 import { validatedRelativeRedirect } from '@/client/router'
 import { useAuthStore } from '@/client/stores/auth'
@@ -13,6 +13,7 @@ import { Field, FieldGroup, FieldLabel } from '@/client/ui/field'
 import { Input } from '@/client/ui/input'
 import { Spinner } from '@/client/ui/spinner'
 
+const siteConfig = useSiteConfigStore()
 const auth = useAuthStore()
 const route = useRoute()
 const router = useRouter()
@@ -32,7 +33,7 @@ async function loadSiteSettings() {
   allowRegister.value = null
   settingsError.value = false
   try {
-    allowRegister.value = (await api.siteSettings()).allowRegister
+    allowRegister.value = (await siteConfig.load()).allowRegister
   } catch {
     settingsError.value = true
   }

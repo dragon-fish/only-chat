@@ -96,7 +96,6 @@ export interface CatalogRefreshStartResponse { instanceId: string }
 export type CatalogRefreshJobState = 'queued' | 'running' | 'paused' | 'errored' | 'terminated' | 'complete' | 'waiting' | 'waitingForPause' | 'unknown'
 export interface CatalogRefreshJobStatus { status: CatalogRefreshJobState; error?: string }
 
-export interface AuditStatus { enabled: boolean }
 export interface AuditUser { id: number; name: string; email: string }
 /** One page of an owner audit listing. Cursors are opaque; pass one back as `after` or `before`. */
 export interface AuditPage<T> { rows: T[]; next: string | null; prev: string | null }

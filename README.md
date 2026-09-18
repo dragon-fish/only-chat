@@ -87,8 +87,12 @@ Conversations, Projects, Providers, models, attachments, messages, or settings.
 The one exception is the owner audit: with `ENABLE_AUDIT` set to exactly `true`, `uid=1` alone gets
 two read-only site-wide listings, `/admin/audit/conversations` (with transcripts) and
 `/admin/audit/providers` (names, interface URLs, enabled models; never the key), listed under
-站点管理 in settings. Every audit request logs the viewer and the path to the Worker log. Set it with `wrangler secret put ENABLE_AUDIT` rather than in
-`wrangler.jsonc` `vars`, which every deploy would reset; absent or any other value keeps it off.
+站点管理 in settings. Every audit request logs the viewer and the path to the Worker log.
+`ENABLE_AUDIT` is declared `"false"` in `wrangler.jsonc`, so a fork starts with the audit off. To
+enable it on a deployment, set the Workers Builds deploy command to
+`npx wrangler deploy --var ENABLE_AUDIT:true`; locally, set `ENABLE_AUDIT="true"` in `.dev.vars`.
+A dashboard variable would be reset by the next deploy, and a secret never reaches local dev: with
+`secrets.required` declared, wrangler loads only declared names from `.dev.vars`.
 
 ## Upgrading an existing deployment
 

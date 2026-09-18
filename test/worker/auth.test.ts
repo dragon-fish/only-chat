@@ -55,7 +55,7 @@ describe('registration policy and route protection', () => {
 
   it('keeps health and public settings available without a session', async () => {
     expect((await json('GET', '/api/health')).status).toBe(200)
-    expect(await (await json('GET', '/api/site-settings')).json()).toEqual({ allowRegister: false })
+    expect(await (await json('GET', '/api/site-config')).json()).toEqual({ allowRegister: false })
   })
 
   it('allows administrators to change registration and create users while closed', async () => {
@@ -73,7 +73,7 @@ describe('registration policy and route protection', () => {
     const user = await registerAndLogin({ ...signupBody, email: 'user@example.com' })
     expect((await user.request('/api/admin/settings')).status).toBe(403)
     expect((await user.json('PUT', '/api/admin/settings', { allowRegister: false, role: 'admin', userId: '1' })).status).toBe(403)
-    expect(await (await json('GET', '/api/site-settings')).json()).toEqual({ allowRegister: true })
+    expect(await (await json('GET', '/api/site-config')).json()).toEqual({ allowRegister: true })
   })
 
   it.each([
@@ -98,7 +98,7 @@ describe('registration policy and route protection', () => {
     const admin = await registerAndLogin()
     expect((await admin.json('PUT', '/api/admin/settings', { allowRegister: 'true' })).status).toBe(400)
     await setAllowRegister(false)
-    expect(await (await json('GET', '/api/site-settings')).json()).toEqual({ allowRegister: false })
+    expect(await (await json('GET', '/api/site-config')).json()).toEqual({ allowRegister: false })
   })
 
   it.each([
@@ -120,7 +120,7 @@ describe('registration policy and route protection', () => {
   it('fails closed on corrupted database configuration', async () => {
     await setAllowRegister(true)
     await env.DB.exec("UPDATE site_settings SET value = 'garbage'")
-    expect((await json('GET', '/api/site-settings')).status).toBe(500)
+    expect((await json('GET', '/api/site-config')).status).toBe(500)
     expect((await json('POST', '/api/auth/sign-up/email', signupBody)).status).toBe(403)
     expect(await env.DB.prepare('SELECT id FROM users').first()).toBeNull()
   })

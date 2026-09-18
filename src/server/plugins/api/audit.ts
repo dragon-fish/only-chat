@@ -2,7 +2,7 @@ import type { Context } from 'cordis'
 import { Hono } from 'hono'
 import { and, asc, desc, eq, gte, inArray, lt, sql, type AnyColumn, type SQL } from 'drizzle-orm'
 import { z } from 'zod'
-import type { AuditConversationRow, AuditPage, AuditProviderRow, AuditStatus, AuditTranscript } from '@/shared/api'
+import type { AuditConversationRow, AuditPage, AuditProviderRow, AuditTranscript } from '@/shared/api'
 import type { Conversation } from '@/shared/models'
 import { attachments, conversations, messages, models, providerInterfaces, providers, users } from '../../db/schema'
 import { listMessages, toMessage } from '../hub/conversations'
@@ -56,6 +56,15 @@ function keyset(query: Paging, column: AnyColumn, id: AnyColumn) {
   return { where, orderBy, page }
 }
 
+/**
+ * Fail-closed: only the exact string enables the audit. The parameter is `string` on purpose — the
+ * generated `Env` types the variable as the literal declared in `wrangler.jsonc`, while a deploy
+ * command or `.dev.vars` may set anything.
+ */
+export function isAuditEnabled(value: string | undefined): boolean {
+  return value === 'true'
+}
+
 /** D1 binds at most 100 parameters per statement, so a 500-row page is looked up in slices. */
 async function inSlices<T>(ids: number[], query: (slice: number[]) => Promise<T[]>): Promise<T[]> {
   const slices: number[][] = []
@@ -71,12 +80,10 @@ async function inSlices<T>(ids: number[], query: (slice: number[]) => Promise<T[
 export function auditRoutes(ctx: Context) {
   const r = new Hono<ApiEnv>()
   const db = ctx.db.orm
-  const enabled = () => ctx.env.ENABLE_AUDIT === 'true'
+  const enabled = () => isAuditEnabled(ctx.env.ENABLE_AUDIT)
   const owner = { id: users.id, name: users.name, email: users.email }
 
-  r.get('/admin/audit/status', requireOwner, c => c.json<AuditStatus>({ enabled: enabled() }))
-
-  // `status` is answered above and never reaches this gate: the client asks it whether to show an entry.
+  // Whether to show the pages at all is answered by `/api/site-config`, for the owner only.
   r.use('/admin/audit/*', async (c, next) => {
     if (!enabled()) return c.json({ error: 'not found' }, 404)
     return requireOwner(c, async () => {
