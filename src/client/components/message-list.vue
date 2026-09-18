@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import MessageItem from '@/client/components/message-item.vue'
+import MessageOutline from '@/client/components/message-outline.vue'
+import MessageRail from '@/client/components/message-rail.vue'
+import { messageTurns } from '@/client/lib/message-turns'
 import { useConfigStore } from '@/client/stores/config'
 import {
   MessageScroller,
@@ -27,6 +30,8 @@ const scroller = ref<{ scrollToMessage: (messageId: string) => boolean } | null>
 
 /** Lets the conversation map jump to a message: the scroller API lives inside this subtree. */
 defineExpose({ scrollToMessage: (messageId: number) => scroller.value?.scrollToMessage(String(messageId)) ?? false })
+/** Navigation only earns its place once there is somewhere to go. */
+const turns = computed(() => messageTurns(props.messages))
 const streaming = computed(() => props.messages.some(message => message.status === 'streaming'))
 
 const audit = useAuditContext()
@@ -77,4 +82,7 @@ MessageScrollerProvider(
             :assistant-model-name="row.assistantModelName" :assistant-provider-name="row.assistantProviderName"
             :assistant-lab-id="row.assistantLabId" :assistant-model-family="row.assistantModelFamily")
     MessageScrollerButton(direction="end" class="size-10 md:size-7")
+    template(v-if="turns.length >= 2")
+      MessageRail(:turns="turns")
+      MessageOutline(:turns="turns")
 </template>
