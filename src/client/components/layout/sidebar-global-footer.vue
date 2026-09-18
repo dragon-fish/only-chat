@@ -14,7 +14,7 @@ const isSettings = computed(() => route.path.startsWith('/settings'))
     <SidebarMenu>
       <SidebarMenuItem>
         <SidebarMenuButton data-global-settings as-child class="min-h-10 md:min-h-0" :is-active="isSettings" tooltip="设置">
-          <RouterLink to="/settings/providers">
+          <RouterLink to="/settings">
             <SettingsIcon />
             <span>设置</span>
           </RouterLink>

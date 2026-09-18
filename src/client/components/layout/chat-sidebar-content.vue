@@ -109,12 +109,6 @@ function clearSearch() {
             </RouterLink>
           </SidebarMenuButton>
         </SidebarMenuItem>
-      </SidebarMenu>
-      <div class="relative group-data-[collapsible=icon]:hidden">
-        <SearchIcon class="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-        <SidebarInput v-model="query" class="min-h-10 pl-8" placeholder="搜索 Project 对话…" />
-      </div>
-      <SidebarMenu>
         <SidebarMenuItem>
           <SidebarMenuButton data-project-settings as-child class="min-h-10 md:min-h-0" tooltip="Project 设置">
             <RouterLink :to="`/project/${project.id}/settings`">
@@ -124,12 +118,16 @@ function clearSearch() {
           </SidebarMenuButton>
         </SidebarMenuItem>
       </SidebarMenu>
+      <div class="relative group-data-[collapsible=icon]:hidden">
+        <SearchIcon class="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+        <SidebarInput v-model="query" class="min-h-10 pl-8" placeholder="搜索 Project 对话…" />
+      </div>
     </SidebarHeader>
 
     <SidebarContent class="overflow-hidden">
       <ScrollArea class="min-h-0 flex-1">
         <SidebarGroup>
-          <SidebarGroupLabel>对话 {{ projectConversations.length }}</SidebarGroupLabel>
+          <SidebarGroupLabel>对话 ({{ projectConversations.length }})</SidebarGroupLabel>
           <SidebarGroupContent>
             <CollectionState :loaded="sync.conversationsLoaded" :error="sync.conversationsError" :retry="sync.loadConversations" :empty="projectConversations.length === 0" :empty-title="query ? '没有匹配的对话' : '这个 Project 还没有对话'">
               <template #empty-action>
@@ -158,7 +156,7 @@ function clearSearch() {
           <SidebarMenuButton as-child class="min-h-10 md:min-h-0" tooltip="新建随心聊">
             <RouterLink to="/new">
               <PlusIcon />
-              <span>新建随心聊</span>
+              <span>随心聊</span>
             </RouterLink>
           </SidebarMenuButton>
         </SidebarMenuItem>

@@ -48,7 +48,7 @@ const INACTIVE = 'text-muted-foreground'
     -->
     <Button
       as-child size="icon-lg"
-      class="size-14 self-end -mt-6 mb-1 rounded-full shadow-lg"
+      class="size-16 self-end -mt-10 mb-1 rounded-full shadow-lg"
     >
       <RouterLink to="/new" aria-label="开始随心聊">
         <!-- Sized on the icon, not the button: the variant only yields to an svg carrying its own

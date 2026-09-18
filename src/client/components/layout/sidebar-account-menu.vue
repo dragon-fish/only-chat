@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { RouterLink } from 'vue-router'
-import { ChevronsUpDownIcon, CircleUserRoundIcon, LogOutIcon, ShieldIcon } from '@lucide/vue'
+import { ChevronsUpDownIcon, CircleUserRoundIcon, LogOutIcon, ShieldCogCornerIcon, UserRoundIcon, UserCogIcon } from '@lucide/vue'
 import { toast } from 'vue-sonner'
 import { useAuthStore } from '@/client/stores/auth'
 import { isAuthAdmin } from '@/shared/auth'
@@ -38,12 +38,16 @@ SidebarMenu(v-if="auth.authUser")
       DropdownMenuContent(side="top" align="start" class="w-60")
         DropdownMenuGroup
           DropdownMenuItem(as-child)
+            RouterLink(to="/me")
+              UserRoundIcon
+              | 个人资料
+          DropdownMenuItem(as-child)
             RouterLink(to="/settings/account")
-              CircleUserRoundIcon
+              UserCogIcon
               | 账户设置
           DropdownMenuItem(v-if="admin" as-child)
             RouterLink(to="/admin/users")
-              ShieldIcon
+              ShieldCogCornerIcon
               | 站点管理
         DropdownMenuSeparator
         DropdownMenuGroup

@@ -34,13 +34,13 @@ onMounted(load)
   <SidebarHeader data-image-context>
     <SidebarMenu>
       <SidebarMenuItem>
-        <SidebarMenuButton as-child class="min-h-10 md:min-h-0" tooltip="新建图片">
-          <RouterLink to="/images/new"><PlusIcon /><span>新建图片</span></RouterLink>
+        <SidebarMenuButton as-child class="min-h-10 md:min-h-0" tooltip="图片 Gallery" :is-active="route.path === '/images'">
+          <RouterLink to="/images"><ImagesIcon /><span>图片 Gallery</span></RouterLink>
         </SidebarMenuButton>
       </SidebarMenuItem>
       <SidebarMenuItem>
-        <SidebarMenuButton as-child class="min-h-10 md:min-h-0" tooltip="图片 Gallery" :is-active="route.path === '/images'">
-          <RouterLink to="/images"><ImagesIcon /><span>图片 Gallery</span></RouterLink>
+        <SidebarMenuButton as-child class="min-h-10 md:min-h-0" tooltip="新建图片">
+          <RouterLink to="/images/new"><PlusIcon /><span>图片 Studio</span></RouterLink>
         </SidebarMenuButton>
       </SidebarMenuItem>
     </SidebarMenu>
