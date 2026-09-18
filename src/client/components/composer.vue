@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { useDropZone } from '@vueuse/core'
 import { ArrowUp, Clock3, ImagePlus, Send, Square, X, Zap } from '@lucide/vue'
+import FileDropOverlay from '@/client/components/file-drop-overlay.vue'
 import { Attachment, AttachmentAction, AttachmentActions, AttachmentGroup, AttachmentMedia } from '@/client/ui/attachment'
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } from '@/client/ui/input-group'
 import { Spinner } from '@/client/ui/spinner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/client/ui/tooltip'
+import { toast } from 'vue-sonner'
 import { uploadImage } from '@/client/lib/image-prep'
 import { mergeRestoredText } from '@/client/stores/sync'
 import { api } from '@/client/lib/api'
@@ -160,10 +163,26 @@ function onPaste(e: ClipboardEvent) {
   const files = [...(e.clipboardData?.files ?? [])]
   if (files.length) { e.preventDefault(); void addFiles(files) }
 }
-function onDrop(e: DragEvent) {
-  e.preventDefault()
-  void addFiles([...(e.dataTransfer?.files ?? [])])
-}
+/**
+ * Dropping anywhere on the page, not just onto the box — which is a thin strip at the bottom of a
+ * tall transcript, and aiming at it is the friction this exists to remove.
+ *
+ * `dataTypes` is what makes dragging a non-image show a "no" cursor and leave the overlay dark, so
+ * the refusal lands before the drop rather than after it. Safari is the exception: it withholds
+ * item types mid-drag, so `useDropZone` treats every drag there as valid and the real check falls
+ * back to the filter below — hence a drop that contributes nothing has to say so.
+ */
+const { isOverDropZone } = useDropZone(document, {
+  dataTypes: ['image/'],
+  onDrop: (files) => {
+    const dropped = (files ?? []).filter((f) => f.type.startsWith('image/'))
+    if (dropped.length === 0) {
+      toast.error('只能添加图片')
+      return
+    }
+    void addFiles(dropped)
+  },
+})
 function dropSent() {
   if (sent.value) releasePreviews(sent.value.images)
   sent.value = null
@@ -281,7 +300,8 @@ onBeforeUnmount(() => { releasePreviews(images.value); dropSent() })
 </script>
 
 <template lang="pug">
-.p-3(@drop="onDrop" @dragover.prevent)
+.p-3
+  FileDropOverlay(:show="isOverDropZone")
   //- Sits on the box the way the fold tab sits on its card: same surface, bottom corners square,
   //- so the two read as one control rather than a notice floating above one.
   .mx-auto.flex.justify-center(v-if="stashed.length" class="max-w-3xl px-2")

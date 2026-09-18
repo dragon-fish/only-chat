@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useDropZone } from '@vueuse/core'
 import { ClockIcon, ImagePlusIcon, ImagesIcon, LoaderCircleIcon, RotateCcwIcon, SlidersHorizontalIcon, SparklesIcon, XIcon } from '@lucide/vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
+import FileDropOverlay from '@/client/components/file-drop-overlay.vue'
 import PageBackButton from '@/client/components/layout/page-back-button.vue'
 import { toast } from 'vue-sonner'
 import ImageParameters from '@/client/components/image-parameters.vue'
@@ -83,6 +85,20 @@ async function addFiles(files: File[]) {
     } catch (error) { toast.error(error instanceof Error ? error.message : String(error)) }
   }
 }
+/**
+ * Page-wide drop for reference images. The overlay stays visible on a model that cannot take image
+ * input and says so instead — refusing at the moment of the drop, after the user has already let
+ * go, tells them too late to be useful.
+ */
+const { isOverDropZone } = useDropZone(document, {
+  dataTypes: ['image/'],
+  onDrop: (files) => {
+    if (!referenceAllowed.value) return
+    void addFiles((files ?? []).filter(file => file.type.startsWith('image/')))
+  },
+})
+const dropLabel = computed(() => (referenceAllowed.value ? '松开以添加参考图' : '当前模型不支持图片输入'))
+
 function chooseFiles() { fileInput.value?.click() }
 function onFiles(event: Event) {
   const input = event.target as HTMLInputElement
@@ -249,6 +265,7 @@ onBeforeUnmount(() => { clearTimeout(pollTimer); releaseReferences() })
     <Button as-child variant="ghost" size="sm" class="ml-auto min-h-10 md:min-h-8"><RouterLink to="/images"><ImagesIcon data-icon="inline-start" />Gallery</RouterLink></Button>
     <Button variant="ghost" size="icon-sm" class="min-h-10 min-w-10 lg:hidden" aria-label="生成参数" @click="parametersOpen = true"><SlidersHorizontalIcon /></Button>
   </Teleport>
+  <FileDropOverlay :show="isOverDropZone" :label="dropLabel" />
   <div class="grid h-full min-h-0 lg:grid-cols-[minmax(0,1fr)_18rem]">
     <main class="flex min-h-0 min-w-0 flex-col">
       <ScrollArea class="min-h-0 flex-1">
