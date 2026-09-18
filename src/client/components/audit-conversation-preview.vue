@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, shallowRef } from 'vue'
+import { InfoIcon } from '@lucide/vue'
 import ResponsiveOverlay from '@/client/components/layout/responsive-overlay.vue'
 import { useOverlayLeave } from '@/client/composables/use-route-overlay'
 import MessageList from '@/client/components/message-list.vue'
@@ -11,7 +12,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/client/ui/alert'
 import { Badge } from '@/client/ui/badge'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/client/ui/empty'
 import { Spinner } from '@/client/ui/spinner'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/client/ui/tabs'
+import { Button } from '@/client/ui/button'
 import type { AuditProviderRow, AuditTranscript } from '@/shared/api'
 
 /** The listing keys this on the id: the context below is bound to one conversation's owner. */
@@ -26,6 +27,7 @@ const error = ref('')
 const audit = createAuditContext(() => providers.value)
 provideAuditContext(audit)
 
+const configOpen = ref(false)
 const config = computed(() => transcript.value?.config ?? null)
 const configModel = computed(() => {
   const model = config.value?.model
@@ -67,39 +69,39 @@ ResponsiveOverlay(
   @update:open="setOpen")
   template(#status)
     Badge(v-if="transcript" variant="outline") 只读 · {{ transcript.owner.name }}
+    Button(
+      v-if="config" variant="ghost" size="icon" class="size-8" title="生效配置" aria-label="生效配置"
+      data-audit-config-open @click="configOpen = true")
+      InfoIcon
   .flex.justify-center.py-8(v-if="loading")
     Spinner(aria-label="正在加载会话")
   Alert(v-else-if="error" variant="destructive")
     AlertTitle 加载失败
     AlertDescription {{ error }}
-  Tabs(v-else default-value="messages" class="gap-4")
-    TabsList
-      TabsTrigger(value="messages") 对话
-      TabsTrigger(value="config") 生效配置
-    TabsContent(value="messages")
-      //- MessageList scrolls itself, so it needs a bounded height inside the overlay's own scroller.
-      div(v-if="path.length" class="-mx-4 h-[calc(100dvh-10rem)] md:h-[65dvh]")
-        MessageList(:messages="path")
-      Empty(v-else)
-        EmptyHeader
-          EmptyTitle 没有消息
-          EmptyDescription 这个会话还没有任何消息。
-    TabsContent(value="config" data-audit-config)
-      p.mb-4.text-xs.text-muted-foreground 按当前 Project 与会话设置计算，是下一轮会使用的配置；单轮临时选择的模型与推理强度不会被保存。
-      dl.grid.gap-x-4.gap-y-3.text-sm(v-if="config" class="grid-cols-[auto_1fr]")
-        dt.text-muted-foreground Project
-        dd {{ config.project?.name ?? '无' }}
-        dt.text-muted-foreground 模型
-        dd {{ configModel ?? '未设置（发送时选择）' }}
-        dt.text-muted-foreground 参数
-        dd
-          span.text-muted-foreground(v-if="!paramRows.length") 未设置，使用模型默认值
-          .grid.gap-x-3.gap-y-1(v-else class="grid-cols-[auto_1fr]")
-            template(v-for="param in paramRows" :key="param.label")
-              span.text-muted-foreground {{ param.label }}
-              code.text-xs {{ param.value }}
-        dt.text-muted-foreground 系统提示词
-        dd.min-w-0
-          span.text-muted-foreground(v-if="config.systemPrompt === null") 无
-          pre.max-h-96.overflow-auto.whitespace-pre-wrap.break-words.rounded-md.bg-muted.p-3.text-xs(v-else) {{ config.systemPrompt }}
+  //- MessageList scrolls itself, so it needs a bounded height inside the overlay's own scroller.
+  div(v-else-if="path.length" class="-mx-4 h-[calc(100dvh-7rem)] md:h-[70dvh]")
+    MessageList(:messages="path")
+  Empty(v-else)
+    EmptyHeader
+      EmptyTitle 没有消息
+      EmptyDescription 这个会话还没有任何消息。
+ResponsiveOverlay(mode="dialog" :open="configOpen" title="生效配置" @update:open="configOpen = $event")
+  div(v-if="config" data-audit-config)
+    p.mb-4.text-xs.text-muted-foreground 按当前 Project 与会话设置计算，是下一轮会使用的配置；单轮临时选择的模型与推理强度不会被保存。
+    dl.grid.gap-x-4.gap-y-3.text-sm(class="grid-cols-[auto_1fr]")
+      dt.text-muted-foreground Project
+      dd {{ config.project?.name ?? '无' }}
+      dt.text-muted-foreground 模型
+      dd {{ configModel ?? '未设置（发送时选择）' }}
+      dt.text-muted-foreground 参数
+      dd
+        span.text-muted-foreground(v-if="!paramRows.length") 未设置，使用模型默认值
+        .grid.gap-x-3.gap-y-1(v-else class="grid-cols-[auto_1fr]")
+          template(v-for="param in paramRows" :key="param.label")
+            span.text-muted-foreground {{ param.label }}
+            code.text-xs {{ param.value }}
+      dt.text-muted-foreground 系统提示词
+      dd.min-w-0
+        span.text-muted-foreground(v-if="config.systemPrompt === null") 无
+        pre.max-h-96.overflow-auto.whitespace-pre-wrap.break-words.rounded-md.bg-muted.p-3.text-xs(v-else) {{ config.systemPrompt }}
 </template>
