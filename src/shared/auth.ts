@@ -11,8 +11,15 @@ export type AdminSiteSettingsUpdate = z.infer<typeof AdminSiteSettingsUpdateSche
 export const AuthRoleSchema = z.enum(['user', 'admin'])
 export type AuthRole = z.infer<typeof AuthRoleSchema>
 
+/** The first account is the site owner: Better Auth's `adminUserIds` and every owner-only surface key on it. */
+export const OWNER_USER_ID = '1'
+
+export function isAuthOwner(user: { id: string | number } | null): boolean {
+  return user !== null && String(user.id) === OWNER_USER_ID
+}
+
 export function isAuthAdmin(user: { id: string | number; role?: string | null } | null): boolean {
-  return user !== null && (String(user.id) === '1' || user.role === 'admin')
+  return isAuthOwner(user) || user?.role === 'admin'
 }
 
 export const AdminCreateUserSchema = z.object({

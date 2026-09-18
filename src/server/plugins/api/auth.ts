@@ -3,6 +3,7 @@ import type { Context as HonoContext } from 'hono'
 import { createMiddleware } from 'hono/factory'
 import type { AuthSession } from '../auth'
 import { parseAuthUserId } from '../auth/user-id'
+import { isAuthOwner } from '@/shared/auth'
 
 export type ApiEnv = { Bindings: Env; Variables: { authSession: AuthSession } }
 
@@ -25,5 +26,11 @@ export const requireAdmin = (ctx: Context) => createMiddleware<ApiEnv>(async (c,
     body: { permissions: { user: ['list'] } },
   })
   if (!permission.success) return c.json({ error: 'Forbidden' }, 403)
+  await next()
+})
+
+/** Owner-only, unlike `requireAdmin`: an ordinary administrator is refused too. Runs after `requireAuth`. */
+export const requireOwner = createMiddleware<ApiEnv>(async (c, next) => {
+  if (!isAuthOwner(c.get('authSession').user)) return c.json({ error: 'Forbidden' }, 403)
   await next()
 })

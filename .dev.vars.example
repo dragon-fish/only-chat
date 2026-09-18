@@ -1,3 +1,4 @@
 KEY_ENCRYPTION_SECRET="change-me-32-bytes-of-randomness"
 BETTER_AUTH_SECRET="replace-with-at-least-32-random-characters"
 ALLOW_REGISTER="false"
+ENABLE_AUDIT="false"

@@ -14,6 +14,7 @@ import { adminEndpoints } from '../auth/access'
 import { AdminCreateUserSchema, AdminSetRoleSchema } from '@/shared/auth'
 import { adminSiteSettingsRoutes, publicSiteSettingsRoutes } from './site-settings'
 import { artifactRoutes } from './artifacts'
+import { auditRoutes } from './audit'
 import { pluginConfigRoutes } from './plugin-config'
 
 export type ApiApp = Hono<ApiEnv>
@@ -74,6 +75,7 @@ export const ApiPlugin = {
     })
     app.use('/ws', requireAuth(ctx))
     app.route('/api', adminSiteSettingsRoutes(ctx))
+    app.route('/api', auditRoutes(ctx))
     app.get('/ws', (c) => {
       if (c.req.header('Upgrade') !== 'websocket') return c.text('Expected websocket', 426)
       // R17: browsers always send Origin, so a mismatch there means some other site's page is

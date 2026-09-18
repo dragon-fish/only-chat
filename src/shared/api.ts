@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { ModelMetadataOverrideSchema } from './model-metadata'
 import { InterfaceProtocolSchema, ConversationParamsSchema } from './models'
+import type { Conversation, InterfaceProtocol, Message } from './models'
 export type { ModelRef } from './model-ref'
 export { ModelRefSchema } from './model-ref'
 
@@ -94,3 +95,17 @@ export interface CatalogStatus { version: string | null; previousVersion: string
 export interface CatalogRefreshStartResponse { instanceId: string }
 export type CatalogRefreshJobState = 'queued' | 'running' | 'paused' | 'errored' | 'terminated' | 'complete' | 'waiting' | 'waitingForPause' | 'unknown'
 export interface CatalogRefreshJobStatus { status: CatalogRefreshJobState; error?: string }
+
+export interface AuditStatus { enabled: boolean }
+/** Another account's provider as the owner audit shows it. Carries no credential, only whether one is stored. */
+export interface AuditProvider {
+  id: number
+  name: string
+  enabled: boolean
+  has_key: boolean
+  default_interface_id: number | null
+  interfaces: { id: number; protocol: InterfaceProtocol; base_url: string }[]
+  /** Enabled models only. */
+  models: { id: number; model_id: string; interface_id: number | null; name: string | null; family: string | null; lab_id: string | null }[]
+}
+export interface AuditTranscript { conversation: Conversation; messages: Message[] }

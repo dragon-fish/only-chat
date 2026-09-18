@@ -1,9 +1,9 @@
 import type { Context } from 'cordis'
-import { Hono } from 'hono'
+import { Hono, type Context as HonoContext } from 'hono'
 import { and, eq } from 'drizzle-orm'
 import { authUserId, type ApiEnv } from './auth'
 import { AttachmentCheckRequestSchema } from '@/shared/api'
-import { attachments } from '../../db/schema'
+import { attachments, type AttachmentRow } from '../../db/schema'
 import { parseId } from './params'
 
 /** One limit for everything that becomes an attachment, uploaded or generated (spec §4.7). */
@@ -54,40 +54,42 @@ export function attachmentRoutes(ctx: Context) {
   })
 
   r.get('/attachments/:id', async (c) => {
-    const userId = authUserId(c)
-    // Successes below are cached for a year; a refusal is about who is asking and must not be.
-    const denied = () => c.json({ error: 'not found' }, 404, { 'cache-control': 'no-store' })
     const id = parseId(c.req.param('id'))
-    if (id === null) return denied()
-    const row = await db.query.attachments.findFirst({ where: and(eq(attachments.id, id), eq(attachments.user_id, userId)) })
-    if (!row) return denied()
-    /**
-     * Bytes are content-addressed and these rows are only ever inserted or deleted, so what an id
-     * serves cannot change and revalidating settles nothing.
-     *
-     * `private` is the load-bearing word: the URL names no user, so a shared cache in front of this
-     * Worker would answer one account's request with another account's picture. Never `public`
-     * without moving an unguessable credential into the URL — and note that even then the URL
-     * becomes a bearer token nobody can revoke, which is why the preview route uses short tickets.
-     *
-     * What remains is the browser's own store, which belongs to the browser and not to the cookie
-     * currently in it. Sign-out sends `Clear-Site-Data: "cache"` for exactly that reason.
-     */
-    const headers = {
-      'cache-control': 'private, max-age=31536000, immutable',
-      etag: `"${row.sha256}"`,
-      vary: 'Cookie',
-      'x-content-type-options': 'nosniff',
-    }
-    // One row read and no object read, which is the whole point of answering it here.
-    if (c.req.header('if-none-match') === headers.etag) return new Response(null, { status: 304, headers })
-
-    const stored = await ctx.assets.getStream(row.r2_key)
-    if (!stored) return c.json({ error: 'object missing' }, 404, { 'cache-control': 'no-store' })
-    return new Response(stored.body, {
-      headers: { ...headers, 'content-type': row.mime, 'content-length': String(stored.size) },
-    })
+    const row = id === null ? undefined : await db.query.attachments.findFirst({ where: and(eq(attachments.id, id), eq(attachments.user_id, authUserId(c))) })
+    return serveAttachment(ctx, c, row)
   })
 
   return r
+}
+
+/** Answers with one attachment's bytes, or a 404 when `row` is absent. The caller decides whose rows it may look up. */
+export async function serveAttachment(ctx: Context, c: HonoContext<ApiEnv>, row: AttachmentRow | undefined): Promise<Response> {
+  // Successes below are cached for a year; a refusal is about who is asking and must not be.
+  if (!row) return c.json({ error: 'not found' }, 404, { 'cache-control': 'no-store' })
+  /**
+   * Bytes are content-addressed and these rows are only ever inserted or deleted, so what an id
+   * serves cannot change and revalidating settles nothing.
+   *
+   * `private` is the load-bearing word: the URL names no user, so a shared cache in front of this
+   * Worker would answer one account's request with another account's picture. Never `public`
+   * without moving an unguessable credential into the URL — and note that even then the URL
+   * becomes a bearer token nobody can revoke, which is why the preview route uses short tickets.
+   *
+   * What remains is the browser's own store, which belongs to the browser and not to the cookie
+   * currently in it. Sign-out sends `Clear-Site-Data: "cache"` for exactly that reason.
+   */
+  const headers = {
+    'cache-control': 'private, max-age=31536000, immutable',
+    etag: `"${row.sha256}"`,
+    vary: 'Cookie',
+    'x-content-type-options': 'nosniff',
+  }
+  // One row read and no object read, which is the whole point of answering it here.
+  if (c.req.header('if-none-match') === headers.etag) return new Response(null, { status: 304, headers })
+
+  const stored = await ctx.assets.getStream(row.r2_key)
+  if (!stored) return c.json({ error: 'object missing' }, 404, { 'cache-control': 'no-store' })
+  return new Response(stored.body, {
+    headers: { ...headers, 'content-type': row.mime, 'content-length': String(stored.size) },
+  })
 }

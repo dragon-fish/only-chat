@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router'
 import { EllipsisIcon, PlusIcon } from '@lucide/vue'
 import { authClient } from '@/client/lib/auth-client'
 import { useAuthStore } from '@/client/stores/auth'
-import { isAuthAdmin, type AuthRole } from '@/shared/auth'
+import { isAuthAdmin, isAuthOwner, type AuthRole } from '@/shared/auth'
 import PageBackButton from '@/client/components/layout/page-back-button.vue'
 import { Alert, AlertDescription, AlertTitle } from '@/client/ui/alert'
 import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/client/ui/alert-dialog'
@@ -165,7 +165,7 @@ onMounted(() => load())
                     span.max-w-48.truncate.font-medium {{ user.name }}
                     span.max-w-48.truncate.text-xs.text-muted-foreground {{ user.email }}
                 TableCell
-                  Badge(variant="secondary") {{ String(user.id) === '1' ? '所有者' : isAuthAdmin(user) ? '管理员' : '用户' }}
+                  Badge(variant="secondary") {{ isAuthOwner(user) ? '所有者' : isAuthAdmin(user) ? '管理员' : '用户' }}
                 TableCell
                   Badge(:variant="user.banned ? 'destructive' : 'outline'") {{ user.banned ? '已封禁' : '正常' }}
                 TableCell(class="hidden md:table-cell") {{ new Date(user.createdAt).toLocaleDateString() }}
@@ -176,13 +176,13 @@ onMounted(() => load())
                         EllipsisIcon
                     DropdownMenuContent(align="end")
                       DropdownMenuGroup
-                        DropdownMenuItem(data-set-role :disabled="String(user.id) === '1'" @select="confirm('role', user)") {{ isAuthAdmin(user) ? '设为普通用户' : '设为管理员' }}
+                        DropdownMenuItem(data-set-role :disabled="isAuthOwner(user)" @select="confirm('role', user)") {{ isAuthAdmin(user) ? '设为普通用户' : '设为管理员' }}
                         DropdownMenuItem(@select="openForm('password', user)") 重设密码
                         DropdownMenuItem(@select="confirm('revoke', user)") 撤销全部登录会话
                       DropdownMenuSeparator
                       DropdownMenuGroup
                         DropdownMenuItem(v-if="user.banned" @select="confirm('unban', user)") 解除封禁
-                        DropdownMenuItem(v-else data-ban-user variant="destructive" :disabled="String(user.id) === '1'" @select="confirm('ban', user)") 封禁账户
+                        DropdownMenuItem(v-else data-ban-user variant="destructive" :disabled="isAuthOwner(user)" @select="confirm('ban', user)") 封禁账户
           Empty(v-else-if="!error")
             EmptyHeader
               EmptyTitle 暂无账户
