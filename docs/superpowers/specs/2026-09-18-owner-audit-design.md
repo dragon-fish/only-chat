@@ -43,14 +43,14 @@ that applies the table above.
 | `/admin/audit/users/:uid/conversations/:id/messages` | `{ conversation, messages }` from `getConversation` + `listMessages`, both scoped by `uid`; 404 when the conversation is not `uid`'s |
 | `/admin/audit/users/:uid/attachments/:id` | the attachment bytes, scoped by `uid` |
 
-`AuditProvider` (zod schema in `src/shared/api.ts`):
+`AuditProvider` (interface in `src/shared/api.ts`):
 
 ```ts
 {
   id, name, enabled, has_key: boolean,
   default_interface_id,
   interfaces: { id, protocol, base_url }[],
-  models: { id, model_id, name, interface_id }[]   // enabled models only
+  models: { id, model_id, interface_id, name, family, lab_id }[]   // enabled models only
 }
 ```
 
@@ -70,13 +70,13 @@ Path ids go through the existing `parseId`; an invalid id is a 404.
 
 - `src/client/lib/api.ts` gains the audit calls and `auditAttachmentUrl(uid, id)`.
 - `admin-users.vue`: when the viewer is the owner and `/admin/audit/status` says enabled, each other
-  user's row menu gets an 「审计」 item linking to `/admin/audit/:userId`.
+  user's row menu gets an 「审计（只读）」 item linking to `/admin/audit/:userId`.
 - Router guard: `/admin/audit/**` requires `isAuthOwner`.
-- `pages/admin/audit/[userId].vue` → `views/admin-audit-user.vue`: two tabs.
+- `pages/admin/audit/[userId]/index.vue` → `views/admin-audit-user.vue`: two tabs.
   - 供应商: one read-only card per provider — name, enabled, key present or not, interfaces
     (protocol + base URL, default marked), enabled models.
   - 会话: chat / image toggle, list of conversations (title, updated time) linking to the transcript.
-- `pages/admin/audit/[userId]/[conversationId].vue` → `views/admin-audit-conversation.vue`: the
+- `pages/admin/audit/[userId]/c/[conversationId].vue` → `views/admin-audit-conversation.vue`: the
   transcript of the branch ending at the conversation's `head_message_id`, rendered with
   `MessageList`.
 
