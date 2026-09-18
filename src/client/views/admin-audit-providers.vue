@@ -28,6 +28,8 @@ function modelSummary(row: AuditProviderRow): string {
   const names = row.models.slice(0, 3).map(modelName).join('、')
   return row.models.length > 3 ? `${names} 等共计 ${row.models.length} 个` : names
 }
+/** A pug attribute cannot carry a `\n` escape — it becomes a raw newline and breaks the expression. */
+const modelList = (row: AuditProviderRow) => row.models.map(modelName).join('\n')
 
 let token = 0
 watch(query, async current => {
@@ -95,7 +97,7 @@ watch(query, async current => {
                 code.block.truncate.text-xs(v-if="endpoint.id === row.default_interface_id" :title="endpoint.base_url") {{ endpoint.base_url }}
               span.text-muted-foreground(v-if="!row.interfaces.some(endpoint => endpoint.id === row.default_interface_id)") —
             TableCell(class="max-w-80")
-              span.block.truncate(v-if="row.models.length" :title="row.models.map(modelName).join('\n')") {{ modelSummary(row) }}
+              span.block.truncate(v-if="row.models.length" :title="modelList(row)") {{ modelSummary(row) }}
               span.text-muted-foreground(v-else) —
       Empty(v-else-if="!error")
         EmptyHeader
