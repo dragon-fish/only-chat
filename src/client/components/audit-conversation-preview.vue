@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, shallowRef } from 'vue'
 import ResponsiveOverlay from '@/client/components/layout/responsive-overlay.vue'
+import { useOverlayLeave } from '@/client/composables/use-route-overlay'
 import MessageList from '@/client/components/message-list.vue'
 import { api } from '@/client/lib/api'
 import { createAuditContext, provideAuditContext } from '@/client/lib/audit-context'
@@ -12,8 +13,10 @@ import { Spinner } from '@/client/ui/spinner'
 import type { AuditProviderRow, AuditTranscript } from '@/shared/api'
 
 /** The listing keys this on the id: the context below is bound to one conversation's owner. */
-const props = defineProps<{ conversationId: number, open: boolean }>()
-const emit = defineEmits<{ 'update:open': [value: boolean] }>()
+const props = defineProps<{ conversationId: number }>()
+/** `leave` fires once the exit animation is over; the listing then drops `?preview` from the URL. */
+const emit = defineEmits<{ leave: [] }>()
+const { open, setOpen } = useOverlayLeave(() => emit('leave'))
 const providers = shallowRef<AuditProviderRow[]>([])
 const transcript = shallowRef<AuditTranscript | null>(null)
 const loading = ref(true)
@@ -39,7 +42,7 @@ onMounted(async () => {
 <template lang="pug">
 ResponsiveOverlay(
   mode="dialog" :open="open" :title="transcript?.conversation.title || '会话预览'"
-  @update:open="emit('update:open', $event)")
+  @update:open="setOpen")
   template(#status)
     Badge(v-if="transcript" variant="outline") 只读 · {{ transcript.owner.name }}
   .flex.justify-center.py-8(v-if="loading")

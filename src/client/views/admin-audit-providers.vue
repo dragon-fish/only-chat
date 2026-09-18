@@ -21,7 +21,10 @@ const page = shallowRef<AuditPage<AuditProviderRow> | null>(null)
 const loading = ref(false)
 const error = ref('')
 
+/** Kept after closing, so the dialog still has its content while it animates out. */
 const selected = shallowRef<AuditProviderRow | null>(null)
+const detailsOpen = ref(false)
+function showDetails(row: AuditProviderRow) { selected.value = row; detailsOpen.value = true }
 const modelName = (model: AuditProviderRow['models'][number]) => model.name ?? model.model_id
 /** The first few names say what kind of provider it is; the full list is in the details. */
 function modelSummary(row: AuditProviderRow): string {
@@ -85,7 +88,7 @@ watch(query, async current => {
           TableRow(v-for="row in page.rows" :key="row.id" :data-audit-provider="row.id")
             TableCell.tabular-nums.text-muted-foreground {{ row.id }}
             TableCell
-              button.font-medium(type="button" class="text-left hover:underline" @click="selected = row") {{ row.name }}
+              button.font-medium(type="button" class="text-left hover:underline" @click="showDetails(row)") {{ row.name }}
             TableCell
               RouterLink(:to="{ query: withQuery({ user: String(row.owner.id) }) }" :title="row.owner.email" class="hover:underline") {{ row.owner.name }}
             TableCell
@@ -105,8 +108,8 @@ watch(query, async current => {
           EmptyDescription 没有符合过滤条件的供应商。
       AuditPager(v-if="page?.rows.length" :prev="page.prev" :next="page.next")
   ResponsiveOverlay(
-    mode="dialog" :open="selected !== null" :title="selected ? `${selected.name}（#${selected.id}）` : ''"
-    @update:open="open => { if (!open) selected = null }")
+    mode="dialog" :open="detailsOpen" :title="selected ? `${selected.name}（#${selected.id}）` : ''"
+    @update:open="detailsOpen = $event")
     dl.grid.gap-x-4.gap-y-3.text-sm(v-if="selected" class="grid-cols-[auto_1fr]")
       dt.text-muted-foreground ID
       dd.tabular-nums {{ selected.id }}

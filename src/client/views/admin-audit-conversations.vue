@@ -139,6 +139,5 @@ const formatTokens = (count: number) => count.toLocaleString('zh-CN')
           EmptyDescription 没有符合过滤条件的会话。
       AuditPager(v-if="page?.rows.length" :prev="page.prev" :next="page.next")
   AuditConversationPreview(
-    v-if="previewId !== null" :key="previewId" :conversation-id="previewId" :open="true"
-    @update:open="open => { if (!open) closePreview() }")
+    v-if="previewId !== null" :key="previewId" :conversation-id="previewId" @leave="closePreview")
 </template>
