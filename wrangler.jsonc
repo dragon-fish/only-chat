@@ -4,13 +4,11 @@
   "main": "./src/server/index.ts",
   "compatibility_date": "2026-09-05",
   "compatibility_flags": ["nodejs_compat"],
-  "secrets": { "required": ["KEY_ENCRYPTION_SECRET", "BETTER_AUTH_SECRET"] },
+  // Secrets and optional switches live in .dev.vars.example, not here: absent means off, the deploy
+  // button prompts for them, and a deploy never deletes a secret. No `secrets.required`: once it
+  // exists, local dev loads only the names it lists from .dev.vars and every optional switch is lost.
   "vars": {
-    "ALLOW_REGISTER": "false",
-    // Owner-only read-only audit pages, off unless exactly "true". Keep "false" here so a fork starts
-    // with it off; a deployment turns it on in its build's deploy command
-    // (`wrangler deploy --var ENABLE_AUDIT:true`), locally in `.dev.vars`.
-    "ENABLE_AUDIT": "false"
+    "ALLOW_REGISTER": "false"
   },
   "workers_dev": false,
   "preview_urls": false,
