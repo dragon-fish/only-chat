@@ -90,8 +90,8 @@ config. The audit view provides an injection (`src/client/lib/audit-context.ts`)
   by `MessageList` instead of `config.modelFor`.
 
 When the injection is present, components render no write affordance: no edit, regenerate, branch
-switcher, fork, tool continue, or human-tool answer controls. The audit view never opens the
-WebSocket.
+switcher, fork, tool continue, or human-tool answer controls, and tool renderers are shown busy.
+The audit view sends nothing over the owner's WebSocket.
 
 A message still `streaming` in D1 is shown as stored; its live state lives in the audited user's
 Durable Object and is not fetched.
