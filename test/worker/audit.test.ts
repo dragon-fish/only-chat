@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { createApp } from '@/server/app'
 import { attachments, conversations, models, providerInterfaces, providers } from '@/server/db/schema'
 import { createConversation, insertMessage } from '@/server/plugins/hub/conversations'
+import { createProject } from '@/server/plugins/hub/projects'
 import type { AuditConversationRow, AuditPage, AuditProviderRow, AuditTranscript } from '@/shared/api'
 import type { Usage } from '@/shared/models'
 import { login, registerAndLogin, signupBody } from './auth-helper'
@@ -165,6 +166,24 @@ describe('owner audit', () => {
   ])('rejects %s', async query => {
     const { owner } = await setup('true')
     expect((await owner(`/admin/audit/conversations?${query}`)).status).toBe(400)
+  })
+
+  it('shows the configuration the next turn would use, the conversation over its Project', async () => {
+    const { ctx, owner, chat } = await setup('true')
+    expect((await json<AuditTranscript>(owner(`/admin/audit/conversations/${chat.id}`))).config)
+      .toEqual({ project: null, systemPrompt: null, params: {}, model: null })
+    const project = await createProject(ctx.db.orm, {
+      user_id: MEMBER, name: 'Member project', system_prompt: 'Project prompt', provider_id: 99, model_id: 'project-model',
+      params: { temperature: 0.2, max_tokens: 100 },
+    })
+    await ctx.db.orm.update(conversations).set({ project_id: project.id, system_prompt: 'Chat prompt', params: { temperature: 0 } })
+      .where(eq(conversations.id, chat.id))
+    expect((await json<AuditTranscript>(owner(`/admin/audit/conversations/${chat.id}`))).config).toEqual({
+      project: { id: project.id, name: 'Member project' },
+      systemPrompt: 'Project prompt\n\nChat prompt',
+      params: { temperature: 0, max_tokens: 100 },
+      model: { provider_id: 99, model_id: 'project-model' },
+    })
   })
 
   it('reads any account transcript and attachment', async () => {

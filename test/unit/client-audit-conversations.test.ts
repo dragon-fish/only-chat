@@ -24,6 +24,7 @@ it('previews a conversation over the listing, with the URL carrying it and no re
   const list = vi.spyOn(api, 'auditConversations').mockResolvedValue({ rows: [row], next: null, prev: null })
   vi.spyOn(api, 'auditTranscript').mockResolvedValue({
     conversation: { id: 7, title: 'Member chat', head_message_id: null } as never, owner, messages: [],
+    config: { project: null, systemPrompt: null, params: {}, model: null },
   })
   vi.spyOn(api, 'auditProviders').mockResolvedValue({ rows: [], next: null, prev: null })
   document.body.innerHTML = '<div id="page-header"></div><div id="host"></div>'

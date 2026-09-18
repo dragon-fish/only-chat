@@ -109,6 +109,7 @@ const formatTokens = (count: number) => count.toLocaleString('zh-CN')
       Table(v-else-if="page?.rows.length" :aria-busy="loading")
         TableHeader
           TableRow
+            TableHead ID
             TableHead 标题
             TableHead 所有者
             TableHead 类型
@@ -118,6 +119,7 @@ const formatTokens = (count: number) => count.toLocaleString('zh-CN')
             TableHead.text-right token（输入 / 输出）
         TableBody
           TableRow(v-for="row in page.rows" :key="row.id" :data-audit-conversation="row.id")
+            TableCell.tabular-nums.text-muted-foreground {{ row.id }}
             TableCell(class="max-w-72")
               .flex.items-center.gap-2
                 RouterLink.truncate.font-medium(

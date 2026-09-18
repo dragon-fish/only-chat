@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { ModelMetadataOverrideSchema } from './model-metadata'
 import { InterfaceProtocolSchema, ConversationParamsSchema } from './models'
-import type { Conversation, InterfaceProtocol, Message } from './models'
+import type { Conversation, ConversationParams, InterfaceProtocol, Message } from './models'
 export type { ModelRef } from './model-ref'
 export { ModelRefSchema } from './model-ref'
 
@@ -125,4 +125,15 @@ export interface AuditProviderRow {
   /** Enabled models only. */
   models: { id: number; model_id: string; name: string | null; family: string | null; lab_id: string | null }[]
 }
-export interface AuditTranscript { conversation: Conversation; owner: AuditUser; messages: Message[] }
+/**
+ * What the next turn would be configured with: the Project's settings with the conversation's over
+ * them. A model or reasoning picked for a single turn travels with that command and is never stored.
+ */
+export interface AuditEffectiveConfig {
+  project: { id: number; name: string } | null
+  /** Project prompt, then conversation prompt, joined as sent. `null` when neither sets one. */
+  systemPrompt: string | null
+  params: ConversationParams
+  model: { provider_id: number; model_id: string } | null
+}
+export interface AuditTranscript { conversation: Conversation; owner: AuditUser; messages: Message[]; config: AuditEffectiveConfig }

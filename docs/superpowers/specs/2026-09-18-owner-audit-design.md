@@ -40,7 +40,7 @@ held in the audited user's Durable Object, viewing projects, plugin data or work
 | Route | Response |
 | --- | --- |
 | `/admin/audit/conversations` | page of `AuditConversationRow` |
-| `/admin/audit/conversations/:id` | `{ conversation, owner, messages }` — every message of every branch |
+| `/admin/audit/conversations/:id` | `{ conversation, owner, messages, config }` — every message of every branch, plus the configuration the next turn would use |
 | `/admin/audit/providers` | page of `AuditProviderRow` |
 | `/admin/audit/attachments/:id` | any account's attachment bytes, served by the shared `serveAttachment` |
 
@@ -79,6 +79,11 @@ model { provider_id, model_id, name } | null, tokens { input, output }`.
   counts the whole context again on each turn.
 - Archived conversations are listed and flagged.
 
+`config` is `resolveEffectiveConfig` over the conversation and its Project, the resolution a
+generation runs: the system prompt is the Project prompt and the conversation prompt joined, the
+params are the Project's with the conversation's over them, plus the model and the Project name. A
+model or reasoning picked for a single turn is never stored, so it cannot appear.
+
 ### Provider rows
 
 `id, name, enabled, has_key, created_at, owner { id, name, email }, default_interface_id,
@@ -99,10 +104,10 @@ Columns are selected explicitly; `api_key` is never selected, `has_key` is `api_
   admin user list) and, for conversations, `since` / `until` as `YYYY-MM-DD` local dates (converted
   to epoch ms for the API), `sort` and `dir`. `limit` is a row of links 50 / 100 / 250 / 500.
   上一页 / 下一页 carry the cursor in the URL. The two pages do not link to each other.
-- `/admin/audit/conversations` (`views/admin-audit-conversations.vue`): columns 标题, 所有者 (links
+- `/admin/audit/conversations` (`views/admin-audit-conversations.vue`): columns ID, 标题, 所有者 (links
   to `?user=`), 类型, 模型, 创建时间, 最近活跃, token (输入 / 输出). Archived rows carry a badge.
   The title opens a read-only preview dialog (`components/audit-conversation-preview.vue`) of the
-  branch ending at the conversation's `head_message_id`. The open preview is `?preview=<id>`: back
+  branch ending at the conversation's `head_message_id`, with a 生效配置 tab showing `config`. The open preview is `?preview=<id>`: back
   closes it, the link can be shared, and it does not reload the listing.
 - `/admin/audit/providers` (`views/admin-audit-providers.vue`): columns ID, 名称, 所有者 (links to
   `?user=`), 状态 (启用 / 密钥), 默认接口, 已启用模型 as 「first three 等共计 n 个」. The name opens a

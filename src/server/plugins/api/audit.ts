@@ -6,6 +6,8 @@ import type { AuditConversationRow, AuditPage, AuditProviderRow, AuditTranscript
 import type { Conversation } from '@/shared/models'
 import { attachments, conversations, messages, models, providerInterfaces, providers, users } from '../../db/schema'
 import { listMessages, toMessage } from '../hub/conversations'
+import { resolveEffectiveConfig } from '../hub/effective-config'
+import { getProject } from '../hub/projects'
 import { serveAttachment } from './attachments'
 import { authUserId, requireOwner, type ApiEnv } from './auth'
 import { parseId } from './params'
@@ -139,8 +141,21 @@ export function auditRoutes(ctx: Context) {
     const found = id === null ? undefined : (await db.select({ conversation: conversations, owner }).from(conversations)
       .innerJoin(users, eq(users.id, conversations.user_id)).where(eq(conversations.id, id)))[0]
     if (!found) return c.json({ error: 'not found' }, 404)
-    const rows = await listMessages(db, found.conversation.id, found.conversation.user_id)
-    return c.json<AuditTranscript>({ conversation: found.conversation as Conversation, owner: found.owner, messages: rows.map(row => toMessage(row)) })
+    const { conversation } = found
+    const [rows, project] = await Promise.all([
+      listMessages(db, conversation.id, conversation.user_id),
+      conversation.project_id === null ? undefined : getProject(db, conversation.project_id, conversation.user_id),
+    ])
+    // The same resolution a generation runs, minus the per-turn pick nothing stores.
+    const resolved = resolveEffectiveConfig({ conversation, project })
+    return c.json<AuditTranscript>({
+      conversation: conversation as Conversation, owner: found.owner, messages: rows.map(row => toMessage(row)),
+      config: {
+        project: project ? { id: project.id, name: project.name } : null,
+        systemPrompt: resolved.systemPrompt, params: resolved.params,
+        model: resolved.model ? { provider_id: resolved.model.provider_id, model_id: resolved.model.model_id } : null,
+      },
+    })
   })
 
   r.get('/admin/audit/providers', async c => {
