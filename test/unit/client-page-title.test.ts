@@ -9,6 +9,7 @@ import ProvidersPage from '@/client/pages/settings/providers/index.vue'
 import ChatsPage from '@/client/pages/chats/index.vue'
 import ImagesPage from '@/client/pages/images.vue'
 import ImageNewPage from '@/client/pages/images/new.vue'
+import { APP_TITLE } from '@/client/composables/use-page-title'
 
 vi.mock('@/client/lib/auth-client', () => ({
   authClient: { useSession: () => shallowRef({ isPending: true }) },
@@ -24,11 +25,11 @@ let unmount = () => {}
 afterEach(() => {
   unmount()
   document.body.innerHTML = ''
-  document.title = 'Only Chat'
+  document.title = APP_TITLE
 })
 
 it('lets each page set its title and keeps the chat index on the brand title', async () => {
-  document.title = 'Only Chat'
+  document.title = APP_TITLE
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
@@ -44,19 +45,19 @@ it('lets each page set its title and keeps the chat index on the brand title', a
   app.mount(host)
   unmount = () => app.unmount()
   await nextTick()
-  expect(document.title).toBe('登录 | Only Chat')
+  expect(document.title).toBe(`登录 | ${APP_TITLE}`)
 
   await router.push('/settings/providers')
   await nextTick()
-  expect(document.title).toBe('供应商设置 | Only Chat')
+  expect(document.title).toBe(`供应商设置 | ${APP_TITLE}`)
 
   await router.push('/chats')
   await nextTick()
-  expect(document.title).toBe('Only Chat')
+  expect(document.title).toBe(APP_TITLE)
 })
 
 it('restores the image gallery title after leaving its nested creation page', async () => {
-  document.title = 'Only Chat'
+  document.title = APP_TITLE
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [{
@@ -71,13 +72,13 @@ it('restores the image gallery title after leaving its nested creation page', as
   app.mount(host)
   unmount = () => app.unmount()
   await nextTick()
-  expect(document.title).toBe('图片 Gallery | Only Chat')
+  expect(document.title).toBe(`图片 Gallery | ${APP_TITLE}`)
 
   await router.push('/images/new')
   await nextTick()
-  expect(document.title).toBe('图片 Studio | Only Chat')
+  expect(document.title).toBe(`图片 Studio | ${APP_TITLE}`)
 
   await router.push('/images')
   await nextTick()
-  expect(document.title).toBe('图片 Gallery | Only Chat')
+  expect(document.title).toBe(`图片 Gallery | ${APP_TITLE}`)
 })

@@ -67,7 +67,9 @@ function expectGlobalFrame(status: string) {
   expect(brand!.textContent).toContain('Only Chat')
   expect(connection).not.toBeNull()
   expect(connection!.getAttribute('data-status')).toBe(status)
-  expect(document.querySelector('a[href="/settings/providers"]')).not.toBeNull()
+  // The data attribute, not the href: the settings entry's target has moved once already, and
+  // what this asserts is that the global frame is present, not where its link points.
+  expect(document.querySelector('[data-global-settings]')).not.toBeNull()
   expect(document.body.textContent).toContain('Sidebar Person')
 }
 
