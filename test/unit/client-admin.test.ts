@@ -47,6 +47,22 @@ it('exposes account and admin destinations on the mobile settings landing page',
   expect(document.querySelector('a[href="/admin/users"]')).toBeNull()
 })
 
+it('lists the audit pages for the owner only while audit is enabled', async () => {
+  const view = await import('@/client/views/settings-index.vue')
+  const auth = await mount(view.default, true)
+  await vi.waitFor(() => expect(document.querySelector('a[href="/admin/audit/conversations"]')).not.toBeNull())
+  expect(document.querySelector('a[href="/admin/audit/providers"]')).not.toBeNull()
+  auth.authUser = { ...auth.authUser!, id: '2', role: 'admin' }
+  await nextTick()
+  expect(document.querySelector('a[href="/admin/audit/conversations"]')).toBeNull()
+  cleanup()
+  vi.restoreAllMocks()
+  await mount(view.default, false)
+  await vi.waitFor(() => expect(api.auditStatus).toHaveBeenCalled())
+  await nextTick()
+  expect(document.querySelector('a[href="/admin/audit/conversations"]')).toBeNull()
+})
+
 it('updates a name through Better Auth and refreshes sidebar identity', async () => {
   const view = await import('@/client/views/settings-account.vue')
   const update = vi.spyOn(authClient, 'updateUser').mockResolvedValue({ data: { status: true }, error: null })

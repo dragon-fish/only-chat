@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { ArrowLeftIcon, CircleUserRoundIcon, FolderIcon, PaletteIcon, PlugIcon, ServerIcon, SettingsIcon, SparklesIcon, UsersIcon } from '@lucide/vue'
+import { ArrowLeftIcon, CircleUserRoundIcon, FolderIcon, PaletteIcon, PlugIcon, ServerIcon, SettingsIcon, SparklesIcon, UsersIcon, MessagesSquareIcon, ServerCogIcon } from '@lucide/vue'
 import { pluginManifests } from '@/client/plugins/loaders'
 import { pluginSettingsEntries } from '@/shared/plugins'
 import { activeNavTarget } from '@/client/lib/settings-nav'
 import { useSyncStore } from '@/client/stores/sync'
 import { useAuthStore } from '@/client/stores/auth'
 import { isAuthAdmin } from '@/shared/auth'
+import { useAuditEnabled } from '@/client/composables/use-audit-listing'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useSettingsReturn } from '@/client/composables/use-settings-return'
 import {
@@ -24,7 +25,7 @@ const pluginPages = computed(() => pluginSettingsEntries(pluginManifests, sync.s
 /** Plugin pages live under `/settings/plugins/…`, so only the longest match may light up. */
 const active = computed(() => activeNavTarget(route.path, [
   ...categories.map(category => category.to),
-  ...administration.map(category => category.to),
+  ...administration.value.map(category => category.to),
   ...pluginPages.value.map(page => page.to),
 ]))
 const categories = [
@@ -34,10 +35,15 @@ const categories = [
   { label: '插件', to: '/settings/plugins', icon: PlugIcon },
   { label: '外观', to: '/settings/appearance', icon: PaletteIcon },
 ]
-const administration = [
+const auditEnabled = useAuditEnabled()
+const administration = computed(() => [
   { label: '用户管理', to: '/admin/users', icon: UsersIcon },
   { label: '注册设置', to: '/admin/settings', icon: SettingsIcon },
-]
+  ...(auditEnabled.value ? [
+    { label: '全站会话', to: '/admin/audit/conversations', icon: MessagesSquareIcon },
+    { label: '全站供应商', to: '/admin/audit/providers', icon: ServerCogIcon },
+  ] : []),
+])
 
 function backToChat() {
   void router.push(returnTo.value)

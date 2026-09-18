@@ -97,15 +97,33 @@ export type CatalogRefreshJobState = 'queued' | 'running' | 'paused' | 'errored'
 export interface CatalogRefreshJobStatus { status: CatalogRefreshJobState; error?: string }
 
 export interface AuditStatus { enabled: boolean }
+export interface AuditUser { id: number; name: string; email: string }
+/** One page of an owner audit listing. Cursors are opaque; pass one back as `after` or `before`. */
+export interface AuditPage<T> { rows: T[]; next: string | null; prev: string | null }
+export interface AuditConversationRow {
+  id: number
+  title: string
+  kind: 'chat' | 'image'
+  archived: boolean
+  created_at: number
+  updated_at: number
+  owner: AuditUser
+  /** The model behind the latest assistant message, in any branch. */
+  model: { provider_id: number; model_id: string; name: string | null } | null
+  /** Summed over every message of every branch; input counts the context again on each turn. */
+  tokens: { input: number; output: number }
+}
 /** Another account's provider as the owner audit shows it. Carries no credential, only whether one is stored. */
-export interface AuditProvider {
+export interface AuditProviderRow {
   id: number
   name: string
   enabled: boolean
   has_key: boolean
+  created_at: number
+  owner: AuditUser
   default_interface_id: number | null
   interfaces: { id: number; protocol: InterfaceProtocol; base_url: string }[]
   /** Enabled models only. */
-  models: { id: number; model_id: string; interface_id: number | null; name: string | null; family: string | null; lab_id: string | null }[]
+  models: { id: number; model_id: string; name: string | null; family: string | null; lab_id: string | null }[]
 }
-export interface AuditTranscript { conversation: Conversation; messages: Message[] }
+export interface AuditTranscript { conversation: Conversation; owner: AuditUser; messages: Message[] }

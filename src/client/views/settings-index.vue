@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { ArrowLeftIcon, ChevronRightIcon, CircleUserRoundIcon, FolderIcon, SparklesIcon, PaletteIcon, PlugIcon, ServerIcon, SettingsIcon, UsersIcon } from '@lucide/vue'
+import { ArrowLeftIcon, ChevronRightIcon, CircleUserRoundIcon, FolderIcon, SparklesIcon, PaletteIcon, PlugIcon, ServerIcon, SettingsIcon, UsersIcon, MessagesSquareIcon, ServerCogIcon } from '@lucide/vue'
 import { pluginManifests } from '@/client/plugins/loaders'
 import { pluginSettingsEntries } from '@/shared/plugins'
 import { useSyncStore } from '@/client/stores/sync'
@@ -8,6 +8,7 @@ import { RouterLink, useRouter } from 'vue-router'
 import { useSettingsReturn } from '@/client/composables/use-settings-return'
 import { useAuthStore } from '@/client/stores/auth'
 import { isAuthAdmin } from '@/shared/auth'
+import { useAuditEnabled } from '@/client/composables/use-audit-listing'
 import { Button } from '@/client/ui/button'
 import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle } from '@/client/ui/item'
 
@@ -23,10 +24,15 @@ const categories = [
   { label: '插件', description: '管理聊天中的工具与扩展', to: '/settings/plugins', icon: PlugIcon },
   { label: '外观', description: '调整主题与显示偏好', to: '/settings/appearance', icon: PaletteIcon },
 ]
-const administration = [
+const auditEnabled = useAuditEnabled()
+const administration = computed(() => [
   { label: '用户管理', description: '管理账户、角色与登录权限', to: '/admin/users', icon: UsersIcon },
   { label: '注册设置', description: '设置本站是否开放注册', to: '/admin/settings', icon: SettingsIcon },
-]
+  ...(auditEnabled.value ? [
+    { label: '全站会话', description: '只读查看所有用户的会话', to: '/admin/audit/conversations', icon: MessagesSquareIcon },
+    { label: '全站供应商', description: '只读查看所有用户的供应商配置', to: '/admin/audit/providers', icon: ServerCogIcon },
+  ] : []),
+])
 
 function backToChat() {
   void router.push(returnTo.value)

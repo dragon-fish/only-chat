@@ -1,6 +1,6 @@
 import { inject, provide, type InjectionKey } from 'vue'
 import { api } from '@/client/lib/api'
-import type { AuditProvider, ModelRef } from '@/shared/api'
+import type { AuditProviderRow, ModelRef } from '@/shared/api'
 
 export interface AuditModel { name: string | null, providerName: string, labId: string | null, family: string | null }
 
@@ -17,9 +17,9 @@ export interface AuditContext {
 const AUDIT_CONTEXT: InjectionKey<AuditContext> = Symbol('audit-context')
 
 /** `providers` is read on every lookup, so a reactive source that loads later still resolves names. */
-export function createAuditContext(userId: number, providers: () => readonly AuditProvider[]): AuditContext {
+export function createAuditContext(providers: () => readonly AuditProviderRow[]): AuditContext {
   return {
-    attachmentUrl: id => api.auditAttachmentUrl(userId, id),
+    attachmentUrl: api.auditAttachmentUrl,
     resolveModel(model) {
       const provider = providers().find(item => item.id === model.provider_id)
       if (!provider) return undefined

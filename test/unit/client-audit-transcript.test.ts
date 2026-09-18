@@ -21,7 +21,7 @@ function mount(audited: boolean) {
   const host = document.createElement('div')
   document.body.append(host)
   const Root = defineComponent(() => {
-    if (audited) provideAuditContext(createAuditContext(3, () => []))
+    if (audited) provideAuditContext(createAuditContext(() => []))
     return () => [user, assistant].map(message => h(MessageItem, { key: message.id, message, assistantName: '助手' }))
   })
   const app = createApp(Root).use(createPinia()).use(createRouter({
@@ -46,5 +46,5 @@ it('renders an audited transcript without any control that writes, loading the a
   expect(host.textContent).toContain('看看这张图')
   expect(host.textContent).toContain('好的')
   expect(controls(host)).toEqual([])
-  expect(host.querySelector('img')?.getAttribute('src')).toBe('/api/admin/audit/users/3/attachments/7')
+  expect(host.querySelector('img')?.getAttribute('src')).toBe('/api/admin/audit/attachments/7')
 })

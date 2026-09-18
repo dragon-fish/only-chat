@@ -45,18 +45,25 @@ declare module 'vue-router/auto-routes' {
       Record<never, never>,
       | never
     >,
-    '/admin/audit/[userId]/': RouteRecordInfo<
-      '/admin/audit/[userId]/',
-      '/admin/audit/:userId',
-      { userId: ParamValue<true> },
-      { userId: ParamValue<false> },
+    '/admin/audit/conversations/': RouteRecordInfo<
+      '/admin/audit/conversations/',
+      '/admin/audit/conversations',
+      Record<never, never>,
+      Record<never, never>,
       | never
     >,
-    '/admin/audit/[userId]/c/[conversationId]': RouteRecordInfo<
-      '/admin/audit/[userId]/c/[conversationId]',
-      '/admin/audit/:userId/c/:conversationId',
-      { conversationId: ParamValue<true>, userId: ParamValue<true> },
-      { conversationId: ParamValue<false>, userId: ParamValue<false> },
+    '/admin/audit/conversations/[conversationId]': RouteRecordInfo<
+      '/admin/audit/conversations/[conversationId]',
+      '/admin/audit/conversations/:conversationId',
+      { conversationId: ParamValue<true> },
+      { conversationId: ParamValue<false> },
+      | never
+    >,
+    '/admin/audit/providers': RouteRecordInfo<
+      '/admin/audit/providers',
+      '/admin/audit/providers',
+      Record<never, never>,
+      Record<never, never>,
       | never
     >,
     '/admin/settings': RouteRecordInfo<
@@ -283,21 +290,29 @@ declare module 'vue-router/auto-routes' {
       pathParamNames:
         | never
     }
-    'src/client/pages/admin/audit/[userId]/index.vue': {
+    'src/client/pages/admin/audit/conversations/index.vue': {
       routes:
-        | '/admin/audit/[userId]/'
+        | '/admin/audit/conversations/'
       views:
         | never
       pathParamNames:
         | never
     }
-    'src/client/pages/admin/audit/[userId]/c/[conversationId].vue': {
+    'src/client/pages/admin/audit/conversations/[conversationId].vue': {
       routes:
-        | '/admin/audit/[userId]/c/[conversationId]'
+        | '/admin/audit/conversations/[conversationId]'
       views:
         | never
       pathParamNames:
         | 'conversationId'
+    }
+    'src/client/pages/admin/audit/providers.vue': {
+      routes:
+        | '/admin/audit/providers'
+      views:
+        | never
+      pathParamNames:
+        | never
     }
     'src/client/pages/admin/settings.vue': {
       routes:

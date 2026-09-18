@@ -9,15 +9,15 @@ import { Alert, AlertDescription, AlertTitle } from '@/client/ui/alert'
 import { Badge } from '@/client/ui/badge'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/client/ui/empty'
 import { Spinner } from '@/client/ui/spinner'
-import type { AuditProvider, AuditTranscript } from '@/shared/api'
+import type { AuditProviderRow, AuditTranscript } from '@/shared/api'
 
-/** The page keys this view on both ids: the context below is bound to one account for its lifetime. */
-const props = defineProps<{ userId: number, conversationId: number }>()
-const providers = shallowRef<AuditProvider[]>([])
+/** The page keys this view on the id: the context below is bound to one conversation's owner. */
+const props = defineProps<{ conversationId: number }>()
+const providers = shallowRef<AuditProviderRow[]>([])
 const transcript = shallowRef<AuditTranscript | null>(null)
 const loading = ref(true)
 const error = ref('')
-provideAuditContext(createAuditContext(props.userId, () => providers.value))
+provideAuditContext(createAuditContext(() => providers.value))
 
 /** The branch the audited user is looking at: the one ending at the conversation's head. */
 const path = computed(() => transcript.value
@@ -26,12 +26,11 @@ const path = computed(() => transcript.value
 
 onMounted(async () => {
   try {
-    const [loadedProviders, loadedTranscript] = await Promise.all([
-      api.auditProviders(props.userId), api.auditTranscript(props.userId, props.conversationId),
-    ])
-    providers.value = loadedProviders
-    transcript.value = loadedTranscript
-  } catch { error.value = '无法加载该会话。审计可能未开启，或会话不属于该用户。' }
+    const loaded = await api.auditTranscript(props.conversationId)
+    // Model names resolve against the owner's providers; without them the raw model id still shows.
+    providers.value = (await api.auditProviders({ user: String(loaded.owner.id), limit: '500' }).catch(() => null))?.rows ?? []
+    transcript.value = loaded
+  } catch { error.value = '无法加载该会话。审计可能未开启，或会话不存在。' }
   finally { loading.value = false }
 })
 </script>
@@ -41,7 +40,7 @@ onMounted(async () => {
   Teleport(to="#page-header" defer)
     PageBackButton
     span.truncate.text-sm.font-medium {{ transcript?.conversation.title || '审计会话' }}
-    Badge(variant="outline") 只读 · 用户 {{ userId }}
+    Badge(v-if="transcript" variant="outline") 只读 · {{ transcript.owner.name }}
   .flex.justify-center.py-8(v-if="loading")
     Spinner(aria-label="正在加载会话")
   .mx-auto.w-full.max-w-3xl.p-4(v-else-if="error")
