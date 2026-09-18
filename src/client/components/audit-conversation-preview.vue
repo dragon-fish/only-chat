@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, shallowRef } from 'vue'
+import ResponsiveOverlay from '@/client/components/layout/responsive-overlay.vue'
 import MessageList from '@/client/components/message-list.vue'
-import PageBackButton from '@/client/components/layout/page-back-button.vue'
 import { api } from '@/client/lib/api'
 import { createAuditContext, provideAuditContext } from '@/client/lib/audit-context'
 import { pathToRoot } from '@/client/stores/sync'
@@ -11,8 +11,9 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/client/ui/em
 import { Spinner } from '@/client/ui/spinner'
 import type { AuditProviderRow, AuditTranscript } from '@/shared/api'
 
-/** The page keys this view on the id: the context below is bound to one conversation's owner. */
-const props = defineProps<{ conversationId: number }>()
+/** The listing keys this on the id: the context below is bound to one conversation's owner. */
+const props = defineProps<{ conversationId: number, open: boolean }>()
+const emit = defineEmits<{ 'update:open': [value: boolean] }>()
 const providers = shallowRef<AuditProviderRow[]>([])
 const transcript = shallowRef<AuditTranscript | null>(null)
 const loading = ref(true)
@@ -36,18 +37,18 @@ onMounted(async () => {
 </script>
 
 <template lang="pug">
-.flex.h-full.min-h-0.flex-col
-  Teleport(to="#page-header" defer)
-    PageBackButton
-    span.truncate.text-sm.font-medium {{ transcript?.conversation.title || '审计会话' }}
+ResponsiveOverlay(
+  mode="dialog" :open="open" :title="transcript?.conversation.title || '会话预览'"
+  @update:open="emit('update:open', $event)")
+  template(#status)
     Badge(v-if="transcript" variant="outline") 只读 · {{ transcript.owner.name }}
   .flex.justify-center.py-8(v-if="loading")
     Spinner(aria-label="正在加载会话")
-  .mx-auto.w-full.max-w-3xl.p-4(v-else-if="error")
-    Alert(variant="destructive")
-      AlertTitle 加载失败
-      AlertDescription {{ error }}
-  .min-h-0.flex-1(v-else-if="path.length")
+  Alert(v-else-if="error" variant="destructive")
+    AlertTitle 加载失败
+    AlertDescription {{ error }}
+  //- MessageList scrolls itself, so it needs a bounded height inside the overlay's own scroller.
+  div(v-else-if="path.length" class="-mx-4 h-[calc(100dvh-7rem)] md:h-[70dvh]")
     MessageList(:messages="path")
   Empty(v-else)
     EmptyHeader

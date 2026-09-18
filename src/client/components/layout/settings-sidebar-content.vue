@@ -1,15 +1,10 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { ArrowLeftIcon, CircleUserRoundIcon, FolderIcon, PaletteIcon, PlugIcon, ServerIcon, SettingsIcon, SparklesIcon, UsersIcon, MessagesSquareIcon, ServerCogIcon } from '@lucide/vue'
-import { pluginManifests } from '@/client/plugins/loaders'
-import { pluginSettingsEntries } from '@/shared/plugins'
-import { activeNavTarget } from '@/client/lib/settings-nav'
-import { useSyncStore } from '@/client/stores/sync'
-import { useAuthStore } from '@/client/stores/auth'
-import { isAuthAdmin } from '@/shared/auth'
-import { useAuditEnabled } from '@/client/composables/use-audit-listing'
+import { ArrowLeftIcon } from '@lucide/vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
+import { activeNavTarget } from '@/client/lib/settings-nav'
 import { useSettingsReturn } from '@/client/composables/use-settings-return'
+import { useSettingsNavStore } from '@/client/stores/settings-nav'
 import {
   SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarHeader,
   SidebarMenu, SidebarMenuButton, SidebarMenuItem,
@@ -18,32 +13,9 @@ import {
 const route = useRoute()
 const router = useRouter()
 const returnTo = useSettingsReturn()
-const auth = useAuthStore()
-const sync = useSyncStore()
-/** A disabled plugin keeps its page — reachable from 插件 — but loses its shortcut here. */
-const pluginPages = computed(() => pluginSettingsEntries(pluginManifests, sync.settings.plugins))
+const nav = useSettingsNavStore()
 /** Plugin pages live under `/settings/plugins/…`, so only the longest match may light up. */
-const active = computed(() => activeNavTarget(route.path, [
-  ...categories.map(category => category.to),
-  ...administration.value.map(category => category.to),
-  ...pluginPages.value.map(page => page.to),
-]))
-const categories = [
-  { label: '账户', to: '/settings/account', icon: CircleUserRoundIcon },
-  { label: '模型服务', to: '/settings/providers', icon: ServerIcon },
-  { label: '全局服务模型', to: '/settings/service-models', icon: SparklesIcon },
-  { label: '插件', to: '/settings/plugins', icon: PlugIcon },
-  { label: '外观', to: '/settings/appearance', icon: PaletteIcon },
-]
-const auditEnabled = useAuditEnabled()
-const administration = computed(() => [
-  { label: '用户管理', to: '/admin/users', icon: UsersIcon },
-  { label: '注册设置', to: '/admin/settings', icon: SettingsIcon },
-  ...(auditEnabled.value ? [
-    { label: '全站会话', to: '/admin/audit/conversations', icon: MessagesSquareIcon },
-    { label: '全站供应商', to: '/admin/audit/providers', icon: ServerCogIcon },
-  ] : []),
-])
+const active = computed(() => activeNavTarget(route.path, nav.targets))
 
 function backToChat() {
   void router.push(returnTo.value)
@@ -58,32 +30,13 @@ SidebarHeader(data-settings-header)
         ArrowLeftIcon
         span 返回聊天
 SidebarContent(data-settings-content)
-  SidebarGroup
-    SidebarGroupLabel 设置
+  SidebarGroup(v-for="group in nav.groups" :key="group.id" :data-settings-group="group.id")
+    SidebarGroupLabel {{ group.label }}
     SidebarGroupContent
       SidebarMenu
-        SidebarMenuItem(v-for="category in categories" :key="category.to")
-          SidebarMenuButton(data-settings-category as-child :is-active="active === category.to" class="min-h-10 md:min-h-0" :tooltip="category.label")
-            RouterLink(:to="category.to")
-              component(:is="category.icon")
-              span {{ category.label }}
-  //- Their own group: a plugin page is not a sub-page of 插件, which manages which plugins run.
-  SidebarGroup(v-if="pluginPages.length" data-settings-plugin-pages)
-    SidebarGroupLabel 插件数据管理
-    SidebarGroupContent
-      SidebarMenu
-        SidebarMenuItem(v-for="page in pluginPages" :key="page.to")
-          SidebarMenuButton(data-settings-plugin-page as-child :is-active="active === page.to" class="min-h-10 md:min-h-0" :tooltip="page.label")
-            RouterLink(:to="page.to")
-              FolderIcon
-              span {{ page.label }}
-  SidebarGroup(v-if="isAuthAdmin(auth.authUser)")
-    SidebarGroupLabel 站点管理
-    SidebarGroupContent
-      SidebarMenu
-        SidebarMenuItem(v-for="category in administration" :key="category.to")
-          SidebarMenuButton(as-child :is-active="active === category.to" class="min-h-10 md:min-h-0" :tooltip="category.label")
-            RouterLink(:to="category.to")
-              component(:is="category.icon")
-              span {{ category.label }}
+        SidebarMenuItem(v-for="item in group.items" :key="item.to")
+          SidebarMenuButton(as-child :is-active="active === item.to" class="min-h-10 md:min-h-0" :tooltip="item.label")
+            RouterLink(:to="item.to")
+              component(:is="item.icon")
+              span {{ item.label }}
 </template>

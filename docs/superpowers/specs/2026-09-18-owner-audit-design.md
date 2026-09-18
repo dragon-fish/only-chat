@@ -90,27 +90,28 @@ Columns are selected explicitly; `api_key` is never selected, `has_key` is `api_
 - Whether to show the pages comes from `GET /api/site-config`, the one request that carries every
   site-wide setting (`allowRegister` today). It is public, and adds `audit` only when the session
   is the owner's. The client loads it once per session into a store (`stores/site-config.ts`).
-- Entry: 「全站会话」 and 「全站供应商」 in the 站点管理 group of the settings sidebar and of the
-  mobile settings landing page, shown only to the owner while `audit` is true.
-  The row menu in `admin-users.vue` links to `/admin/audit/conversations?user=<id>`.
+- Entry: an 「审计」 group with 「全站会话」 and 「全站供应商」, shown only to the owner while
+  `audit` is true. The settings sidebar and the `/settings` landing page render the same table of
+  contents, `stores/settings-nav.ts`, as Special:SpecialPages is for a wiki. The row menu in
+  `admin-users.vue` links to `/admin/audit/conversations?user=<id>`.
 - Router guard: `/admin/audit/**` requires `isAuthOwner`.
 - Both listing pages read and write the URL query. The form has `user` (a select filled from the
   admin user list) and, for conversations, `since` / `until` as `YYYY-MM-DD` local dates (converted
   to epoch ms for the API), `sort` and `dir`. `limit` is a row of links 50 / 100 / 250 / 500.
-  「较新」/「较旧」 carry the cursor in the URL. The two pages do not link to each other; the settings
-  sidebar and landing page are the index of pages, as Special:SpecialPages is.
-- `/admin/audit/conversations` (`views/admin-audit-conversations.vue`): columns 标题 (links to the
-  transcript), 所有者 (links to `?user=`), 类型, 模型, 创建时间, 最近活跃, token (输入 / 输出).
-  Archived rows carry a badge.
-- `/admin/audit/providers` (`views/admin-audit-providers.vue`): columns 名称, 所有者 (links to
-  `?user=`), 状态 (启用 / 密钥), 接口 (protocol + base URL, default marked), 已启用模型.
-- `/admin/audit/conversations/:id` (`views/admin-audit-conversation.vue`): the transcript of the
-  branch ending at the conversation's `head_message_id`, rendered with `MessageList`.
+  上一页 / 下一页 carry the cursor in the URL. The two pages do not link to each other.
+- `/admin/audit/conversations` (`views/admin-audit-conversations.vue`): columns 标题, 所有者 (links
+  to `?user=`), 类型, 模型, 创建时间, 最近活跃, token (输入 / 输出). Archived rows carry a badge.
+  The title opens a read-only preview dialog (`components/audit-conversation-preview.vue`) of the
+  branch ending at the conversation's `head_message_id`. The open preview is `?preview=<id>`: back
+  closes it, the link can be shared, and it does not reload the listing.
+- `/admin/audit/providers` (`views/admin-audit-providers.vue`): columns ID, 名称, 所有者 (links to
+  `?user=`), 状态 (启用 / 密钥), 默认接口, 已启用模型 as 「first three 等共计 n 个」. The name opens a
+  details dialog with every interface and every enabled model.
 
 ### Read-only rendering
 
 `MessageList` / `MessageItem` and the tool renderers read the sync store and the viewer's own
-config. The transcript view provides an injection (`src/client/lib/audit-context.ts`) holding:
+config. The preview provides an injection (`src/client/lib/audit-context.ts`) holding:
 
 - `attachmentUrl(id)` — used wherever a message component shows an attachment;
 - `resolveModel({ provider_id, model_id })` — resolves against the conversation owner's providers,

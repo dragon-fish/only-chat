@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref, shallowRef, watch } from 'vue'
-import { RouterLink } from 'vue-router'
+import { computed, ref, shallowRef, watch } from 'vue'
+import { RouterLink, useRouter } from 'vue-router'
+import AuditConversationPreview from '@/client/components/audit-conversation-preview.vue'
 import AuditPager from '@/client/components/audit-pager.vue'
 import PageBackButton from '@/client/components/layout/page-back-button.vue'
 import { useAuditListing, useAuditUsers } from '@/client/composables/use-audit-listing'
@@ -29,18 +30,33 @@ function localDay(day: string | undefined, offsetDays = 0): string | undefined {
   return Number.isNaN(start.getTime()) ? undefined : String(start.getTime())
 }
 function apiQuery(current: Record<string, string>): Record<string, string> {
-  const { since, until, ...rest } = current
+  const { since, until, preview: _preview, ...rest } = current
   const bounds = { since: localDay(since), until: localDay(until, 1) }
   return { ...rest, ...Object.fromEntries(Object.entries(bounds).filter((entry): entry is [string, string] => entry[1] !== undefined)) }
 }
 
+/**
+ * The open preview is `?preview=<id>`, so the browser's back button closes it and the link can be
+ * shared. It is not a filter: opening or closing it must not reload the listing.
+ */
+const router = useRouter()
+const previewId = computed(() => /^\d+$/.test(query.value.preview ?? '') ? Number(query.value.preview) : null)
+let previewPushed = false
+function markPreviewPushed() { previewPushed = true }
+function closePreview() {
+  if (previewPushed) router.back()
+  else void router.replace({ query: withQuery({ preview: undefined }, true) })
+  previewPushed = false
+}
+
 let token = 0
-watch(query, async current => {
+const listingKey = computed(() => JSON.stringify(apiQuery(query.value)))
+watch(listingKey, async () => {
   const mine = ++token
   loading.value = true
   error.value = ''
   try {
-    const loaded = await api.auditConversations(apiQuery(current))
+    const loaded = await api.auditConversations(apiQuery(query.value))
     if (mine === token) page.value = loaded
   } catch {
     if (mine === token) { page.value = null; error.value = '无法加载会话列表。审计可能未开启，或过滤条件无效。' }
@@ -60,7 +76,7 @@ const formatTokens = (count: number) => count.toLocaleString('zh-CN')
     .mx-auto.flex.w-full.max-w-6xl.flex-col.gap-6.p-4(class="md:p-6 lg:p-8")
       .flex.flex-col.gap-2
         h1.text-2xl.font-semibold 全站会话
-        p.text-sm.text-muted-foreground 只读列出所有用户的会话。点击标题查看会话内容。
+        p.text-sm.text-muted-foreground 只读列出所有用户的会话。点击标题预览会话内容。
       form.flex.flex-wrap.items-end.gap-4(data-audit-filters @submit.prevent)
         Field(class="w-56")
           FieldLabel(for="audit-user") 用户
@@ -104,7 +120,9 @@ const formatTokens = (count: number) => count.toLocaleString('zh-CN')
           TableRow(v-for="row in page.rows" :key="row.id" :data-audit-conversation="row.id")
             TableCell(class="max-w-72")
               .flex.items-center.gap-2
-                RouterLink.truncate.font-medium(:to="`/admin/audit/conversations/${row.id}`" class="hover:underline") {{ row.title || '未命名会话' }}
+                RouterLink.truncate.font-medium(
+                  :to="{ query: withQuery({ preview: String(row.id) }, true) }" class="hover:underline"
+                  @click="markPreviewPushed") {{ row.title || '未命名会话' }}
                 Badge(v-if="row.archived" variant="outline") 已归档
             TableCell
               RouterLink(:to="{ query: withQuery({ user: String(row.owner.id) }) }" :title="row.owner.email" class="hover:underline") {{ row.owner.name }}
@@ -120,4 +138,7 @@ const formatTokens = (count: number) => count.toLocaleString('zh-CN')
           EmptyTitle 没有会话
           EmptyDescription 没有符合过滤条件的会话。
       AuditPager(v-if="page?.rows.length" :prev="page.prev" :next="page.next")
+  AuditConversationPreview(
+    v-if="previewId !== null" :key="previewId" :conversation-id="previewId" :open="true"
+    @update:open="open => { if (!open) closePreview() }")
 </template>

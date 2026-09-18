@@ -2,6 +2,7 @@
 import { ref, shallowRef, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import AuditPager from '@/client/components/audit-pager.vue'
+import ResponsiveOverlay from '@/client/components/layout/responsive-overlay.vue'
 import PageBackButton from '@/client/components/layout/page-back-button.vue'
 import { useAuditListing, useAuditUsers } from '@/client/composables/use-audit-listing'
 import { api } from '@/client/lib/api'
@@ -19,6 +20,14 @@ const users = useAuditUsers()
 const page = shallowRef<AuditPage<AuditProviderRow> | null>(null)
 const loading = ref(false)
 const error = ref('')
+
+const selected = shallowRef<AuditProviderRow | null>(null)
+const modelName = (model: AuditProviderRow['models'][number]) => model.name ?? model.model_id
+/** The first few names say what kind of provider it is; the full list is in the details. */
+function modelSummary(row: AuditProviderRow): string {
+  const names = row.models.slice(0, 3).map(modelName).join('、')
+  return row.models.length > 3 ? `${names} 等共计 ${row.models.length} 个` : names
+}
 
 let token = 0
 watch(query, async current => {
@@ -64,34 +73,63 @@ watch(query, async current => {
       Table(v-else-if="page?.rows.length" :aria-busy="loading")
         TableHeader
           TableRow
+            TableHead ID
             TableHead 名称
             TableHead 所有者
             TableHead 状态
-            TableHead 接口
+            TableHead 默认接口
             TableHead 已启用模型
         TableBody
-          TableRow(v-for="row in page.rows" :key="row.id" :data-audit-provider="row.id" class="align-top")
-            TableCell.font-medium {{ row.name }}
+          TableRow(v-for="row in page.rows" :key="row.id" :data-audit-provider="row.id")
+            TableCell.tabular-nums.text-muted-foreground {{ row.id }}
+            TableCell
+              button.font-medium(type="button" class="text-left hover:underline" @click="selected = row") {{ row.name }}
             TableCell
               RouterLink(:to="{ query: withQuery({ user: String(row.owner.id) }) }" :title="row.owner.email" class="hover:underline") {{ row.owner.name }}
             TableCell
               .flex.flex-wrap.gap-1
                 Badge(:variant="row.enabled ? 'secondary' : 'outline'") {{ row.enabled ? '已启用' : '已停用' }}
                 Badge(:variant="row.has_key ? 'secondary' : 'destructive'") {{ row.has_key ? '已配置密钥' : '未配置密钥' }}
-            TableCell(class="max-w-96")
-              span.text-muted-foreground(v-if="!row.interfaces.length") —
-              .flex.flex-col.gap-1(v-else)
-                .flex.flex-wrap.items-center.gap-1(v-for="endpoint in row.interfaces" :key="endpoint.id")
-                  Badge(variant="outline") {{ endpoint.protocol }}
-                  code.break-all.text-xs {{ endpoint.base_url }}
-                  Badge(v-if="endpoint.id === row.default_interface_id" variant="secondary") 默认
-            TableCell(class="max-w-96")
-              span.text-muted-foreground(v-if="!row.models.length") —
-              .flex.flex-wrap.gap-1(v-else)
-                Badge(v-for="model in row.models" :key="model.id" variant="outline" :title="model.model_id") {{ model.name ?? model.model_id }}
+            TableCell(class="max-w-72")
+              template(v-for="endpoint in row.interfaces" :key="endpoint.id")
+                code.block.truncate.text-xs(v-if="endpoint.id === row.default_interface_id" :title="endpoint.base_url") {{ endpoint.base_url }}
+              span.text-muted-foreground(v-if="!row.interfaces.some(endpoint => endpoint.id === row.default_interface_id)") —
+            TableCell(class="max-w-80")
+              span.block.truncate(v-if="row.models.length" :title="row.models.map(modelName).join('\n')") {{ modelSummary(row) }}
+              span.text-muted-foreground(v-else) —
       Empty(v-else-if="!error")
         EmptyHeader
           EmptyTitle 没有供应商
           EmptyDescription 没有符合过滤条件的供应商。
       AuditPager(v-if="page?.rows.length" :prev="page.prev" :next="page.next")
+  ResponsiveOverlay(
+    mode="dialog" :open="selected !== null" :title="selected ? `${selected.name}（#${selected.id}）` : ''"
+    @update:open="open => { if (!open) selected = null }")
+    dl.grid.gap-x-4.gap-y-3.text-sm(v-if="selected" class="grid-cols-[auto_1fr]")
+      dt.text-muted-foreground ID
+      dd.tabular-nums {{ selected.id }}
+      dt.text-muted-foreground 所有者
+      dd {{ selected.owner.name }}（{{ selected.owner.email }}）
+      dt.text-muted-foreground 状态
+      dd.flex.flex-wrap.gap-1
+        Badge(:variant="selected.enabled ? 'secondary' : 'outline'") {{ selected.enabled ? '已启用' : '已停用' }}
+        Badge(:variant="selected.has_key ? 'secondary' : 'destructive'") {{ selected.has_key ? '已配置密钥' : '未配置密钥' }}
+      dt.text-muted-foreground 创建时间
+      dd {{ new Date(selected.created_at).toLocaleString('zh-CN') }}
+      dt.text-muted-foreground 接口
+      dd.flex.flex-col.gap-1
+        span.text-muted-foreground(v-if="!selected.interfaces.length") —
+        .flex.flex-wrap.items-center.gap-1(v-for="endpoint in selected.interfaces" :key="endpoint.id")
+          Badge(variant="outline") {{ endpoint.protocol }}
+          code.break-all.text-xs {{ endpoint.base_url }}
+          Badge(v-if="endpoint.id === selected.default_interface_id" variant="secondary") 默认
+      dt.text-muted-foreground 已启用模型
+      dd
+        span.text-muted-foreground(v-if="!selected.models.length") —
+        template(v-else)
+          p.mb-2.text-muted-foreground 共 {{ selected.models.length }} 个
+          ul.flex.flex-col.gap-1
+            li.flex.flex-wrap.items-baseline.gap-2(v-for="model in selected.models" :key="model.id")
+              span {{ modelName(model) }}
+              code.text-xs.text-muted-foreground(v-if="model.name") {{ model.model_id }}
 </template>

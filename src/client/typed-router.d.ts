@@ -52,13 +52,6 @@ declare module 'vue-router/auto-routes' {
       Record<never, never>,
       | never
     >,
-    '/admin/audit/conversations/[conversationId]': RouteRecordInfo<
-      '/admin/audit/conversations/[conversationId]',
-      '/admin/audit/conversations/:conversationId',
-      { conversationId: ParamValue<true> },
-      { conversationId: ParamValue<false> },
-      | never
-    >,
     '/admin/audit/providers': RouteRecordInfo<
       '/admin/audit/providers',
       '/admin/audit/providers',
@@ -297,14 +290,6 @@ declare module 'vue-router/auto-routes' {
         | never
       pathParamNames:
         | never
-    }
-    'src/client/pages/admin/audit/conversations/[conversationId].vue': {
-      routes:
-        | '/admin/audit/conversations/[conversationId]'
-      views:
-        | never
-      pathParamNames:
-        | 'conversationId'
     }
     'src/client/pages/admin/audit/providers.vue': {
       routes:
