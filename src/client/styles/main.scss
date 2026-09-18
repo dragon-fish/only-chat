@@ -35,12 +35,23 @@ body,
   padding-bottom: env(safe-area-inset-bottom);
 }
 
-// vue-sonner ships unlayered CSS with three attribute selectors and a fixed 20px close button.
-// This fourth selector wins without `!important`, preserving the 16px glyph while expanding the
-// interactive target to the mobile touch floor.
+// vue-sonner's close button is a circle that overhangs the card's top-left corner
+// (`translate(-35%, -35%)`), sized by three attribute selectors to a fixed 20px. This fourth
+// selector wins without `!important`.
+//
+// 26px is deliberate: the card is 54px tall, so anything larger reads as a blister stuck to the
+// corner rather than a control. Do not expand this to 40px to reach a touch-target floor — that
+// was tried, and a disc covering three quarters of the card's height looks like a bug. The button
+// sits outside the card with empty space all around it, which is the real hit area.
 [data-sonner-toaster] [data-sonner-toast][data-styled='true'] [data-close-button] {
-  width: 40px;
-  height: 40px;
+  width: 26px;
+  height: 26px;
+
+  // The shadcn wrapper feeds this slot a 16px lucide glyph, which crowds a 26px circle.
+  svg {
+    width: 14px;
+    height: 14px;
+  }
 }
 
 @media (min-width: 48rem) {
