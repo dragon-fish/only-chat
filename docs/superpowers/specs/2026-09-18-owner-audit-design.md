@@ -95,8 +95,8 @@ Columns are selected explicitly; `api_key` is never selected, `has_key` is `api_
 - Both listing pages read and write the URL query. The form has `user` (a select filled from the
   admin user list) and, for conversations, `since` / `until` as `YYYY-MM-DD` local dates (converted
   to epoch ms for the API), `sort` and `dir`. `limit` is a row of links 50 / 100 / 250 / 500.
-  「较新」/「较旧」 carry the cursor in the URL. With `user` set, each page links to the other page
-  filtered by the same user.
+  「较新」/「较旧」 carry the cursor in the URL. The two pages do not link to each other; the settings
+  sidebar and landing page are the index of pages, as Special:SpecialPages is.
 - `/admin/audit/conversations` (`views/admin-audit-conversations.vue`): columns 标题 (links to the
   transcript), 所有者 (links to `?user=`), 类型, 模型, 创建时间, 最近活跃, token (输入 / 输出).
   Archived rows carry a badge.
