@@ -34,6 +34,7 @@ import { useConfigStore } from '@/client/stores/config'
 import { Button } from '@/client/ui/button'
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from '@/client/ui/empty'
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/client/ui/resizable'
+import { Skeleton } from '@/client/ui/skeleton'
 import type { ModelRef } from '@/shared/api'
 import type { ConversationPluginSettings, Message } from '@/shared/models'
 import { joinStash } from '@/shared/stash'
@@ -542,6 +543,15 @@ ResizablePanelGroup(direction="horizontal" class="h-full")
               @commit="commitSettings" @update-plugin-settings="onPluginSettingsChange")
       .min-h-0.flex-1
         CollectionState(:loaded="visiblePath.length > 0 || sid === null || (sync.conversationsLoaded && sync.loadedMessageConversations.has(sid))" :error="messageLoadError || (sid !== null ? sync.conversationsError : null)" :retry="retryChat")
+          //- The same column as MessageList's content, so the transcript lands where its placeholder stood.
+          template(#loading)
+            .mx-auto.flex.w-full.max-w-3xl.flex-col.gap-6.px-4.py-5
+              template(v-for="index in 2" :key="index")
+                Skeleton(class="h-10 w-2/5 self-end rounded-2xl")
+                .flex.flex-col.gap-2
+                  Skeleton(class="h-4 w-full")
+                  Skeleton(class="h-4 w-11/12")
+                  Skeleton(class="h-4 w-3/5")
           MessageList(
             v-if="visiblePath.length" ref="messageList" :key="sid ?? 'draft'" :messages="visiblePath" :project="project"
             :effective-model="effective"

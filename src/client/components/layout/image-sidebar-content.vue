@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { ImageIcon, ImagesIcon, PlusIcon } from '@lucide/vue'
 import { RouterLink, useRoute } from 'vue-router'
 import CollectionState from '@/client/components/collection-state.vue'
+import SidebarListSkeleton from '@/client/components/layout/sidebar-list-skeleton.vue'
 import { api } from '@/client/lib/api'
 import { useSyncStore } from '@/client/stores/sync'
 import { Button } from '@/client/ui/button'
@@ -52,6 +53,7 @@ onMounted(load)
         <SidebarGroupContent>
           <CollectionState :loaded="loaded" :error="error" :retry="load" :empty="conversations.length === 0" empty-title="还没有创作历史">
             <template #empty-action><Button as-child variant="outline"><RouterLink to="/images/new">开始创作</RouterLink></Button></template>
+            <template #loading><SidebarListSkeleton /></template>
             <SidebarMenu>
               <SidebarMenuItem v-for="conversation in conversations" :key="conversation.id">
                 <SidebarMenuButton as-child class="min-h-10 md:min-h-0" :is-active="activeId === conversation.id" :tooltip="conversation.title">

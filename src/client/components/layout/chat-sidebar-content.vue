@@ -6,6 +6,7 @@ import {
 import { RouterLink, useRoute } from 'vue-router'
 import ProjectAvatar from '@/client/components/project-avatar.vue'
 import CollectionState from '@/client/components/collection-state.vue'
+import SidebarListSkeleton from '@/client/components/layout/sidebar-list-skeleton.vue'
 import { Button } from '@/client/ui/button'
 import ProjectCreateDialog from '@/client/components/layout/project-create-dialog.vue'
 import ProjectNavRow from '@/client/components/layout/project-nav-row.vue'
@@ -134,6 +135,7 @@ function clearSearch() {
                 <Button v-if="query" variant="outline" class="min-h-10" @click="clearSearch">清除搜索</Button>
                 <Button v-else as-child variant="outline" class="min-h-10"><RouterLink :to="`/project/${project.id}/new`">开始对话</RouterLink></Button>
               </template>
+              <template #loading><SidebarListSkeleton /></template>
               <SidebarMenu>
                 <ConversationNavRow
                   v-for="conversation in projectConversations" :key="conversation.id"
@@ -193,6 +195,7 @@ function clearSearch() {
                 <Button v-if="query" variant="outline" class="min-h-10" @click="clearSearch">清除搜索</Button>
                 <ProjectCreateDialog v-else />
               </template>
+              <template #loading><SidebarListSkeleton /></template>
               <SidebarMenu>
                 <ProjectNavRow v-for="item in visibleProjects" :key="item.id" :project="item" />
               </SidebarMenu>
@@ -223,6 +226,7 @@ function clearSearch() {
                 <Button v-if="query" variant="outline" class="min-h-10" @click="clearSearch">清除搜索</Button>
                 <Button v-else as-child variant="outline" class="min-h-10"><RouterLink to="/new">开始对话</RouterLink></Button>
               </template>
+              <template #loading><SidebarListSkeleton /></template>
               <SidebarMenu>
                 <ConversationNavRow
                   v-for="conversation in outerConversations" :key="conversation.id"

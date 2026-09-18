@@ -28,8 +28,11 @@ Alert(v-if="error" variant="destructive")
   AlertDescription(class="break-words")
     p {{ error }}
     Button(v-if="props.retry" variant="outline" class="min-h-10 mt-2" :disabled="retrying" @click="retry") 重试
-.flex.flex-col.gap-2(v-else-if="!loaded" role="status" aria-label="正在加载")
-  Skeleton(v-for="index in 3" :key="index" class="h-12 w-full")
+//- `loading` lets a caller draw placeholders shaped like its own rows; the blocks are the fallback.
+div(v-else-if="!loaded" role="status" aria-label="正在加载")
+  slot(name="loading")
+    .flex.flex-col.gap-2
+      Skeleton(v-for="index in 3" :key="index" class="h-12 w-full")
   span.sr-only 加载中…
 Empty(v-else-if="empty")
   EmptyHeader
