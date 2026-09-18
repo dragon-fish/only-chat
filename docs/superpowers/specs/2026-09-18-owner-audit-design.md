@@ -2,9 +2,14 @@
 
 ## Scope
 
-The site owner (user id `1`) gets a read-only view of another account's provider configuration and
-conversations, so that helping a non-technical user no longer means querying D1 by hand. Nothing in
-this feature writes to another account's data, and no ordinary `admin` can reach it.
+The site owner (user id `1`) gets two read-only, site-wide listings — every account's
+conversations and every account's providers — so that helping a non-technical user no longer means
+querying D1 by hand. Nothing in this feature writes to another account's data, and no ordinary
+`admin` can reach it.
+
+The shape follows MediaWiki special pages: think Special:Conversations and Special:Providers. Each
+is one filter form over one table, every filter lives in the URL, paging is newer/older, and a
+cell that names a user is a link that filters by that user.
 
 Separately, starting a model catalog refresh becomes admin-only.
 
@@ -15,90 +20,110 @@ held in the audited user's Durable Object, viewing projects, plugin data or work
 
 | Condition | Result |
 | --- | --- |
-| `ENABLE_AUDIT` is not exactly `"true"` | every audit route answers 404, the client shows no entry |
+| `ENABLE_AUDIT` is not exactly `"true"` | every audit data route answers 404, the client shows no entry |
 | caller is not the owner (including role `admin`) | 403 |
 | caller is the owner | allowed |
 
-- `src/shared/auth.ts` gains `OWNER_USER_ID = '1'` and `isAuthOwner(user)`. `isAuthAdmin`,
-  `adminUserIds` in `src/server/plugins/auth/index.ts` and the owner badge in `admin-users.vue` use
-  them instead of the `'1'` literal.
-- `src/server/plugins/api/auth.ts` gains `requireOwner`, which runs after `requireAuth` and checks
-  `isAuthOwner(c.get('authSession').user)`.
+- `src/shared/auth.ts` has `OWNER_USER_ID = '1'` and `isAuthOwner(user)`; `isAuthAdmin`,
+  `adminUserIds` and the owner badge in `admin-users.vue` use them.
+- `src/server/plugins/api/auth.ts` has `requireOwner`, which runs after `requireAuth`.
 - `ENABLE_AUDIT` is read fail-closed: only the string `"true"` enables it. It is **not** declared in
   `wrangler.jsonc` `vars`, because a deploy would overwrite a dashboard value with the declared
   default. Production sets it with `wrangler secret put ENABLE_AUDIT`; local dev sets it in
-  `.dev.vars`. `.dev.vars.example` documents it as `ENABLE_AUDIT="false"`.
+  `.dev.vars`. `.dev.vars.example` documents it as `ENABLE_AUDIT="false"`. Its type lives in
+  `src/server/env.d.ts`.
 
 ## Server
 
-New file `src/server/plugins/api/audit.ts`, mounted in `ApiPlugin` like the other route files. All
-routes are `GET`, all sit behind `requireAuth` (the existing `/api/*` guard) and then an audit gate
-that applies the table above.
+`src/server/plugins/api/audit.ts`, all `GET`, all behind the `/api/*` session guard.
 
 | Route | Response |
 | --- | --- |
-| `/admin/audit/status` | `{ enabled: boolean }` — the only audit route that answers when disabled; still owner-only |
-| `/admin/audit/users/:uid/providers` | `AuditProvider[]` (below) |
-| `/admin/audit/users/:uid/conversations?kind=chat\|image` | `listConversations(db, uid, kind)` |
-| `/admin/audit/users/:uid/conversations/:id/messages` | `{ conversation, messages }` from `getConversation` + `listMessages`, both scoped by `uid`; 404 when the conversation is not `uid`'s |
-| `/admin/audit/users/:uid/attachments/:id` | the attachment bytes, scoped by `uid` |
+| `/admin/audit/status` | `{ enabled }` — owner-only, answers even when disabled |
+| `/admin/audit/conversations` | page of `AuditConversationRow` |
+| `/admin/audit/conversations/:id` | `{ conversation, owner, messages }` — every message of every branch |
+| `/admin/audit/providers` | page of `AuditProviderRow` |
+| `/admin/audit/attachments/:id` | any account's attachment bytes, served by the shared `serveAttachment` |
 
-`AuditProvider` (interface in `src/shared/api.ts`):
+Every route but `status` passes the enabled gate (404) and then `requireOwner` (403), and logs one
+line `console.log('audit', { viewer, path })` where `path` includes the query string. No response
+content is logged.
 
-```ts
-{
-  id, name, enabled, has_key: boolean,
-  default_interface_id,
-  interfaces: { id, protocol, base_url }[],
-  models: { id, model_id, interface_id, name, family, lab_id }[]   // enabled models only
-}
-```
+### Listing parameters
 
-The provider query selects these columns explicitly. `api_key` is never selected; `has_key` is
-computed in SQL as `api_key IS NOT NULL`.
+Shared by both listings, all optional; an invalid value is a 400.
 
-The attachment route shares its serving code with `GET /attachments/:id`: the part that turns an
-`attachments` row into a response (ETag, 304, R2 stream, headers) moves into a function both routes
-call. Only the row lookup differs.
+| Param | Meaning | Default |
+| --- | --- | --- |
+| `user` | owner user id | all users |
+| `limit` | one of 50, 100, 250, 500 | 50 |
+| `after`, `before` | opaque cursor from a previous page | first page |
+| `sort` | conversations: `id`, `created`, `active` (`updated_at`); providers: `id` only | `id` |
+| `dir` | `asc`, `desc` | `desc` |
 
-Every audit request that reaches a handler logs one line:
-`console.log('audit', { viewer, target, path })` — no response content.
+Conversations also take `since` / `until`: epoch ms bounds on `updated_at` (most recent activity),
+inclusive / exclusive.
 
-Path ids go through the existing `parseId`; an invalid id is a 404.
+A page is `{ rows, next, prev }`. Paging is keyset on `(sort column, id)`: `after` continues in the
+sort direction, `before` walks back, and rows always come back in sort order. `next` is present when
+more rows follow, `prev` when the request carried a cursor.
+
+### Conversation rows
+
+`id, title, kind, archived, created_at, updated_at, owner { id, name, email },
+model { provider_id, model_id, name } | null, tokens { input, output }`.
+
+- `model` produced the latest assistant message, in any branch — what actually ran, since the
+  conversation's own `model_id` is only an override and usually null. `name` comes from that
+  model's resolved metadata when the row still exists.
+- `tokens` sums `usage.prompt` and `usage.completion` over every message of every branch. Input
+  counts the whole context again on each turn.
+- Archived conversations are listed and flagged.
+
+### Provider rows
+
+`id, name, enabled, has_key, created_at, owner { id, name, email }, default_interface_id,
+interfaces { id, protocol, base_url }[], models { id, model_id, name }[]` (enabled models only).
+Columns are selected explicitly; `api_key` is never selected, `has_key` is `api_key IS NOT NULL`.
 
 ## Client
 
-- `src/client/lib/api.ts` gains the audit calls and `auditAttachmentUrl(uid, id)`.
-- `admin-users.vue`: when the viewer is the owner and `/admin/audit/status` says enabled, each other
-  user's row menu gets an 「审计（只读）」 item linking to `/admin/audit/:userId`.
+- Entry: 「全站会话」 and 「全站供应商」 in the 站点管理 group of the settings sidebar and of the
+  mobile settings landing page, shown only to the owner while `/admin/audit/status` says enabled.
+  The row menu in `admin-users.vue` links to `/admin/audit/conversations?user=<id>`.
 - Router guard: `/admin/audit/**` requires `isAuthOwner`.
-- `pages/admin/audit/[userId]/index.vue` → `views/admin-audit-user.vue`: two tabs.
-  - 供应商: one read-only card per provider — name, enabled, key present or not, interfaces
-    (protocol + base URL, default marked), enabled models.
-  - 会话: chat / image toggle, list of conversations (title, updated time) linking to the transcript.
-- `pages/admin/audit/[userId]/c/[conversationId].vue` → `views/admin-audit-conversation.vue`: the
-  transcript of the branch ending at the conversation's `head_message_id`, rendered with
-  `MessageList`.
+- Both listing pages read and write the URL query. The form has `user` (a select filled from the
+  admin user list) and, for conversations, `since` / `until` as `YYYY-MM-DD` local dates (converted
+  to epoch ms for the API), `sort` and `dir`. `limit` is a row of links 50 / 100 / 250 / 500.
+  「较新」/「较旧」 carry the cursor in the URL. With `user` set, each page links to the other page
+  filtered by the same user.
+- `/admin/audit/conversations` (`views/admin-audit-conversations.vue`): columns 标题 (links to the
+  transcript), 所有者 (links to `?user=`), 类型, 模型, 创建时间, 最近活跃, token (输入 / 输出).
+  Archived rows carry a badge.
+- `/admin/audit/providers` (`views/admin-audit-providers.vue`): columns 名称, 所有者 (links to
+  `?user=`), 状态 (启用 / 密钥), 接口 (protocol + base URL, default marked), 已启用模型.
+- `/admin/audit/conversations/:id` (`views/admin-audit-conversation.vue`): the transcript of the
+  branch ending at the conversation's `head_message_id`, rendered with `MessageList`.
 
 ### Read-only rendering
 
 `MessageList` / `MessageItem` and the tool renderers read the sync store and the viewer's own
-config. The audit view provides an injection (`src/client/lib/audit-context.ts`) holding:
+config. The transcript view provides an injection (`src/client/lib/audit-context.ts`) holding:
 
-- `attachmentUrl(id)` — used wherever a component currently calls `api.attachmentUrl`;
-- `resolveModel({ provider_id, model_id })` — resolves against the audited user's providers, used
-  by `MessageList` instead of `config.modelFor`.
+- `attachmentUrl(id)` — used wherever a message component shows an attachment;
+- `resolveModel({ provider_id, model_id })` — resolves against the conversation owner's providers,
+  used by `MessageList` instead of `config.modelFor`.
 
 When the injection is present, components render no write affordance: no edit, regenerate, branch
 switcher, fork, tool continue, or human-tool answer controls, and tool renderers are shown busy.
 The audit view sends nothing over the owner's WebSocket.
 
-A message still `streaming` in D1 is shown as stored; its live state lives in the audited user's
-Durable Object and is not fetched.
+A message still `streaming` in D1 is shown as stored; its live state lives in the owner's Durable
+Object and is not fetched.
 
 ## Model catalog refresh
 
-- `POST /model-catalog/refresh` and `GET /model-catalog/refresh/:instanceId` get `requireAdmin`.
+- `POST /model-catalog/refresh` and `GET /model-catalog/refresh/:instanceId` require an admin.
 - `catalog-refresh-status.vue` hides the refresh button unless `isAuthAdmin(auth.authUser)`; the
   version and last-success lines stay visible to everyone.
 
@@ -108,10 +133,14 @@ Worker tests:
 
 - audit disabled: owner gets 404 on data routes and `{ enabled: false }` from status;
 - audit enabled: a role-`admin` user and a plain user get 403 on every audit route;
-- owner reads another user's providers, and the serialized response contains neither the stored
-  ciphertext nor an `api_key` field;
-- owner reads another user's conversation list, messages and an attachment;
-- a conversation or attachment belonging to a different user than `:uid` is a 404;
+- the provider listing spans users, filters by user, and contains neither the stored ciphertext nor
+  an `api_key` field;
+- the conversation listing spans users, filters by user and activity time, reports the latest
+  assistant model and token sums, includes archived rows, and pages forward and back without gaps
+  or repeats;
+- invalid listing parameters are a 400;
+- owner reads any account's transcript and attachment;
 - a plain user gets 403 from `POST /model-catalog/refresh`.
 
-Unit test: `MessageItem` under the audit injection renders none of the write controls.
+Unit tests: `MessageItem` under the audit injection renders none of the write controls; the audit
+entries appear only for the owner with audit enabled.
