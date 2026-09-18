@@ -29,8 +29,8 @@ held in the audited user's Durable Object, viewing projects, plugin data or work
 - `src/server/plugins/api/auth.ts` has `requireOwner`, which runs after `requireAuth`.
 - `ENABLE_AUDIT` is read fail-closed: only the string `"true"` enables it. It is not declared in
   `wrangler.jsonc`, so absent means off and a fork starts with it off; `.dev.vars.example` lists it.
-  A deployment sets it as a secret (`wrangler secret put` or a Secret-type dashboard variable),
-  which no deploy deletes; local dev sets it in `.dev.vars`. `wrangler.jsonc` has no `secrets.required`: with it
+  A deployment sets it as a plain dashboard variable, readable at a glance, which `keep_vars: true`
+  keeps across deploys; local dev sets it in `.dev.vars`. `wrangler.jsonc` has no `secrets.required`: with it
   declared, local dev loads only the listed names from `.dev.vars`.
 
 ## Server

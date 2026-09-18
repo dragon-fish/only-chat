@@ -4,9 +4,11 @@
   "main": "./src/server/index.ts",
   "compatibility_date": "2026-09-05",
   "compatibility_flags": ["nodejs_compat"],
-  // Secrets and optional switches live in .dev.vars.example, not here: absent means off, the deploy
-  // button prompts for them, and a deploy never deletes a secret. No `secrets.required`: once it
-  // exists, local dev loads only the names it lists from .dev.vars and every optional switch is lost.
+  // Optional switches (see .dev.vars.example) are not declared here: absent means off, so a fork starts
+  // with them off. A deployment sets them as plain dashboard variables, which `keep_vars` stops the next
+  // deploy from deleting; a var declared below would still override the dashboard. No
+  // `secrets.required`: once it exists, local dev loads only the names it lists from .dev.vars.
+  "keep_vars": true,
   "vars": {
     "ALLOW_REGISTER": "false"
   },

@@ -89,9 +89,9 @@ two read-only site-wide listings, `/admin/audit/conversations` (with transcripts
 `/admin/audit/providers` (names, interface URLs, enabled models; never the key), listed under
 站点管理 in settings. Every audit request logs the viewer and the path to the Worker log.
 `ENABLE_AUDIT` is an optional switch listed in `.dev.vars.example` and deliberately absent from
-`wrangler.jsonc`, so a fork starts with the audit off. Enable it as a secret (`wrangler secret put
-ENABLE_AUDIT`, or a Secret-type variable in the dashboard), which no deploy deletes; locally, set it
-in `.dev.vars`. Do not reintroduce `secrets.required`: with it declared, local dev loads only the
+`wrangler.jsonc`, so a fork starts with the audit off. Enable it as a plain variable in the dashboard, where
+its value stays readable; `wrangler.jsonc` sets `keep_vars`, so a deploy keeps undeclared dashboard
+variables instead of deleting them. Locally, set it in `.dev.vars`. Do not reintroduce `secrets.required`: with it declared, local dev loads only the
 listed names from `.dev.vars` and every optional switch silently reads as absent.
 
 ## Upgrading an existing deployment
