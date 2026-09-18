@@ -92,11 +92,11 @@ watch(query, async current => {
               .flex.flex-wrap.gap-1
                 Badge(:variant="row.enabled ? 'secondary' : 'outline'") {{ row.enabled ? '已启用' : '已停用' }}
                 Badge(:variant="row.has_key ? 'secondary' : 'destructive'") {{ row.has_key ? '已配置密钥' : '未配置密钥' }}
-            TableCell(class="max-w-72")
+            TableCell(class="max-w-56")
               template(v-for="endpoint in row.interfaces" :key="endpoint.id")
                 code.block.truncate.text-xs(v-if="endpoint.id === row.default_interface_id" :title="endpoint.base_url") {{ endpoint.base_url }}
               span.text-muted-foreground(v-if="!row.interfaces.some(endpoint => endpoint.id === row.default_interface_id)") —
-            TableCell(class="max-w-80")
+            TableCell(class="max-w-64")
               span.block.truncate(v-if="row.models.length" :title="modelList(row)") {{ modelSummary(row) }}
               span.text-muted-foreground(v-else) —
       Empty(v-else-if="!error")
