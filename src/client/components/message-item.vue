@@ -11,7 +11,7 @@ import TurnSegments from '@/client/components/turn-segments.vue'
 import { messageSegments, turnBlocks } from '@/client/components/message-segments'
 import { canContinueToolMessage } from '@/client/components/tool-part-renderer'
 import ProjectAvatar from '@/client/components/project-avatar.vue'
-import { api } from '@/client/lib/api'
+import { useAttachmentUrl, useAuditContext } from '@/client/lib/audit-context'
 import { cn } from '@/client/lib/utils'
 import { assistantWaitState, editCommandFor, regenerateCommandFor, useSyncStore, type EffectiveModel } from '@/client/stores/sync'
 import { Alert, AlertDescription, AlertTitle } from '@/client/ui/alert'
@@ -38,6 +38,9 @@ const props = defineProps<{
   effectiveModel?: EffectiveModel
 }>()
 const sync = useSyncStore()
+/** An audited transcript belongs to someone else: nothing here may offer to change it. */
+const readonly = useAuditContext() !== null
+const attachmentUrl = useAttachmentUrl()
 const { resolved: resolvedTheme } = useTheme()
 const codeBlockProps: NonNullable<NodeRendererProps['codeBlockProps']> = {
   theme: { light: 'one-light', dark: 'one-dark-pro' },
@@ -70,12 +73,12 @@ const emptyTurn = computed(() => props.message.role === 'assistant'
   && !streaming.value
   && segments.value.length === 0
   && props.message.status === 'done')
-const canContinueTools = computed(() => canContinueToolMessage(
+const canContinueTools = computed(() => !readonly && canContinueToolMessage(
   props.message,
   [...(sync.messages.get(props.message.conversation_id)?.values() ?? [])],
   sync.conversations.get(props.message.conversation_id)?.head_message_id,
 ))
-const isConversationHead = computed(() => sync.conversations.get(props.message.conversation_id)?.head_message_id === props.message.id)
+const isConversationHead = computed(() => !readonly && sync.conversations.get(props.message.conversation_id)?.head_message_id === props.message.id)
 /** Spec §7.4: the shell is visible the moment it arrives, and never claims reasoning it lacks. */
 const wait = computed(() => assistantWaitState(props.message))
 const { pending: forkPending, fork } = useConversationFork()
@@ -113,7 +116,7 @@ MessageRoot(
       BubbleContent(:class="cn(message.role === 'assistant' && 'w-full')")
         template(v-if="message.role === 'user'")
           .flex.flex-wrap.gap-2.pb-1(v-if="images.length")
-            img.max-h-40.rounded(v-for="img in images" :key="img.attachment_id" :src="api.attachmentUrl(img.attachment_id)")
+            img.max-h-40.rounded(v-for="img in images" :key="img.attachment_id" :src="attachmentUrl(img.attachment_id)")
           template(v-if="!editing")
             p.whitespace-pre-wrap.text-sm(v-for="(p, i) in textParts" :key="i") {{ p.text }}
           .flex.flex-col.gap-2(v-else)
@@ -145,18 +148,18 @@ MessageRoot(
           p.text-xs.text-muted-foreground(v-else-if="message.status === 'aborted'") 已停止
 
     MessageFooter(v-if="!optimistic" class="gap-1")
-      BranchSwitcher(:message="message")
+      BranchSwitcher(v-if="!readonly" :message="message")
       Button(
-        v-if="message.role === 'assistant' && !streaming" variant="ghost" size="icon-xs"
+        v-if="!readonly && message.role === 'assistant' && !streaming" variant="ghost" size="icon-xs"
         class="min-h-10 min-w-10 md:min-h-6 md:min-w-6"
         title="重新生成" aria-label="重新生成" @click="regenerate")
         RefreshCwIcon
       Button(
-        v-if="message.role === 'user' && !editing" variant="ghost" size="icon-xs"
+        v-if="!readonly && message.role === 'user' && !editing" variant="ghost" size="icon-xs"
         class="min-h-10 min-w-10 md:min-h-6 md:min-w-6"
         title="编辑消息" aria-label="编辑消息" @click="startEdit")
         PencilIcon
-      DropdownMenu(v-if="message.role === 'assistant' && !streaming")
+      DropdownMenu(v-if="!readonly && message.role === 'assistant' && !streaming")
         DropdownMenuTrigger(as-child)
           Button(
             variant="ghost" size="icon-xs" class="min-h-10 min-w-10 md:min-h-6 md:min-w-6"

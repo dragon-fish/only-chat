@@ -13,6 +13,8 @@ import {
 import type { Message, Project } from '@/shared/models'
 import type { EffectiveModel } from '@/client/stores/sync'
 import { projectPresentation } from '@/client/lib/ui-models'
+import { useAuditContext, type AuditModel } from '@/client/lib/audit-context'
+import type { ModelRef } from '@/shared/api'
 
 const props = defineProps<{
   messages: Message[]
@@ -27,21 +29,29 @@ const scroller = ref<{ scrollToMessage: (messageId: string) => boolean } | null>
 defineExpose({ scrollToMessage: (messageId: number) => scroller.value?.scrollToMessage(String(messageId)) ?? false })
 const streaming = computed(() => props.messages.some(message => message.status === 'streaming'))
 
+const audit = useAuditContext()
+/** An audited transcript names models from the audited account's providers, not the viewer's. */
+function modelInfo(model: ModelRef): AuditModel | undefined {
+  if (audit) return audit.resolveModel(model)
+  const actual = config.modelFor(model)
+  return actual && { name: actual.model.metadata.name ?? null, providerName: actual.provider.name, labId: actual.model.lab_id, family: actual.model.metadata.family ?? null }
+}
+
 const rows = computed(() => props.messages.map((message) => {
   const optimistic = props.optimisticId === message.id
   if (message.role !== 'assistant') return { message, optimistic }
   const actual = message.provider_id !== null && message.model_id !== null
-    ? config.modelFor({ provider_id: message.provider_id, model_id: message.model_id })
+    ? modelInfo({ provider_id: message.provider_id, model_id: message.model_id })
     : undefined
-  const actualModelName = actual?.model.metadata.name ?? message.model_id ?? '助手'
+  const actualModelName = actual?.name ?? message.model_id ?? '助手'
   return {
     message,
     optimistic,
     assistantName: props.project ? projectPresentation(props.project.name).title : actualModelName,
     assistantModelName: props.project && message.model_id !== null ? actualModelName : undefined,
-    assistantProviderName: actual?.provider.name ?? actualModelName,
-    assistantLabId: actual?.model.lab_id ?? null,
-    assistantModelFamily: actual?.model.metadata.family,
+    assistantProviderName: actual?.providerName ?? actualModelName,
+    assistantLabId: actual?.labId ?? null,
+    assistantModelFamily: actual?.family ?? undefined,
   }
 }))
 </script>

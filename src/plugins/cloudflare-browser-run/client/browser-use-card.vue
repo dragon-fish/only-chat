@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { ChevronRightIcon, CodeIcon, GlobeIcon, TriangleAlertIcon } from '@lucide/vue'
-import { api } from '@/client/lib/api'
+import { useAttachmentUrl } from '@/client/lib/audit-context'
 import { useSyncStore } from '@/client/stores/sync'
 import { Alert, AlertDescription, AlertTitle } from '@/client/ui/alert'
 import { Badge } from '@/client/ui/badge'
@@ -12,6 +12,7 @@ import { BrowserUseErrorSchema, BrowserUseInputSchema, BrowserUseOutputSchema, B
 
 const props = defineProps<{ call: ToolCallPart; result: ToolResultPart | null }>()
 const sync = useSyncStore()
+const attachmentUrl = useAttachmentUrl()
 
 const code = computed(() => BrowserUseInputSchema.safeParse(props.call.args).data?.code ?? null)
 const output = computed(() => BrowserUseOutputSchema.safeParse(props.result?.content).data ?? null)
@@ -80,7 +81,7 @@ const pageLabel = computed(() => {
       pre.oc-scroll.mt-1.max-h-64.overflow-auto.whitespace-pre-wrap.rounded-md.bg-muted.px-3.py-2.text-xs {{ logs }}
   .flex.flex-wrap.gap-2(v-if="screenshots.length")
     a(
-      v-for="shot in screenshots" :key="shot.attachment_id" :href="api.attachmentUrl(shot.attachment_id)"
+      v-for="shot in screenshots" :key="shot.attachment_id" :href="attachmentUrl(shot.attachment_id)"
       target="_blank" rel="noopener" :title="shot.name" class="block overflow-hidden rounded-md border")
-      img.h-24.w-auto.max-w-48.object-cover(:src="api.attachmentUrl(shot.attachment_id)" :alt="shot.name" loading="lazy")
+      img.h-24.w-auto.max-w-48.object-cover(:src="attachmentUrl(shot.attachment_id)" :alt="shot.name" loading="lazy")
 </template>

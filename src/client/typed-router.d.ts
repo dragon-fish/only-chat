@@ -45,6 +45,20 @@ declare module 'vue-router/auto-routes' {
       Record<never, never>,
       | never
     >,
+    '/admin/audit/[userId]/': RouteRecordInfo<
+      '/admin/audit/[userId]/',
+      '/admin/audit/:userId',
+      { userId: ParamValue<true> },
+      { userId: ParamValue<false> },
+      | never
+    >,
+    '/admin/audit/[userId]/c/[conversationId]': RouteRecordInfo<
+      '/admin/audit/[userId]/c/[conversationId]',
+      '/admin/audit/:userId/c/:conversationId',
+      { conversationId: ParamValue<true>, userId: ParamValue<true> },
+      { conversationId: ParamValue<false>, userId: ParamValue<false> },
+      | never
+    >,
     '/admin/settings': RouteRecordInfo<
       '/admin/settings',
       '/admin/settings',
@@ -268,6 +282,22 @@ declare module 'vue-router/auto-routes' {
         | never
       pathParamNames:
         | never
+    }
+    'src/client/pages/admin/audit/[userId]/index.vue': {
+      routes:
+        | '/admin/audit/[userId]/'
+      views:
+        | never
+      pathParamNames:
+        | never
+    }
+    'src/client/pages/admin/audit/[userId]/c/[conversationId].vue': {
+      routes:
+        | '/admin/audit/[userId]/c/[conversationId]'
+      views:
+        | never
+      pathParamNames:
+        | 'conversationId'
     }
     'src/client/pages/admin/settings.vue': {
       routes:

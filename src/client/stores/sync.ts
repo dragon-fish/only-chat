@@ -595,7 +595,8 @@ export function moveConversationCommand(conversationId: number, projectId: numbe
   return { type: 'conversation.update', conversation_id: conversationId, project_id: projectId }
 }
 
-function pathToRoot(byId: Map<number, Message>, headId: number | null): Message[] {
+/** The branch that ends at `headId`, root first. */
+export function pathToRoot(byId: Map<number, Message>, headId: number | null): Message[] {
   const out: Message[] = []
   let cur = headId === null ? undefined : byId.get(headId)
   const seen = new Set<number>()

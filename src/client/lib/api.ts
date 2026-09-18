@@ -1,4 +1,4 @@
-import type { AttachmentCheckResponse, AttachmentUploadResponse, BulkModelStateInput, BulkModelStateResponse, CatalogProviderSummary, CatalogRefreshJobStatus, CatalogRefreshStartResponse, CatalogStatus, FetchModelsResponse, ModelRef, ModelWriteInput, ProviderWriteInput } from '@/shared/api'
+import type { AttachmentCheckResponse, AuditProvider, AuditStatus, AuditTranscript, AttachmentUploadResponse, BulkModelStateInput, BulkModelStateResponse, CatalogProviderSummary, CatalogRefreshJobStatus, CatalogRefreshStartResponse, CatalogStatus, FetchModelsResponse, ModelRef, ModelWriteInput, ProviderWriteInput } from '@/shared/api'
 import type { Message, ModelListSnapshot, ModelWithMetadata, Project, ProviderWithInterfaces, Conversation, User } from '@/shared/models'
 import type { PresetProvider } from '@/server/plugins/llm/presets'
 import type { AdminSiteSettings, AdminSiteSettingsUpdate, PublicSiteSettings } from '@/shared/auth'
@@ -72,6 +72,11 @@ function queryString(input: Record<string, unknown>): string {
 export const api = {
   siteSettings: () => request<PublicSiteSettings>('GET', '/api/site-settings'),
   adminSettings: () => request<AdminSiteSettings>('GET', '/api/admin/settings'),
+  auditStatus: () => request<AuditStatus>('GET', '/api/admin/audit/status'),
+  auditProviders: (userId: number) => request<AuditProvider[]>('GET', `/api/admin/audit/users/${userId}/providers`),
+  auditConversations: (userId: number, kind: 'chat' | 'image') => request<Conversation[]>('GET', `/api/admin/audit/users/${userId}/conversations?kind=${kind}`),
+  auditTranscript: (userId: number, conversationId: number) => request<AuditTranscript>('GET', `/api/admin/audit/users/${userId}/conversations/${conversationId}/messages`),
+  auditAttachmentUrl: (userId: number, id: number) => `/api/admin/audit/users/${userId}/attachments/${id}`,
   updateAdminSettings: (input: AdminSiteSettingsUpdate) => request<AdminSiteSettings>('PUT', '/api/admin/settings', input),
   me: () => request<User>('GET', '/api/me'),
   updatePluginConfig: (pluginId: string, patch: Record<string, unknown>) =>

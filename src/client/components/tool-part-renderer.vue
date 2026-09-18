@@ -3,6 +3,7 @@ import { computed, inject, shallowRef, watch } from 'vue'
 import { BracesIcon, CircleHelpIcon } from '@lucide/vue'
 import type { Component } from 'vue'
 import type { ClientPluginHost } from '@/client/plugins/host'
+import { useAuditContext } from '@/client/lib/audit-context'
 import { DISCONNECTED_MESSAGE, useSyncStore } from '@/client/stores/sync'
 import { Alert, AlertDescription, AlertTitle } from '@/client/ui/alert'
 import { Spinner } from '@/client/ui/spinner'
@@ -20,6 +21,8 @@ const props = defineProps<{
   inputPending?: boolean
 }>()
 const sync = useSyncStore()
+/** Under an audit a renderer is shown busy, which is how every renderer already disables its controls. */
+const readonly = useAuditContext() !== null
 const host = inject<ClientPluginHost | null>('clientPluginHost', null)
 const renderer = shallowRef<Component | null>(null)
 const loading = shallowRef(false)
@@ -54,6 +57,7 @@ watch(effectiveResult, result => { if (result) busy.value = false })
 watch(() => sync.lastError, error => { if (error) busy.value = false })
 
 function send(command: Parameters<typeof sync.send>[0], optimisticRequestId?: string) {
+  if (readonly) return
   sync.lastError = null
   if (sync.status !== 'open' || !sync.send(command)) {
     if (optimisticRequestId) sync.rejectOptimistic(optimisticRequestId)
@@ -65,6 +69,7 @@ function send(command: Parameters<typeof sync.send>[0], optimisticRequestId?: st
 }
 
 function respond(result: unknown) {
+  if (readonly) return
   const requestId = crypto.randomUUID()
   sync.beginOptimistic(requestId, {
     kind: 'tool_result',
@@ -99,7 +104,7 @@ Alert(v-else-if="compactPending")
   :class="optimisticResult ? 'opacity-70' : undefined")
   component(
     :is="renderer" :call="call" :result="effectiveResult"
-    :can-continue="canContinue" :busy="busy" @respond="respond" @continue="continueGeneration")
+    :can-continue="canContinue && !readonly" :busy="busy || readonly" @respond="respond" @continue="continueGeneration")
 Alert(v-else)
   BracesIcon
   AlertTitle {{ call.name }}

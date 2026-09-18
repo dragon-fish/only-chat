@@ -14,7 +14,8 @@ vi.mock('@/client/lib/auth-client', async importOriginal => ({
 
 let cleanup = () => {}
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.clearAllMocks(); vi.unstubAllGlobals(); document.body.innerHTML = '' })
-async function mount(component: Component) {
+async function mount(component: Component, auditEnabled = false) {
+  if (!vi.isMockFunction(api.auditStatus)) vi.spyOn(api, 'auditStatus').mockResolvedValue({ enabled: auditEnabled })
   document.body.innerHTML = '<div id="page-header"></div>'
   const pinia = createPinia()
   const auth = useAuthStore(pinia)
@@ -115,10 +116,10 @@ it('lists accounts in pages and disables owner ban and demotion actions', async 
 })
 
 const managedUser = { id: '2', name: 'Member', email: 'member@example.com', role: 'user', banned: false, createdAt: new Date(), updatedAt: new Date(), emailVerified: false }
-async function mountUsers() {
+async function mountUsers(auditEnabled = false) {
   vi.mocked(authClient.admin.listUsers).mockResolvedValue({ data: { users: [managedUser], total: 21, limit: 20, offset: 0 }, error: null })
   const view = await import('@/client/views/admin-users.vue')
-  const auth = await mount(view.default)
+  const auth = await mount(view.default, auditEnabled)
   await vi.waitFor(() => expect(document.querySelector('[data-user-actions="2"]')).not.toBeNull())
   return auth
 }
@@ -129,6 +130,18 @@ async function openActions() {
   document.querySelector<HTMLElement>('[data-user-actions="2"]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
   await vi.waitFor(() => expect(document.querySelector('[data-ban-user]')).not.toBeNull())
 }
+
+it('offers the owner a read-only audit of other accounts only while audit is enabled', async () => {
+  await mountUsers(true)
+  await vi.waitFor(() => expect(api.auditStatus).toHaveBeenCalled())
+  await openActions()
+  expect(document.querySelector('[data-audit-user]')).not.toBeNull()
+  cleanup()
+  vi.restoreAllMocks()
+  await mountUsers(false)
+  await openActions()
+  expect(document.querySelector('[data-audit-user]')).toBeNull()
+})
 
 it('loads the next page with an offset rather than reloading the first page', async () => {
   await mountUsers()

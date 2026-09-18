@@ -4,7 +4,7 @@ import type { NodeRendererProps } from 'markstream-vue'
 import ReasoningBlock from '@/client/components/reasoning-block.vue'
 import ToolPartRenderer from '@/client/components/tool-part-renderer.vue'
 import type { MessageSegment } from '@/client/components/message-segments'
-import { api } from '@/client/lib/api'
+import { useAttachmentUrl } from '@/client/lib/audit-context'
 
 /** One definition, used for the collapsed process and for the answer below it. */
 defineProps<{
@@ -18,6 +18,7 @@ defineProps<{
   isDark: boolean
   codeBlockProps: NonNullable<NodeRendererProps['codeBlockProps']>
 }>()
+const attachmentUrl = useAttachmentUrl()
 </script>
 
 <template lang="pug">
@@ -40,5 +41,5 @@ defineProps<{
     //- Generated images are served by the same authenticated attachment route as uploads.
     img(
       v-else-if="segment.kind === 'image'" class="max-h-80 rounded border"
-      :src="api.attachmentUrl(segment.part.attachment_id)")
+      :src="attachmentUrl(segment.part.attachment_id)")
 </template>

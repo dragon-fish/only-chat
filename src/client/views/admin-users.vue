@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, shallowRef } from 'vue'
 import { useRouter } from 'vue-router'
 import { EllipsisIcon, PlusIcon } from '@lucide/vue'
+import { api } from '@/client/lib/api'
 import { authClient } from '@/client/lib/auth-client'
 import { useAuthStore } from '@/client/stores/auth'
 import { isAuthAdmin, isAuthOwner, type AuthRole } from '@/shared/auth'
@@ -119,7 +120,13 @@ async function performAction() {
   } catch { formError.value = '无法更新账户，请检查网络后重试。' }
   finally { pending.value = false }
 }
-onMounted(() => load())
+const auditEnabled = ref(false)
+async function loadAuditStatus() {
+  if (!isAuthOwner(auth.authUser)) return
+  try { auditEnabled.value = (await api.auditStatus()).enabled }
+  catch { auditEnabled.value = false }
+}
+onMounted(() => { void load(); void loadAuditStatus() })
 </script>
 
 <template lang="pug">
@@ -179,6 +186,7 @@ onMounted(() => load())
                         DropdownMenuItem(data-set-role :disabled="isAuthOwner(user)" @select="confirm('role', user)") {{ isAuthAdmin(user) ? '设为普通用户' : '设为管理员' }}
                         DropdownMenuItem(@select="openForm('password', user)") 重设密码
                         DropdownMenuItem(@select="confirm('revoke', user)") 撤销全部登录会话
+                        DropdownMenuItem(v-if="auditEnabled && !isAuthOwner(user)" data-audit-user @select="router.push(`/admin/audit/${user.id}`)") 审计（只读）
                       DropdownMenuSeparator
                       DropdownMenuGroup
                         DropdownMenuItem(v-if="user.banned" @select="confirm('unban', user)") 解除封禁

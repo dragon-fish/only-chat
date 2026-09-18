@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { api } from '@/client/lib/api'
+import { useAttachmentUrl } from '@/client/lib/audit-context'
 import type { Message } from '@/shared/models'
 import { shotsInTurn } from './turn-shots'
 
 const props = defineProps<{ message: Message }>()
+const attachmentUrl = useAttachmentUrl()
 
 /**
  * Additive, not a move. Each card keeps the pictures of its own call, because the run is worth
@@ -19,9 +20,9 @@ const shots = computed(() => shotsInTurn(props.message.parts))
   p(class="text-muted-foreground text-xs") 本轮的浏览器截图
   .flex.flex-wrap.gap-2
     a(
-      v-for="shot in shots" :key="shot.attachmentId" :href="api.attachmentUrl(shot.attachmentId)"
+      v-for="shot in shots" :key="shot.attachmentId" :href="attachmentUrl(shot.attachmentId)"
       target="_blank" rel="noopener" :title="shot.name"
       class="block overflow-hidden rounded-md border")
       img.h-24.w-auto.max-w-48.object-cover(
-        :src="api.attachmentUrl(shot.attachmentId)" :alt="shot.name" loading="lazy")
+        :src="attachmentUrl(shot.attachmentId)" :alt="shot.name" loading="lazy")
 </template>
