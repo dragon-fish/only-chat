@@ -16,12 +16,12 @@ const STORED_KEY = 'iv.stored-ciphertext-marker'
 const OWNER = 1
 const MEMBER = 3
 
-async function setup(enableAudit: string | undefined) {
+async function setup(enableAudit: string | boolean | undefined) {
   const owner = await registerAndLogin()
   await owner.json('POST', '/api/auth/admin/create-user', { ...signupBody, email: 'admin@example.com', role: 'admin' })
   const admin = await login({ ...signupBody, email: 'admin@example.com' })
   const member = await registerAndLogin({ ...signupBody, name: 'Member', email: 'member@example.com' })
-  const ctx = await createApp({ env: { ...env, ENABLE_AUDIT: enableAudit } as typeof env, side: 'worker' })
+  const ctx = await createApp({ env: { ...env, ENABLE_AUDIT: enableAudit } as unknown as typeof env, side: 'worker' })
   const db = ctx.db.orm
 
   const [provider] = await db.insert(providers).values({ user_id: MEMBER, name: 'Member gateway', api_key: STORED_KEY, created_at: 0 }).returning()
@@ -60,10 +60,17 @@ async function setup(enableAudit: string | undefined) {
 const json = async <T>(response: Response | Promise<Response>) => await (await response).json() as T
 
 describe('owner audit', () => {
-  it.each([[undefined], ['false'], ['TRUE']])('is off unless ENABLE_AUDIT is exactly "true" (%s)', async value => {
+  it.each([[undefined], ['false'], ['TRUE'], [false]])('is off unless ENABLE_AUDIT is exactly "true" (%s)', async value => {
     const { owner, paths } = await setup(value)
     expect(await json(owner('/site-config'))).toMatchObject({ audit: false })
     for (const path of paths) expect.soft((await owner(path)).status, path).toBe(404)
+  })
+
+  // `wrangler.jsonc` declares the switch as a JSON boolean; `.dev.vars` and `--var` pass a string.
+  it.each([['true'], [true]])('turns on for %j', async value => {
+    const { owner } = await setup(value)
+    expect(await json(owner('/site-config'))).toMatchObject({ audit: true })
+    expect((await owner('/admin/audit/conversations')).status).toBe(200)
   })
 
   // Only the owner learns whether audit exists; for everyone else the field is simply absent.

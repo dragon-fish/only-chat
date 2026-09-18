@@ -70,7 +70,7 @@ configured anywhere: authentication and the links tools hand out both derive it 
 that arrived, so the route binding is what decides it. Generate independent random values for
 `KEY_ENCRYPTION_SECRET` and `BETTER_AUTH_SECRET`; the latter must contain at least 32 characters.
 
-`ALLOW_REGISTER` is a non-secret Worker variable and defaults to `false`. For a new deployment,
+`ALLOW_REGISTER` is a non-secret Worker variable and defaults to `false` in `wrangler.jsonc`. For a new deployment,
 explicitly enable it only long enough to register the first account, which naturally receives
 `uid=1` and fixed administrator privileges. Close it immediately afterward. `/admin/settings`
 stores a D1 override with precedence over `ALLOW_REGISTER`; clearing that override restores the
@@ -88,11 +88,10 @@ The one exception is the owner audit: with `ENABLE_AUDIT` set to exactly `true`,
 two read-only site-wide listings, `/admin/audit/conversations` (with transcripts) and
 `/admin/audit/providers` (names, interface URLs, enabled models; never the key), listed under
 站点管理 in settings. Every audit request logs the viewer and the path to the Worker log.
-`ENABLE_AUDIT` is an optional switch listed in `.dev.vars.example` and deliberately absent from
-`wrangler.jsonc`, so a fork starts with the audit off. Enable it as a plain variable in the dashboard, where
-its value stays readable; `wrangler.jsonc` sets `keep_vars`, so a deploy keeps undeclared dashboard
-variables instead of deleting them. Locally, set it in `.dev.vars`. Do not reintroduce `secrets.required`: with it declared, local dev loads only the
-listed names from `.dev.vars` and every optional switch silently reads as absent.
+`ENABLE_AUDIT` defaults to `false` in `wrangler.jsonc`, so a fork starts with the audit off;
+`.dev.vars` overrides it locally. A var declared in `wrangler.jsonc` overrides the dashboard on every
+deploy (`keep_vars` only protects undeclared ones), so a deployment enables it in its Workers Builds
+deploy command: `npx wrangler deploy --var ENABLE_AUDIT:true`.
 
 ## Upgrading an existing deployment
 

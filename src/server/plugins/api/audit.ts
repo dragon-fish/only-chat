@@ -57,12 +57,11 @@ function keyset(query: Paging, column: AnyColumn, id: AnyColumn) {
 }
 
 /**
- * Fail-closed: only the exact string enables the audit. The parameter is `string` on purpose — the
- * generated `Env` types the variable as the literal declared in `wrangler.jsonc`, while a deploy
- * command or `.dev.vars` may set anything.
+ * Fail-closed: only `true` enables the audit. `wrangler.jsonc` declares the default as a JSON boolean,
+ * while `.dev.vars` and `wrangler deploy --var` deliver strings, so both spellings count.
  */
-export function isAuditEnabled(value: string | undefined): boolean {
-  return value === 'true'
+export function isAuditEnabled(value: unknown): boolean {
+  return value === true || value === 'true'
 }
 
 /** D1 binds at most 100 parameters per statement, so a 500-row page is looked up in slices. */

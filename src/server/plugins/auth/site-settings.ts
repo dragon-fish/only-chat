@@ -7,7 +7,9 @@ export interface ResolvedBoolean {
   source: 'db' | 'env' | 'default'
 }
 
+/** `wrangler.jsonc` vars arrive as JSON booleans; `.dev.vars`, deploy flags and D1 rows as strings. */
 function parseBoolean(value: unknown): boolean | undefined {
+  if (typeof value === 'boolean') return value
   if (typeof value !== 'string') return undefined
   if (value.toLowerCase() === 'true') return true
   if (value.toLowerCase() === 'false') return false

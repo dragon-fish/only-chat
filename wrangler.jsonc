@@ -4,13 +4,14 @@
   "main": "./src/server/index.ts",
   "compatibility_date": "2026-09-05",
   "compatibility_flags": ["nodejs_compat"],
-  // Optional switches (see .dev.vars.example) are not declared here: absent means off, so a fork starts
-  // with them off. A deployment sets them as plain dashboard variables, which `keep_vars` stops the next
-  // deploy from deleting; a var declared below would still override the dashboard. No
-  // `secrets.required`: once it exists, local dev loads only the names it lists from .dev.vars.
+  "secrets": { "required": ["KEY_ENCRYPTION_SECRET", "BETTER_AUTH_SECRET"] },
   "keep_vars": true,
+  // Defaults for every deployment, a fork included; `.dev.vars` overrides them locally. A declared var
+  // overrides the dashboard on deploy, so a deployment turns a switch on in its deploy command
+  // (`wrangler deploy --var ENABLE_AUDIT:true`), not in the dashboard.
   "vars": {
-    "ALLOW_REGISTER": "false"
+    "ALLOW_REGISTER": false,
+    "ENABLE_AUDIT": false
   },
   "workers_dev": false,
   "preview_urls": false,

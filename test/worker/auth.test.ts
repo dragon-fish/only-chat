@@ -102,8 +102,8 @@ describe('registration policy and route protection', () => {
   })
 
   it.each([
-    ['TRUE', true], ['False', false], ['invalid-secret-value', false],
-  ])('resolves the environment registration setting %s', async (value, expected) => {
+    ['TRUE', true], ['False', false], ['invalid-secret-value', false], [true, true], [false, false],
+  ] as const)('resolves the environment registration setting %s', async (value, expected) => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     try {
       const db = createDb(env.DB)
