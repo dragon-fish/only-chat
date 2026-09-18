@@ -70,7 +70,7 @@ ResponsiveOverlay(
   template(#status)
     Badge(v-if="transcript" variant="outline") 只读 · {{ transcript.owner.name }}
     Button(
-      v-if="config" variant="ghost" size="icon" class="size-8" title="生效配置" aria-label="生效配置"
+      v-if="config" variant="ghost" size="icon" class="-my-1 size-8" title="生效配置" aria-label="生效配置"
       data-audit-config-open @click="configOpen = true")
       InfoIcon
   .flex.justify-center.py-8(v-if="loading")

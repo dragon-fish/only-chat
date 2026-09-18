@@ -44,7 +44,9 @@ Dialog(v-if="mode === 'dialog'" :open="open" @update:open="emit('update:open', $
     :aria-describedby="undefined" @close-auto-focus="restoreFocus"
     class="left-0 top-0 flex h-dvh max-h-dvh max-w-none translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-none p-0 sm:max-w-none md:left-1/2 md:top-1/2 md:h-auto md:max-h-[calc(100dvh-4rem)] md:max-w-3xl md:-translate-x-1/2 md:-translate-y-1/2 md:rounded-xl [&>[data-slot=dialog-close]]:size-10")
     DialogHeader(class="shrink-0 px-4 pr-14 pt-[max(1rem,env(safe-area-inset-top))] pb-4")
-      .flex.min-h-5.items-center.gap-2
+      //- 24px tall so its centre sits at 28px, level with the close button (top-2, 40px); status
+      //- content taller than that must not grow the row, or the title drops below the close button.
+      .flex.min-h-6.items-center.gap-2
         DialogTitle(class="min-w-0 flex-1") {{ title }}
         slot(name="status")
     .oc-scroll.min-h-0.flex-1.overflow-y-auto.px-4.pb-4
