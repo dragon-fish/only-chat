@@ -30,6 +30,8 @@ describe('minimal account administration', () => {
     expect((await member.request('/api/admin/settings')).status).toBe(403)
     expect((await member.json('PUT', '/api/admin/settings', { allowRegister: null })).status).toBe(403)
     expect((await member.request('/api/auth/admin/list-users')).status).toBe(403)
+    expect((await member.json('POST', '/api/model-catalog/refresh')).status).toBe(403)
+    expect((await member.request('/api/model-catalog/refresh/catalog-manual-test')).status).toBe(403)
     for (const [endpoint, body] of [
       ['create-user', { ...signupBody, email: 'new@example.com' }],
       ['set-role', { userId: '2', role: 'admin' }], ['ban-user', { userId: '2' }],

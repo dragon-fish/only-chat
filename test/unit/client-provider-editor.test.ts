@@ -6,6 +6,7 @@ import { toast, type Action } from 'vue-sonner'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import ProviderEditor from '@/client/views/settings-provider-edit.vue'
 import { api } from '@/client/lib/api'
+import { useAuthStore } from '@/client/stores/auth'
 import { useConfigStore } from '@/client/stores/config'
 import type { ModelWithMetadata, ProviderWithInterfaces } from '@/shared/models'
 import { catalogStatus, modelRecords, provider } from './provider-fixtures'
@@ -28,7 +29,7 @@ type ModelSource = (providerId: number) => Promise<{ models: ModelWithMetadata[]
 /** Set by mountEditor; tests swap the data behind providerModelSummary without replacing its mock. */
 let setModelSource: (next: ModelSource) => void = () => {}
 
-async function mountEditor(sourceModels: ModelWithMetadata[] = models, providerRecord: ProviderWithInterfaces = provider) {
+async function mountEditor(sourceModels: ModelWithMetadata[] = models, providerRecord: ProviderWithInterfaces = provider, userId = '1') {
   desktop.value = true
   const summaries = new Map<number, ModelWithMetadata[]>()
   vi.spyOn(api, 'providers').mockResolvedValue([providerRecord])
@@ -46,6 +47,7 @@ async function mountEditor(sourceModels: ModelWithMetadata[] = models, providerR
   vi.spyOn(api, 'catalogStatus').mockResolvedValue(catalogStatus)
   vi.spyOn(api, 'catalogProviders').mockResolvedValue([{ id: 'acme', name: 'Acme', api: 'https://acme.test/v1' }])
   const pinia = createPinia()
+  useAuthStore(pinia).authUser = { id: userId, name: 'Someone', email: 'someone@example.com', emailVerified: false, createdAt: new Date(), updatedAt: new Date(), role: 'user', banned: false }
   await useConfigStore(pinia).load()
   const router = createRouter({ history: createMemoryHistory(), routes: [
     { path: '/settings/providers/:id', component: ProviderEditor, props: route => ({ providerId: Number('id' in route.params ? route.params.id : undefined) }) },
@@ -645,6 +647,12 @@ describe('provider model editor', () => {
     expect(document.querySelector('[aria-label="正在更新模型列表"]')).toBeNull()
     expect(document.body.textContent).not.toContain('搜索模型至少需要 3 个字符')
     expect(vi.mocked(api.providerModelSummary)).toHaveBeenCalledTimes(calls)
+  })
+
+  it('offers the catalog refresh only to administrators', async () => {
+    await mountEditor(models, provider, '2')
+    expect(document.body.textContent).toContain('版本：')
+    expect([...document.querySelectorAll('button')].some(button => button.textContent?.trim() === '刷新模型目录')).toBe(false)
   })
 
   it('keeps its saved heading stable and refreshes catalog metadata without clearing the draft', async () => {

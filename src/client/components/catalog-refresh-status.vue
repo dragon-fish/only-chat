@@ -1,14 +1,18 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { RefreshCwIcon } from '@lucide/vue'
 import { api } from '@/client/lib/api'
+import { useAuthStore } from '@/client/stores/auth'
 import { useConfigStore } from '@/client/stores/config'
 import { Button } from '@/client/ui/button'
 import { Spinner } from '@/client/ui/spinner'
 import type { CatalogStatus } from '@/shared/api'
+import { isAuthAdmin } from '@/shared/auth'
 
 const emit = defineEmits<{ refreshed: [] }>()
 const config = useConfigStore()
+const auth = useAuthStore()
+const canRefresh = computed(() => isAuthAdmin(auth.authUser))
 const status = ref<CatalogStatus | null>(null)
 const refreshing = ref(false)
 const error = ref<string | null>(null)
@@ -55,6 +59,7 @@ async function track(instanceId: string) {
 }
 onMounted(() => {
   void load()
+  if (!canRefresh.value) return
   try {
     const instanceId = localStorage.getItem(STORAGE_KEY)
     if (instanceId) void track(instanceId)
@@ -73,7 +78,7 @@ async function refresh() {
 
 <template lang="pug">
 .flex.flex-col.gap-2
-  Button(type="button" variant="outline" :disabled="refreshing" @click="refresh")
+  Button(v-if="canRefresh" type="button" variant="outline" :disabled="refreshing" @click="refresh")
     Spinner(v-if="refreshing" data-icon="inline-start")
     RefreshCwIcon(v-else data-icon="inline-start")
     | 刷新模型目录

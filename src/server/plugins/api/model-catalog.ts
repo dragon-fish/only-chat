@@ -1,7 +1,7 @@
 import type { Context } from 'cordis'
 import { Hono } from 'hono'
 import { disposeRpcStub } from '@/server/rpc'
-import type { ApiEnv } from './auth'
+import { requireAdmin, type ApiEnv } from './auth'
 
 export function modelCatalogRoutes(ctx: Context) {
   const app = new Hono<ApiEnv>()
@@ -11,6 +11,9 @@ export function modelCatalogRoutes(ctx: Context) {
     const providers = Object.values(await ctx.modelCatalog.providerIndex())
     return c.json(providers.filter(provider => `${provider.id} ${provider.name}`.toLowerCase().includes(query)))
   })
+  // Refreshing rewrites every account's model metadata, so only administrators may start or poll one.
+  app.use('/model-catalog/refresh', requireAdmin(ctx))
+  app.use('/model-catalog/refresh/*', requireAdmin(ctx))
   app.post('/model-catalog/refresh', async c => {
     const instance = await ctx.env.MODEL_CATALOG_REFRESH.create({
       id: `catalog-manual-${crypto.randomUUID()}`,
