@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import type { NodeRendererProps } from 'markstream-vue'
-import { EllipsisIcon, GitForkIcon, LoaderCircle, PencilIcon, RefreshCwIcon, TriangleAlertIcon } from '@lucide/vue'
+import { CopyIcon, EllipsisIcon, GitForkIcon, LoaderCircle, PencilIcon, RefreshCwIcon, TriangleAlertIcon } from '@lucide/vue'
+import { toast } from 'vue-sonner'
 import BranchSwitcher from '@/client/components/branch-switcher.vue'
 import MessageFooters from '@/client/components/message-footers.vue'
 import LabAvatar from '@/client/components/lab-avatar.vue'
@@ -60,6 +61,27 @@ const segments = computed(() => messageSegments(props.message.parts))
 const activeSegmentKey = computed(() => (streaming.value ? segments.value.at(-1)?.key ?? null : null))
 /** Steps fold into collapsibles; speech and output never do. */
 const blocks = computed(() => turnBlocks(segments.value))
+const copyText = computed(() => {
+  if (props.message.role === 'user') return textParts.value.map(part => part.text).join('\n')
+  // Progress before the final thinking/tool step is not part of the final answer.
+  let lastStep = segments.value.length - 1
+  while (lastStep >= 0) {
+    const segment = segments.value[lastStep]!
+    if (segment.kind === 'reasoning' || segment.kind === 'tool') break
+    lastStep--
+  }
+  return segments.value.slice(lastStep + 1)
+    .flatMap(segment => segment.kind === 'text' ? [segment.markdown] : []).join('\n')
+})
+
+async function copyMessage() {
+  try {
+    await navigator.clipboard.writeText(copyText.value)
+    toast.success('已复制')
+  } catch {
+    toast.error('复制失败，请重试')
+  }
+}
 
 /**
  * A settled assistant turn that produced nothing at all.
@@ -148,6 +170,11 @@ MessageRoot(
           p.text-xs.text-muted-foreground(v-else-if="message.status === 'aborted'") 已停止
 
     MessageFooter(v-if="!optimistic" class="gap-1")
+      Button(
+        v-if="!streaming && copyText.trim()" variant="ghost" size="icon-xs"
+        class="min-h-10 min-w-10 md:min-h-6 md:min-w-6"
+        title="复制消息" aria-label="复制消息" @click="copyMessage")
+        CopyIcon
       BranchSwitcher(v-if="!readonly" :message="message")
       Button(
         v-if="!readonly && message.role === 'assistant' && !streaming" variant="ghost" size="icon-xs"
