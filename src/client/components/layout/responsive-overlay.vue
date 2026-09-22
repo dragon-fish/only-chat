@@ -15,7 +15,10 @@ const props = withDefaults(defineProps<{
   mode?: 'side' | 'dialog'
 }>(), { mode: 'side' })
 
-const emit = defineEmits<{ 'update:open': [value: boolean] }>()
+const emit = defineEmits<{
+  'update:open': [value: boolean]
+  'open-auto-focus': [event: Event]
+}>()
 const isDesktop = useMediaQuery('(min-width: 768px)')
 let opener: HTMLElement | null = null
 let unmounting = false
@@ -41,7 +44,7 @@ function restoreFocus(event: Event) {
 <template lang="pug">
 Dialog(v-if="mode === 'dialog'" :open="open" @update:open="emit('update:open', $event)")
   DialogContent(
-    :aria-describedby="undefined" @close-auto-focus="restoreFocus"
+    :aria-describedby="undefined" @close-auto-focus="restoreFocus" @open-auto-focus="emit('open-auto-focus', $event)"
     class="left-0 top-0 flex h-dvh max-h-dvh max-w-none translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-none p-0 sm:max-w-none md:left-1/2 md:top-1/2 md:h-auto md:max-h-[calc(100dvh-4rem)] md:max-w-3xl md:-translate-x-1/2 md:-translate-y-1/2 md:rounded-xl [&>[data-slot=dialog-close]]:size-10")
     DialogHeader(class="shrink-0 px-4 pr-14 pt-[max(1rem,env(safe-area-inset-top))] pb-4")
       //- 24px tall so its centre sits at 28px, level with the close button (top-2, 40px); status
@@ -54,7 +57,7 @@ Dialog(v-if="mode === 'dialog'" :open="open" @update:open="emit('update:open', $
     DialogFooter(v-if="$slots.footer" class="mx-0 mb-0 shrink-0 flex-col gap-3 rounded-none p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:flex-col md:rounded-b-xl")
       slot(name="footer")
 Sheet(v-else-if="isDesktop" :open="open" @update:open="emit('update:open', $event)")
-  SheetContent(side="right" :aria-describedby="undefined" @close-auto-focus="restoreFocus")
+  SheetContent(side="right" :aria-describedby="undefined" @close-auto-focus="restoreFocus" @open-auto-focus="emit('open-auto-focus', $event)")
     SheetHeader(class="min-h-13 flex-row items-center gap-2 pr-14")
       SheetTitle(class="min-w-0 flex-1") {{ title }}
       slot(name="status")
@@ -63,7 +66,7 @@ Sheet(v-else-if="isDesktop" :open="open" @update:open="emit('update:open', $even
     SheetFooter(v-if="$slots.footer")
       slot(name="footer")
 Drawer(v-else :open="open" @update:open="emit('update:open', $event)")
-  DrawerContent(class="overflow-hidden pb-[max(1rem,env(safe-area-inset-bottom))]" :aria-describedby="undefined" @close-auto-focus="restoreFocus")
+  DrawerContent(class="overflow-hidden pb-[max(1rem,env(safe-area-inset-bottom))]" :aria-describedby="undefined" @close-auto-focus="restoreFocus" @open-auto-focus="emit('open-auto-focus', $event)")
     DrawerHeader(class="min-h-13 flex-row items-center gap-2")
       DrawerTitle(class="min-w-0 flex-1") {{ title }}
       slot(name="status")

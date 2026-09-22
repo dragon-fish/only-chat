@@ -14,6 +14,18 @@ import { Button } from '@/client/ui/button'
 const props = defineProps<{ turns: readonly MessageTurn[] }>()
 const { activeId, jump } = useMessageTurnNav(toRef(props, 'turns'))
 const open = ref(false)
+const list = ref<HTMLOListElement | null>(null)
+
+function revealCurrent(event: Event) {
+  const current = list.value?.querySelector<HTMLElement>('[aria-current="location"]')
+  const viewport = list.value?.parentElement
+  if (!current || !viewport) return
+  // Override the overlay's first-item focus, and scroll only its body, not the transcript.
+  event.preventDefault()
+  current.focus({ preventScroll: true })
+  const rect = current.getBoundingClientRect()
+  viewport.scrollTop += rect.top - viewport.getBoundingClientRect().top - (viewport.clientHeight - rect.height) / 2
+}
 
 function go(id: number) {
   open.value = false
@@ -27,8 +39,8 @@ Button(
   class="absolute inset-e-4 bottom-4 z-10 size-10 border border-border bg-background shadow-sm md:hidden"
   @click="open = true")
   ListIcon
-ResponsiveOverlay(:open="open" title="对话目录" @update:open="open = $event")
-  ol.flex.flex-col.gap-1
+ResponsiveOverlay(:open="open" title="对话目录" @update:open="open = $event" @open-auto-focus="revealCurrent")
+  ol.flex.flex-col.gap-1(ref="list")
     li(v-for="(turn, index) in turns" :key="turn.id")
       button(
         type="button" :data-turn="turn.id" :aria-current="turn.id === activeId ? 'location' : undefined"

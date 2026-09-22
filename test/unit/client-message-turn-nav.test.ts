@@ -19,7 +19,7 @@ beforeEach(() => {
   scrollable.value = { start: false, end: true }
   scrollToMessage.mockClear()
 })
-afterEach(() => { cleanup(); document.body.innerHTML = '' })
+afterEach(() => { cleanup(); vi.restoreAllMocks(); document.body.innerHTML = '' })
 
 async function mount(path: string, entries = turns) {
   const component = (await import(path)).default as Component
@@ -122,4 +122,31 @@ it('closes the mobile outline and jumps to the picked turn', async () => {
   document.querySelector<HTMLButtonElement>('[role="dialog"] [data-turn="5"]')!.click()
   expect(scrollToMessage).toHaveBeenCalledWith('5', { behavior: 'smooth' })
   await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull())
+})
+
+it('centres the current turn on each outline opening without moving the transcript', async () => {
+  const originalRect = HTMLElement.prototype.getBoundingClientRect
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+    if (this.dataset.turn) return new DOMRect(0, this.dataset.turn === '5' ? 600 : 200, 300, 48)
+    if (this.classList.contains('oc-scroll')) return new DOMRect(0, 100, 300, 200)
+    return originalRect.call(this)
+  })
+  vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(200)
+  visibility.value = { currentAnchorId: '5', visibleMessageIds: ['5'] }
+  const host = await mount('@/client/components/message-outline.vue')
+  const open = () => host.querySelector<HTMLButtonElement>('[data-message-outline]')!.click()
+  open()
+  await vi.waitFor(() => {
+    expect(document.activeElement?.getAttribute('data-turn')).toBe('5')
+    expect(document.querySelector('[role="dialog"] .oc-scroll')?.scrollTop).toBe(424)
+  })
+  document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+  await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull())
+  visibility.value = { currentAnchorId: '1', visibleMessageIds: ['1'] }
+  open()
+  await vi.waitFor(() => {
+    expect(document.activeElement?.getAttribute('data-turn')).toBe('1')
+    expect(document.querySelector('[role="dialog"] .oc-scroll')?.scrollTop).toBe(24)
+  })
+  expect(scrollToMessage).not.toHaveBeenCalled()
 })
