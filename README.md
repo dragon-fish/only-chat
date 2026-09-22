@@ -12,6 +12,9 @@ Personal AI chat on Cloudflare Workers. Every device sees the same conversations
   message create the Conversation in one command.
 - Tree-shaped messages: editing or regenerating creates a sibling, with a branch switcher on the bubble.
 - Text (markdown), pasted/dropped images, model-generated images, collapsible reasoning blocks.
+- Desktop turn navigation uses a slim rail beside the transcript: hover for a question/reply
+  preview, click to jump, or scroll the rail independently in long conversations. Mobile uses
+  an outline button. Both mark the turn currently being read.
 - One WebSocket per user, held by a `UserHub` Durable Object. Generation runs server-side to
   completion, so any device can join, leave or reconnect mid-stream.
 
