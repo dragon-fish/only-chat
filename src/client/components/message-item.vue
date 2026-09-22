@@ -174,7 +174,7 @@ MessageRoot(
         v-if="!streaming && copyText.trim()" variant="ghost" size="icon-xs"
         class="min-h-10 min-w-10 md:min-h-6 md:min-w-6"
         title="复制消息" aria-label="复制消息" @click="copyMessage")
-        CopyIcon
+        CopyIcon(:stroke-width="1.5" class="opacity-80")
       BranchSwitcher(v-if="!readonly" :message="message")
       Button(
         v-if="!readonly && message.role === 'assistant' && !streaming" variant="ghost" size="icon-xs"
