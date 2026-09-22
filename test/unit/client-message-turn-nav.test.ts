@@ -49,6 +49,8 @@ it('reuses the preview when keyboard focus moves and dismisses it with Escape', 
   const preview = document.querySelector<HTMLElement>('[data-message-rail-preview]')!
   expect(preview).not.toBeNull()
   expect(preview.textContent).toContain('first')
+  expect(preview.textContent).toContain('a')
+  expect(preview.textContent).not.toContain('second')
   host.querySelector<HTMLButtonElement>('[data-turn="5"]')!.focus()
   await nextTick()
   expect(document.querySelector('[data-message-rail-preview]')).toBe(preview)

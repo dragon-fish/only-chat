@@ -9,7 +9,6 @@ const rail = ref<HTMLElement | null>(null)
 const preview = ref<HTMLElement | null>(null)
 const previewTitle = ref<HTMLElement | null>(null)
 const previewReply = ref<HTMLElement | null>(null)
-const previewNext = ref<HTMLElement | null>(null)
 const PAD = 8
 const TICK = 10
 const REACH = 38
@@ -40,7 +39,6 @@ function updatePreview() {
   previewTitle.value!.textContent = turn.prompt || '（空消息）'
   previewReply.value!.textContent = turn.reply
   previewReply.value!.hidden = !turn.reply
-  previewNext.value!.textContent = props.turns[hovered + 1]?.prompt || '已到最后一轮对话'
   const height = preview.value.offsetHeight
   const center = railTop + PAD + hovered * TICK + TICK / 2 - rail.value.scrollTop
   preview.value.style.top = `${Math.max(8, Math.min(window.innerHeight - height - 8, center - height / 2))}px`
@@ -190,7 +188,6 @@ Teleport(to="body")
   aside.message-rail-preview(ref="preview" data-message-rail-preview aria-hidden="true" class="hidden md:block")
     p.message-rail-preview-title(ref="previewTitle")
     p.message-rail-preview-reply(ref="previewReply")
-    p.message-rail-preview-next(ref="previewNext")
 </template>
 
 <style scoped>
@@ -241,7 +238,7 @@ Teleport(to="body")
   transition: opacity 90ms, transform 90ms;
 }
 .message-rail-preview[data-open] { opacity: 1; transform: translateX(0); }
-.message-rail-preview-title, .message-rail-preview-next { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.message-rail-preview-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .message-rail-preview-title { font-size: 13px; line-height: 21px; color: var(--popover-foreground); }
 .message-rail-preview-reply {
   font-size: 13px;
@@ -254,7 +251,6 @@ Teleport(to="body")
   margin-top: 3px;
 }
 .message-rail-preview-reply[hidden] { display: none; }
-.message-rail-preview-next { font-size: 12px; line-height: 20px; color: var(--muted-foreground); opacity: .65; margin-top: 12px; }
 @media (prefers-reduced-motion: reduce) {
   .message-rail-tick span, .message-rail-preview { transition: none; }
 }
