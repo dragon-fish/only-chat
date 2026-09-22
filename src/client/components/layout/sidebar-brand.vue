@@ -40,7 +40,7 @@ const statusColor = computed(() => ({
             :data-status="status"
             :aria-label="statusLabel"
             type="button"
-            class="ring-sidebar-ring absolute top-1/2 right-1 flex size-8 -translate-y-1/2 items-center justify-center rounded-md outline-hidden focus-visible:ring-2 group-data-[collapsible=icon]:top-auto group-data-[collapsible=icon]:right-0 group-data-[collapsible=icon]:bottom-0 group-data-[collapsible=icon]:size-4 group-data-[collapsible=icon]:translate-y-0"
+            class="ring-sidebar-ring absolute top-1/2 right-1 flex size-8 -translate-y-1/2 items-center justify-center rounded-md outline-hidden focus-visible:ring-2 group-data-[collapsible=icon]:static group-data-[collapsible=icon]:mx-auto group-data-[collapsible=icon]:mt-1 group-data-[collapsible=icon]:h-6 group-data-[collapsible=icon]:translate-y-0"
           >
             <span aria-hidden="true" :class="[statusColor, 'size-2 shrink-0 rounded-full ring-2 ring-sidebar']" />
           </TooltipTrigger>
