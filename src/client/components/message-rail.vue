@@ -198,7 +198,6 @@ Teleport(to="body")
   scrollbar-width: none;
   overscroll-behavior: contain;
   border-radius: 0 9px 9px 0;
-  background: color-mix(in oklch, var(--foreground) 1%, transparent);
 }
 .message-rail::-webkit-scrollbar { display: none; }
 .message-rail-tick {

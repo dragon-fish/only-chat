@@ -5,14 +5,20 @@ import type { MessageTurn } from '@/client/lib/message-turns'
 
 const scrollToMessage = vi.fn()
 const visibility = ref({ currentAnchorId: null as string | null, visibleMessageIds: [] as string[] })
+const scrollable = ref({ start: false, end: true })
 vi.mock('@/client/ui/message-scroller', () => ({
   useMessageScroller: () => ({ scrollToMessage, scrollToEnd: vi.fn(), scrollToStart: vi.fn() }),
   useMessageScrollerVisibility: () => visibility,
+  useMessageScrollerScrollable: () => scrollable,
 }))
 
 const turns: MessageTurn[] = [{ id: 1, prompt: 'first', reply: 'a' }, { id: 5, prompt: 'second', reply: 'b' }]
 let cleanup = () => {}
-beforeEach(() => { visibility.value = { currentAnchorId: null, visibleMessageIds: [] }; scrollToMessage.mockClear() })
+beforeEach(() => {
+  visibility.value = { currentAnchorId: null, visibleMessageIds: [] }
+  scrollable.value = { start: false, end: true }
+  scrollToMessage.mockClear()
+})
 afterEach(() => { cleanup(); document.body.innerHTML = '' })
 
 async function mount(path: string, entries = turns) {
@@ -50,6 +56,21 @@ it('reuses the preview when keyboard focus moves and dismisses it with Escape', 
   expect(preview.textContent).not.toContain('first')
   host.querySelector('[data-turn="5"]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
   expect(preview.dataset.open).toBeUndefined()
+})
+
+it('marks the final turn at the bottom even when its anchor cannot reach the top', async () => {
+  const host = await mount('@/client/components/message-rail.vue')
+  const active = () => host.querySelector('[aria-current="location"]')?.getAttribute('data-turn')
+  visibility.value = { currentAnchorId: '1', visibleMessageIds: ['1', '5'] }
+  scrollable.value = { start: true, end: false }
+  await nextTick()
+  expect(active()).toBe('5')
+  scrollable.value = { start: true, end: true }
+  await nextTick()
+  expect(active()).toBe('1')
+  scrollable.value = { start: false, end: false }
+  await nextTick()
+  expect(active()).toBe('5')
 })
 
 it('keeps visible active ticks stationary and reveals only offscreen ticks', async () => {
