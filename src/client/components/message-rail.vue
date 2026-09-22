@@ -54,7 +54,8 @@ function paint() {
   const index = Math.max(0, Math.min(props.turns.length - 1, Math.floor((y - PAD) / TICK)))
   const nearby = new Set<number>()
   for (let i = Math.max(0, index - 4); i <= Math.min(props.turns.length - 1, index + 4); i++) {
-    const distance = Math.abs(PAD + i * TICK + TICK / 2 - y)
+    // Snap the peak to the selected tick so its neighbours stay symmetric within the hit area.
+    const distance = Math.abs(i - index) * TICK
     if (distance >= REACH) continue
     const strength = (1 + Math.cos(Math.PI * distance / REACH)) / 2
     nearby.add(i)
@@ -215,14 +216,14 @@ Teleport(to="body")
   height: 2px;
   transform-origin: left;
   transform: scaleX(calc(1 + 3.3 * var(--swell, 0)));
-  background: color-mix(in oklch, var(--foreground) 35%, transparent);
+  background: color-mix(in oklch, var(--foreground) 25%, transparent);
   transition: transform 140ms ease-out, background 140ms ease-out;
   pointer-events: none;
 }
 .message-rail:not([data-tracking]) .message-rail-tick[aria-current] span {
-  background: color-mix(in oklch, var(--foreground) 70%, transparent);
+  background: color-mix(in oklch, var(--foreground) 90%, transparent);
 }
-.message-rail[data-tracking] span { transition: none; }
+.message-rail[data-tracking] span { transition: transform 100ms ease-out; }
 .message-rail[data-tracking] span[data-hovered] { background: var(--foreground); }
 .message-rail-preview {
   position: fixed;
@@ -252,6 +253,6 @@ Teleport(to="body")
 }
 .message-rail-preview-reply[hidden] { display: none; }
 @media (prefers-reduced-motion: reduce) {
-  .message-rail-tick span, .message-rail-preview { transition: none; }
+  .message-rail-tick span, .message-rail[data-tracking] span, .message-rail-preview { transition: none; }
 }
 </style>

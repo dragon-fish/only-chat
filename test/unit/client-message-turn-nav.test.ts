@@ -115,6 +115,22 @@ it('updates only nearby ticks and keeps the rail stable while browsing previews'
   expect(document.querySelector<HTMLElement>('[data-message-rail-preview]')!.dataset.open).toBeUndefined()
 })
 
+it('keeps the swell centred on the hovered tick while moving within its hit area', async () => {
+  const entries = Array.from({ length: 12 }, (_, id) => ({ id, prompt: `turn ${id}`, reply: '' }))
+  const host = await mount('@/client/components/message-rail.vue', entries)
+  const rail = host.querySelector<HTMLElement>('[data-message-rail]')!
+  const strength = (id: number) => rail.querySelector<HTMLElement>(`[data-turn="${id}"] span`)!.style.getPropertyValue('--swell')
+  rail.dispatchEvent(new PointerEvent('pointerenter', { clientY: 59 }))
+  await vi.waitFor(() => expect(rail.querySelector('[data-hovered]')?.parentElement?.getAttribute('data-turn')).toBe('5'))
+  const peak = strength(5)
+  expect(Number(peak)).toBeGreaterThan(Number(strength(4)))
+  expect(strength(4)).toBe(strength(6))
+  rail.dispatchEvent(new PointerEvent('pointermove', { clientY: 67 }))
+  await new Promise(requestAnimationFrame)
+  expect(strength(5)).toBe(peak)
+  expect(strength(4)).toBe(strength(6))
+})
+
 it('closes the mobile outline and jumps to the picked turn', async () => {
   const host = await mount('@/client/components/message-outline.vue')
   host.querySelector<HTMLButtonElement>('[data-message-outline]')!.click()
