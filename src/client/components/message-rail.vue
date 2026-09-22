@@ -65,9 +65,11 @@ function paint() {
   for (const i of changed) if (!nearby.has(i)) tick(i)?.style.removeProperty('--swell')
   changed = nearby
   if (hovered !== index) {
+    tick(hovered)?.removeAttribute('data-hovered')
     hovered = index
     updatePreview()
   }
+  tick(index)?.setAttribute('data-hovered', '')
 }
 
 function queue() {
@@ -96,6 +98,7 @@ function leave() {
   clearTimeout(openTimer)
   cancelAnimationFrame(frame)
   frame = 0
+  tick(hovered)?.removeAttribute('data-hovered')
   hovered = -1
   rail.value?.removeAttribute('data-tracking')
   preview.value?.removeAttribute('data-open')
@@ -215,14 +218,15 @@ Teleport(to="body")
   height: 2px;
   transform-origin: left;
   transform: scaleX(calc(1 + 3.3 * var(--swell, 0)));
-  background: color-mix(in oklch, var(--foreground) calc(35% + 60% * var(--swell, 0)), transparent);
+  background: color-mix(in oklch, var(--foreground) 35%, transparent);
   transition: transform 140ms ease-out, background 140ms ease-out;
   pointer-events: none;
 }
-.message-rail-tick[aria-current] span {
-  background: color-mix(in oklch, var(--foreground) calc(70% + 25% * var(--swell, 0)), transparent);
+.message-rail:not([data-tracking]) .message-rail-tick[aria-current] span {
+  background: color-mix(in oklch, var(--foreground) 70%, transparent);
 }
 .message-rail[data-tracking] span { transition: none; }
+.message-rail[data-tracking] span[data-hovered] { background: var(--foreground); }
 .message-rail-preview {
   position: fixed;
   z-index: 50;
