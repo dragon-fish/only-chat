@@ -11,13 +11,21 @@ export const GenerateImageInputSchema = z.strictObject({
 export type GenerateImageInput = z.infer<typeof GenerateImageInputSchema>
 
 /** The immediate tool result: the images arrive later, in a task notification. */
-export interface GenerateImageStarted {
-  task_id: string
-  status: 'started'
-  count: number
-  model: string
-}
+export const GenerateImageStartedSchema = z.object({
+  task_id: z.string().regex(/^image_run:\d+$/),
+  status: z.literal('started'),
+  count: z.number().int(),
+  model: z.string(),
+})
+export type GenerateImageStarted = z.infer<typeof GenerateImageStartedSchema>
 
-export interface GenerateImageError { error: string }
+export const GenerateImageErrorSchema = z.object({ error: z.string() })
+export type GenerateImageError = z.infer<typeof GenerateImageErrorSchema>
 
 export type GenerateImageOutput = GenerateImageStarted | GenerateImageError
+
+/** The artifact run behind an `image_run:<id>` task id. */
+export function runIdOf(taskId: string): number | null {
+  const match = /^image_run:(\d+)$/.exec(taskId)
+  return match ? Number(match[1]) : null
+}

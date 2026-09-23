@@ -16,3 +16,15 @@ it('exports the supplied current path as readable Markdown and lossless JSON', (
   const json = JSON.parse(conversationExporters.json.serialize(context))
   expect(json).toMatchObject({ version: 1, conversation: { id: 1 }, messages: [{ id: 1 }, { id: 2, usage: { prompt: 2 } }] })
 })
+
+it('exports a task notification as its summary, not as a tool result', () => {
+  const markdown = conversationExporters.markdown.serialize({
+    conversation, attachmentUrl: (id: number) => `/a/${id}`,
+    messages: [{ ...messages[0]!, parts: [{
+      type: 'task_notification', task_id: 'image_run:1', plugin_id: 'image_generation', tool_call_id: 'c',
+      status: 'completed', text: 'Generated 1 image(s)',
+    }] }],
+  })
+  expect(markdown).toContain('> 后台任务（completed）：Generated 1 image(s)')
+  expect(markdown).not.toContain('工具结果')
+})

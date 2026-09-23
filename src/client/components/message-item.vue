@@ -12,6 +12,7 @@ import TurnSegments from '@/client/components/turn-segments.vue'
 import { messageSegments, turnBlocks } from '@/client/components/message-segments'
 import { canContinueToolMessage } from '@/client/components/tool-part-renderer'
 import ProjectAvatar from '@/client/components/project-avatar.vue'
+import TaskNotificationRow from '@/client/components/task-notification-row.vue'
 import { useAttachmentUrl, useAuditContext } from '@/client/lib/audit-context'
 import { cn } from '@/client/lib/utils'
 import { assistantWaitState, editCommandFor, regenerateCommandFor, useSyncStore, type EffectiveModel } from '@/client/stores/sync'
@@ -22,6 +23,7 @@ import { Button } from '@/client/ui/button'
 import { Message as MessageRoot, MessageAvatar, MessageContent, MessageFooter, MessageHeader } from '@/client/ui/message'
 import { Textarea } from '@/client/ui/textarea'
 import type { Message, Project } from '@/shared/models'
+import { isNotificationOnly, type TaskNotificationPart } from '@/shared/parts'
 import { useConversationFork } from '@/client/composables/use-conversation-fork'
 import { useTheme } from '@/client/composables/use-theme'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/client/ui/dropdown-menu'
@@ -52,6 +54,9 @@ const draft = ref('')
 
 const textParts = computed(() => props.message.parts.filter((p) => p.type === 'text'))
 const images = computed(() => props.message.parts.filter((p) => p.type === 'image'))
+const notices = computed(() => props.message.parts.filter((p): p is TaskNotificationPart => p.type === 'task_notification'))
+/** Written by the server when a background task finished: a status row, not something the person said. */
+const notificationOnly = computed(() => props.message.role === 'user' && isNotificationOnly(props.message.parts))
 /**
  * The assistant bubble renders these in order. A reasoning block is "active" — expanded, labelled
  * 正在思考… — only while it is the live tail of a streaming reply; anything arriving after it
@@ -121,8 +126,11 @@ function regenerate() {
 </script>
 
 <template lang="pug">
+//- Not a bubble: nobody wrote it, and there is nothing to edit or copy.
+.flex.flex-col.gap-2(v-if="notificationOnly")
+  TaskNotificationRow(v-for="notice in notices" :key="notice.task_id" :notification="notice")
 MessageRoot(
-  v-if="!emptyTurn"
+  v-else-if="!emptyTurn"
   :align="message.role === 'user' ? 'end' : 'start'"
   :data-optimistic="optimistic || undefined" :class="cn(optimistic && 'opacity-70')")
   MessageAvatar(v-if="message.role === 'assistant'" class="self-start group-has-data-[slot=message-footer]/message:translate-y-0")
@@ -137,6 +145,8 @@ MessageRoot(
     Bubble(:align="message.role === 'user' ? 'end' : 'start'" :variant="message.role === 'user' ? 'tinted' : 'ghost'" :class="cn(message.role === 'assistant' && 'w-full')")
       BubbleContent(:class="cn(message.role === 'assistant' && 'w-full')")
         template(v-if="message.role === 'user'")
+          .flex.flex-col.gap-2.pb-2(v-if="notices.length")
+            TaskNotificationRow(v-for="notice in notices" :key="notice.task_id" :notification="notice")
           .flex.flex-wrap.gap-2.pb-1(v-if="images.length")
             img.max-h-40.rounded(v-for="img in images" :key="img.attachment_id" :src="attachmentUrl(img.attachment_id)")
           template(v-if="!editing")

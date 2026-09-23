@@ -92,4 +92,14 @@ describe('ClientPluginHost', () => {
     host.dispatchEvent('alpha', { n: 3 })
     expect(received).toHaveLength(1)
   })
+
+  it('lazily loads the plugin that renders a notification, and has none for an unknown plugin', async () => {
+    const host = new ClientPluginHost({
+      manifests: [{ id: 'image_generation', name: 'Images', description: 'Images', tools: [{ id: 'generate_image', name: 'g', description: 'g' }] }],
+      loaders: { image_generation: async () => ({ setup: ctx => { ctx.notifications.register({ name: 'thumbs' }) } }) },
+    })
+    expect(await host.ensureNotificationRenderer('image_generation')).toEqual({ name: 'thumbs' })
+    expect(await host.ensureNotificationRenderer('nobody')).toBeUndefined()
+  })
 })
+

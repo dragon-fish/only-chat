@@ -7,6 +7,7 @@ export type ConfigRenderer = unknown
 export type MessageFooterRenderer = unknown
 export type SettingsPanelRenderer = unknown
 export type WorkspacePanelRenderer = unknown
+export type NotificationRenderer = unknown
 
 /** What a plugin asks of the workspace panel; the shell decides whether to grant it. */
 export interface WorkspaceAttention {
@@ -28,6 +29,11 @@ export interface ClientPluginContext {
    * what a per-tool-call card cannot do, because the point is the turn's outcome, not one call.
    */
   messageFooter: { register(component: MessageFooterRenderer): () => void }
+  /**
+   * Detail under a `task_notification` this plugin's background task produced, given the part as
+   * `notification`. Without one the notification shows its summary text.
+   */
+  notifications: { register(component: NotificationRenderer): () => void }
   /**
    * Extra content on this plugin's own settings page, under `/settings/plugins/<id>`. The
    * declaration-driven form stays; this is for what a form cannot be — a file manager, a log, a
@@ -73,6 +79,7 @@ export class ClientPluginHost {
   private readonly renderers = new Map<string, ToolRenderer>()
   private readonly configRenderers = new Map<string, ConfigRenderer>()
   private readonly messageFooters = new Map<string, MessageFooterRenderer>()
+  private readonly notificationRenderers = new Map<string, NotificationRenderer>()
   private readonly settingsPanels = new Map<string, SettingsPanelRenderer>()
   private readonly eventListeners = new Map<string, Set<(payload: unknown) => void>>()
   private readonly workspacePanels = new Map<string, WorkspacePanelRenderer>()
@@ -204,6 +211,17 @@ export class ClientPluginHost {
             return unregister
           },
         },
+        notifications: {
+          register: (component) => {
+            if (this.notificationRenderers.has(pluginId)) throw new Error(`notification renderer already registered: ${pluginId}`)
+            this.notificationRenderers.set(pluginId, component)
+            const unregister = () => {
+              if (this.notificationRenderers.get(pluginId) === component) this.notificationRenderers.delete(pluginId)
+            }
+            registrations.push(unregister)
+            return unregister
+          },
+        },
         workspacePanel: {
           register: (component) => {
             if (this.workspacePanels.has(pluginId)) throw new Error(`workspace panel already registered: ${pluginId}`)
@@ -270,6 +288,15 @@ export class ClientPluginHost {
     } finally {
       this.pending.delete(pluginId)
     }
+  }
+
+  /** Historical notifications use this path even when their plugin is now globally disabled. */
+  async ensureNotificationRenderer(pluginId: string): Promise<NotificationRenderer | undefined> {
+    const existing = this.notificationRenderers.get(pluginId)
+    if (existing !== undefined) return existing
+    if (!this.loaders[pluginId]) return undefined
+    await this.ensurePlugin(pluginId)
+    return this.notificationRenderers.get(pluginId)
   }
 
   /** Historical Parts use this path even when their plugin is now globally disabled. */

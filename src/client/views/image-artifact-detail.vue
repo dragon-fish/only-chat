@@ -29,6 +29,12 @@ const { open, setOpen: close } = useRouteOverlay(() => {
   const conversationId = routeParamToId(typeof value === 'string' ? value : undefined)
   return conversationId === null ? '/images' : `/images/s/${conversationId}`
 })
+/** An Agent's image came from a chat; everything else from an image conversation in Studio. */
+const sourcePath = computed(() => {
+  const value = artifact.value
+  if (!value?.conversation_id) return null
+  return value.source === 'tool' ? `/c/${value.conversation_id}` : `/images/s/${value.conversation_id}`
+})
 /** The viewer is dark in both themes, so its controls cannot use the theme's ghost colours. */
 const toolClass = 'rounded-full text-white/85 hover:bg-white/15 hover:text-white disabled:text-white/30'
 
@@ -127,7 +133,7 @@ watch(() => props.artifactId, () => void load())
                 <dt class="text-muted-foreground">供应商</dt><dd class="truncate">{{ artifact.provider_name }}</dd>
                 <dt class="text-muted-foreground">尺寸</dt><dd>{{ artifact.width && artifact.height ? `${artifact.width} × ${artifact.height}` : '供应商默认' }}</dd>
                 <dt class="text-muted-foreground">来源</dt>
-                <dd><RouterLink v-if="artifact.conversation_id" :to="`/images/s/${artifact.conversation_id}`" class="font-medium underline-offset-4 hover:underline">Conversation #{{ artifact.conversation_id }}</RouterLink><span v-else>来源已删除</span></dd>
+                <dd><RouterLink v-if="sourcePath" :to="sourcePath" class="font-medium underline-offset-4 hover:underline">Conversation #{{ artifact.conversation_id }}</RouterLink><span v-else>来源已删除</span></dd>
               </dl>
             </PopoverContent>
           </Popover>
