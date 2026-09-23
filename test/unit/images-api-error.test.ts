@@ -24,17 +24,32 @@ function respondWith(status: number, body: string) {
 afterEach(() => { vi.unstubAllGlobals() })
 
 describe('a rejected Images API request says enough to diagnose it', () => {
-  it('names the endpoint and the upstream code', async () => {
-    respondWith(404, JSON.stringify({ error: { code: 'ModelNotOpen', message: 'model not activated for account 12345' } }))
+  it('names the endpoint, the upstream code and what the provider said', async () => {
+    respondWith(400, JSON.stringify({ error: { code: 'moderation_blocked', message: 'Your request was rejected by the safety system.' } }))
     const client = createOpenAIImagesClient(BASE, 'key')
 
     const failure = await client.generate(request()).catch((error: Error) => error.message)
 
-    expect(failure).toContain('404')
-    expect(failure).toContain('/images/generations')
-    expect(failure).toContain('ModelNotOpen')
-    // Free text from a provider may quote the request, which can carry a credential.
-    expect(failure).not.toContain('account 12345')
+    expect(failure).toBe('Images API request failed: 400 at /images/generations (moderation_blocked): Your request was rejected by the safety system.')
+  })
+
+  it('redacts credentials a provider echoes back', async () => {
+    const key = 'sk-live-0123456789abcdefghij'
+    respondWith(401, JSON.stringify({ error: { message: `Incorrect API key ${key}; header was Bearer ${key}. Try ak_9f8e7d6c5b4a3210 or token abcdefghijklmnopqrstuvwxyz0123456789ABCD.` } }))
+    const client = createOpenAIImagesClient(BASE, key)
+
+    const failure = await client.generate(request()).catch((error: Error) => error.message)
+
+    expect(failure).toContain('Incorrect API key')
+    expect(failure).not.toContain(key)
+    expect(failure).not.toContain('ak_9f8e7d6c5b4a3210')
+    expect(failure).not.toContain('abcdefghijklmnopqrstuvwxyz0123456789ABCD')
+  })
+
+  it('caps the provider text at 500 characters', async () => {
+    respondWith(400, JSON.stringify({ error: { message: 'too long '.repeat(200) } }))
+    const failure = await createOpenAIImagesClient(BASE, 'key').generate(request()).then(() => '', (error: Error) => error.message)
+    expect(failure.length).toBeLessThanOrEqual('Images API request failed: 400 at /images/generations: '.length + 500)
   })
 
   it('reports the edits endpoint when the request carried a reference', async () => {

@@ -48,30 +48,44 @@ function appendOptions(body: FormData, request: ImageGenerationRequest): void {
 }
 
 /**
- * A provider's error `code` is a classification token; its `message` is free text that routinely
- * quotes the request back, which is how a credential ends up in one. Only the token may travel into
- * `artifact_runs.error`, where a user reads it — the same rule `fileCleanupError` follows.
+ * A provider's error `code` is a classification token and must stay one: anything longer than a short
+ * identifier is free text, which is dropped.
  */
 const UPSTREAM_CODE = /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/
+const MAX_UPSTREAM_MESSAGE = 500
 
-async function upstreamCode(response: Response): Promise<string | null> {
+/**
+ * A provider's error text tells the person — and an Agent retrying the request — why it was
+ * refused, so it travels into `artifact_runs.error`. It is also free text that may quote the
+ * request back, credentials included, so it is redacted first: the key this request used, bearer
+ * tokens, key-shaped tokens, and any long unbroken token. Do not pass it through unredacted.
+ */
+function redact(text: string, apiKey: string): string {
+  let out = apiKey ? text.split(apiKey).join('[redacted]') : text
+  out = out.replace(/Bearer\s+\S+/gi, 'Bearer [redacted]')
+  out = out.replace(/\b(?:sk|ak|pk|key)[-_][A-Za-z0-9_-]{8,}/gi, '[redacted]')
+  out = out.replace(/[A-Za-z0-9_-]{32,}/g, '[redacted]')
+  return out.trim().slice(0, MAX_UPSTREAM_MESSAGE)
+}
+
+async function upstreamError(response: Response, apiKey: string): Promise<{ code: string | null; message: string | null }> {
   const body = await response.text().catch(() => '')
   let parsed: unknown
   try { parsed = JSON.parse(body) }
-  catch { return null }
+  catch { return { code: null, message: null } }
   const error = (parsed as { error?: unknown })?.error
-  const code = typeof error === 'object' && error !== null
-    ? (error as { code?: unknown }).code
-    : (parsed as { code?: unknown })?.code
-  return typeof code === 'string' && UPSTREAM_CODE.test(code) ? code : null
+  const source = typeof error === 'object' && error !== null ? error as { code?: unknown; message?: unknown } : parsed as { code?: unknown; message?: unknown }
+  const code = typeof source?.code === 'string' && UPSTREAM_CODE.test(source.code) ? source.code : null
+  const message = typeof source?.message === 'string' ? redact(source.message, apiKey) : ''
+  return { code, message: message || null }
 }
 
-async function readResponse(response: Response, request: ImageGenerationRequest, path: string): Promise<ImageGenerationResult> {
+async function readResponse(response: Response, request: ImageGenerationRequest, path: string, apiKey: string): Promise<ImageGenerationResult> {
   if (!response.ok) {
     // The path matters as much as the status: which of the two endpoints was called depends on
     // whether the request carried a reference, and a 404 means different things for each.
-    const code = await upstreamCode(response)
-    throw new Error(`Images API request failed: ${response.status} at ${path}${code === null ? '' : ` (${code})`}`)
+    const { code, message } = await upstreamError(response, apiKey)
+    throw new Error(`Images API request failed: ${response.status} at ${path}${code === null ? '' : ` (${code})`}${message ? `: ${message}` : ''}`)
   }
   const parsed = ResponseSchema.parse(await response.json())
   const images = await Promise.all(parsed.data.map(async (item) => {
@@ -131,7 +145,7 @@ export function createOpenAIImagesClient(
       // Only the path we built travels into the error: a base URL can carry a key in its query.
       const path = `/images/${editing && options.referenceMode !== 'generation-json' ? 'edits' : 'generations'}`
       const response = await fetch(`${base}${path}`, { method: 'POST', headers, body, signal: request.signal })
-      return readResponse(response, request, path)
+      return readResponse(response, request, path, apiKey)
     },
   }
 }
