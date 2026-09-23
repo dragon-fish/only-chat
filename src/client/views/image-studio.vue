@@ -21,6 +21,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/
 import { Field, FieldDescription, FieldLabel } from '@/client/ui/field'
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } from '@/client/ui/input-group'
 import { ScrollArea } from '@/client/ui/scroll-area'
+import { MessageScroller, MessageScrollerButton, MessageScrollerContent, MessageScrollerItem, MessageScrollerProvider, MessageScrollerViewport } from '@/client/ui/message-scroller'
 import { Separator } from '@/client/ui/separator'
 import { Skeleton } from '@/client/ui/skeleton'
 import type { ArtifactDto, ArtifactRunDto, CreateImageRunInput, ImageGenerationParams } from '@/shared/artifacts'
@@ -298,84 +299,97 @@ onBeforeUnmount(() => { clearTimeout(pollTimer); releaseReferences() })
   <FileDropOverlay :show="isOverDropZone" :label="dropLabel" />
   <div class="grid h-full min-h-0 lg:grid-cols-[minmax(0,1fr)_18rem]">
     <main class="flex min-h-0 min-w-0 flex-col">
-      <ScrollArea class="min-h-0 flex-1">
-        <div class="mx-auto flex min-h-full w-full max-w-5xl flex-col p-4 md:p-8">
-          <div v-if="loading" class="grid w-full grid-cols-2 gap-3"><Skeleton class="aspect-square rounded-xl" /><Skeleton class="aspect-square rounded-xl" /></div>
-          <div v-else-if="chronologicalRuns.length" class="flex flex-col gap-8">
-            <article v-for="run in chronologicalRuns" :key="run.id" class="flex flex-col gap-4">
-              <div class="flex justify-end">
-                <div class="flex max-w-[85%] flex-col gap-2 rounded-2xl rounded-br-sm bg-muted px-4 py-3">
-                  <div v-if="run.reference_attachment_ids?.length" class="flex flex-wrap justify-end gap-2">
-                    <img v-for="attachmentId in run.reference_attachment_ids" :key="attachmentId" :src="api.attachmentUrl(attachmentId)" alt="本轮参考图" class="size-16 rounded-lg border object-cover" loading="lazy" />
-                  </div>
-                  <p class="whitespace-pre-wrap text-sm">{{ run.prompt }}</p>
-                </div>
-              </div>
-
-              <div class="flex justify-start">
-                <div class="flex w-full max-w-4xl flex-col gap-3">
-                  <div v-if="run.status === 'queued' || run.status === 'running'" class="flex flex-col gap-3">
-                    <Skeleton v-if="run.params.count === 1" class="aspect-square w-full max-w-[min(32rem,60vh)] rounded-xl" />
-                    <div v-else class="grid w-full gap-2" :class="gridClass(run.params.count)">
-                      <Skeleton v-for="index in run.params.count" :key="index" class="aspect-square rounded-lg" />
-                    </div>
-                    <span class="text-sm text-muted-foreground">{{ run.status === 'queued' ? '等待生成…' : '正在生成图片，可以安全离开此页面。' }}</span>
-                  </div>
-                  <Alert v-else-if="run.status === 'failed'" variant="destructive">
-                    <AlertTitle>图片生成失败</AlertTitle>
-                    <AlertDescription>{{ run.error ?? '供应商未返回具体错误。' }}</AlertDescription>
-                  </Alert>
-                  <Alert v-else-if="run.status === 'cancelled'">
-                    <AlertTitle>已取消生成</AlertTitle>
-                    <AlertDescription>这次请求没有产生图片。</AlertDescription>
-                  </Alert>
-                  <!-- One image: capped by height, not width — a full-width landscape image outgrows the
-                       viewport and pushes the prompt bubble off screen. The 1536px preview variant covers
-                       that cap at 2x; the original is one click away on the detail page. -->
-                  <div v-else-if="outputsFor(run.id).length === 1" class="flex">
-                    <div v-for="artifact in outputsFor(run.id)" :key="artifact.id" class="group relative max-w-full overflow-hidden rounded-xl border bg-muted">
-                      <RouterLink :to="`/images/s/${props.conversationId}/a/${artifact.id}`" class="block">
-                        <img :src="api.artifactContentUrl(artifact.id, 'preview')" :alt="artifact.prompt" class="block max-h-[min(32rem,60vh)] w-auto max-w-full object-contain" loading="lazy" />
-                        <Badge class="absolute bottom-3 left-3 opacity-0 transition-opacity group-hover:opacity-100" variant="secondary">查看详情</Badge>
-                      </RouterLink>
-                      <Button v-if="referenceAllowed" size="sm" variant="secondary" class="absolute bottom-3 right-3 opacity-100 shadow-sm transition-opacity md:opacity-0 md:group-hover:opacity-100 focus-visible:opacity-100" @click="addArtifactReference(artifact)"><ImagePlusIcon data-icon="inline-start" />继续编辑</Button>
-                    </div>
-                  </div>
-                  <!-- Several: cropped square tiles from the 512px gallery variant; the detail dialog shows
-                       each uncropped and steps through the run. -->
-                  <div v-else class="grid w-full gap-2" :class="gridClass(outputsFor(run.id).length)">
-                    <div v-for="artifact in outputsFor(run.id)" :key="artifact.id" class="group relative aspect-square overflow-hidden rounded-lg border bg-muted">
-                      <RouterLink :to="`/images/s/${props.conversationId}/a/${artifact.id}`" class="block size-full" :aria-label="`查看第 ${artifact.output_index + 1} 张`">
-                        <img :src="api.artifactContentUrl(artifact.id, 'gallery')" :alt="artifact.prompt" class="size-full object-cover transition-transform duration-300 group-hover:scale-[1.03]" loading="lazy" />
-                      </RouterLink>
-                      <Button v-if="referenceAllowed" size="icon-sm" variant="secondary" class="absolute bottom-2 right-2 opacity-100 shadow-sm transition-opacity md:opacity-0 md:group-hover:opacity-100 focus-visible:opacity-100" aria-label="继续编辑" @click="addArtifactReference(artifact)"><ImagePlusIcon /></Button>
+      <div v-if="loading" class="min-h-0 flex-1">
+        <div class="mx-auto grid w-full max-w-5xl grid-cols-2 gap-3 p-4 md:p-8"><Skeleton class="aspect-square rounded-xl" /><Skeleton class="aspect-square rounded-xl" /></div>
+      </div>
+      <!-- The chat transcript's scroller: opens at the newest run and stays there while images load
+           in above it. Keyed per conversation because the opening position is applied only once. -->
+      <MessageScrollerProvider v-else-if="chronologicalRuns.length" :key="props.conversationId ?? 'draft'" :auto-scroll="false" :scroll-previous-item-peek="0" default-scroll-position="end">
+        <MessageScroller class="min-h-0 flex-1">
+          <MessageScrollerViewport>
+            <MessageScrollerContent class="mx-auto w-full max-w-5xl p-4 md:p-8">
+              <!-- client_request_id, not id: the placeholder's id changes when the server answers,
+                   and a new key would remount the item and replay the new-run scroll. -->
+              <MessageScrollerItem v-for="run in chronologicalRuns" :key="run.client_request_id" :message-id="run.client_request_id" scroll-anchor>
+                <article class="flex flex-col gap-4">
+                  <div class="flex justify-end">
+                    <div class="flex max-w-[85%] flex-col gap-2 rounded-2xl rounded-br-sm bg-muted px-4 py-3">
+                      <div v-if="run.reference_attachment_ids?.length" class="flex flex-wrap justify-end gap-2">
+                        <img v-for="attachmentId in run.reference_attachment_ids" :key="attachmentId" :src="api.attachmentUrl(attachmentId)" alt="本轮参考图" class="size-16 rounded-lg border object-cover" loading="lazy" />
+                      </div>
+                      <p class="whitespace-pre-wrap text-sm">{{ run.prompt }}</p>
                     </div>
                   </div>
 
-                  <div class="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                    <span v-if="formatDuration(run)" class="inline-flex items-center gap-1"><ClockIcon class="size-3.5" />{{ formatDuration(run) }}</span>
-                    <span v-if="run.usage?.total_tokens">{{ run.usage.total_tokens.toLocaleString() }} tokens</span>
-                    <span v-if="run.usage?.generated_images">{{ run.usage.generated_images }} 张图片</span>
-                    <div class="ml-auto flex gap-2">
-                      <Button v-if="run.status === 'failed'" size="xs" variant="ghost" @click="restoreRun(run)">恢复输入</Button>
-                      <Button v-if="run.status !== 'queued' && run.status !== 'running'" size="xs" variant="ghost" :disabled="Boolean(running)" @click="retryRun(run)"><RotateCcwIcon data-icon="inline-start" />重试</Button>
+                  <div class="flex justify-start">
+                    <div class="flex w-full max-w-4xl flex-col gap-3">
+                      <div v-if="run.status === 'queued' || run.status === 'running'" class="flex flex-col gap-3">
+                        <Skeleton v-if="run.params.count === 1" class="aspect-square w-full max-w-[min(32rem,60vh)] rounded-xl" />
+                        <div v-else class="grid w-full gap-2" :class="gridClass(run.params.count)">
+                          <Skeleton v-for="index in run.params.count" :key="index" class="aspect-square rounded-lg" />
+                        </div>
+                        <span class="text-sm text-muted-foreground">{{ run.status === 'queued' ? '等待生成…' : '正在生成图片，可以安全离开此页面。' }}</span>
+                      </div>
+                      <Alert v-else-if="run.status === 'failed'" variant="destructive">
+                        <AlertTitle>图片生成失败</AlertTitle>
+                        <AlertDescription>{{ run.error ?? '供应商未返回具体错误。' }}</AlertDescription>
+                      </Alert>
+                      <Alert v-else-if="run.status === 'cancelled'">
+                        <AlertTitle>已取消生成</AlertTitle>
+                        <AlertDescription>这次请求没有产生图片。</AlertDescription>
+                      </Alert>
+                      <!-- One image: capped by height, not width — a full-width landscape image outgrows the
+                           viewport and pushes the prompt bubble off screen. The 1536px preview variant covers
+                           that cap at 2x; the original is one click away on the detail page. -->
+                      <div v-else-if="outputsFor(run.id).length === 1" class="flex">
+                        <div v-for="artifact in outputsFor(run.id)" :key="artifact.id" class="group relative max-w-full overflow-hidden rounded-xl border bg-muted">
+                          <RouterLink :to="`/images/s/${props.conversationId}/a/${artifact.id}`" class="block">
+                            <img :src="api.artifactContentUrl(artifact.id, 'preview')" :alt="artifact.prompt" class="block max-h-[min(32rem,60vh)] w-auto max-w-full object-contain" loading="lazy" />
+                            <Badge class="absolute bottom-3 left-3 opacity-0 transition-opacity group-hover:opacity-100" variant="secondary">查看详情</Badge>
+                          </RouterLink>
+                          <Button v-if="referenceAllowed" size="sm" variant="secondary" class="absolute bottom-3 right-3 opacity-100 shadow-sm transition-opacity md:opacity-0 md:group-hover:opacity-100 focus-visible:opacity-100" @click="addArtifactReference(artifact)"><ImagePlusIcon data-icon="inline-start" />继续编辑</Button>
+                        </div>
+                      </div>
+                      <!-- Several: cropped square tiles from the 512px gallery variant; the detail dialog shows
+                           each uncropped and steps through the run. -->
+                      <div v-else class="grid w-full gap-2" :class="gridClass(outputsFor(run.id).length)">
+                        <div v-for="artifact in outputsFor(run.id)" :key="artifact.id" class="group relative aspect-square overflow-hidden rounded-lg border bg-muted">
+                          <RouterLink :to="`/images/s/${props.conversationId}/a/${artifact.id}`" class="block size-full" :aria-label="`查看第 ${artifact.output_index + 1} 张`">
+                            <img :src="api.artifactContentUrl(artifact.id, 'gallery')" :alt="artifact.prompt" class="size-full object-cover transition-transform duration-300 group-hover:scale-[1.03]" loading="lazy" />
+                          </RouterLink>
+                          <Button v-if="referenceAllowed" size="icon-sm" variant="secondary" class="absolute bottom-2 right-2 opacity-100 shadow-sm transition-opacity md:opacity-0 md:group-hover:opacity-100 focus-visible:opacity-100" aria-label="继续编辑" @click="addArtifactReference(artifact)"><ImagePlusIcon /></Button>
+                        </div>
+                      </div>
+
+                      <div class="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                        <span v-if="formatDuration(run)" class="inline-flex items-center gap-1"><ClockIcon class="size-3.5" />{{ formatDuration(run) }}</span>
+                        <span v-if="run.usage?.total_tokens">{{ run.usage.total_tokens.toLocaleString() }} tokens</span>
+                        <span v-if="run.usage?.generated_images">{{ run.usage.generated_images }} 张图片</span>
+                        <div class="ml-auto flex gap-2">
+                          <Button v-if="run.status === 'failed'" size="xs" variant="ghost" @click="restoreRun(run)">恢复输入</Button>
+                          <Button v-if="run.status !== 'queued' && run.status !== 'running'" size="xs" variant="ghost" :disabled="Boolean(running)" @click="retryRun(run)"><RotateCcwIcon data-icon="inline-start" />重试</Button>
+                        </div>
+                      </div>
                     </div>
                   </div>
-                </div>
-              </div>
 
-              <div class="flex items-center gap-3 text-xs text-muted-foreground">
-                <Separator class="flex-1" />
-                <span>{{ runDividerLabel(run) }}</span>
-                <Separator class="flex-1" />
-              </div>
-            </article>
-          </div>
-          <Empty v-else class="my-auto">
-            <EmptyHeader><EmptyMedia variant="icon"><ImagesIcon /></EmptyMedia><EmptyTitle>开始创作</EmptyTitle><EmptyDescription>描述你想生成的画面，也可以添加参考图进行编辑。</EmptyDescription></EmptyHeader>
-          </Empty>
-        </div>
-      </ScrollArea>
+                  <div class="flex items-center gap-3 text-xs text-muted-foreground">
+                    <Separator class="flex-1" />
+                    <span>{{ runDividerLabel(run) }}</span>
+                    <Separator class="flex-1" />
+                  </div>
+                </article>
+              </MessageScrollerItem>
+            </MessageScrollerContent>
+          </MessageScrollerViewport>
+          <MessageScrollerButton direction="end" class="size-10 md:size-7" />
+        </MessageScroller>
+      </MessageScrollerProvider>
+      <div v-else class="flex min-h-0 flex-1 p-4 md:p-8">
+        <Empty class="my-auto">
+          <EmptyHeader><EmptyMedia variant="icon"><ImagesIcon /></EmptyMedia><EmptyTitle>开始创作</EmptyTitle><EmptyDescription>描述你想生成的画面，也可以添加参考图进行编辑。</EmptyDescription></EmptyHeader>
+        </Empty>
+      </div>
       <div class="border-t bg-background p-3">
         <div class="mx-auto w-full max-w-3xl">
           <div v-if="references.length" class="mb-2 flex flex-wrap gap-2 lg:hidden">
