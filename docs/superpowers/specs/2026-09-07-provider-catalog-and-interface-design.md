@@ -300,6 +300,7 @@ Catalog 查找严格按以下层级执行，命中较高层后不再用较低层
 6. 全局目录未精确命中，且只有一方含斜杠时，在全局 `models` 中按 `/` 最后一段匹配。
 7. Basename 只能命中一个候选；多个候选视为歧义并继续下一层或最终不匹配。
 8. 双方都有斜杠但完整 ID 不同，不做 basename 匹配。
+   例外：运营商 model ID 的第一段不是已知 Lab ID 时，视为网关自有命名空间（如 `claude/…`、`codex/…`）。第 1、2、5、6 层用完整 ID 未命中后，再用去掉该段的剩余 ID 按同样规则匹配。已知 Lab 前缀永不剥离。
 9. 不转换大小写、点号、连字符、下划线或版本号。
 
 Operator provider 条目是首选 fallback，因为它表达该运营商实际暴露的模型 ID、能力、reasoning options、限制和价格。Lab provider 是 operator 未命中时的保守增强层：它只提供 `reasoning_options`、`interleaved` 和 `modalities`，不得提供 `cost`、`limit`、`provider`、`experimental`、`status` 或其他运营商相关字段。全局 `models` 提供模型自身通用事实。所有匹配来源、ID 和种类写入模型解析缓存，方便 UI 解释来源。

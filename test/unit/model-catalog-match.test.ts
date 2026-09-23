@@ -206,11 +206,24 @@ describe('matchCatalogModel', () => {
     expect(result.globalModel).toMatchObject({ modelId: 'deepseek/deepseek-v4-flash', kind: 'basename' })
   })
 
-  it('does not basename-match two different slashed IDs', () => {
-    const result = matchCatalogModel({ providerId: null, modelId: 'other/deepseek-v4-flash', catalog })
+  it('does not basename-match across two different known Lab prefixes', () => {
+    const result = matchCatalogModel({ providerId: null, modelId: 'alpha/deepseek-v4-flash', catalog })
 
     expect(result.labProvider).toBeNull()
     expect(result.globalModel).toBeNull()
+  })
+
+  it('strips a gateway prefix that is not a known Lab before matching the remainder', () => {
+    expect(matchCatalogModel({ providerId: null, modelId: 'gateway/deepseek-v4-flash', catalog })).toMatchObject({
+      globalModel: { providerId: 'deepseek', modelId: 'deepseek/deepseek-v4-flash', kind: 'basename' },
+      labId: 'deepseek',
+    })
+
+    expect(matchCatalogModel({ providerId: null, modelId: 'gateway/deepseek/deepseek-v4-flash', catalog }).globalModel)
+      .toMatchObject({ modelId: 'deepseek/deepseek-v4-flash', kind: 'exact' })
+
+    expect(matchCatalogModel({ providerId: 'openrouter', modelId: 'gateway/deepseek/deepseek-v4-flash', catalog }).operatorProvider)
+      .toMatchObject({ modelId: 'deepseek/deepseek-v4-flash', kind: 'exact' })
   })
 
   it('rejects ambiguous basenames rather than choosing by record order', () => {

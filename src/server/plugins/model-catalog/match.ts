@@ -144,16 +144,26 @@ export function matchCatalogModel({ providerId, modelId, catalog }: {
   modelId: string
   catalog: ModelCatalog
 }): CatalogModelMatchResult {
-  const operatorProvider = providerId === null
-    ? null
-    : toCatalogModelHit(providerId, matchModelRecord(modelId, catalog.providers[providerId]?.models ?? {}))
-
   const knownLabIds = new Set(Object.keys(catalog.models)
     .map(labIdFromGlobalModelId)
     .filter((id): id is string => id !== null))
 
   const separator = modelId.indexOf('/')
   const prefixedLabId = separator > 0 ? modelId.slice(0, separator) : null
+  // A first segment that is not a known Lab is the gateway's own namespace
+  // (`claude/…`, `codex/…`), not a claim about the model's origin, so the
+  // remainder is matched on its own. A known Lab prefix is never stripped:
+  // `alpha/x` must not match `beta/x`.
+  const gatewayRemainder = prefixedLabId !== null && !knownLabIds.has(prefixedLabId)
+    ? modelId.slice(separator + 1)
+    : null
+  const matchRecord = (models: Readonly<Record<string, CatalogModel>>): ModelRecordHit | null =>
+    matchModelRecord(modelId, models) ?? (gatewayRemainder === null ? null : matchModelRecord(gatewayRemainder, models))
+
+  const operatorProvider = providerId === null
+    ? null
+    : toCatalogModelHit(providerId, matchRecord(catalog.providers[providerId]?.models ?? {}))
+
   let labProvider: CatalogModelHit | null = null
   if (operatorProvider === null
     && prefixedLabId !== null
@@ -166,7 +176,7 @@ export function matchCatalogModel({ providerId, modelId, catalog }: {
     )
   }
 
-  const globalRecordHit = matchModelRecord(modelId, catalog.models)
+  const globalRecordHit = matchRecord(catalog.models)
   const globalLabId = globalRecordHit === null ? null : labIdFromGlobalModelId(globalRecordHit.modelId)
   const globalModel = globalRecordHit === null
     ? null
