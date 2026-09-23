@@ -1,4 +1,4 @@
-import type { CreateImageRunInput } from '@/shared/artifacts'
+import type { ArtifactRunDto, CreateImageRunInput } from '@/shared/artifacts'
 import type { ModelRef } from '@/shared/model-ref'
 import type { ModelListItem, ProviderWithInterfaces } from '@/shared/models'
 
@@ -46,4 +46,55 @@ export function buildImageRunInput(draft: ImageDraft): CreateImageRunInput {
       ...(draft.outputFormat ? { output_format: draft.outputFormat } : {}),
     },
   }
+}
+
+let nextPendingId = -1
+
+/**
+ * The row a submitted run occupies until `POST /artifact-runs/image` answers. Its id is negative so
+ * it can never be mistaken for a real run — nothing may send it to the API. Only the fields Studio
+ * renders are real; the provider and model names stay empty until the first poll replaces the row.
+ */
+export function pendingRun(input: CreateImageRunInput): ArtifactRunDto {
+  return {
+    id: nextPendingId--,
+    user_id: 0,
+    client_request_id: input.client_request_id,
+    kind: 'image_generation',
+    source: 'studio',
+    operation: input.reference_attachment_ids.length ? 'edit' : 'generate',
+    status: 'queued',
+    conversation_id: input.conversation_id ?? null,
+    message_id: null,
+    provider_id: input.model.provider_id,
+    model_id: input.model.model_id,
+    provider_name: '',
+    interface_protocol: '',
+    model_name: '',
+    prompt: input.prompt,
+    params: input.params,
+    error: null,
+    usage: null,
+    created_at: Date.now(),
+    started_at: null,
+    completed_at: null,
+    reference_attachment_ids: input.reference_attachment_ids,
+  }
+}
+
+/**
+ * `/images/new` and `/images/s/:id` are different route components, so the first run of a new
+ * conversation outlives the Studio instance that submitted it. The next instance takes it from here
+ * instead of showing a skeleton until its own fetch returns.
+ */
+const createdRuns = new Map<number, ArtifactRunDto>()
+
+export function stashCreatedRun(run: ArtifactRunDto & { conversation_id: number }): void {
+  createdRuns.set(run.conversation_id, run)
+}
+
+export function takeCreatedRun(conversationId: number): ArtifactRunDto | undefined {
+  const run = createdRuns.get(conversationId)
+  createdRuns.delete(conversationId)
+  return run
 }

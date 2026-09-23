@@ -9,7 +9,7 @@ import { toast } from 'vue-sonner'
 import ImageParameters from '@/client/components/image-parameters.vue'
 import ResponsiveOverlay from '@/client/components/layout/responsive-overlay.vue'
 import { api } from '@/client/lib/api'
-import { buildImageRunInput, isStudioImageModel } from '@/client/lib/image-studio'
+import { buildImageRunInput, isStudioImageModel, pendingRun, stashCreatedRun, takeCreatedRun } from '@/client/lib/image-studio'
 import { uploadImage } from '@/client/lib/image-prep'
 import { useConfigStore } from '@/client/stores/config'
 import { useSyncStore } from '@/client/stores/sync'
@@ -23,7 +23,7 @@ import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } fro
 import { ScrollArea } from '@/client/ui/scroll-area'
 import { Separator } from '@/client/ui/separator'
 import { Skeleton } from '@/client/ui/skeleton'
-import type { ArtifactDto, ArtifactRunDto, ImageGenerationParams } from '@/shared/artifacts'
+import type { ArtifactDto, ArtifactRunDto, CreateImageRunInput, ImageGenerationParams } from '@/shared/artifacts'
 import type { Conversation } from '@/shared/models'
 
 interface ReferenceImage { attachmentId: number; preview: string }
@@ -146,27 +146,46 @@ function runDividerLabel(run: ArtifactRunDto): string {
   if (run.status === 'cancelled') return '已取消创建'
   return '已创建图片'
 }
-async function retryRun(run: ArtifactRunDto) {
-  if (running.value || run.provider_id === null || props.conversationId === null) return
+/**
+ * Shows the run at once and swaps in the real one when the server answers. Resolves to whether the
+ * server accepted it; on refusal the placeholder is gone again and the caller puts its input back.
+ */
+async function startRun(input: CreateImageRunInput): Promise<boolean> {
+  const pending = pendingRun(input)
+  runs.value.unshift(pending)
   submitting.value = true
   try {
-    const created = await api.createImageRun({
-      client_request_id: crypto.randomUUID(), conversation_id: props.conversationId,
-      model: { provider_id: run.provider_id, model_id: run.model_id }, prompt: run.prompt,
-      reference_attachment_ids: run.reference_attachment_ids ?? [], params: run.params,
-    })
-    await loadConversationData()
-    void poll(created.run_id)
+    const created = await api.createImageRun(input)
+    const run = { ...pending, id: created.run_id, conversation_id: created.conversation_id, message_id: created.message_id }
+    const index = runs.value.findIndex(item => item.id === pending.id)
+    if (index >= 0) runs.value[index] = run
+    submitting.value = false
+    if (props.conversationId === null) {
+      stashCreatedRun(run)
+      await router.replace(`/images/s/${created.conversation_id}`)
+    }
+    else void poll(created.run_id)
+    return true
   } catch (error) {
+    runs.value = runs.value.filter(item => item.id !== pending.id)
     submitting.value = false
     toast.error(error instanceof Error ? error.message : String(error))
+    return false
   }
+}
+async function retryRun(run: ArtifactRunDto) {
+  if (running.value || submitting.value || run.provider_id === null || props.conversationId === null) return
+  await startRun({
+    client_request_id: crypto.randomUUID(), conversation_id: props.conversationId,
+    model: { provider_id: run.provider_id, model_id: run.model_id }, prompt: run.prompt,
+    reference_attachment_ids: run.reference_attachment_ids ?? [], params: run.params,
+  })
 }
 function applyArtifactDraft(artifact: ArtifactDto, edit: boolean) {
   prompt.value = artifact.prompt
   if (artifact.provider_id !== null) modelKey.value = `${artifact.provider_id}:${artifact.model_id}`
   applyParams(artifact.params)
-  if (edit) references.value.push({ attachmentId: artifact.attachment_id, preview: api.artifactContentUrl(artifact.id) })
+  if (edit) references.value.push({ attachmentId: artifact.attachment_id, preview: api.artifactContentUrl(artifact.id, 'gallery') })
 }
 async function loadModels() {
   if (!config.loaded) await config.load()
@@ -187,7 +206,10 @@ async function loadConversationData() {
   outputs.value = page.artifacts
 }
 async function load() {
-  loading.value = true
+  const handedOver = props.conversationId === null ? undefined : takeCreatedRun(props.conversationId)
+  runs.value = handedOver ? [handedOver] : []
+  outputs.value = []
+  loading.value = !handedOver
   try {
     conversations.value = await api.imageConversations()
     await Promise.all([loadModels(), loadConversationData()])
@@ -227,26 +249,27 @@ async function poll(runId: number) {
 async function submit() {
   const model = parseModel()
   if (!model || !canSubmit.value) return
-  // Kept, and the box goes read-only instead. Emptying it on the press would be right if something
-  // took its place — the runs list only gains a row once the server answers, so the prompt would
-  // simply vanish, which reads as lost rather than sent. Read-only rather than disabled: disabling
-  // a focused field blurs it, and the caret does not come back.
-  submitting.value = true
-  try {
-    const created = await api.createImageRun(buildImageRunInput({
-      model, ...(props.conversationId === null ? {} : { conversationId: props.conversationId }), prompt: prompt.value,
-      references: references.value.map(item => item.attachmentId), count: count.value, customSize: customSize.value,
-      width: width.value, height: height.value, quality: quality.value, background: background.value as '' | 'transparent' | 'opaque',
-      outputFormat: outputFormat.value as '' | 'png' | 'webp' | 'jpeg',
-    }))
-    prompt.value = ''
-    releaseReferences()
-    if (props.conversationId === null) await router.replace(`/images/s/${created.conversation_id}`)
-    else await poll(created.run_id)
-  } catch (error) { submitting.value = false; toast.error(error instanceof Error ? error.message : String(error)) }
+  const draft = { prompt: prompt.value, references: references.value }
+  const input = buildImageRunInput({
+    model, ...(props.conversationId === null ? {} : { conversationId: props.conversationId }), prompt: draft.prompt,
+    references: draft.references.map(item => item.attachmentId), count: count.value, customSize: customSize.value,
+    width: width.value, height: height.value, quality: quality.value, background: background.value as '' | 'transparent' | 'opaque',
+    outputFormat: outputFormat.value as '' | 'png' | 'webp' | 'jpeg',
+  })
+  // The draft moves into the placeholder bubble, so the box empties on the press. The box stays
+  // read-only until the server answers, which is what lets a refusal put the draft back verbatim.
+  // Read-only rather than disabled: disabling a focused field blurs it, and the caret does not come back.
+  prompt.value = ''
+  references.value = []
+  const accepted = await startRun(input)
+  if (accepted) for (const image of draft.references) URL.revokeObjectURL(image.preview)
+  else {
+    prompt.value = draft.prompt
+    references.value = draft.references
+  }
 }
 async function cancel() {
-  if (!latestRun.value) return
+  if (!latestRun.value || latestRun.value.id < 0) return
   runs.value[0] = await api.cancelArtifactRun(latestRun.value.id)
   submitting.value = false
 }
@@ -285,7 +308,7 @@ onBeforeUnmount(() => { clearTimeout(pollTimer); releaseReferences() })
               <div class="flex justify-start">
                 <div class="flex w-full max-w-4xl flex-col gap-3">
                   <div v-if="run.status === 'queued' || run.status === 'running'" class="flex flex-col gap-3">
-                    <Skeleton class="aspect-square w-full max-w-2xl rounded-xl" />
+                    <Skeleton class="aspect-square w-full max-w-[min(32rem,60vh)] rounded-xl" />
                     <span class="text-sm text-muted-foreground">{{ run.status === 'queued' ? '等待生成…' : '正在生成图片，可以安全离开此页面。' }}</span>
                   </div>
                   <Alert v-else-if="run.status === 'failed'" variant="destructive">
@@ -296,10 +319,13 @@ onBeforeUnmount(() => { clearTimeout(pollTimer); releaseReferences() })
                     <AlertTitle>已取消生成</AlertTitle>
                     <AlertDescription>这次请求没有产生图片。</AlertDescription>
                   </Alert>
-                  <div v-else class="grid w-full gap-3" :class="outputsFor(run.id).length > 1 ? 'grid-cols-2' : 'grid-cols-1'">
-                    <div v-for="artifact in outputsFor(run.id)" :key="artifact.id" class="group relative overflow-hidden rounded-xl border bg-muted">
-                      <RouterLink :to="`/images/s/${props.conversationId}/a/${artifact.id}`" class="block h-full">
-                        <img :src="api.artifactContentUrl(artifact.id)" :alt="artifact.prompt" class="h-full w-full object-contain" loading="lazy" />
+                  <!-- Capped by height, not width: a full-width landscape image outgrows the viewport and
+                       pushes the prompt bubble off screen. The 1536px preview variant covers that cap
+                       at 2x; the original is one click away on the detail page. -->
+                  <div v-else class="flex flex-wrap gap-3">
+                    <div v-for="artifact in outputsFor(run.id)" :key="artifact.id" class="group relative max-w-full overflow-hidden rounded-xl border bg-muted">
+                      <RouterLink :to="`/images/s/${props.conversationId}/a/${artifact.id}`" class="block">
+                        <img :src="api.artifactContentUrl(artifact.id, 'preview')" :alt="artifact.prompt" class="block w-auto max-w-full object-contain" :class="outputsFor(run.id).length > 1 ? 'max-h-[min(20rem,45vh)]' : 'max-h-[min(32rem,60vh)]'" loading="lazy" />
                         <Badge class="absolute bottom-3 left-3 opacity-0 transition-opacity group-hover:opacity-100" variant="secondary">查看详情</Badge>
                       </RouterLink>
                       <Button v-if="referenceAllowed" size="sm" variant="secondary" class="absolute bottom-3 right-3 opacity-100 shadow-sm transition-opacity md:opacity-0 md:group-hover:opacity-100 focus-visible:opacity-100" @click="addArtifactReference(artifact)"><ImagePlusIcon data-icon="inline-start" />继续编辑</Button>
@@ -343,7 +369,7 @@ onBeforeUnmount(() => { clearTimeout(pollTimer); releaseReferences() })
               <span v-if="references.length && !referenceAllowed" class="text-xs text-destructive">当前模型不支持图片输入</span>
               <div class="ml-auto flex items-center gap-2">
                 <Badge v-if="latestRun" variant="outline">{{ statusLabel }}</Badge>
-                <InputGroupButton v-if="running" variant="destructive" size="sm" @click="cancel"><XIcon data-icon="inline-start" />取消</InputGroupButton>
+                <InputGroupButton v-if="running" variant="destructive" size="sm" :disabled="submitting" @click="cancel"><XIcon data-icon="inline-start" />取消</InputGroupButton>
                 <InputGroupButton v-else size="sm" variant="default" :disabled="!canSubmit" @click="submit"><LoaderCircleIcon v-if="submitting" class="animate-spin" data-icon="inline-start" /><SparklesIcon v-else data-icon="inline-start" />生成</InputGroupButton>
               </div>
             </InputGroupAddon>

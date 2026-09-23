@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildImageRunInput, isChatSelectableModel, isStudioImageModel } from '@/client/lib/image-studio'
+import { buildImageRunInput, isChatSelectableModel, isStudioImageModel, pendingRun, stashCreatedRun, takeCreatedRun } from '@/client/lib/image-studio'
 import type { ModelWithMetadata, ProviderWithInterfaces } from '@/shared/models'
 
 const provider: ProviderWithInterfaces = {
@@ -40,5 +40,32 @@ describe('Image Studio client contract', () => {
       reference_attachment_ids: [7],
       params: { count: 2, size: { width: 2048, height: 2048 }, quality: 'high', background: 'transparent', output_format: 'webp' },
     })
+  })
+
+  it('renders a submitted run before the server answers, as an edit when it carries references', () => {
+    const input = (references: number[]) => buildImageRunInput({
+      model: { provider_id: 1, model_id: 'image' }, conversationId: 5, prompt: 'Otter', references, count: 1,
+      customSize: false, width: 1024, height: 1024, quality: '', background: '', outputFormat: '',
+    })
+    const first = pendingRun(input([]))
+    const second = pendingRun(input([7]))
+
+    expect(first).toMatchObject({ status: 'queued', operation: 'generate', prompt: 'Otter', conversation_id: 5, provider_id: 1 })
+    expect(second).toMatchObject({ operation: 'edit', reference_attachment_ids: [7] })
+    // Negative and distinct, so a placeholder can never collide with a real run or with another placeholder.
+    expect(first.id).toBeLessThan(0)
+    expect(second.id).not.toBe(first.id)
+  })
+
+  it('hands a created run to the next Studio instance exactly once', () => {
+    const run = { ...pendingRun(buildImageRunInput({
+      model: { provider_id: 1, model_id: 'image' }, prompt: 'Otter', references: [], count: 1,
+      customSize: false, width: 1024, height: 1024, quality: '', background: '', outputFormat: '',
+    })), id: 42, conversation_id: 9 }
+    stashCreatedRun(run)
+
+    expect(takeCreatedRun(8)).toBeUndefined()
+    expect(takeCreatedRun(9)).toBe(run)
+    expect(takeCreatedRun(9)).toBeUndefined()
   })
 })
