@@ -3,7 +3,9 @@ import { eq } from 'drizzle-orm'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createApp } from '@/server/app'
 import { createDb } from '@/server/db/client'
-import { artifactRuns, artifacts, models, providerInterfaces, providers } from '@/server/db/schema'
+import { artifactRuns, artifacts, messages, models, providerInterfaces, providers } from '@/server/db/schema'
+import { createToolImageRun } from '@/server/plugins/artifacts/runs'
+import { createConversation, insertMessage, listMessages, toMessage, updateConversation } from '@/server/plugins/hub/conversations'
 import { executeImageRun } from '@/server/plugins/artifacts/workflow'
 import { encryptSecret } from '@/server/plugins/llm/crypto'
 import { registerAndLogin } from './auth-helper'
@@ -127,5 +129,66 @@ describe('Artifact generation Workflow', () => {
     await executeImageRun(await createApp({ env, side: 'workflow' }), userId, created.run_id)
 
     expect(body).toMatchObject({ model: 'seedream', watermark: false, seed: 2 })
+  })
+
+  it('keeps the chat reply untouched when a tool run completes, and notifies when one is cancelled', async () => {
+    const client = await registerAndLogin({ name: 'Agent', email: 'workflow-tool@example.com', password: 'a-long-test-password' })
+    const userId = Number(((await (await client.request('/api/auth/get-session')).json()) as { user: { id: string } }).user.id)
+    const db = createDb(env.DB)
+    const [provider] = await db.insert(providers).values({
+      user_id: userId, name: 'Images', api_key: await encryptSecret(env.KEY_ENCRYPTION_SECRET, 'image-key'), created_at: 0,
+    }).returning()
+    const [selected] = await db.insert(providerInterfaces).values({
+      provider_id: provider!.id, protocol: 'responses', base_url: 'https://images.example/v1', created_at: 0,
+    }).returning()
+    await db.update(providers).set({ default_interface_id: selected!.id }).where(eq(providers.id, provider!.id))
+    await db.insert(models).values({
+      provider_id: provider!.id, model_id: 'image-model', enabled: true, supports_image_output: true,
+      metadata_resolved: { name: 'Image Model', modalities: { input: ['text'], output: ['image'] } },
+    })
+    const conversation = await createConversation(db, { user_id: userId, title: 'chat', provider_id: null, model_id: null })
+    const toolCall = { type: 'tool_call' as const, id: 'call_1', name: 'generate_image', args: { prompt: 'An otter' } }
+    // No model on the reply, so delivering the notification writes it without starting a turn.
+    const reply = await insertMessage(db, userId, {
+      conversation_id: conversation.id, parent_id: null, seq: 1, role: 'assistant', parts: [toolCall],
+      provider_id: null, model_id: null, usage: null, status: 'done', error: null, created_at: 0,
+    })
+    await updateConversation(db, conversation.id, userId, { head_message_id: reply.id })
+    const terminated: string[] = []
+    const startApp = await createApp({
+      env: {
+        ...env,
+        ARTIFACT_WORKFLOW: {
+          create: async ({ id }: { id: string }) => ({ id, dispose() {} }),
+          get: async (id: string) => ({ terminate: async () => { terminated.push(id) }, dispose() {} }),
+        },
+      } as unknown as Env,
+      side: 'worker',
+    })
+    const run = (toolCallId: string) => createToolImageRun(startApp, userId, {
+      conversationId: conversation.id, messageId: reply.id, toolCallId, model: { provider_id: provider!.id, model_id: 'image-model' },
+      prompt: 'An otter', params: { count: 1, size: null },
+    })
+
+    const { run_id: completedId } = await run('call_1')
+    expect((await run('call_1')).run_id).toBe(completedId)
+    vi.stubGlobal('fetch', async () => Response.json({ data: [{ b64_json: btoa(String.fromCharCode(...png)) }] }))
+    await executeImageRun(await createApp({ env, side: 'workflow' }), userId, completedId)
+    expect(await db.query.messages.findFirst({ where: eq(messages.id, reply.id) })).toMatchObject({ parts: [toolCall], status: 'done' })
+    expect(await db.query.artifactRuns.findFirst({ where: eq(artifactRuns.id, completedId) }))
+      .toMatchObject({ status: 'completed', source: 'tool', tool_call_id: 'call_1', client_request_id: `tool:${reply.id}:call_1` })
+    expect(await db.query.artifacts.findFirst({ where: eq(artifacts.run_id, completedId) })).toBeDefined()
+
+    const { run_id: cancelledId } = await run('call_2')
+    const pending: Promise<unknown>[] = []
+    const executionCtx = { waitUntil: (promise: Promise<unknown>) => { pending.push(promise) }, passThroughOnException() {}, props: {} }
+    const cancelled = await startApp.api.request(`/api/artifact-runs/${cancelledId}/cancel`, { method: 'POST', headers: { cookie: client.cookie } }, env, executionCtx as never)
+    expect(cancelled.status).toBe(200)
+    await Promise.all(pending)
+    expect(terminated).toHaveLength(1)
+    expect(await db.query.messages.findFirst({ where: eq(messages.id, reply.id) })).toMatchObject({ status: 'done' })
+    const notices = (await listMessages(db, conversation.id, userId)).flatMap(row => toMessage(row).parts)
+      .filter(part => part.type === 'task_notification')
+    expect(notices).toEqual([expect.objectContaining({ task_id: `image_run:${cancelledId}`, status: 'cancelled', tool_call_id: 'call_2' })])
   })
 })

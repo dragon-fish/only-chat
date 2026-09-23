@@ -89,7 +89,9 @@ export async function executeImageRun(ctx: Context, userId: number, runId: numbe
       }
       imageParts.push({ type: 'image', attachment_id: attachment.id, artifact_id: artifact.id })
     }
-    if (run.message_id !== null && run.conversation_id !== null) {
+    // A tool run's message is the chat reply that made the call. Its content belongs to that turn and
+    // must never be replaced by the images; the outcome reaches the chat as a task notification.
+    if (run.source !== 'tool' && run.message_id !== null && run.conversation_id !== null) {
       await db.update(messages).set({ parts: imageParts }).where(and(
         eq(messages.id, run.message_id), eq(messages.conversation_id, run.conversation_id),
       ))
@@ -100,7 +102,7 @@ export async function executeImageRun(ctx: Context, userId: number, runId: numbe
     const failure = safeError(error)
     const [failed] = await db.update(artifactRuns).set({ status: 'failed', error: failure, completed_at: Date.now() })
       .where(and(eq(artifactRuns.id, run.id), eq(artifactRuns.user_id, userId), eq(artifactRuns.status, 'running'))).returning({ id: artifactRuns.id })
-    if (failed && run.message_id !== null && run.conversation_id !== null) {
+    if (failed && run.source !== 'tool' && run.message_id !== null && run.conversation_id !== null) {
       await db.update(messages).set({ status: 'error', error: failure }).where(and(
         eq(messages.id, run.message_id), eq(messages.conversation_id, run.conversation_id),
       ))

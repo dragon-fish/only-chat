@@ -6,6 +6,7 @@ import { z } from 'zod'
 import { artifactRunInputs, artifactRuns, artifacts, attachments, messages } from '@/server/db/schema'
 import { disposeRpcStub } from '@/server/rpc'
 import { ArtifactRunInputError, createImageRun } from '../artifacts/runs'
+import { notifyToolRun } from '../artifacts/notify'
 import { authUserId, type ApiEnv } from './auth'
 import { parseId } from './params'
 
@@ -77,7 +78,8 @@ export function artifactRoutes(ctx: Context) {
     const current = run ?? await ctx.db.orm.query.artifactRuns.findFirst({ where: and(eq(artifactRuns.id, id), eq(artifactRuns.user_id, userId)) })
     if (!current) return c.json({ error: 'not found' }, 404)
     if (run) {
-      if (run.message_id !== null && run.conversation_id !== null) {
+      // A tool run's message is the chat reply that made the call, not an image placeholder: leave it be.
+      if (run.source !== 'tool' && run.message_id !== null && run.conversation_id !== null) {
         await ctx.db.orm.update(messages).set({ status: 'aborted', error: 'Image generation cancelled' }).where(and(
           eq(messages.id, run.message_id), eq(messages.conversation_id, run.conversation_id),
         ))
@@ -87,6 +89,11 @@ export function artifactRoutes(ctx: Context) {
         await instance.terminate()
       } catch { /* The persisted cancelled state remains authoritative. */ }
       finally { disposeRpcStub(instance) }
+      // The Workflow is gone, so its notify step never runs; a cancelled tool run reports itself. After
+      // the response, because delivery may run the Agent's whole next turn.
+      if (run.source === 'tool') {
+        c.executionCtx.waitUntil(notifyToolRun(ctx.env, userId, run.id).catch(error => console.error('cancel notify failed', error)))
+      }
     }
     return c.json((await withReferenceInputs(ctx, [current]))[0]!)
   })

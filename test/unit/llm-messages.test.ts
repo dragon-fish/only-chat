@@ -507,7 +507,7 @@ describe('rolling back to somewhere legal', () => {
 
 describe('task notifications', () => {
   const notice: TaskNotificationPart = {
-    type: 'task_notification', task_id: 'image_run:12', plugin_id: 'image-generation', tool_call_id: 'call_1',
+    type: 'task_notification', task_id: 'image_run:12', plugin_id: 'image_generation', tool_call_id: 'call_1',
     status: 'completed', text: 'Generated 1 image(s): /artifacts/31.png',
   }
 

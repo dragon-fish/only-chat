@@ -81,7 +81,7 @@ const settlement = (conversationId: number, origin: number, taskId = 'image_run:
   conversation_id: conversationId,
   origin_message_id: origin,
   notification: {
-    type: 'task_notification', task_id: taskId, plugin_id: 'image-generation', tool_call_id: 'call_1',
+    type: 'task_notification', task_id: taskId, plugin_id: 'image_generation', tool_call_id: 'call_1',
     status: 'completed', text: 'Generated 1 image(s): /artifacts/1.png',
   },
 })

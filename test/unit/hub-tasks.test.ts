@@ -4,7 +4,7 @@ import type { Message } from '@/shared/models'
 import type { Part, TaskNotificationPart } from '@/shared/parts'
 
 const notice = (task_id: string): TaskNotificationPart => ({
-  type: 'task_notification', task_id, plugin_id: 'image-generation', tool_call_id: 'c', status: 'completed', text: 'ok',
+  type: 'task_notification', task_id, plugin_id: 'image_generation', tool_call_id: 'c', status: 'completed', text: 'ok',
 })
 const msg = (id: number, role: 'user' | 'assistant', parts: Part[]): Message => ({
   id, conversation_id: 1, parent_id: id - 1 || null, seq: id, role, parts, provider_id: null, model_id: null,

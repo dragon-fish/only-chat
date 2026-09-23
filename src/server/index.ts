@@ -10,6 +10,7 @@ import { disposeRpcStub } from './rpc'
 import { parseAuthUserId } from './plugins/auth/user-id'
 import { AUTH_REVOKED_PATH, hasActiveAuthSession, INTERNAL_AUTH_SESSION_ID_HEADER, INTERNAL_USER_ID_HEADER, USER_ID_STORAGE_KEY, type SocketAttachment } from './plugins/hub/identity'
 import { executeImageRun } from './plugins/artifacts/workflow'
+import { notifyToolRun } from './plugins/artifacts/notify'
 import type { Conversation } from '@/shared/models'
 import type { TaskSettlement } from './plugins/hub/tasks'
 export { BrowserGateway, BrowserHost, BrowserRunner } from '@/plugins/cloudflare-browser-run/server/entrypoints'
@@ -55,10 +56,16 @@ export class ModelCatalogRefreshWorkflow extends WorkflowEntrypoint<Env, { sourc
 
 export class ArtifactGenerationWorkflow extends WorkflowEntrypoint<Env, { userId: number; runId: number }> {
   async run(event: Readonly<WorkflowEvent<{ userId: number; runId: number }>>, step: WorkflowStep) {
-    return step.do('generate image artifact', {
+    await step.do('generate image artifact', {
       retries: { limit: 0, delay: '1 second' },
       timeout: '30 minutes',
     }, async () => executeImageRun(await createApp({ env: this.env, side: 'workflow' }), event.payload.userId, event.payload.runId))
+    // Delivery may start the Agent's next turn and waits for it, hence the long timeout. Retrying is
+    // safe: the hub delivers each task id once.
+    await step.do('notify agent', {
+      retries: { limit: 5, delay: '5 seconds', backoff: 'exponential' },
+      timeout: '15 minutes',
+    }, async () => notifyToolRun(this.env, event.payload.userId, event.payload.runId))
   }
 }
 

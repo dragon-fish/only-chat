@@ -1,6 +1,8 @@
 import type { Context } from 'cordis'
 import { and, eq } from 'drizzle-orm'
-import type { CreateImageRunInput, CreateImageRunResponse } from '@/shared/artifacts'
+import type { CreateImageRunInput, CreateImageRunResponse, ImageGenerationParams } from '@/shared/artifacts'
+import type { ModelRef } from '@/shared/model-ref'
+import type { DB } from '@/server/db/client'
 import type { Part } from '@/shared/parts'
 import { artifactRunInputs, artifactRuns, conversations } from '@/server/db/schema'
 import { disposeRpcStub } from '@/server/rpc'
@@ -15,6 +17,21 @@ export class ArtifactRunInputError extends Error {
   constructor(message: string, readonly status: 404 | 409 | 422 = 422) { super(message) }
 }
 
+/** The provider, model and Images-capable interface a run would use, or the reason it cannot. */
+async function resolveImageTarget(db: DB, userId: number, ref: ModelRef, referenceIds: readonly number[]) {
+  const provider = await getProvider(db, ref.provider_id, userId)
+  const model = provider ? await getModel(db, provider.id, ref.model_id, userId) : undefined
+  if (!provider || !provider.enabled || !model || !model.enabled) throw new ArtifactRunInputError('image model not found', 404)
+  if (!model.supports_image_output) throw new ArtifactRunInputError('model does not support image output')
+  if (referenceIds.length && !model.supports_image_input) throw new ArtifactRunInputError('model does not support image input')
+  const interfaceId = model.interface_id ?? provider.default_interface_id
+  const selected = interfaceId === null ? undefined : await getProviderInterface(db, interfaceId, userId)
+  if (!selected || selected.provider_id !== provider.id || !IMAGE_PROTOCOLS.has(selected.protocol)) {
+    throw new ArtifactRunInputError('model interface does not support the Images API')
+  }
+  return { provider, model, selected }
+}
+
 export async function createImageRun(ctx: Context, userId: number, input: CreateImageRunInput): Promise<CreateImageRunResponse> {
   const db = ctx.db.orm
   const existing = await db.query.artifactRuns.findFirst({
@@ -24,16 +41,7 @@ export async function createImageRun(ctx: Context, userId: number, input: Create
     return { run_id: existing.id, conversation_id: existing.conversation_id, message_id: existing.message_id }
   }
 
-  const provider = await getProvider(db, input.model.provider_id, userId)
-  const model = provider ? await getModel(db, provider.id, input.model.model_id, userId) : undefined
-  if (!provider || !provider.enabled || !model || !model.enabled) throw new ArtifactRunInputError('image model not found', 404)
-  if (!model.supports_image_output) throw new ArtifactRunInputError('model does not support image output')
-  if (input.reference_attachment_ids.length && !model.supports_image_input) throw new ArtifactRunInputError('model does not support image input')
-  const interfaceId = model.interface_id ?? provider.default_interface_id
-  const selected = interfaceId === null ? undefined : await getProviderInterface(db, interfaceId, userId)
-  if (!selected || selected.provider_id !== provider.id || !IMAGE_PROTOCOLS.has(selected.protocol)) {
-    throw new ArtifactRunInputError('model interface does not support the Images API')
-  }
+  const { provider, model, selected } = await resolveImageTarget(db, userId, input.model, input.reference_attachment_ids)
   const references = await Promise.all(input.reference_attachment_ids.map(id => getAttachment(db, id, userId)))
   if (references.some(value => value === undefined)) throw new ArtifactRunInputError('reference attachment not found', 404)
 
@@ -92,4 +100,46 @@ export async function createImageRun(ctx: Context, userId: number, input: Create
     throw new Error('Could not start image generation')
   }
   return { run_id: run!.id, conversation_id: conversation.id, message_id: outputMessage.id }
+}
+
+export interface ToolImageRunInput {
+  conversationId: number
+  /** The assistant message holding the tool call. */
+  messageId: number
+  toolCallId: string
+  model: ModelRef
+  prompt: string
+  params: ImageGenerationParams
+}
+
+/**
+ * A run started by the Agent inside a chat. Unlike Studio it writes no messages and never moves
+ * the head: the assistant message holding the call stays exactly as the turn left it, and the
+ * outcome returns through a task notification.
+ */
+export async function createToolImageRun(ctx: Context, userId: number, input: ToolImageRunInput): Promise<{ run_id: number }> {
+  const db = ctx.db.orm
+  const clientRequestId = `tool:${input.messageId}:${input.toolCallId}`
+  const existing = await db.query.artifactRuns.findFirst({
+    where: and(eq(artifactRuns.user_id, userId), eq(artifactRuns.client_request_id, clientRequestId)),
+  })
+  if (existing) return { run_id: existing.id }
+  const { provider, model, selected } = await resolveImageTarget(db, userId, input.model, [])
+  // Workflow instance ids allow only letters, digits, `-` and `_`.
+  const workflowId = `artifact-${userId}-tool-${input.messageId}-${input.toolCallId.replace(/[^A-Za-z0-9_-]/g, '_')}`.slice(0, 100)
+  const [run] = await db.insert(artifactRuns).values({
+    user_id: userId, client_request_id: clientRequestId, kind: 'image_generation', source: 'tool', operation: 'generate',
+    status: 'queued', conversation_id: input.conversationId, message_id: input.messageId, tool_call_id: input.toolCallId,
+    provider_id: provider.id, provider_name: provider.name, interface_id: selected.id, interface_protocol: selected.protocol,
+    credential_version: provider.credential_version, model_id: model.model_id, model_name: model.metadata_resolved.name ?? model.model_id,
+    prompt: input.prompt, params: input.params, workflow_instance_id: workflowId, created_at: Date.now(),
+  }).returning()
+  try {
+    disposeRpcStub(await ctx.env.ARTIFACT_WORKFLOW.create({ id: workflowId, params: { userId, runId: run!.id } }))
+  } catch {
+    await db.update(artifactRuns).set({ status: 'failed', error: 'Could not start image generation', completed_at: Date.now() })
+      .where(and(eq(artifactRuns.id, run!.id), eq(artifactRuns.user_id, userId)))
+    throw new Error('Could not start image generation')
+  }
+  return { run_id: run!.id }
 }
