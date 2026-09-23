@@ -1,0 +1,1 @@
+ALTER TABLE `models` ADD `image_extra_body` text DEFAULT '{}' NOT NULL;

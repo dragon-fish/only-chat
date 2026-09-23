@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { ModelMetadataOverrideSchema } from './model-metadata'
+import { ImageExtraBodySchema } from './artifacts'
 import { InterfaceProtocolSchema, ConversationParamsSchema } from './models'
 import type { Conversation, ConversationParams, InterfaceProtocol, Message } from './models'
 export type { ModelRef } from './model-ref'
@@ -62,6 +63,7 @@ export const ModelWriteInputSchema = z.strictObject({
   model_id: z.string().min(1),
   interface_id: z.number().int().nullable().optional(),
   metadata_override: ModelMetadataOverrideSchema.optional(),
+  image_extra_body: ImageExtraBodySchema.optional(),
   enabled: z.boolean().optional(),
   sort: z.number().int().optional(),
 })

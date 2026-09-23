@@ -1,12 +1,27 @@
 import { z } from 'zod'
 import { ModelRefSchema } from './model-ref'
 
+/** Keys the Images request always sets itself; an extra entry may not replace them. */
+export const IMAGE_EXTRA_RESERVED_KEYS: readonly string[] = ['model', 'prompt', 'n', 'image']
+
+/**
+ * Provider-specific request body fields, like the OpenAI SDK's `extra_body` (Seedream's
+ * `watermark: false`, for one). Merged last into the Images request, so an entry here overrides a
+ * standard option of the same name — `size: '2K'` is a legitimate Seedream value `size` cannot express.
+ */
+export const ImageExtraBodySchema = z.record(z.string().trim().min(1).max(64), z.json())
+  .refine(value => Object.keys(value).length <= 32, 'At most 32 extra body entries')
+  .refine(value => Object.keys(value).every(key => !IMAGE_EXTRA_RESERVED_KEYS.includes(key)), `Extra body cannot set ${IMAGE_EXTRA_RESERVED_KEYS.join(', ')}`)
+export type ImageExtraBody = z.infer<typeof ImageExtraBodySchema>
+
 export const ImageGenerationParamsSchema = z.strictObject({
   count: z.number().int().min(1).max(10).default(1),
   size: z.strictObject({ width: z.number().int().positive(), height: z.number().int().positive() }).nullable().default(null),
   quality: z.string().trim().min(1).max(50).optional(),
   background: z.enum(['transparent', 'opaque']).optional(),
   output_format: z.enum(['png', 'webp', 'jpeg']).optional(),
+  /** This run's own entries only; the model's defaults are merged underneath when the run executes. */
+  extra: ImageExtraBodySchema.optional(),
 })
 export type ImageGenerationParams = z.infer<typeof ImageGenerationParamsSchema>
 

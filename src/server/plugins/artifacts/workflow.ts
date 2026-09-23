@@ -44,7 +44,9 @@ export async function executeImageRun(ctx: Context, userId: number, runId: numbe
     }))
     const client = await ctx.llm.createImages(provider, selected)
     const result = await client.generate({
-      modelId: run.model_id, prompt: run.prompt, references, params: run.params,
+      modelId: run.model_id, prompt: run.prompt, references,
+      // The model's defaults are read now, not copied at creation: editing them fixes a queued run too.
+      params: { ...run.params, extra: { ...model.image_extra_body, ...run.params.extra } },
       idempotencyKey: run.workflow_instance_id,
     })
     const current = await db.query.artifactRuns.findFirst({ where: and(eq(artifactRuns.id, run.id), eq(artifactRuns.user_id, userId)) })

@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { CatalogMatchesSchema, ModelMetadataSchema, ModelMetadataOverrideSchema } from './model-metadata'
 import { PartsSchema } from './parts'
 import { ModelRefSchema } from './model-ref'
+import { ImageExtraBodySchema } from './artifacts'
 import { PluginConfigStatusSchema } from './plugins'
 
 /** Supported provider interfaces. */
@@ -192,6 +193,7 @@ export const ModelWithMetadataSchema = z.strictObject({
   interface_id: z.number().int().nullable(),
   metadata: ModelMetadataSchema,
   metadata_override: ModelMetadataOverrideSchema,
+  image_extra_body: ImageExtraBodySchema,
   catalog_matches: CatalogMatchesSchema,
   lab_id: z.string().nullable(),
   enabled: z.boolean(),
@@ -220,6 +222,8 @@ export const ModelListItemSchema = z.strictObject({
   model_id: z.string(),
   interface_id: z.number().int().nullable(),
   metadata: ModelListMetadataSchema,
+  /** Studio shows it beside the per-run editor, whose entries override it. */
+  image_extra_body: ImageExtraBodySchema,
   lab_id: z.string().nullable(),
   enabled: z.boolean(),
   manual_pinned: z.boolean(),

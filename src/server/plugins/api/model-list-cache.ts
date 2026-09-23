@@ -31,6 +31,7 @@ export function toModelListItem(row: ModelRow): ModelListItem {
     model_id: row.model_id,
     interface_id: row.interface_id,
     metadata: listMetadata(row.metadata_resolved),
+    image_extra_body: row.image_extra_body,
     lab_id: row.lab_id,
     enabled: row.enabled,
     manual_pinned: row.manual_pinned,

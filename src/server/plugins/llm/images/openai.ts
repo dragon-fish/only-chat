@@ -43,6 +43,8 @@ function appendOptions(body: FormData, request: ImageGenerationRequest): void {
   if (params.quality) body.set('quality', params.quality)
   if (params.background) body.set('background', params.background)
   if (params.output_format) body.set('output_format', params.output_format)
+  // Multipart fields are text: a string travels as-is, anything else as its JSON.
+  for (const [key, value] of Object.entries(params.extra ?? {})) body.set(key, typeof value === 'string' ? value : JSON.stringify(value))
 }
 
 /**
@@ -123,6 +125,7 @@ export function createOpenAIImagesClient(
               ? `data:${request.references[0]!.mime};base64,${toBase64(request.references[0]!.bytes)}`
               : request.references.map(reference => `data:${reference.mime};base64,${toBase64(reference.bytes)}`),
           } : {}),
+          ...params.extra,
         })
       }
       // Only the path we built travels into the error: a base URL can carry a key in its query.

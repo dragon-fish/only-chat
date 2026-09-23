@@ -10,7 +10,7 @@ const provider: ProviderWithInterfaces = {
 }
 const imageModel: ModelWithMetadata = {
   id: 1, provider_id: 1, model_id: 'image', interface_id: null,
-  metadata: { modalities: { input: ['text', 'image'], output: ['image'] } }, metadata_override: {},
+  metadata: { modalities: { input: ['text', 'image'], output: ['image'] } }, metadata_override: {}, image_extra_body: {},
   catalog_matches: { operator: null, lab: null, global: null }, lab_id: null, enabled: true,
   manual_pinned: false, upstream_available: true, sort: 0,
 }

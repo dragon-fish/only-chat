@@ -93,4 +93,32 @@ describe('OpenAI-compatible Images client', () => {
     })
     expect(output.usage).toEqual({ generated_images: 1, output_tokens: 2048, total_tokens: 2048 })
   })
+
+  it('merges extra body entries last, over the standard options, in both JSON and multipart bodies', async () => {
+    const requests: Request[] = []
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push(new Request(input, init))
+      return Response.json({ data: [{ b64_json: btoa(String.fromCharCode(...png)) }] })
+    })
+    const client = createOpenAIImagesClient('https://gateway.example/v1', 'secret')
+    const extra = { watermark: false, size: '2K', options: { seed: 7 }, label: 'raw' }
+    await client.generate({
+      modelId: 'seedream', prompt: 'An otter', references: [], idempotencyKey: 'run-5',
+      params: { count: 1, size: { width: 1024, height: 1024 }, extra },
+    })
+    await client.generate({
+      modelId: 'seedream', prompt: 'An otter', idempotencyKey: 'run-6',
+      references: [{ bytes: png, mime: 'image/png', filename: 'reference.png' }],
+      params: { count: 1, size: null, extra },
+    })
+
+    expect(await requests[0]!.json()).toEqual({
+      model: 'seedream', prompt: 'An otter', n: 1, size: '2K', watermark: false, options: { seed: 7 }, label: 'raw',
+    })
+    const form = await requests[1]!.formData()
+    expect(form.get('watermark')).toBe('false')
+    expect(form.get('size')).toBe('2K')
+    expect(form.get('options')).toBe('{"seed":7}')
+    expect(form.get('label')).toBe('raw')
+  })
 })

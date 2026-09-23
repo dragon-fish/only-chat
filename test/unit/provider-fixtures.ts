@@ -8,9 +8,9 @@ export const provider: ProviderWithInterfaces = {
 
 export const modelRecords: ModelWithMetadata[] = [
   { id: 2, provider_id: 1, model_id: 'first-model', metadata: { name: 'First model', modalities: { input: ['text', 'image'], output: ['text'] } }, enabled: true, sort: 0,
-    interface_id: null, metadata_override: {}, catalog_matches: { operator: null, lab: null, global: null }, lab_id: null, manual_pinned: true, upstream_available: null },
+    interface_id: null, metadata_override: {}, image_extra_body: {}, catalog_matches: { operator: null, lab: null, global: null }, lab_id: null, manual_pinned: true, upstream_available: null },
   { id: 3, provider_id: 1, model_id: 'second-model', metadata: { name: 'Second model', reasoning: true }, enabled: false, sort: 1,
-    interface_id: null, metadata_override: {}, catalog_matches: { operator: null, lab: null, global: null }, lab_id: null, manual_pinned: true, upstream_available: null },
+    interface_id: null, metadata_override: {}, image_extra_body: {}, catalog_matches: { operator: null, lab: null, global: null }, lab_id: null, manual_pinned: true, upstream_available: null },
 ]
 
 export const catalogStatus = { version: 'v1', previousVersion: null, lastSuccessAt: 1, lastError: null }

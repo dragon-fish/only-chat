@@ -54,6 +54,7 @@ export const useConfigStore = defineStore('config', () => {
       id: model.id, provider_id: model.provider_id, model_id: model.model_id, interface_id: model.interface_id,
       metadata: Object.fromEntries(Object.entries({ name, family, reasoning, reasoning_options, tool_call, modalities, limit, interleaved })
         .filter(([, value]) => value !== undefined)),
+      image_extra_body: model.image_extra_body,
       lab_id: model.lab_id, enabled: model.enabled, manual_pinned: model.manual_pinned,
       upstream_available: model.upstream_available, sort: model.sort,
     }

@@ -1,7 +1,7 @@
 import { sql } from 'drizzle-orm'
 import { check, index, integer, primaryKey, sqliteTable, text, uniqueIndex, type AnySQLiteColumn } from 'drizzle-orm/sqlite-core'
 import type { CatalogMatches, ModelMetadata, ModelMetadataOverride } from '@/shared/model-metadata'
-import type { ArtifactRunStatus, ArtifactUsage, ImageGenerationParams } from '@/shared/artifacts'
+import type { ArtifactRunStatus, ArtifactUsage, ImageExtraBody, ImageGenerationParams } from '@/shared/artifacts'
 import type { Part } from '@/shared/parts'
 import type {
   InterfaceProtocol, PersistedStatus, ConversationParams, ConversationPluginSettings, Usage, UserSettings,
@@ -114,6 +114,8 @@ export const models = sqliteTable('models', {
   metadata_resolved: text({ mode: 'json' }).$type<ModelMetadata>().notNull().default({}),
   catalog_matches: text({ mode: 'json' }).$type<CatalogMatches>().notNull().default({ operator: null, lab: null, global: null }),
   provider_metadata: text({ mode: 'json' }).$type<Record<string, unknown>>().notNull().default({}),
+  /** Merged under each image run's own extra body; see `ImageExtraBodySchema`. */
+  image_extra_body: text({ mode: 'json' }).$type<ImageExtraBody>().notNull().default({}),
   lab_id: text(),
   supports_image_input: integer({ mode: 'boolean' }).notNull().default(false),
   supports_reasoning: integer({ mode: 'boolean' }).notNull().default(false),

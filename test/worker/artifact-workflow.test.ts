@@ -87,4 +87,45 @@ describe('Artifact generation Workflow', () => {
     expect(content.status).toBe(200)
     expect(new Uint8Array(await content.arrayBuffer())).toEqual(png)
   })
+
+  it('sends the model extra body under the run override, read when the run executes', async () => {
+    const client = await registerAndLogin({ name: 'Extra', email: 'workflow-extra@example.com', password: 'a-long-test-password' })
+    const userId = Number(((await (await client.request('/api/auth/get-session')).json()) as { user: { id: string } }).user.id)
+    const db = createDb(env.DB)
+    const [provider] = await db.insert(providers).values({
+      user_id: userId, name: 'Images', api_key: await encryptSecret(env.KEY_ENCRYPTION_SECRET, 'image-key'), created_at: 0,
+    }).returning()
+    const [selected] = await db.insert(providerInterfaces).values({
+      provider_id: provider!.id, protocol: 'chat-completions', base_url: 'https://images.example/v1', created_at: 0,
+    }).returning()
+    await db.update(providers).set({ default_interface_id: selected!.id }).where(eq(providers.id, provider!.id))
+    const [model] = await db.insert(models).values({
+      provider_id: provider!.id, model_id: 'seedream', enabled: true, supports_image_output: true,
+      metadata_resolved: { name: 'Seedream', modalities: { input: ['text'], output: ['image'] } },
+      image_extra_body: { watermark: true, seed: 1 },
+    }).returning()
+    const startApp = await createApp({
+      env: { ...env, ARTIFACT_WORKFLOW: { create: async ({ id }: { id: string }) => ({ id, dispose() {} }) } } as unknown as Env,
+      side: 'worker',
+    })
+    const response = await startApp.api.request('/api/artifact-runs/image', {
+      method: 'POST', headers: { 'content-type': 'application/json', cookie: client.cookie }, body: JSON.stringify({
+        client_request_id: crypto.randomUUID(), model: { provider_id: provider!.id, model_id: 'seedream' },
+        prompt: 'A sea otter', reference_attachment_ids: [], params: { count: 1, extra: { seed: 2 } },
+      }),
+    })
+    expect(response.status, await response.clone().text()).toBe(202)
+    const created = await response.json() as { run_id: number }
+    // Edited after the run was queued: the run must pick this up, not a copy taken at creation.
+    await db.update(models).set({ image_extra_body: { watermark: false, seed: 1 } }).where(eq(models.id, model!.id))
+    let body: unknown
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+      body = await new Request(input, init).json()
+      return Response.json({ data: [{ b64_json: btoa(String.fromCharCode(...png)) }] })
+    })
+
+    await executeImageRun(await createApp({ env, side: 'workflow' }), userId, created.run_id)
+
+    expect(body).toMatchObject({ model: 'seedream', watermark: false, seed: 2 })
+  })
 })

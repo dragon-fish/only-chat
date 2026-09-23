@@ -26,7 +26,7 @@ function built(m: LanguageModel): LanguageModelV4 {
 const model: ModelRow = {
   id: 1, provider_id: 1, model_id: 'test-model', enabled: true, sort: 0,
   interface_id: null, metadata_override: {}, metadata_resolved: {}, catalog_matches: { operator: null, lab: null, global: null },
-  provider_metadata: {}, lab_id: null, supports_image_input: false, supports_image_output: false,
+  provider_metadata: {}, image_extra_body: {}, lab_id: null, supports_image_input: false, supports_image_output: false,
   supports_reasoning: false, supports_tools: false, context_limit: null, output_limit: null,
   manual_pinned: true, upstream_available: null,
 }
