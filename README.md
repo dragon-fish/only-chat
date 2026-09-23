@@ -52,7 +52,11 @@ Directives at the start of the newest user message shape the reply:
 | `/error [message]` | a provider failure |
 | `/slow [ms]` | text streamed with a delay between chunks |
 
-Anything else — including a malformed directive — streams ordinary generated text. Pass `--user <id>`
+Anything else — including a malformed directive — streams ordinary generated text.
+
+The `mock-image` model serves Image Studio: each run downloads a placeholder photo from
+`picsum.photos` at the requested size (the dev server needs direct internet access for this; it does
+not go through a proxy). Directives do not apply to it. Pass `--user <id>`
 to seed for a user other than `1`. The command is idempotent and local-only.
 
     pnpm typecheck                    # vue-tsc + both tsc projects

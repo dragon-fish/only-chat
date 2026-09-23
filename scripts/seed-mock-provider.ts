@@ -34,12 +34,14 @@ interface MockModel {
   name: string
   tools: boolean
   reasoning: boolean
+  image?: boolean
 }
 
 const MODELS: MockModel[] = [
   { id: 'mock-plain', name: 'Mock Plain', tools: false, reasoning: false },
   { id: 'mock-tools', name: 'Mock Tools', tools: true, reasoning: false },
   { id: 'mock-reasoning', name: 'Mock Reasoning', tools: true, reasoning: true },
+  { id: 'mock-image', name: 'Mock Image', tools: false, reasoning: false, image: true },
 ]
 
 function parseUserId(rawArgs: string[]): number {
@@ -60,6 +62,13 @@ async function execute(sql: string): Promise<void> {
 }
 
 function metadata(model: MockModel): ModelMetadata {
+  if (model.image) {
+    return {
+      name: model.name,
+      description: 'Local mock image model. Returns placeholder photos from picsum.photos at the requested size.',
+      modalities: { input: ['text', 'image'], output: ['image'] },
+    }
+  }
   return {
     name: model.name,
     description: 'Local mock provider. Send /tool_call, /parallel, /reasoning, /error or /slow to shape the reply.',

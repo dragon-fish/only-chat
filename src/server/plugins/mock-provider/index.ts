@@ -1,6 +1,7 @@
 import type { Context } from 'cordis'
 import type { LanguageModelV4, LanguageModelV4CallOptions, LanguageModelV4Prompt, LanguageModelV4StreamPart } from '@ai-sdk/provider'
 import type { LlmProtocolAdapter } from '../llm/index'
+import type { ScopedImagesClient } from '../llm/images/types'
 import { anthropicAdapter } from '../llm/protocols/anthropic'
 import { chatCompletionsAdapter } from '../llm/protocols/chat-completions'
 import { responsesAdapter } from '../llm/protocols/responses'
@@ -98,8 +99,30 @@ function mockModel(provider: string, modelId: string): LanguageModelV4 {
   }
 }
 
+/**
+ * Placeholder photos from picsum.photos, sized as requested. Not placehold.co: workerd's `fetch`
+ * ignores proxy variables, and picsum is the one reachable without a proxy from here. Seeded by the
+ * idempotency key, so a retried workflow step gets the same image back.
+ */
+function mockImages(): ScopedImagesClient {
+  return {
+    async generate(request) {
+      const { width, height } = request.params.size ?? { width: 1024, height: 1024 }
+      const images = await Promise.all(Array.from({ length: request.params.count }, async (_, index) => {
+        const seed = encodeURIComponent(`${request.idempotencyKey}-${index}`)
+        const response = await fetch(`https://picsum.photos/seed/${seed}/${width}/${height}`, { signal: request.signal })
+        if (!response.ok) throw new Error(`mock image download failed: ${response.status}`)
+        const mime = response.headers.get('content-type')?.split(';')[0]?.trim() || 'image/jpeg'
+        return { bytes: new Uint8Array(await response.arrayBuffer()), mime }
+      }))
+      return { images, usage: { generated_images: images.length } }
+    },
+  }
+}
+
 /** Serves mock interfaces locally and hands every other interface back to the real adapter. */
 function mockable(adapter: LlmProtocolAdapter): LlmProtocolAdapter {
+  const { createImages } = adapter
   return {
     ...adapter,
     createModel(provider, providerInterface, model, apiKey, trace) {
@@ -108,6 +131,11 @@ function mockable(adapter: LlmProtocolAdapter): LlmProtocolAdapter {
       }
       return mockModel(`mock-${providerInterface.protocol}`, model.model_id)
     },
+    ...(createImages && {
+      createImages(provider, providerInterface, apiKey) {
+        return isMockBaseUrl(providerInterface.base_url) ? mockImages() : createImages(provider, providerInterface, apiKey)
+      },
+    }),
   }
 }
 
