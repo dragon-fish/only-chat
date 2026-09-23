@@ -24,8 +24,8 @@ function go(delta: number) {
 <template lang="pug">
 .inline-flex.items-center.gap-1.text-xs.text-muted-foreground(v-if="siblings.length > 1")
   Button(variant="ghost" size="icon-xs" class="size-10 md:size-6" aria-label="上一个分支" title="上一个分支" :disabled="index <= 0" @click="go(-1)")
-    ChevronLeft(data-icon="inline-start")
+    ChevronLeft(data-icon="inline-start" class="size-3.5")
   span {{ index + 1 }} / {{ siblings.length }}
   Button(variant="ghost" size="icon-xs" class="size-10 md:size-6" aria-label="下一个分支" title="下一个分支" :disabled="index >= siblings.length - 1" @click="go(1)")
-    ChevronRight(data-icon="inline-end")
+    ChevronRight(data-icon="inline-end" class="size-3.5")
 </template>

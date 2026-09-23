@@ -174,24 +174,24 @@ MessageRoot(
         v-if="!streaming && copyText.trim()" variant="ghost" size="icon-xs"
         class="min-h-10 min-w-10 md:min-h-6 md:min-w-6"
         title="复制消息" aria-label="复制消息" @click="copyMessage")
-        CopyIcon
+        CopyIcon(class="size-3.5")
       BranchSwitcher(v-if="!readonly" :message="message")
       Button(
         v-if="!readonly && message.role === 'assistant' && !streaming" variant="ghost" size="icon-xs"
         class="min-h-10 min-w-10 md:min-h-6 md:min-w-6"
         title="重新生成" aria-label="重新生成" @click="regenerate")
-        RefreshCwIcon
+        RefreshCwIcon(class="size-3.5")
       Button(
         v-if="!readonly && message.role === 'user' && !editing" variant="ghost" size="icon-xs"
         class="min-h-10 min-w-10 md:min-h-6 md:min-w-6"
         title="编辑消息" aria-label="编辑消息" @click="startEdit")
-        PencilIcon
+        PencilIcon(class="size-3.5")
       DropdownMenu(v-if="!readonly && message.role === 'assistant' && !streaming")
         DropdownMenuTrigger(as-child)
           Button(
             variant="ghost" size="icon-xs" class="min-h-10 min-w-10 md:min-h-6 md:min-w-6"
             title="更多操作" aria-label="更多消息操作")
-            EllipsisIcon
+            EllipsisIcon(class="size-3.5")
         DropdownMenuContent(align="start")
           DropdownMenuItem(class="min-h-10" :disabled="!!forkPending" @select="fork(message.conversation_id, message.id)")
             GitForkIcon
