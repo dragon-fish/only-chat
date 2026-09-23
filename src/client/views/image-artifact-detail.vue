@@ -2,9 +2,9 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useEventListener } from '@vueuse/core'
 import { ChevronLeftIcon, ChevronRightIcon, CopyIcon, DownloadIcon, ImagePlusIcon, InfoIcon, RefreshCwIcon, TrashIcon, XIcon } from '@lucide/vue'
-import { RouterLink, useRoute, useRouter } from 'vue-router'
+import { RouterLink, useRoute, useRouter, type RouteLocationRaw } from 'vue-router'
 import { toast } from 'vue-sonner'
-import { useRouteOverlay } from '@/client/composables/use-route-overlay'
+import { useOverlayLeave } from '@/client/composables/use-route-overlay'
 import { routeParamToId } from '@/client/lib/route-params'
 import { api } from '@/client/lib/api'
 import { Button } from '@/client/ui/button'
@@ -15,7 +15,16 @@ import { Skeleton } from '@/client/ui/skeleton'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/client/ui/tooltip'
 import type { ArtifactDto } from '@/shared/artifacts'
 
-const props = defineProps<{ artifactId: number | null }>()
+const props = defineProps<{
+  artifactId: number | null
+  /**
+   * Where the viewer lives. By default it is a route of its own (`/images/a/:id`,
+   * `/images/s/:c/a/:id`) and leaving goes back up that path; a host that opens it over another
+   * screen — a chat, through `?image=` — passes both so closing and stepping keep the person there.
+   */
+  leave?: () => void
+  stepTo?: (artifactId: number) => RouteLocationRaw
+}>()
 const route = useRoute()
 const router = useRouter()
 const artifact = ref<ArtifactDto | null>(null)
@@ -24,11 +33,11 @@ const siblings = ref<ArtifactDto[]>([])
 const position = computed(() => (artifact.value ? siblings.value.findIndex(item => item.id === artifact.value!.id) : -1))
 const previous = computed(() => (position.value > 0 ? siblings.value[position.value - 1] : undefined))
 const next = computed(() => (position.value >= 0 ? siblings.value[position.value + 1] : undefined))
-const { open, setOpen: close } = useRouteOverlay(() => {
+const { open, setOpen: close } = useOverlayLeave(props.leave ?? (() => {
   const value = (route.params as Record<string, unknown>).conversationId
   const conversationId = routeParamToId(typeof value === 'string' ? value : undefined)
-  return conversationId === null ? '/images' : `/images/s/${conversationId}`
-})
+  void router.push(conversationId === null ? '/images' : `/images/s/${conversationId}`)
+}))
 /** An Agent's image came from a chat; everything else from an image conversation in Studio. */
 const sourcePath = computed(() => {
   const value = artifact.value
@@ -52,7 +61,7 @@ async function load() {
 }
 /** Replace, not push: Back should close the viewer, not walk back through every image viewed. */
 function step(target: ArtifactDto | undefined) {
-  if (target) void router.replace(route.path.replace(/\/\d+$/u, `/${target.id}`))
+  if (target) void router.replace(props.stepTo ? props.stepTo(target.id) : route.path.replace(/\/\d+$/u, `/${target.id}`))
 }
 useEventListener(window, 'keydown', (event: KeyboardEvent) => {
   if (!open.value || event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return

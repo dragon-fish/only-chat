@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { ImagesIcon, TriangleAlertIcon, XIcon } from '@lucide/vue'
-import { RouterLink } from 'vue-router'
+import { RouterLink, useRoute } from 'vue-router'
+import { withViewer } from '@/client/lib/image-viewer'
 import { api } from '@/client/lib/api'
 import { useAuditContext } from '@/client/lib/audit-context'
 import { cn } from '@/client/lib/utils'
@@ -17,6 +18,7 @@ import { thumbnailGridClass } from './thumbnail-grid'
 const props = defineProps<{ call: ToolCallPart; result: ToolResultPart | null }>()
 // Runs belong to the transcript's owner; an auditor's session cannot read them, so it shows the summary only.
 const auditing = useAuditContext() !== null
+const route = useRoute()
 const input = computed(() => GenerateImageInputSchema.safeParse(props.call.args).data ?? null)
 const started = computed(() => GenerateImageStartedSchema.safeParse(props.result?.content).data ?? null)
 const failure = computed(() => GenerateImageErrorSchema.safeParse(props.result?.content).data?.error ?? null)
@@ -85,7 +87,7 @@ onBeforeUnmount(() => clearTimeout(timer))
         Skeleton(v-for="index in tiles" :key="index" class="aspect-square rounded-lg")
       .grid.w-full.gap-2(v-else-if="outputs.length" :class="thumbnailGridClass(outputs.length)")
         RouterLink(
-          v-for="artifact in outputs" :key="artifact.id" :to="`/images/a/${artifact.id}`"
+          v-for="artifact in outputs" :key="artifact.id" :to="withViewer(route, artifact.id)"
           :class="cn('group block aspect-square overflow-hidden rounded-lg border bg-muted')" :aria-label="`查看第 ${artifact.output_index + 1} 张`")
           img.size-full.object-cover.transition-transform.duration-300(class="group-hover:scale-[1.03]" :src="api.artifactContentUrl(artifact.id, 'gallery')" :alt="artifact.prompt" loading="lazy")
       p.text-xs.text-destructive(v-else-if="run?.status === 'failed'") {{ run.error ?? '供应商未返回具体错误。' }}

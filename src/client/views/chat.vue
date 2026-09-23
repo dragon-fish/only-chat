@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed, inject, nextTick, onBeforeUnmount, reactive, ref, watch, watchEffect } from 'vue'
 import { useMediaQuery } from '@vueuse/core'
-import { RouterLink, useRouter } from 'vue-router'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
+import ImageArtifactDetail from '@/client/views/image-artifact-detail.vue'
+import { viewerArtifactId, withoutViewer, withViewer } from '@/client/lib/image-viewer'
 import { ArrowLeftIcon, PanelRightIcon, RotateCcwIcon } from '@lucide/vue'
 import MessageList from '@/client/components/message-list.vue'
 import Composer from '@/client/components/composer.vue'
@@ -43,6 +45,11 @@ import { workspaceTabs } from '@/shared/plugins'
 
 const props = withDefaults(defineProps<{ conversationId: number | null; projectId?: number | null }>(), { projectId: null })
 const router = useRouter()
+const route = useRoute()
+/** An image opened from this chat, shown over it; see `image-viewer.ts`. */
+const viewerId = computed(() => viewerArtifactId(route.query))
+const closeViewer = () => { void router.replace(withoutViewer(route)) }
+const viewerStepTo = (artifactId: number) => withViewer(route, artifactId)
 const sync = useSyncStore()
 const config = useConfigStore()
 const isDesktop = useMediaQuery('(min-width: 768px)')
@@ -598,4 +605,5 @@ ResponsiveOverlay(
   WorkspacePanel(
     :tabs="tabs" :active="workspace.tab.value" :conversation-id="sid" :project-id="project?.id ?? null"
     @update:active="workspace.show($event)")
+ImageArtifactDetail(v-if="viewerId !== null" :artifact-id="viewerId" :leave="closeViewer" :step-to="viewerStepTo")
 </template>
