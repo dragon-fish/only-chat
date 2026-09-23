@@ -57,16 +57,19 @@
 
 领域在任务结束时调用 `UserHub.settleTask(userId, { conversation_id, origin_message_id, notification })`（DO RPC，与 `publishConversation` 同一模式）。`origin_message_id` 是包含该工具调用的 assistant 消息。
 
-- DO 先把通知写入 DO storage 的待投递队列，再返回；`Hub[Service.init]` 恢复未投递的队列。
+- DO 先把通知写入 DO storage 的待投递队列（键前缀 `task:`），再投递。队列必须持久化：插话用的 stash 只在内存里。
+- DO 重启后，`Hub[Service.init]` 发现队列非空时立即设置 alarm，由 alarm 投递。
 - 幂等：对话中已有消息包含相同 `task_id` 的通知时，丢弃。
 
 ### 2.5 投递规则
 
 1. **分支**：`origin_message_id` 必须是当前 head 的祖先或 head 本身。否则不投递给模型（出队丢弃），结果仍显示在工具卡片上。
-2. **生成中**：把通知放入该对话进行中任务的 stash，由 `prepareStep` 的插话机制在两个 step 之间写成 user 消息，回复在其下继续。
+2. **生成中**：通知留在队列。`prepareStep` 在两个 step 之间取出，与 stash 中的用户插话一起写成 user 消息（复用插话的 handoff），回复在其下继续。只有通知时不标记 `INTERJECTED`，模型侧也不加中断提示。这一轮最后一步之后才到达的通知，由这一轮结束时投递。
 3. **空闲**：以 head 为父写入一条只含通知的 user 消息，并按对话的有效配置发起新一轮生成，与 `runSend` 相同，只是由服务端发起。
-4. **合并**：同时待投递的多条通知合并进同一条消息（`joinStash`）。
+4. **合并**：同时待投递的多条通知写进同一条消息。
 5. **续写上限**：沿当前路径往回数，自最后一条含用户原话的 user 消息以来，只含通知的 user 消息达到 5 条时，只写入通知，不发起生成。
+6. **等待人工**：head 上有未回答的人工工具调用（如 `ask_user`）时不投递，留在队列。
+7. **模型**：服务端发起的一轮以发起任务那条 assistant 消息的模型作为兜底（每轮的模型本由客户端选择）。
 
 ### 2.6 UI
 
@@ -76,7 +79,7 @@
 
 ### 3.1 注册
 
-插件 id `image-generation`，工具 `generate_image`，默认不启用，按对话选择开启（保持工具列表稳定以利于前缀缓存）。全局设置可让新对话默认开启。
+插件 id `image_generation`，工具 `generate_image`，默认不启用，按对话选择开启（保持工具列表稳定以利于前缀缓存）。全局设置可让新对话默认开启。
 
 ### 3.2 输入
 

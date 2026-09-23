@@ -4,7 +4,7 @@
 
 **Goal:** Agent 调用 `generate_image` 在后台生成图片；完成后以 `<task-notification>` user 消息回到对话，并自动续写。
 
-**Architecture:** 核心新增 `task_notification` Part 与 hub 内的通知队列（DO storage 持久化），投递时复用 `reserveUserMessage` / `generate` 与 `prepareStep` 插话机制。生图任务仍是 `artifact_runs` + Workflow；Workflow 新增 `notify` step 调 `UserHub.settleTask`。`image-generation` 插件只负责把工具调用变成一个 `source = 'tool'` 的 run。
+**Architecture:** 核心新增 `task_notification` Part 与 hub 内的通知队列（DO storage 持久化），投递时复用 `reserveUserMessage` / `generate` 与 `prepareStep` 插话机制。生图任务仍是 `artifact_runs` + Workflow；Workflow 新增 `notify` step 调 `UserHub.settleTask`。`image_generation` 插件只负责把工具调用变成一个 `source = 'tool'` 的 run。
 
 **Tech Stack:** TypeScript, cordis, Cloudflare Durable Objects / Workflows / D1, AI SDK v6 (`streamText`, `prepareStep`), Vue 3 + Pug, Vitest（`unit` / `worker` 两个 project）。
 
@@ -16,7 +16,7 @@
 - `task_id` 形如 `image_run:<run id>`。
 - 续写上限常量 `MAX_NOTIFICATION_TURNS = 5`（含即将写入的这一条）。
 - 工具幂等键 `client_request_id = tool:<message_id>:<call_id>`。
-- 插件 id `image-generation`，工具 id `generate_image`；插件默认关闭（`user.settings.plugins` 未置 true 即关闭）。
+- 插件 id `image_generation`，工具 id `generate_image`；插件默认关闭（`user.settings.plugins` 未置 true 即关闭）。
 - 生图模型解析：对话 `image_provider_id/image_model_id` > `settings.service_models.image`；模型必须 enabled、`supports_image_output`、接口协议属于 `IMAGE_PROTOCOLS`。
 - 代码风格：两空格、单引号、无分号；注释英文，写「现在是什么 + 不要改成什么」。
 - 只跑相关测试文件；全量只在合并/推送前跑。
@@ -76,7 +76,7 @@ import { renderTaskNotification, interjectedUserMessage } from '@/server/plugins
 import { isNotificationOnly, type TaskNotificationPart } from '@/shared/parts'
 
 const notice: TaskNotificationPart = {
-  type: 'task_notification', task_id: 'image_run:12', plugin_id: 'image-generation', tool_call_id: 'call_1',
+  type: 'task_notification', task_id: 'image_run:12', plugin_id: 'image_generation', tool_call_id: 'call_1',
   status: 'completed', text: 'Generated 1 image(s): /artifacts/31.png',
 }
 
@@ -234,7 +234,7 @@ import type { Message } from '@/shared/models'
 import type { Part, TaskNotificationPart } from '@/shared/parts'
 
 const notice = (task_id: string): TaskNotificationPart => ({
-  type: 'task_notification', task_id, plugin_id: 'image-generation', tool_call_id: 'c', status: 'completed', text: 'ok',
+  type: 'task_notification', task_id, plugin_id: 'image_generation', tool_call_id: 'c', status: 'completed', text: 'ok',
 })
 const msg = (id: number, role: 'user' | 'assistant', parts: Part[]): Message => ({
   id, conversation_id: 1, parent_id: id - 1 || null, seq: id, role, parts, provider_id: null, model_id: null,
@@ -529,7 +529,7 @@ async function seedChat(providerId: number, assistantParts: Part[] = [{ type: 't
 
 const settlement = (conversationId: number, origin: number, taskId = 'image_run:1'): TaskSettlement => ({
   conversation_id: conversationId, origin_message_id: origin,
-  notification: { type: 'task_notification', task_id: taskId, plugin_id: 'image-generation', tool_call_id: 'call_1', status: 'completed', text: 'Generated 1 image(s): /artifacts/1.png' },
+  notification: { type: 'task_notification', task_id: taskId, plugin_id: 'image_generation', tool_call_id: 'call_1', status: 'completed', text: 'Generated 1 image(s): /artifacts/1.png' },
 })
 
 const settle = (s: TaskSettlement) =>
@@ -661,7 +661,7 @@ describe('toolRunNotification', () => {
   it('lists every output path on success', () => {
     expect(toolRunNotification({ id: 12, status: 'completed', error: null, tool_call_id: 'call_1' }, [{ id: 31, mime: 'image/png' }, { id: 32, mime: 'image/webp' }]))
       .toEqual({
-        type: 'task_notification', task_id: 'image_run:12', plugin_id: 'image-generation', tool_call_id: 'call_1',
+        type: 'task_notification', task_id: 'image_run:12', plugin_id: 'image_generation', tool_call_id: 'call_1',
         status: 'completed', text: 'Generated 2 image(s): /artifacts/31.png, /artifacts/32.webp',
       })
   })
@@ -692,7 +692,7 @@ import { artifactRuns, artifacts, type ArtifactRow, type ArtifactRunRow } from '
 import { disposeRpcStub } from '@/server/rpc'
 import type { TaskNotificationPart } from '@/shared/parts'
 
-export const IMAGE_GENERATION_PLUGIN_ID = 'image-generation'
+export const IMAGE_GENERATION_PLUGIN_ID = 'image_generation'
 const EXTENSION: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif' }
 
 export function toolRunNotification(
@@ -878,7 +878,7 @@ git commit -m "feat(artifacts): run Agent-started image jobs and notify their co
 
 ---
 
-### Task 4: `image-generation` 插件（服务端）
+### Task 4: `image_generation` 插件（服务端）
 
 **Files:**
 - Modify: `src/shared/plugins.ts`（ID 常量与 `BuiltInPluginId` / `BuiltInToolId` 联合）
@@ -889,13 +889,13 @@ git commit -m "feat(artifacts): run Agent-started image jobs and notify their co
 **Interfaces:**
 - Consumes: Task 3 的 `createToolImageRun`、`resolveImageModel`、`IMAGE_GENERATION_PLUGIN_ID`
 - Produces:
-  - `IMAGE_GENERATION_PLUGIN_ID = 'image-generation'`、`GENERATE_IMAGE_TOOL_ID = 'generate_image'`（`src/shared/plugins.ts`；`notify.ts` 改为从这里导入）
+  - `IMAGE_GENERATION_PLUGIN_ID = 'image_generation'`、`GENERATE_IMAGE_TOOL_ID = 'generate_image'`（`src/shared/plugins.ts`；`notify.ts` 改为从这里导入）
   - `GenerateImageInputSchema = z.strictObject({ prompt: z.string().trim().min(1).max(4000), count: z.number().int().min(1).max(10).optional(), size: z.strictObject({ width: z.number().int().min(256).max(4096), height: z.number().int().min(256).max(4096) }).optional() })`
   - 工具结果 `GenerateImageStarted = { task_id: string; status: 'started'; count: number; model: string }` 或 `{ error: string }`
 
 - [ ] **Step 1: 失败测试**
 
-`test/worker/image-generation-tool.test.ts`，沿用 `test/worker/workspace-files-tools.test.ts` 的 `seedProvider` / `installModel` / `callTool`（L45–117）写法：聊天模型 `metadata_resolved: { tool_call: true }`，用户 `settings.plugins['image-generation'] = true`，对话 `tools` 包含 `generate_image`；另播种一个图片模型（`supports_image_output: true`，接口协议 `responses`）并写入 `users.settings.service_models.image`；`env.ARTIFACT_WORKFLOW` 无法在 DO 内替换时，改为断言结果与 `artifact_runs` 行（run 状态可为 `queued` 或 `failed: Could not start image generation`，二者都证明走到了创建）。
+`test/worker/image-generation-tool.test.ts`，沿用 `test/worker/workspace-files-tools.test.ts` 的 `seedProvider` / `installModel` / `callTool`（L45–117）写法：聊天模型 `metadata_resolved: { tool_call: true }`，用户 `settings.plugins['image_generation'] = true`，对话 `tools` 包含 `generate_image`；另播种一个图片模型（`supports_image_output: true`，接口协议 `responses`）并写入 `users.settings.service_models.image`；`env.ARTIFACT_WORKFLOW` 无法在 DO 内替换时，改为断言结果与 `artifact_runs` 行（run 状态可为 `queued` 或 `failed: Could not start image generation`，二者都证明走到了创建）。
 
 ```ts
   it('starts a background run and returns at once', async () => {
@@ -1026,7 +1026,7 @@ git commit -m "feat(plugins): add the image-generation plugin with a background 
     const markdown = conversationExporters.markdown.serialize({
       conversation, attachmentUrl: id => `/a/${id}`,
       messages: [{ ...message, role: 'user', parts: [{
-        type: 'task_notification', task_id: 'image_run:1', plugin_id: 'image-generation', tool_call_id: 'c',
+        type: 'task_notification', task_id: 'image_run:1', plugin_id: 'image_generation', tool_call_id: 'c',
         status: 'completed', text: 'Generated 1 image(s)',
       }] }],
     })
@@ -1035,7 +1035,7 @@ git commit -m "feat(plugins): add the image-generation plugin with a background 
   })
 ```
 
-Host：追加用例——插件 setup 里 `ctx.notifications.register(X)` 后，`host.ensureNotificationRenderer('image-generation')` 解析为 `X`；未注册的 plugin id 解析为 `undefined`。照该文件测试 `tools.register` / `ensureToolRenderer` 的现有写法。
+Host：追加用例——插件 setup 里 `ctx.notifications.register(X)` 后，`host.ensureNotificationRenderer('image_generation')` 解析为 `X`；未注册的 plugin id 解析为 `undefined`。照该文件测试 `tools.register` / `ensureToolRenderer` 的现有写法。
 
 - [ ] **Step 2: Run** 对应 unit 测试 → FAIL
 
