@@ -382,7 +382,7 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
         // Writing the row is not enough — the SDK would carry on with the list it built at the
         // start, and the model would never hear what was said. The override carries forward, so
         // every later step sees it too.
-        return { messages: [...messages, interjectedUserMessage(said, attachments)] }
+        return { messages: [...messages, interjectedUserMessage(said, attachments, true)] }
       },
       providerOptions: buildProviderOptions(target.providerInterface.protocol, params, target.model.metadata_resolved),
     })

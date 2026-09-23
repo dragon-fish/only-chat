@@ -40,12 +40,26 @@ export const ToolResultPartSchema = z.object({
   providerOptions: ProviderOptionsSchema.optional(),
 })
 
+/**
+ * A background task's outcome, delivered to the model inside a user message. User role because a
+ * mid-conversation `developer`/`system` message is not accepted by every protocol.
+ */
+export const TaskNotificationPartSchema = z.object({
+  type: z.literal('task_notification'),
+  task_id: z.string().min(1).max(200),
+  plugin_id: z.string().min(1),
+  tool_call_id: z.string().min(1),
+  status: z.enum(['completed', 'failed', 'cancelled']),
+  text: z.string().max(20_000),
+})
+
 export const PartSchema = z.discriminatedUnion('type', [
   TextPartSchema,
   ImagePartSchema,
   ReasoningPartSchema,
   ToolCallPartSchema,
   ToolResultPartSchema,
+  TaskNotificationPartSchema,
 ])
 export const PartsSchema = z.array(PartSchema)
 
@@ -54,4 +68,10 @@ export type ImagePart = z.infer<typeof ImagePartSchema>
 export type ReasoningPart = z.infer<typeof ReasoningPartSchema>
 export type ToolCallPart = z.infer<typeof ToolCallPartSchema>
 export type ToolResultPart = z.infer<typeof ToolResultPartSchema>
+export type TaskNotificationPart = z.infer<typeof TaskNotificationPartSchema>
 export type Part = z.infer<typeof PartSchema>
+
+/** A user message made only of notifications was written by the server, not the person. */
+export function isNotificationOnly(parts: readonly Part[]): boolean {
+  return parts.length > 0 && parts.every(part => part.type === 'task_notification')
+}

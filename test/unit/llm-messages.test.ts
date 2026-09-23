@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { buildModelMessages, buildProviderOptions, requiredAttachmentIds, type AttachmentInput, type BuildInput } from '@/server/plugins/llm/messages'
+import { buildModelMessages, buildProviderOptions, interjectedUserMessage, renderTaskNotification, requiredAttachmentIds, type AttachmentInput, type BuildInput } from '@/server/plugins/llm/messages'
+import { isNotificationOnly, type TaskNotificationPart } from '@/shared/parts'
 import type { Message } from '@/shared/models'
 import type { ModelMetadata } from '@/shared/model-metadata'
 import type { InterfaceProtocol } from '@/shared/models'
@@ -501,5 +502,37 @@ describe('rolling back to somewhere legal', () => {
     // One note in front of each thing they said, in order.
     const said = (out[2] as { content: Array<{ text: string }> }).content.map(c => c.text)
     expect(said).toEqual([expect.any(String), '乙', expect.any(String), '丙', expect.any(String), '丁'])
+  })
+})
+
+describe('task notifications', () => {
+  const notice: TaskNotificationPart = {
+    type: 'task_notification', task_id: 'image_run:12', plugin_id: 'image-generation', tool_call_id: 'call_1',
+    status: 'completed', text: 'Generated 1 image(s): /artifacts/31.png',
+  }
+
+  it('reach the model as a tagged user text block', () => {
+    const messages = buildModelMessages({
+      protocol: 'responses', systemPrompt: null, attachments: new Map(),
+      path: [msg({ id: 1, role: 'user', parts: [notice] })],
+    })
+    expect(messages).toEqual([{ role: 'user', content: [{ type: 'text', text: renderTaskNotification(notice) }] }])
+    expect(renderTaskNotification(notice)).toBe([
+      '<task-notification>', '<task-id>image_run:12</task-id>', '<status>completed</status>',
+      '<summary>Generated 1 image(s): /artifacts/31.png</summary>', '</task-notification>',
+    ].join('\n'))
+  })
+
+  it('does not claim the person interrupted when only notifications arrived mid-turn', () => {
+    expect(interjectedUserMessage([notice], new Map(), false))
+      .toEqual({ role: 'user', content: [{ type: 'text', text: renderTaskNotification(notice) }] })
+    expect((interjectedUserMessage([{ type: 'text', text: 'hi' }], new Map(), true).content as Array<{ text: string }>)[0]!.text)
+      .toBe('[Request interrupted by user]')
+  })
+
+  it('tells a notification-only message from one the person wrote', () => {
+    expect(isNotificationOnly([notice])).toBe(true)
+    expect(isNotificationOnly([notice, { type: 'text', text: 'and also' }])).toBe(false)
+    expect(isNotificationOnly([])).toBe(false)
   })
 })

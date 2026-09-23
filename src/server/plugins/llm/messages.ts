@@ -6,7 +6,7 @@ import type { OpenResponsesLanguageModelOptions } from '@ai-sdk/open-responses'
 import type { OpenAICompatibleProviderOptions } from '@ai-sdk/openai-compatible'
 import type { Message, InterfaceProtocol, ReasoningEffort, ConversationParams } from '@/shared/models'
 import type { ModelMetadata } from '@/shared/model-metadata'
-import type { Part, ProviderOptions, ToolResultPart } from '@/shared/parts'
+import type { Part, ProviderOptions, TaskNotificationPart, ToolResultPart } from '@/shared/parts'
 import { RESPONSES_PROVIDER_NAME, responsesReasoningReplayOptions } from './responses-reasoning'
 
 export const COMPAT_PROVIDER_NAME = 'compat'
@@ -36,6 +36,20 @@ type UserPart = Extract<UserModelMessage['content'], unknown[]>[number]
 type AssistantPart = Extract<AssistantModelMessage['content'], unknown[]>[number]
 type ToolPart = ToolModelMessage['content'][number]
 
+/**
+ * How a background task's outcome reads to the model. Tagged plain text in a user message, the way
+ * Claude Code reports its own background tasks; do not turn it into a system or developer message.
+ */
+export function renderTaskNotification(part: TaskNotificationPart): string {
+  return [
+    '<task-notification>',
+    `<task-id>${part.task_id}</task-id>`,
+    `<status>${part.status}</status>`,
+    `<summary>${part.text}</summary>`,
+    '</task-notification>',
+  ].join('\n')
+}
+
 function userParts(parts: Part[], attachments: ReadonlyMap<number, AttachmentInput>): UserPart[] {
   const out: UserPart[] = []
   for (const p of parts) {
@@ -45,6 +59,8 @@ function userParts(parts: Part[], attachments: ReadonlyMap<number, AttachmentInp
       const att = attachments.get(p.attachment_id)
       if (!att) throw new Error(`attachment ${p.attachment_id} input not provided`)
       out.push({ type: 'file', mediaType: att.mime, data: att.data })
+    } else if (p.type === 'task_notification') {
+      out.push({ type: 'text', text: renderTaskNotification(p) })
     }
     // reasoning / tool parts never appear on user messages
   }
@@ -226,12 +242,17 @@ const INTERRUPT_MESSAGE = '[Request interrupted by user]'
  * to `prepareStep` as an override. Built here, next to the rule it mirrors, so the request sent now
  * and the one rebuilt from the rows on the next turn say the same thing — note first, then what
  * they said, exactly where `buildModelMessages` puts it for a reply that ends on a tool result.
+ *
+ * `interrupted` is false when only task notifications arrived: nobody cut the reply short, it is
+ * stored without `INTERJECTED`, and the rebuilt prompt carries no note — so neither may this one.
  */
 export function interjectedUserMessage(
   said: Part[],
   attachments: ReadonlyMap<number, AttachmentInput>,
+  interrupted: boolean,
 ): ModelMessage {
-  return { role: 'user', content: [{ type: 'text', text: INTERRUPT_MESSAGE }, ...userParts(said, attachments)] }
+  const content = userParts(said, attachments)
+  return { role: 'user', content: interrupted ? [{ type: 'text', text: INTERRUPT_MESSAGE }, ...content] : content }
 }
 
 /**
