@@ -12,6 +12,7 @@ import { PluginChannelPlugin } from './plugins/plugin-channel'
 import { AskUserServerPlugin } from '@/plugins/ask-user/server'
 import { TavilyServerPlugin } from '@/plugins/tavily/server'
 import { DatetimeServerPlugin } from '@/plugins/datetime/server'
+import { ImageGenerationServerPlugin } from '@/plugins/image-generation/server'
 import { WorkspaceFilesServerPlugin } from '@/plugins/workspace-files/server'
 import { WorkspaceFilesApiPlugin } from '@/plugins/workspace-files/server/api'
 import { BrowserRunServerPlugin } from '@/plugins/cloudflare-browser-run/server'
@@ -56,6 +57,7 @@ export async function createApp(options: AppOptions): Promise<Context> {
       await ctx.plugin(AskUserServerPlugin)
       await ctx.plugin(TavilyServerPlugin)
       await ctx.plugin(DatetimeServerPlugin)
+      await ctx.plugin(ImageGenerationServerPlugin)
       await ctx.plugin(WorkspaceFilesServerPlugin)
       await ctx.plugin(HubPlugin, { userId: options.userId })
       if (!ctx.get('hub')) throw new Error('HubPlugin loaded but ctx.hub is unavailable')
