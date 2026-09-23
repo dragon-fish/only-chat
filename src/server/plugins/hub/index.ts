@@ -18,7 +18,8 @@ import { createProject, deleteProject, getProject, listProjectConversations, upd
 import { SeqAllocator } from './seq'
 import { joinStash } from '@/shared/stash'
 import { logLifecycle, partsBytes } from './lifecycle-log'
-import { runEdit, runInterjectInterrupt, runRegenerate, runSend, runToolContinue, runToolRespond } from './generation'
+import { deliverTaskNotifications, runEdit, runInterjectInterrupt, runRegenerate, runSend, runToolContinue, runToolRespond } from './generation'
+import { TASK_STORAGE_PREFIX, type TaskSettlement } from './tasks'
 import { parseAuthUserId } from '../auth/user-id'
 import { AUTH_REVOKED_CLOSE_CODE, hasActiveAuthSession, ORIGIN_STORAGE_KEY, type SocketAttachment } from './identity'
 
@@ -80,6 +81,10 @@ export class Hub extends Service {
   async [Service.init]() {
     this._publicOrigin = await this.state.storage.get<string>(ORIGIN_STORAGE_KEY) ?? null
     await this._recoverInflight()
+    // Notifications queued behind a turn that died with the previous instance: the alarm delivers them.
+    if ((await this.state.storage.list({ prefix: TASK_STORAGE_PREFIX, limit: 1 })).size > 0) {
+      await this.state.storage.setAlarm(Date.now())
+    }
   }
 
   // ---- sockets
@@ -475,6 +480,31 @@ export class Hub extends Service {
     return parts
   }
 
+  /** Durable, unlike the stash: a settled task must survive the DO restarting before it is delivered. */
+  async queueTask(settlement: TaskSettlement): Promise<void> {
+    await this.state.storage.put(TASK_STORAGE_PREFIX + settlement.notification.task_id, settlement)
+  }
+
+  async queuedTasks(conversationId: number): Promise<TaskSettlement[]> {
+    const stored = await this.state.storage.list<TaskSettlement>({ prefix: TASK_STORAGE_PREFIX })
+    return [...stored.values()].filter(entry => entry.conversation_id === conversationId)
+  }
+
+  async dropTask(taskId: string): Promise<void> {
+    await this.state.storage.delete(TASK_STORAGE_PREFIX + taskId)
+  }
+
+  /**
+   * Queue first, then deliver unless a turn is running: that turn takes it between steps, or
+   * delivers it when it ends. Awaits any turn it starts — the caller's request is what keeps the DO
+   * alive, the same way `webSocketMessage` awaits a send.
+   */
+  async settleTask(settlement: TaskSettlement): Promise<void> {
+    await this.queueTask(settlement)
+    if (this.inflight().some(job => job.conversationId === settlement.conversation_id)) return
+    await deliverTaskNotifications(this, settlement.conversation_id)
+  }
+
   async flushInflight(job: InflightJob): Promise<void> {
     const stored: StoredInflight = { message: job.message, parts: job.parts, startedAt: job.startedAt }
     await this.state.storage.put(`${INFLIGHT_PREFIX}${job.message.id}`, stored)
@@ -507,6 +537,12 @@ export class Hub extends Service {
     if (earliest !== Infinity) await this.state.storage.setAlarm(earliest + GENERATION_TIMEOUT_MS)
     // Everything left is already aborted but not yet untracked: keep watching instead of going dark.
     else if (this._inflight.size > 0) await this.state.storage.setAlarm(now + ALARM_WATCHDOG_MS)
+    else {
+      const queued = await this.state.storage.list<TaskSettlement>({ prefix: TASK_STORAGE_PREFIX })
+      for (const conversationId of new Set([...queued.values()].map(entry => entry.conversation_id))) {
+        await deliverTaskNotifications(this, conversationId).catch(error => console.error('task delivery failed', error))
+      }
+    }
   }
 
   /** A previous DO instance died mid-generation: persist what it had as aborted. */

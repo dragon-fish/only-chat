@@ -27,6 +27,7 @@ import {
 import { resolveAttachmentInputs } from './attachment-transport'
 import { pathToRoot, titleFromParts, titleTextFromParts } from './tree'
 import { completedToolState } from './tool-state'
+import { awaitsHuman, deliveredTaskIds, MAX_NOTIFICATION_TURNS, notificationTurnsSinceHuman, originOnPath, type TaskSettlement } from './tasks'
 
 /** Payload of the `message/before-send` event: feature plugins may inspect or amend the prompt. */
 export interface BeforeSendPayload {
@@ -376,13 +377,17 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
        * neither the tree nor the screen has any use for it.
        */
       prepareStep: async ({ messages }) => {
-        const said = hub.takeStash(shell.id)
+        // Notifications first, then what the person said: the order the stored message keeps.
+        const notices = await takeTurnNotifications(hub, target.conversation.id)
+        const said = [...notices.map(entry => entry.notification), ...hub.takeStash(shell.id)]
         if (said.length === 0) return {}
-        await handOff(said)
+        const interrupted = said.length > notices.length
+        await handOff(said, interrupted)
+        for (const entry of notices) await hub.dropTask(entry.notification.task_id)
         // Writing the row is not enough — the SDK would carry on with the list it built at the
         // start, and the model would never hear what was said. The override carries forward, so
         // every later step sees it too.
-        return { messages: [...messages, interjectedUserMessage(said, attachments, true)] }
+        return { messages: [...messages, interjectedUserMessage(said, attachments, interrupted)] }
       },
       providerOptions: buildProviderOptions(target.providerInterface.protocol, params, target.model.metadata_resolved),
     })
@@ -405,11 +410,14 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
      * the last message rather than being split — a smaller wrong than either half of a turn
      * claiming all of it.
      */
-    const handOff = async (said: Part[]): Promise<void> => {
-      // `done`, because everything it produced is intact — and marked, because nothing in those
-      // parts distinguishes a turn that was taken over from one that simply ended.
-      await finalizeMessage(hub.db, shell.id, hub.userId, { parts: acc.parts, usage: null, status: 'done', error: INTERJECTED })
-      await hub.broadcastGeneration({ type: 'message.done', message_id: shell.id, status: 'done', usage: null, error: INTERJECTED })
+    const handOff = async (said: Part[], interrupted: boolean): Promise<void> => {
+      // `done`, because everything it produced is intact. Marked `INTERJECTED` only when the person
+      // spoke, because nothing in those parts distinguishes a turn that was taken over from one that
+      // simply ended. A notification alone cuts nobody off: a reply ending on tool results is
+      // ordinary, and marking it would tell the model the user interrupted.
+      const error = interrupted ? INTERJECTED : null
+      await finalizeMessage(hub.db, shell.id, hub.userId, { parts: acc.parts, usage: null, status: 'done', error })
+      await hub.broadcastGeneration({ type: 'message.done', message_id: shell.id, status: 'done', usage: null, error })
       await hub.untrackInflight(shell.id)
       logLifecycle('generation.handoff', {
         conversationId: target.conversation.id, messageId: shell.id, bytes: partsBytes(said),
@@ -572,6 +580,8 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
   // conversation that can never be written to again, and the ways to acquire one are ordinary:
   // arguments repair could not fix, or a tool the model named that is not in its set.
   await closeUnanswerableCalls(hub, shell.id, shell.conversation_id, acc.parts, status)
+  // Tasks that settled during this turn but after its last step had nowhere else to go.
+  await deliverTaskNotifications(hub, shell.conversation_id)
 }
 
 /**
@@ -948,4 +958,71 @@ export async function runToolRespond(hub: Hub, cmd: Extract<WsCommand, { type: '
 
 export async function runToolContinue(hub: Hub, cmd: Extract<WsCommand, { type: 'tool.continue' }>): Promise<void> {
   await continueFromToolMessage(hub, cmd.message_id)
+}
+
+/**
+ * Splits queued notifications into those the current path may still read and those it never will —
+ * delivered already, or started on a branch the person left — dropping the latter from the queue.
+ */
+async function deliverableTasks(hub: Hub, conversationId: number): Promise<{ deliverable: TaskSettlement[]; path: Message[]; byId: Map<number, Message> } | null> {
+  const queued = await hub.queuedTasks(conversationId)
+  if (queued.length === 0) return null
+  const conversation = await getConversation(hub.db, conversationId, hub.userId)
+  if (!conversation) {
+    for (const entry of queued) await hub.dropTask(entry.notification.task_id)
+    return null
+  }
+  const messages = (await listMessages(hub.db, conversationId, hub.userId)).map(row => toMessage(row))
+  const byId = new Map(messages.map(message => [message.id, message]))
+  const path = pathToRoot(byId, conversation.head_message_id)
+  const delivered = deliveredTaskIds(messages)
+  const deliverable: TaskSettlement[] = []
+  for (const entry of queued) {
+    if (delivered.has(entry.notification.task_id) || !originOnPath(path, entry.origin_message_id)) {
+      await hub.dropTask(entry.notification.task_id)
+    } else deliverable.push(entry)
+  }
+  return { deliverable, path, byId }
+}
+
+/** Queued notifications a running turn may read between steps. They leave the queue once written. */
+async function takeTurnNotifications(hub: Hub, conversationId: number): Promise<TaskSettlement[]> {
+  return (await deliverableTasks(hub, conversationId))?.deliverable ?? []
+}
+
+/**
+ * Writes queued notifications for one conversation as a user message under its head and, within
+ * `MAX_NOTIFICATION_TURNS`, starts the turn that reads them. Idempotent per task id, so a retried
+ * `settleTask` never delivers twice.
+ */
+export async function deliverTaskNotifications(hub: Hub, conversationId: number): Promise<void> {
+  if (hub.inflight().some(job => job.conversationId === conversationId)) return
+  const found = await deliverableTasks(hub, conversationId)
+  if (!found || found.deliverable.length === 0) return
+  const { deliverable, path, byId } = found
+  if (awaitsHuman(path.at(-1), name => hub.app.tools.human(name) !== undefined)) return
+  const conversation = await getConversation(hub.db, conversationId, hub.userId)
+  if (!conversation) return
+
+  const parts = deliverable.map(entry => entry.notification)
+  let written: Message
+  try {
+    written = await reserveUserMessage(hub, conversation, conversation.head_message_id, parts)
+  } catch {
+    // Head moved: a send won the race. That turn delivers these when it settles.
+    return
+  }
+  for (const entry of deliverable) await hub.dropTask(entry.notification.task_id)
+  if (notificationTurnsSinceHuman([...path, written]) >= MAX_NOTIFICATION_TURNS) return
+
+  const origin = byId.get(deliverable[0]!.origin_message_id)!
+  if (origin.provider_id === null || origin.model_id === null) return
+  const target = await resolveTarget(hub, {
+    conversationId,
+    // The per-turn model is chosen by the client; a turn the server starts reuses the one that launched the task.
+    fallbackModel: { provider_id: origin.provider_id, model_id: origin.model_id },
+    firstParts: parts,
+  })
+  const shell = await openReservedAssistantShell(hub, target, written.id)
+  await generate(hub, target, shell, written.id)
 }

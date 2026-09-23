@@ -11,6 +11,7 @@ import { parseAuthUserId } from './plugins/auth/user-id'
 import { AUTH_REVOKED_PATH, hasActiveAuthSession, INTERNAL_AUTH_SESSION_ID_HEADER, INTERNAL_USER_ID_HEADER, USER_ID_STORAGE_KEY, type SocketAttachment } from './plugins/hub/identity'
 import { executeImageRun } from './plugins/artifacts/workflow'
 import type { Conversation } from '@/shared/models'
+import type { TaskSettlement } from './plugins/hub/tasks'
 export { BrowserGateway, BrowserHost, BrowserRunner } from '@/plugins/cloudflare-browser-run/server/entrypoints'
 
 let workerApp: Promise<Context> | undefined
@@ -111,6 +112,12 @@ export class UserHub extends DurableObject<Env> {
     if (conversation.user_id !== parsed || !(await this.ensureOwner(parsed))) throw new Error('Hub identity mismatch')
     if (created) await this.app.hub.emitConversationCreated(conversation)
     else await this.app.hub.emitConversationUpdated(conversation)
+  }
+
+  /** A background task started in one of this user's conversations has finished. */
+  async settleTask(userId: number, settlement: TaskSettlement): Promise<void> {
+    if (!(await this.ensureOwner(parseAuthUserId(userId)))) throw new Error('Hub identity mismatch')
+    await this.app.hub.settleTask(settlement)
   }
 
   async fetch(request: Request): Promise<Response> {
