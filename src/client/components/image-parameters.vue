@@ -1,12 +1,15 @@
 <script setup lang="ts">
-import { useId } from 'vue'
+import { computed, useId } from 'vue'
 import { Input } from '@/client/ui/input'
+import ExtraBodyEditor from '@/client/components/extra-body-editor.vue'
 import SearchableSelect from '@/client/components/searchable-select.vue'
-import { Field, FieldGroup, FieldLabel } from '@/client/ui/field'
+import { formatExtraValue } from '@/client/lib/extra-body'
+import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/client/ui/field'
 import { NativeSelect, NativeSelectOption } from '@/client/ui/native-select'
 import { Switch } from '@/client/ui/switch'
+import type { ImageExtraBody } from '@/shared/artifacts'
 
-defineProps<{ models: Array<{ key: string; label: string; description?: string }> }>()
+const props = defineProps<{ models: Array<{ key: string; label: string; description?: string }>; extraDefaults?: ImageExtraBody }>()
 const model = defineModel<string>('model', { required: true })
 const count = defineModel<number>('count', { required: true })
 const customSize = defineModel<boolean>('customSize', { required: true })
@@ -15,7 +18,10 @@ const height = defineModel<number>('height', { required: true })
 const quality = defineModel<string>('quality', { required: true })
 const background = defineModel<string>('background', { required: true })
 const outputFormat = defineModel<string>('outputFormat', { required: true })
+const extra = defineModel<ImageExtraBody>('extra', { required: true })
+const extraError = defineModel<string | null>('extraError', { required: true })
 const modelId = useId()
+const defaultsText = computed(() => Object.entries(props.extraDefaults ?? {}).map(([key, value]) => `${key}=${formatExtraValue(value)}`).join('，'))
 </script>
 
 <template>
@@ -71,6 +77,14 @@ const modelId = useId()
         <NativeSelectOption value="webp">WebP</NativeSelectOption>
         <NativeSelectOption value="jpeg">JPEG</NativeSelectOption>
       </NativeSelect>
+    </Field>
+    <Field>
+      <FieldLabel>自定义参数</FieldLabel>
+      <ExtraBodyEditor v-model="extra" v-model:error="extraError" />
+      <FieldDescription>
+        合并进请求体，类似 extra_body。值能按 JSON 解析就按 JSON，否则作为字符串。
+        <template v-if="defaultsText">模型默认：<code class="font-mono">{{ defaultsText }}</code>，同名参数以这里为准。</template>
+      </FieldDescription>
     </Field>
   </FieldGroup>
 </template>

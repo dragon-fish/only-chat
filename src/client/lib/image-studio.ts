@@ -1,4 +1,4 @@
-import type { ArtifactRunDto, CreateImageRunInput } from '@/shared/artifacts'
+import type { ArtifactRunDto, CreateImageRunInput, ImageExtraBody } from '@/shared/artifacts'
 import type { ModelRef } from '@/shared/model-ref'
 import type { ModelListItem, ProviderWithInterfaces } from '@/shared/models'
 
@@ -28,6 +28,7 @@ interface ImageDraft {
   quality: string
   background: '' | 'transparent' | 'opaque'
   outputFormat: '' | 'png' | 'webp' | 'jpeg'
+  extra?: ImageExtraBody
 }
 
 export function buildImageRunInput(draft: ImageDraft): CreateImageRunInput {
@@ -44,6 +45,7 @@ export function buildImageRunInput(draft: ImageDraft): CreateImageRunInput {
       ...(quality ? { quality } : {}),
       ...(draft.background ? { background: draft.background } : {}),
       ...(draft.outputFormat ? { output_format: draft.outputFormat } : {}),
+      ...(draft.extra && Object.keys(draft.extra).length ? { extra: { ...draft.extra } } : {}),
     },
   }
 }

@@ -3,12 +3,15 @@ import { ModelWriteInputSchema, type ModelWriteInput } from '@/shared/api'
 import { ModelMetadataOverrideSchema, type ModelMetadataOverride } from '@/shared/model-metadata'
 import type { ModelWithMetadata, ProviderInterface } from '@/shared/models'
 
-export type ModelDraft = Required<Pick<ModelWriteInput, 'model_id' | 'interface_id' | 'enabled' | 'metadata_override'>>
+export type ModelDraft = Required<Pick<ModelWriteInput, 'model_id' | 'interface_id' | 'enabled' | 'metadata_override' | 'image_extra_body'>>
 
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value))
 
 export function createModelDraft(model: ModelWithMetadata): ModelDraft {
-  return { model_id: model.model_id, interface_id: model.interface_id, enabled: model.enabled, metadata_override: clone(model.metadata_override) }
+  return {
+    model_id: model.model_id, interface_id: model.interface_id, enabled: model.enabled,
+    metadata_override: clone(model.metadata_override), image_extra_body: clone(model.image_extra_body),
+  }
 }
 
 /** A display row may contain pending writes; only a server acknowledgement can advance the baseline. */
@@ -72,6 +75,7 @@ export function modelWriteFromDraft(model: ModelWithMetadata, draft: ModelDraft,
   if (parsed.interface_id !== model.interface_id) write.interface_id = parsed.interface_id
   if (parsed.enabled !== model.enabled) write.enabled = parsed.enabled
   if (JSON.stringify(parsed.metadata_override) !== JSON.stringify(model.metadata_override)) write.metadata_override = parsed.metadata_override
+  if (JSON.stringify(parsed.image_extra_body) !== JSON.stringify(model.image_extra_body)) write.image_extra_body = parsed.image_extra_body
   return write
 }
 

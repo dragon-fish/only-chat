@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatExtraValue, parseExtraValue } from '@/client/lib/extra-body'
+import { buildExtraBody, extraBodyRows, formatExtraValue, parseExtraValue } from '@/client/lib/extra-body'
 
 describe('extra body value text', () => {
   it('reads JSON literals as JSON and anything else as a string', () => {
@@ -16,3 +16,19 @@ describe('extra body value text', () => {
     }
   })
 })
+
+describe('buildExtraBody', () => {
+  it('builds typed entries, skipping blank rows, and round-trips through rows', () => {
+    const built = buildExtraBody([{ key: ' watermark ', value: 'false' }, { key: '', value: '' }, { key: 'size', value: '2K' }])
+    expect(built).toEqual({ body: { watermark: false, size: '2K' } })
+    if (!('body' in built)) throw new Error('expected a body')
+    expect(buildExtraBody(extraBodyRows(built.body))).toEqual(built)
+  })
+
+  it('reports a row it cannot send instead of dropping it', () => {
+    expect(buildExtraBody([{ key: 'seed', value: '1' }, { key: 'seed', value: '2' }])).toHaveProperty('error')
+    expect(buildExtraBody([{ key: '', value: 'false' }])).toHaveProperty('error')
+    expect(buildExtraBody([{ key: 'prompt', value: 'x' }])).toHaveProperty('error')
+  })
+})
+

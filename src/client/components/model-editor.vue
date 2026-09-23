@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { BracesIcon, ChevronDownIcon, Trash2Icon, TriangleAlertIcon } from '@lucide/vue'
+import ExtraBodyEditor from '@/client/components/extra-body-editor.vue'
 import ResponsiveOverlay from '@/client/components/layout/responsive-overlay.vue'
 import UnsavedChangesGuard from '@/client/components/unsaved-changes-guard.vue'
 import { catalogSource, metadataValue, resetMetadataOverride, setMetadataOverride, type ModelEditorSession } from '@/client/lib/model-editor'
@@ -31,6 +32,11 @@ const errors = reactive<Record<string, string>>({})
 const rawOpen = ref(false)
 const advancedOpen = ref(false)
 const rawInput = ref('')
+const extraBodyError = ref<string | null>(null)
+watch(extraBodyError, (message) => {
+  if (message) errors.image_extra_body = message
+  else delete errors.image_extra_body
+})
 const prefix = `model-${props.session.target.provider_id}-${props.session.target.id}`
 type MetadataField = { path: string; label: string; kind: 'text' | 'number' | 'boolean' }
 const fields = (kind: MetadataField['kind'], labels: Record<string, string>): MetadataField[] => Object.entries(labels).map(([path, label]) => ({ path, label, kind }))
@@ -234,6 +240,10 @@ ResponsiveOverlay(:open="open" title="编辑模型" @update:open="setOpen")
           FieldLabel(:for="`${prefix}-enabled`") 启用模型
           FieldDescription 在聊天的模型选择器中显示。
         Switch(:id="`${prefix}-enabled`" v-model="form.enabled" class="after:-inset-y-3")
+      Field(v-if="effectiveModalities('output').includes('image')" :data-invalid="!!extraBodyError || undefined")
+        FieldLabel 生图请求参数
+        ExtraBodyEditor(v-model="form.image_extra_body" v-model:error="extraBodyError")
+        FieldDescription 此模型每次生图都会合并进请求体，类似 extra_body，例如 watermark = false。值能按 JSON 解析就按 JSON，否则作为字符串。Studio 里填写的同名参数优先。
     p.text-sm.text-muted-foreground {{ catalogSource(model) }}
     p.text-sm.text-muted-foreground 留空继承目录值；下方展示当前已保存的有效值。恢复默认将在保存后重新解析。
     Button(type="button" variant="outline" class="min-h-10 self-start" aria-label="查看或编辑原始 JSON" :disabled="rawOpen && !!errors.raw" @click="toggleRawEditor")

@@ -24,7 +24,7 @@ import { ScrollArea } from '@/client/ui/scroll-area'
 import { MessageScroller, MessageScrollerButton, MessageScrollerContent, MessageScrollerItem, MessageScrollerProvider, MessageScrollerViewport } from '@/client/ui/message-scroller'
 import { Separator } from '@/client/ui/separator'
 import { Skeleton } from '@/client/ui/skeleton'
-import type { ArtifactDto, ArtifactRunDto, CreateImageRunInput, ImageGenerationParams } from '@/shared/artifacts'
+import type { ArtifactDto, ArtifactRunDto, CreateImageRunInput, ImageExtraBody, ImageGenerationParams } from '@/shared/artifacts'
 import type { Conversation } from '@/shared/models'
 
 interface ReferenceImage { attachmentId: number; preview: string }
@@ -48,6 +48,8 @@ const height = ref(1024)
 const quality = ref('')
 const background = ref('')
 const outputFormat = ref('')
+const extra = ref<ImageExtraBody>({})
+const extraError = ref<string | null>(null)
 const references = ref<ReferenceImage[]>([])
 const fileInput = ref<HTMLInputElement | null>(null)
 let pollTimer: ReturnType<typeof setTimeout> | undefined
@@ -66,7 +68,7 @@ const statusLabel = computed(() => ({
   queued: '等待中', running: '生成中', completed: '已完成', failed: '失败', cancelled: '已取消',
 }[latestRun.value?.status ?? 'completed']))
 const referenceAllowed = computed(() => selectedEntry.value?.model.metadata.modalities?.input.includes('image') === true)
-const canSubmit = computed(() => Boolean(modelKey.value && prompt.value.trim() && !submitting.value && !running.value && (!references.value.length || referenceAllowed.value)))
+const canSubmit = computed(() => Boolean(modelKey.value && prompt.value.trim() && !submitting.value && !running.value && !extraError.value && (!references.value.length || referenceAllowed.value)))
 
 function parseModel() {
   const separator = modelKey.value.indexOf(':')
@@ -132,6 +134,7 @@ function applyParams(params: ImageGenerationParams) {
   quality.value = params.quality ?? ''
   background.value = params.background ?? ''
   outputFormat.value = params.output_format ?? ''
+  extra.value = params.extra ?? {}
 }
 function restoreRun(run: ArtifactRunDto) {
   releaseReferences()
@@ -262,7 +265,7 @@ async function submit() {
     model, ...(props.conversationId === null ? {} : { conversationId: props.conversationId }), prompt: draft.prompt,
     references: draft.references.map(item => item.attachmentId), count: count.value, customSize: customSize.value,
     width: width.value, height: height.value, quality: quality.value, background: background.value as '' | 'transparent' | 'opaque',
-    outputFormat: outputFormat.value as '' | 'png' | 'webp' | 'jpeg',
+    outputFormat: outputFormat.value as '' | 'png' | 'webp' | 'jpeg', extra: extra.value,
   })
   // The draft moves into the placeholder bubble, so the box empties on the press. The box stays
   // read-only until the server answers, which is what lets a refusal put the draft back verbatim.
@@ -426,12 +429,12 @@ onBeforeUnmount(() => { clearTimeout(pollTimer); releaseReferences() })
             <Button type="button" variant="outline" class="min-h-10 border-dashed" @click="chooseFiles"><ImagePlusIcon data-icon="inline-start" />{{ references.length ? '添加更多参考图' : '添加参考图' }}</Button>
             <FieldDescription>有参考图时会使用图片编辑模式。</FieldDescription>
           </Field>
-          <ImageParameters v-model:model="modelKey" v-model:count="count" v-model:custom-size="customSize" v-model:width="width" v-model:height="height" v-model:quality="quality" v-model:background="background" v-model:output-format="outputFormat" :models="modelOptions" />
+          <ImageParameters v-model:model="modelKey" v-model:count="count" v-model:custom-size="customSize" v-model:width="width" v-model:height="height" v-model:quality="quality" v-model:background="background" v-model:output-format="outputFormat" :extra-defaults="selectedEntry?.model.image_extra_body" v-model:extra="extra" v-model:extra-error="extraError" :models="modelOptions" />
         </div>
       </ScrollArea>
     </aside>
   </div>
   <ResponsiveOverlay v-model:open="parametersOpen" title="生成参数">
-    <ImageParameters v-model:model="modelKey" v-model:count="count" v-model:custom-size="customSize" v-model:width="width" v-model:height="height" v-model:quality="quality" v-model:background="background" v-model:output-format="outputFormat" :models="modelOptions" />
+    <ImageParameters v-model:model="modelKey" v-model:count="count" v-model:custom-size="customSize" v-model:width="width" v-model:height="height" v-model:quality="quality" v-model:background="background" v-model:output-format="outputFormat" :extra-defaults="selectedEntry?.model.image_extra_body" v-model:extra="extra" v-model:extra-error="extraError" :models="modelOptions" />
   </ResponsiveOverlay>
 </template>
