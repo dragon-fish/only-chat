@@ -117,7 +117,9 @@ async function main() {
     const derived = materializeModelMetadata(resolved, model.id, 'Mock')
     const modelId = escapeSqlLiteral(model.id)
     const json = escapeSqlLiteral(JSON.stringify(resolved))
-    const columns = `interface_id = ${interfaceId}, metadata_resolved = ${json},`
+    // Also the override: the catalog knows no mock model, so saving one in the model editor
+    // re-resolves its metadata from the override alone and would otherwise lose every capability.
+    const columns = `interface_id = ${interfaceId}, metadata_override = ${json}, metadata_resolved = ${json},`
       + ` supports_reasoning = ${derived.supports_reasoning ? 1 : 0}, supports_tools = ${derived.supports_tools ? 1 : 0},`
       + ` supports_image_input = ${derived.supports_image_input ? 1 : 0}, supports_image_output = ${derived.supports_image_output ? 1 : 0},`
       + ` context_limit = ${derived.context_limit ?? 'NULL'}, output_limit = ${derived.output_limit ?? 'NULL'},`
