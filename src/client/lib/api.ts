@@ -112,7 +112,7 @@ export const api = {
   artifactRun: (id: number) => request<ArtifactRunDto>('GET', `/api/artifact-runs/${id}`),
   artifactRuns: (conversationId: number) => request<ArtifactRunDto[]>('GET', `/api/artifact-runs${queryString({ conversation_id: conversationId })}`),
   cancelArtifactRun: (id: number) => request<ArtifactRunDto>('POST', `/api/artifact-runs/${id}/cancel`),
-  artifacts: (query: { cursor?: string; limit?: number; conversation_id?: number } = {}) => request<ArtifactPage>('GET', `/api/artifacts${queryString({ kind: 'image', ...query })}`),
+  artifacts: (query: { cursor?: string; limit?: number; conversation_id?: number; run_id?: number } = {}) => request<ArtifactPage>('GET', `/api/artifacts${queryString({ kind: 'image', ...query })}`),
   artifact: (id: number) => request<ArtifactDto>('GET', `/api/artifacts/${id}`),
   deleteArtifact: (id: number) => request<void>('DELETE', `/api/artifacts/${id}`),
   artifactContentUrl: (id: number, variant?: 'gallery' | 'preview') => `/api/artifacts/${id}/content${queryString({ variant })}`,

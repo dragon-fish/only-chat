@@ -114,7 +114,14 @@ function addArtifactReference(artifact: ArtifactDto) {
   references.value.push({ attachmentId: artifact.attachment_id, preview: api.artifactContentUrl(artifact.id, 'gallery') })
 }
 function outputsFor(runId: number) {
-  return outputs.value.filter(artifact => artifact.run_id === runId)
+  return outputs.value.filter(artifact => artifact.run_id === runId).sort((a, b) => a.output_index - b.output_index)
+}
+/** Square tiles for a multi-image run: columns and a width cap per count, so 2 and 15 both stay readable. */
+function gridClass(count: number): string {
+  if (count === 2) return 'max-w-2xl grid-cols-2'
+  if (count === 3) return 'max-w-3xl grid-cols-3'
+  if (count === 4) return 'max-w-xl grid-cols-2'
+  return 'max-w-4xl grid-cols-3 sm:grid-cols-4 lg:grid-cols-5'
 }
 function applyParams(params: ImageGenerationParams) {
   count.value = params.count
@@ -308,7 +315,10 @@ onBeforeUnmount(() => { clearTimeout(pollTimer); releaseReferences() })
               <div class="flex justify-start">
                 <div class="flex w-full max-w-4xl flex-col gap-3">
                   <div v-if="run.status === 'queued' || run.status === 'running'" class="flex flex-col gap-3">
-                    <Skeleton class="aspect-square w-full max-w-[min(32rem,60vh)] rounded-xl" />
+                    <Skeleton v-if="run.params.count === 1" class="aspect-square w-full max-w-[min(32rem,60vh)] rounded-xl" />
+                    <div v-else class="grid w-full gap-2" :class="gridClass(run.params.count)">
+                      <Skeleton v-for="index in run.params.count" :key="index" class="aspect-square rounded-lg" />
+                    </div>
                     <span class="text-sm text-muted-foreground">{{ run.status === 'queued' ? '等待生成…' : '正在生成图片，可以安全离开此页面。' }}</span>
                   </div>
                   <Alert v-else-if="run.status === 'failed'" variant="destructive">
@@ -319,16 +329,26 @@ onBeforeUnmount(() => { clearTimeout(pollTimer); releaseReferences() })
                     <AlertTitle>已取消生成</AlertTitle>
                     <AlertDescription>这次请求没有产生图片。</AlertDescription>
                   </Alert>
-                  <!-- Capped by height, not width: a full-width landscape image outgrows the viewport and
-                       pushes the prompt bubble off screen. The 1536px preview variant covers that cap
-                       at 2x; the original is one click away on the detail page. -->
-                  <div v-else class="flex flex-wrap gap-3">
+                  <!-- One image: capped by height, not width — a full-width landscape image outgrows the
+                       viewport and pushes the prompt bubble off screen. The 1536px preview variant covers
+                       that cap at 2x; the original is one click away on the detail page. -->
+                  <div v-else-if="outputsFor(run.id).length === 1" class="flex">
                     <div v-for="artifact in outputsFor(run.id)" :key="artifact.id" class="group relative max-w-full overflow-hidden rounded-xl border bg-muted">
                       <RouterLink :to="`/images/s/${props.conversationId}/a/${artifact.id}`" class="block">
-                        <img :src="api.artifactContentUrl(artifact.id, 'preview')" :alt="artifact.prompt" class="block w-auto max-w-full object-contain" :class="outputsFor(run.id).length > 1 ? 'max-h-[min(20rem,45vh)]' : 'max-h-[min(32rem,60vh)]'" loading="lazy" />
+                        <img :src="api.artifactContentUrl(artifact.id, 'preview')" :alt="artifact.prompt" class="block max-h-[min(32rem,60vh)] w-auto max-w-full object-contain" loading="lazy" />
                         <Badge class="absolute bottom-3 left-3 opacity-0 transition-opacity group-hover:opacity-100" variant="secondary">查看详情</Badge>
                       </RouterLink>
                       <Button v-if="referenceAllowed" size="sm" variant="secondary" class="absolute bottom-3 right-3 opacity-100 shadow-sm transition-opacity md:opacity-0 md:group-hover:opacity-100 focus-visible:opacity-100" @click="addArtifactReference(artifact)"><ImagePlusIcon data-icon="inline-start" />继续编辑</Button>
+                    </div>
+                  </div>
+                  <!-- Several: cropped square tiles from the 512px gallery variant; the detail dialog shows
+                       each uncropped and steps through the run. -->
+                  <div v-else class="grid w-full gap-2" :class="gridClass(outputsFor(run.id).length)">
+                    <div v-for="artifact in outputsFor(run.id)" :key="artifact.id" class="group relative aspect-square overflow-hidden rounded-lg border bg-muted">
+                      <RouterLink :to="`/images/s/${props.conversationId}/a/${artifact.id}`" class="block size-full" :aria-label="`查看第 ${artifact.output_index + 1} 张`">
+                        <img :src="api.artifactContentUrl(artifact.id, 'gallery')" :alt="artifact.prompt" class="size-full object-cover transition-transform duration-300 group-hover:scale-[1.03]" loading="lazy" />
+                      </RouterLink>
+                      <Button v-if="referenceAllowed" size="icon-sm" variant="secondary" class="absolute bottom-2 right-2 opacity-100 shadow-sm transition-opacity md:opacity-0 md:group-hover:opacity-100 focus-visible:opacity-100" aria-label="继续编辑" @click="addArtifactReference(artifact)"><ImagePlusIcon /></Button>
                     </div>
                   </div>
 

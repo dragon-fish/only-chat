@@ -95,6 +95,8 @@ export function artifactRoutes(ctx: Context) {
     const limit = Math.min(100, Math.max(1, Number(c.req.query('limit')) || 30))
     const conversationId = c.req.query('conversation_id') === undefined ? undefined : Number(c.req.query('conversation_id'))
     if (conversationId !== undefined && (!Number.isInteger(conversationId) || conversationId <= 0)) return c.json({ error: 'invalid conversation' }, 400)
+    const runId = c.req.query('run_id') === undefined ? undefined : Number(c.req.query('run_id'))
+    if (runId !== undefined && (!Number.isInteger(runId) || runId <= 0)) return c.json({ error: 'invalid run' }, 400)
     let cursor: z.infer<typeof CursorSchema> | undefined
     const encoded = c.req.query('cursor')
     if (encoded) {
@@ -106,6 +108,7 @@ export function artifactRoutes(ctx: Context) {
       .where(and(
         eq(artifacts.user_id, userId), eq(artifacts.kind, 'image'), isNull(artifacts.deleted_at),
         conversationId === undefined ? undefined : eq(artifactRuns.conversation_id, conversationId),
+        runId === undefined ? undefined : eq(artifacts.run_id, runId),
         cursor ? or(lt(artifacts.created_at, cursor.created_at), and(eq(artifacts.created_at, cursor.created_at), lt(artifacts.id, cursor.id))) : undefined,
       )).orderBy(desc(artifacts.created_at), desc(artifacts.id)).limit(limit + 1)
     const page = rows.slice(0, limit)
