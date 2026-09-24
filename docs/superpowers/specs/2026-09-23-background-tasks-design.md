@@ -83,6 +83,8 @@
 
 ### 3.2 输入
 
+带 `reference_images` 即为改图（run 的 `operation = 'edit'`），工具描述写明「生成或编辑图片」。生图模型不支持图片输入时，工具返回错误，不创建 run。
+
 ```ts
 {
   prompt: string
@@ -125,12 +127,21 @@ Workflow 结束一个 `source = 'tool'` 的 run 后调用 `settleTask`：
 
 | 挂载 | 内容 | 文件名 |
 |---|---|---|
-| `/artifacts` | `conversation_id` 为本对话的 run 生成的图片（任意来源） | `<artifact_id>.<ext>` |
+| `/artifacts` | `conversation_id` 为本对话的 run 产出的图片（未删除） | `<artifact_id>.<ext>` |
+| `/artifacts` | 聊天模型在本对话 assistant 消息中直接生成的图片（没有 artifact 记录） | `msg-<attachment_id>.<ext>` |
 | `/uploads` | 本对话 user 消息中附带的图片 | `<attachment_id>.<ext>` |
 
 - 条目在读取时由 `artifacts`、`artifact_runs`、`messages` 派生，不写 `workspace_files`。
 - `list_files("/")` 列出这两个挂载；对其写入、重命名、删除一律拒绝。
-- 路径解析（路径 → attachment id）由核心的 workspace files service 提供，`generate_image` 解析 `reference_images` 时复用。
+- 路径解析（路径 → attachment id）由核心的 workspace files service 提供，`generate_image` 解析 `reference_images` 时复用；它不依赖 workspace_files 插件是否启用。
+- 扩展名由 MIME 决定：`image/png`→`png`，`image/jpeg`→`jpg`，`image/webp`→`webp`，`image/gif`→`gif`。
+
+### 4.0 让模型知道路径
+
+对话启用了任一消费这些路径的工具（`read_file`、`generate_image`）时，`buildModelMessages` 为图片补上路径标注，否则不加：
+
+- user 消息中的每张图片前加文本 `[image: /uploads/<attachment_id>.<ext>]`。
+- assistant 消息中聊天模型生成的图片（本身不回放给模型）替换为文本 `[generated image: /artifacts/msg-<attachment_id>.<ext>]`；带 `artifact_id` 的替换为 `[generated image: /artifacts/<artifact_id>.<ext>]`。
 
 ### 4.1 读图
 
@@ -141,6 +152,6 @@ Workflow 结束一个 `source = 'tool'` 的 run 后调用 `settleTask`：
 
 图片作为 user 消息中的 image part 交给模型，紧跟在这一步的工具结果之后，与用户上传走同一套附件传输（Files API 指针或内联）：
 
-- **持久化**：`tool_result` Part 增加可选 `attachments: number[]`。`buildModelMessages` 在含这些结果的 tool 消息后紧跟一条 user 消息，携带对应图片；`requiredAttachmentIds` 同步包含它们。
+- **持久化**：`tool_result` Part 增加可选 `attachments: number[]`。工具在输出里用保留键 `__attachments` 交出 attachment id，累加器把它移到 Part 上并从 `content` 中删去。`buildModelMessages` 在含这些结果的 tool 消息后紧跟一条 user 消息：每张图前一行文本 `Image returned by <tool name>:`，随后是图片；`requiredAttachmentIds` 同步包含它们。
 - **本轮内**：SDK 自带消息列表，`prepareStep` 以与插话相同的方式追加这条 user 消息。
 - **协议**：实现时逐一验证 `anthropic`、`chat-completions`、`responses`、`vertex-compatible` 接受「tool 结果后紧跟 user 图片」；不接受的协议，该模型按「无法查看图片」处理。
