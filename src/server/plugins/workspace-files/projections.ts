@@ -2,6 +2,7 @@ import { and, asc, eq, inArray, isNull } from 'drizzle-orm'
 import type { DB } from '../../db/client'
 import { artifactRuns, artifacts, attachments, conversations, messages } from '../../db/schema'
 import type { Part } from '@/shared/parts'
+import { artifactPath, generatedPath, uploadPath } from '@/shared/image-paths'
 import { parseWorkspacePath, type ProjectedMount } from './path'
 
 /** One image a projected mount shows. Derived on every read; nothing about it is stored. */
@@ -13,26 +14,6 @@ export interface ProjectedEntry {
   width: number | null
   height: number | null
   createdAt: number
-}
-
-const EXTENSIONS: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif' }
-
-export function imageExtension(mime: string): string {
-  return EXTENSIONS[mime] ?? 'bin'
-}
-
-/** An image a run produced. Named by artifact id: task notifications already hand the model these paths. */
-export function artifactPath(artifactId: number, mime: string): string {
-  return `/artifacts/${artifactId}.${imageExtension(mime)}`
-}
-
-/** An image the chat model produced inline, which has no artifact row, only an attachment. */
-export function generatedPath(attachmentId: number, mime: string): string {
-  return `/artifacts/msg-${attachmentId}.${imageExtension(mime)}`
-}
-
-export function uploadPath(attachmentId: number, mime: string): string {
-  return `/uploads/${attachmentId}.${imageExtension(mime)}`
 }
 
 /** Messages of a conversation this user owns; an empty list for anyone else's. */

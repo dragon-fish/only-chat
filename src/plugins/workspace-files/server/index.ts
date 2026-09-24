@@ -2,7 +2,9 @@ import type { Context } from 'cordis'
 import { tool } from 'ai'
 import { WorkspaceFiles, type Result, type WorkspaceError } from '@/server/plugins/workspace-files/service'
 import type { ToolContext } from '@/server/plugins/tools'
-import { formatWorkspacePath, parseWorkspacePath } from '@/server/plugins/workspace-files/path'
+import { formatWorkspacePath, isProjectedMount, parseWorkspacePath } from '@/server/plugins/workspace-files/path'
+import { resolveProjected } from '@/server/plugins/workspace-files/projections'
+import { stripToolAttachments, TOOL_ATTACHMENTS_KEY } from '@/shared/parts'
 import {
   DELETE_FILE_TOOL_ID, LIST_FILES_TOOL_ID, PREVIEW_FILE_TOOL_ID, READ_FILE_TOOL_ID, RENAME_FILE_TOOL_ID,
   RESTORE_FILE_TOOL_ID, WORKSPACE_FILES_PLUGIN_ID, WRITE_FILE_TOOL_ID, EDIT_FILE_TOOL_ID,
@@ -11,7 +13,7 @@ import {
   DeleteFileInputSchema, EditFileInputSchema, ListFilesInputSchema, PreviewFileInputSchema, ReadFileInputSchema,
   RenameFileInputSchema, RestoreFileInputSchema, WriteFileInputSchema,
   type DeleteFileOutput, type EditFileOutput, type ListFilesOutput, type PreviewFileOutput,
-  type ReadFileOutput, type ReadFileUnchangedOutput,
+  type ReadFileOutput, type ReadFileUnchangedOutput, type ReadImageOutput,
   type RenameFileOutput, type RestoreFileOutput, type WriteFileOutput, type WorkspaceToolError,
 } from '../shared'
 import { absolutePreviewUrl, PREVIEW_TICKET_TTL_SECONDS, previewTypeFor, previewUrlFor } from './preview'
@@ -167,9 +169,22 @@ export const WorkspaceFilesServerPlugin = {
         'Keep the version from the result: write_file needs it to replace this file.',
         'Reading a file this turn already read whole, with nothing written to it since, answers `unchanged` instead of the content — the earlier result is still above you and says what the file holds.',
         'Do not re-read a file immediately after write_file returned its metadata — you already have the version and line count.',
+        'Images under /artifacts (generated in this conversation) and /uploads (sent by the user) are shown to you as images when you read them; offset and limit do not apply.',
       ].join(' '),
       inputSchema: ReadFileInputSchema,
-      async execute(input): Promise<ReadFileOutput | ReadFileUnchangedOutput | WorkspaceToolError> {
+      // The model reads the output without the reserved key; the images arrive in the message after it.
+      toModelOutput: ({ output }) => ({ type: 'json', value: stripToolAttachments(output) as never }),
+      async execute(input): Promise<ReadFileOutput | ReadFileUnchangedOutput | ReadImageOutput | WorkspaceToolError> {
+        const target = parseWorkspacePath(input.path)
+        if (target.ok && isProjectedMount(target.value.mount)) {
+          const image = await resolveProjected(runtime.db, runtime.userId, runtime.conversationId, input.path)
+          if (!image) return { error: 'FILE_NOT_FOUND', message: MESSAGES.FILE_NOT_FOUND }
+          const facts = { path: image.path, mime: image.mime, width: image.width, height: image.height, fileSize: image.size }
+          if (!runtime.acceptsImages) {
+            return { ...facts, image: 'unsupported', message: 'This model cannot view images.' }
+          }
+          return { ...facts, image: 'shown', message: 'The image follows this result.', [TOOL_ATTACHMENTS_KEY]: [image.attachmentId] } as ReadImageOutput
+        }
         const { files, scope } = servicesFor(runtime)
         const result = await files.read({ path: input.path, offset: input.offset, limit: input.limit, ...scope })
         if (!result.ok) return unwrap(result) as WorkspaceToolError

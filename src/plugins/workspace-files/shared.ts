@@ -99,6 +99,21 @@ export interface ReadFileOutput {
 }
 
 /**
+ * Reading an image under `/artifacts` or `/uploads`. `shown` means the model receives the image
+ * itself right after this result; `unsupported` means this model cannot take images, which is a
+ * fact to act on, not a failure.
+ */
+export interface ReadImageOutput {
+  path: string
+  mime: string
+  width: number | null
+  height: number | null
+  fileSize: number
+  image: 'shown' | 'unsupported'
+  message: string
+}
+
+/**
  * The answer to reading a file this turn has already read whole and nothing has written to since.
  * The earlier result is still in context; a second copy of the same bytes is paid for again on
  * every request the turn makes after it.

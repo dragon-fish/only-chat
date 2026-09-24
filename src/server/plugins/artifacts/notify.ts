@@ -4,8 +4,7 @@ import { artifactRuns, artifacts, type ArtifactRow, type ArtifactRunRow } from '
 import { disposeRpcStub } from '@/server/rpc'
 import { IMAGE_GENERATION_PLUGIN_ID } from '@/shared/plugins'
 import type { TaskNotificationPart } from '@/shared/parts'
-
-const EXTENSION: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif' }
+import { artifactPath } from '@/shared/image-paths'
 
 /** What the Agent is told about a run it started. A failure keeps the provider's own words so it can rephrase and retry. */
 export function toolRunNotification(
@@ -17,7 +16,7 @@ export function toolRunNotification(
     plugin_id: IMAGE_GENERATION_PLUGIN_ID, tool_call_id: run.tool_call_id ?? '',
   }
   if (run.status === 'completed') {
-    const paths = outputs.map(output => `/artifacts/${output.id}.${EXTENSION[output.mime] ?? 'png'}`)
+    const paths = outputs.map(output => artifactPath(output.id, output.mime))
     return { ...base, status: 'completed', text: `Generated ${outputs.length} image(s): ${paths.join(', ')}` }
   }
   if (run.status === 'cancelled') return { ...base, status: 'cancelled', text: 'Cancelled by the user.' }

@@ -7,6 +7,7 @@ import type { OpenAICompatibleProviderOptions } from '@ai-sdk/openai-compatible'
 import type { Message, InterfaceProtocol, ReasoningEffort, ConversationParams } from '@/shared/models'
 import type { ModelMetadata } from '@/shared/model-metadata'
 import type { Part, ProviderOptions, TaskNotificationPart, ToolResultPart } from '@/shared/parts'
+import { artifactPath, generatedPath, uploadPath } from '@/shared/image-paths'
 import { RESPONSES_PROVIDER_NAME, responsesReasoningReplayOptions } from './responses-reasoning'
 
 export const COMPAT_PROVIDER_NAME = 'compat'
@@ -28,6 +29,13 @@ export interface BuildInput {
   /** Root → leaf. A tool continuation ends at the assistant message that now contains its result. */
   path: Message[]
   attachments: ReadonlyMap<number, AttachmentInput>
+  /**
+   * Present when this turn has a tool that refers to images by name (`read_file`, `generate_image`):
+   * every image is then labelled with its path from `@/shared/image-paths`. Maps the attachment id of
+   * each image an assistant message holds to its MIME, which names the file; user images carry
+   * theirs in `attachments`. Absent, the prompt carries no labels at all.
+   */
+  imageLabels?: ReadonlyMap<number, string>
 }
 
 const ANTHROPIC_CACHE = { anthropic: { cacheControl: { type: 'ephemeral' } } } as const
@@ -50,7 +58,7 @@ export function renderTaskNotification(part: TaskNotificationPart): string {
   ].join('\n')
 }
 
-function userParts(parts: Part[], attachments: ReadonlyMap<number, AttachmentInput>): UserPart[] {
+function userParts(parts: Part[], attachments: ReadonlyMap<number, AttachmentInput>, labelImages = false): UserPart[] {
   const out: UserPart[] = []
   for (const p of parts) {
     if (p.type === 'text') {
@@ -58,6 +66,7 @@ function userParts(parts: Part[], attachments: ReadonlyMap<number, AttachmentInp
     } else if (p.type === 'image') {
       const att = attachments.get(p.attachment_id)
       if (!att) throw new Error(`attachment ${p.attachment_id} input not provided`)
+      if (labelImages) out.push({ type: 'text', text: `[image: ${uploadPath(p.attachment_id, att.mime)}]` })
       out.push({ type: 'file', mediaType: att.mime, data: att.data })
     } else if (p.type === 'task_notification') {
       out.push({ type: 'text', text: renderTaskNotification(p) })
@@ -99,6 +108,7 @@ function assistantMessages(
   parts: Part[],
   protocol: InterfaceProtocol,
   attachments: ReadonlyMap<number, AttachmentInput>,
+  imageLabels?: ReadonlyMap<number, string>,
 ): Array<AssistantModelMessage | ToolModelMessage | UserModelMessage> {
   const out: Array<AssistantModelMessage | ToolModelMessage | UserModelMessage> = []
   /**
@@ -177,10 +187,15 @@ function assistantMessages(
         tool.push(withOptions({ type: 'tool-result', toolCallId: p.call_id, toolName: p.name, output: { type: 'json', value: p.content as never } }, options))
         if (p.attachments?.length) shown.push(p)
         break
-      case 'image':
-        // Generated images are not replayed to the model in MVP. `requiredAttachmentIds` below is
-        // the other half of that decision: it must skip exactly what this branch drops.
+      case 'image': {
+        // The pixels are never replayed: `requiredAttachmentIds` must skip exactly what this drops.
+        // Only the name is, when a tool can use it — to open the image or to edit it.
+        if (!imageLabels) break
+        const mime = imageLabels.get(p.attachment_id) ?? ''
+        const name = p.artifact_id === undefined ? generatedPath(p.attachment_id, mime) : artifactPath(p.artifact_id, mime)
+        appendAssistant({ type: 'text', text: `[generated image: ${name}]` })
         break
+      }
     }
   }
   flushAssistant()
@@ -271,8 +286,9 @@ export function interjectedUserMessage(
   said: Part[],
   attachments: ReadonlyMap<number, AttachmentInput>,
   interrupted: boolean,
+  labelImages = false,
 ): ModelMessage {
-  const content = userParts(said, attachments)
+  const content = userParts(said, attachments, labelImages)
   return { role: 'user', content: interrupted ? [{ type: 'text', text: INTERRUPT_MESSAGE }, ...content] : content }
 }
 
@@ -285,7 +301,7 @@ export function interjectedUserMessage(
  * which rejects a `role: 'system'` message inside `messages`.
  */
 export function buildModelMessages(input: BuildInput): ModelMessage[] {
-  const { protocol, systemPrompt, path, attachments } = input
+  const { protocol, systemPrompt, path, attachments, imageLabels } = input
   const out: ModelMessage[] = []
   const cache = protocol === 'anthropic'
 
@@ -303,7 +319,7 @@ export function buildModelMessages(input: BuildInput): ModelMessage[] {
 
   path.forEach((m, i) => {
     if (m.role === 'user') {
-      const said = userParts(m.parts, attachments)
+      const said = userParts(m.parts, attachments, imageLabels !== undefined)
       const content: UserPart[] = pending === null ? said : [{ type: 'text', text: pending }, ...said]
       pending = null
 
@@ -321,7 +337,7 @@ export function buildModelMessages(input: BuildInput): ModelMessage[] {
       return
     }
 
-    const said = assistantMessages(m.parts, protocol, attachments)
+    const said = assistantMessages(m.parts, protocol, attachments, imageLabels)
     if (said.length === 0) {
       // A turn that said nothing, however it ended — stopped by hand, or handed off the moment the
       // operator spoke. There is no turn here to put between two user messages, and leaving a gap

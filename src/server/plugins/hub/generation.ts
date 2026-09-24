@@ -3,11 +3,12 @@ import { INFLIGHT_FLUSH_INTERVAL_MS, TOOL_MAX_STEPS } from '@/shared/constants'
 import type { Message, PersistedStatus, ConversationParams, ConversationPluginSettings, StepUsage, Usage } from '@/shared/models'
 import { toolResultPart, type Part, type ToolCallPart, type ToolResultPart } from '@/shared/parts'
 import type { SendCommand, WsCommand } from '@/shared/ws'
-import { ASK_USER_TOOL_ID, parseConversationPluginSettings } from '@/shared/plugins'
+import { ASK_USER_TOOL_ID, GENERATE_IMAGE_TOOL_ID, parseConversationPluginSettings, READ_FILE_TOOL_ID } from '@/shared/plugins'
 import { pluginManifests } from '@/shared/plugin-manifests'
 import { AskUserInputSchema } from '@/plugins/ask-user/shared'
 import { createAskUserToolCallRepair } from '@/plugins/ask-user/server/repair'
-import type { ModelRow, ProviderInterfaceRow, ProviderRow, ConversationRow } from '../../db/schema'
+import { attachments as attachmentRows, type ModelRow, type ProviderInterfaceRow, type ProviderRow, type ConversationRow } from '../../db/schema'
+import { and, eq, inArray } from 'drizzle-orm'
 import { PartAccumulator } from '../llm/accumulator'
 import { logLifecycle, partsBytes } from './lifecycle-log'
 import { buildModelMessages, buildProviderOptions, carriesToolResultImages, INTERJECTED, interjectedUserMessage, requiredAttachmentIds, toolImagesMessage, type AttachmentInput } from '../llm/messages'
@@ -266,6 +267,22 @@ async function assembleContext(hub: Hub, target: Target, leafMessageId: number):
   return { path, attachments: await resolveAttachmentInputs(deps, target.provider, target.providerInterface, ids) }
 }
 
+/** Tools that refer to images by path; with either on, the prompt names every image (spec §4.0). */
+function labelsImages(toolIds: readonly string[]): boolean {
+  return toolIds.includes(READ_FILE_TOOL_ID) || toolIds.includes(GENERATE_IMAGE_TOOL_ID)
+}
+
+/** MIME of each image the assistant messages on the path hold, which is what names their files. */
+async function generatedImageMimes(hub: Hub, path: readonly Message[]): Promise<Map<number, string>> {
+  const ids = [...new Set(path.flatMap(message => (message.role === 'assistant'
+    ? message.parts.flatMap(part => (part.type === 'image' ? [part.attachment_id] : []))
+    : [])))]
+  if (ids.length === 0) return new Map()
+  const rows = await hub.db.select({ id: attachmentRows.id, mime: attachmentRows.mime }).from(attachmentRows)
+    .where(and(eq(attachmentRows.user_id, hub.userId), inArray(attachmentRows.id, ids)))
+  return new Map(rows.map(row => [row.id, row.mime]))
+}
+
 // ---- stage 5/6: stream + finalize
 
 async function generate(hub: Hub, target: Target, shell: Message, leafMessageId: number): Promise<void> {
@@ -291,7 +308,8 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
     const payload: BeforeSendPayload = { conversationId: target.conversation.id, systemPrompt: target.config.systemPrompt, path }
     hub.app.emit('message/before-send', payload)
 
-    const messages = buildModelMessages({ protocol: target.providerInterface.protocol, systemPrompt: payload.systemPrompt, path: payload.path, attachments })
+    const imageLabels = labelsImages(target.toolIds) ? await generatedImageMimes(hub, payload.path) : undefined
+    const messages = buildModelMessages({ protocol: target.providerInterface.protocol, systemPrompt: payload.systemPrompt, path: payload.path, attachments, imageLabels })
     const params: ConversationParams = target.config.params
     const trace = {
       conversationId: target.conversation.id,
@@ -403,7 +421,7 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
         // Writing the row is not enough — the SDK would carry on with the list it built at the
         // start, and the model would never hear what was said. The override carries forward, so
         // every later step sees it too.
-        return { messages: [...messages, ...extra, interjectedUserMessage(said, attachments, interrupted)] }
+        return { messages: [...messages, ...extra, interjectedUserMessage(said, attachments, interrupted, imageLabels !== undefined)] }
       },
       providerOptions: buildProviderOptions(target.providerInterface.protocol, params, target.model.metadata_resolved),
     })

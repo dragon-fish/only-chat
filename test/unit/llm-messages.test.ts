@@ -562,3 +562,32 @@ describe('images returned by a tool', () => {
       .toEqual({ type: 'tool_result', call_id: 'call_x', name: 'web_search', content: { results: [] } })
   })
 })
+
+describe('image path labels', () => {
+  const path: Message[] = [
+    msg({ id: 1, role: 'user', parts: [{ type: 'image', attachment_id: 9 }, { type: 'text', text: 'make it blue' }] }),
+    msg({ id: 2, role: 'assistant', parts: [{ type: 'image', attachment_id: 12 }, { type: 'image', attachment_id: 13, artifact_id: 33 }, { type: 'text', text: 'done' }] }),
+  ]
+  const input = (imageLabels?: ReadonlyMap<number, string>): BuildInput => ({ protocol: 'responses', systemPrompt: null, attachments: new Map([[9, inlinePng]]), path, imageLabels })
+
+  it('name every image so a tool can refer to it, when a tool that takes the names is on', () => {
+    const out = buildModelMessages(input(new Map([[12, 'image/webp'], [13, 'image/png']])))
+    expect(out[0]).toEqual({ role: 'user', content: [
+      { type: 'text', text: '[image: /uploads/9.png]' }, { type: 'file', mediaType: 'image/png', data: inlinePng.data }, { type: 'text', text: 'make it blue' },
+    ] })
+    expect(out[1]).toEqual({ role: 'assistant', content: [
+      { type: 'text', text: '[generated image: /artifacts/msg-12.webp]' }, { type: 'text', text: '[generated image: /artifacts/33.png]' }, { type: 'text', text: 'done' },
+    ] })
+  })
+
+  it('leave the prompt as it was otherwise', () => {
+    const out = buildModelMessages(input())
+    expect(out[0]).toEqual({ role: 'user', content: [{ type: 'file', mediaType: 'image/png', data: inlinePng.data }, { type: 'text', text: 'make it blue' }] })
+    expect(out[1]).toEqual({ role: 'assistant', content: [{ type: 'text', text: 'done' }] })
+  })
+
+  it('label what was said mid-turn the way the rebuilt history will', () => {
+    expect(interjectedUserMessage([{ type: 'image', attachment_id: 9 }], new Map([[9, inlinePng]]), false, true))
+      .toEqual({ role: 'user', content: [{ type: 'text', text: '[image: /uploads/9.png]' }, { type: 'file', mediaType: 'image/png', data: inlinePng.data }] })
+  })
+})
