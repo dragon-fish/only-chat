@@ -7,6 +7,8 @@ export const GenerateImageInputSchema = z.strictObject({
     width: z.number().int().min(256).max(4096),
     height: z.number().int().min(256).max(4096),
   }).optional().describe('Output size in pixels. Omit to let the image model choose.'),
+  reference_images: z.array(z.string().min(1)).min(1).max(10).optional()
+    .describe('Images to edit or draw from, by the paths this conversation labels them with: /uploads/… for images the user sent, /artifacts/… for generated ones.'),
 })
 export type GenerateImageInput = z.infer<typeof GenerateImageInputSchema>
 

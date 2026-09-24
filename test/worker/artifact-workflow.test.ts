@@ -167,7 +167,7 @@ describe('Artifact generation Workflow', () => {
     })
     const run = (toolCallId: string) => createToolImageRun(startApp, userId, {
       conversationId: conversation.id, messageId: reply.id, toolCallId, model: { provider_id: provider!.id, model_id: 'image-model' },
-      prompt: 'An otter', params: { count: 1, size: null },
+      prompt: 'An otter', params: { count: 1, size: null }, references: [],
     })
 
     const { run_id: completedId } = await run('call_1')

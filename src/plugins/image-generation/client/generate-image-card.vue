@@ -7,6 +7,7 @@ import { api } from '@/client/lib/api'
 import { useAuditContext } from '@/client/lib/audit-context'
 import { cn } from '@/client/lib/utils'
 import { Alert, AlertDescription, AlertTitle } from '@/client/ui/alert'
+import { Badge } from '@/client/ui/badge'
 import { Button } from '@/client/ui/button'
 import { Skeleton } from '@/client/ui/skeleton'
 import { Spinner } from '@/client/ui/spinner'
@@ -74,6 +75,7 @@ onBeforeUnmount(() => clearTimeout(timer))
     .oc-turn-row.text-sm
       ImagesIcon(class="size-4 shrink-0 text-muted-foreground")
       span.min-w-0.truncate {{ input?.prompt ?? '生成图片' }}
+      Badge(v-if="input?.reference_images?.length" variant="secondary" class="shrink-0") 改图 · {{ input.reference_images.length }} 张参考
       span.shrink-0.text-muted-foreground(v-if="auditing || run?.status === 'completed'") {{ started.count }} 张 · {{ started.model }}
       span.shrink-0.text-muted-foreground(v-else-if="run?.status === 'cancelled'") 已取消
       span.shrink-0.text-muted-foreground(v-else-if="run?.status === 'failed'") 失败

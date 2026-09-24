@@ -4,7 +4,7 @@ import { MockLanguageModelV4, simulateReadableStream } from 'ai/test'
 import { eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
 import { createDb } from '@/server/db/client'
-import { artifactRuns, models, providerInterfaces, providers, users } from '@/server/db/schema'
+import { artifactRunInputs, artifactRuns, attachments, models, providerInterfaces, providers, users } from '@/server/db/schema'
 import { encryptSecret } from '@/server/plugins/llm/crypto'
 import { listMessages } from '@/server/plugins/hub/conversations'
 import { hasToolResult } from '@/server/plugins/mock-provider'
@@ -38,7 +38,7 @@ const DONE_STREAM = [
 ] as StreamPart[]
 
 /** A chat model that calls generate_image once, and an image model for the user's global image slot. */
-async function seed(withImageModel: boolean) {
+async function seed(withImageModel: boolean, imageInput = true) {
   const db = createDb(env.DB)
   await ensureTestUser(db)
   const [provider] = await db.insert(providers).values({
@@ -50,7 +50,10 @@ async function seed(withImageModel: boolean) {
   await db.update(providers).set({ default_interface_id: iface!.id }).where(eq(providers.id, provider!.id))
   await db.insert(models).values([
     { provider_id: provider!.id, model_id: 'chat-model', metadata_resolved: { tool_call: true }, enabled: true, sort: 0 },
-    { provider_id: provider!.id, model_id: 'image-model', metadata_resolved: { modalities: { input: ['text'], output: ['image'] } }, supports_image_output: true, enabled: true, sort: 1 },
+    {
+      provider_id: provider!.id, model_id: 'image-model', supports_image_output: true, supports_image_input: imageInput, enabled: true, sort: 1,
+      metadata_resolved: { modalities: { input: imageInput ? ['text', 'image'] : ['text'], output: ['image'] } },
+    },
   ])
   await db.update(users).set({ settings: {
     plugins: { image_generation: true },
@@ -83,11 +86,24 @@ async function installModel() {
   })
 }
 
-async function callGenerateImage(providerId: number, input: unknown) {
+async function uploadedImage(): Promise<number> {
+  const bytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])
+  const key = `image-tool/${Date.now()}-${Math.random()}`
+  // The chat turn sends the person's image to the chat model, so its bytes must exist.
+  await env.BUCKET.put(key, bytes)
+  const [row] = await createDb(env.DB).insert(attachments).values({
+    user_id: 1, sha256: `image-tool-${Date.now()}-${Math.random()}`.slice(0, 64).padEnd(64, '0'), mime: 'image/png', size: bytes.byteLength,
+    width: 1, height: 1, r2_key: key, origin: 'upload', created_at: 0,
+  }).returning()
+  return row!.id
+}
+
+async function callGenerateImage(providerId: number, input: unknown, uploaded?: number) {
   toolInput = input
   const c = await connect(await ensureTestUser())
   c.ws.send(JSON.stringify({
-    type: 'send', conversation_id: null, parent_id: null, parts: [{ type: 'text', text: 'draw' }],
+    type: 'send', conversation_id: null, parent_id: null,
+    parts: [...(uploaded === undefined ? [] : [{ type: 'image', attachment_id: uploaded }]), { type: 'text', text: 'draw' }],
     provider_id: providerId, model_id: 'chat-model', tools: ['generate_image'],
   }))
   await c.next('message.done')
@@ -115,4 +131,34 @@ describe('generate_image', () => {
     const result = await callGenerateImage(providerId, { prompt: 'an otter' })
     expect(result?.content).toEqual({ error: NO_IMAGE_MODEL })
   })
+
+  it('edits an image the user sent, by the path the conversation labels it with', async () => {
+    const providerId = await seed(true)
+    await installModel()
+    const uploaded = await uploadedImage()
+    const result = await callGenerateImage(providerId, { prompt: 'make it blue', reference_images: [`/uploads/${uploaded}.png`] }, uploaded)
+    const runId = Number((result!.content as { task_id: string }).task_id.split(':')[1])
+    const db = createDb(env.DB)
+    expect(await db.query.artifactRuns.findFirst({ where: eq(artifactRuns.id, runId) })).toMatchObject({ operation: 'edit' })
+    expect(await db.select().from(artifactRunInputs).where(eq(artifactRunInputs.run_id, runId))).toEqual([expect.objectContaining({ attachment_id: uploaded, position: 0 })])
+  })
+
+  it('refuses a reference that is not an image of this conversation', async () => {
+    const providerId = await seed(true)
+    await installModel()
+    const elsewhere = await uploadedImage()
+    const result = await callGenerateImage(providerId, { prompt: 'make it blue', reference_images: [`/uploads/${elsewhere}.png`] })
+    expect(result?.content).toEqual({ error: expect.stringContaining(`No image at /uploads/${elsewhere}.png`) })
+  })
+
+  it('refuses references the image model cannot take, without starting a run', async () => {
+    const providerId = await seed(true, false)
+    await installModel()
+    const uploaded = await uploadedImage()
+    const before = (await createDb(env.DB).select().from(artifactRuns)).length
+    const result = await callGenerateImage(providerId, { prompt: 'make it blue', reference_images: [`/uploads/${uploaded}.png`] }, uploaded)
+    expect(result?.content).toEqual({ error: 'model does not support image input' })
+    expect((await createDb(env.DB).select().from(artifactRuns)).length).toBe(before)
+  })
 })
+

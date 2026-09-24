@@ -110,6 +110,8 @@ export interface ToolImageRunInput {
   model: ModelRef
   prompt: string
   params: ImageGenerationParams
+  /** Attachment ids of the images to edit; empty for a plain generation. */
+  references: readonly number[]
 }
 
 /**
@@ -124,16 +126,19 @@ export async function createToolImageRun(ctx: Context, userId: number, input: To
     where: and(eq(artifactRuns.user_id, userId), eq(artifactRuns.client_request_id, clientRequestId)),
   })
   if (existing) return { run_id: existing.id }
-  const { provider, model, selected } = await resolveImageTarget(db, userId, input.model, [])
+  const { provider, model, selected } = await resolveImageTarget(db, userId, input.model, input.references)
   // Workflow instance ids allow only letters, digits, `-` and `_`.
   const workflowId = `artifact-${userId}-tool-${input.messageId}-${input.toolCallId.replace(/[^A-Za-z0-9_-]/g, '_')}`.slice(0, 100)
   const [run] = await db.insert(artifactRuns).values({
-    user_id: userId, client_request_id: clientRequestId, kind: 'image_generation', source: 'tool', operation: 'generate',
+    user_id: userId, client_request_id: clientRequestId, kind: 'image_generation', source: 'tool', operation: input.references.length ? 'edit' : 'generate',
     status: 'queued', conversation_id: input.conversationId, message_id: input.messageId, tool_call_id: input.toolCallId,
     provider_id: provider.id, provider_name: provider.name, interface_id: selected.id, interface_protocol: selected.protocol,
     credential_version: provider.credential_version, model_id: model.model_id, model_name: model.metadata_resolved.name ?? model.model_id,
     prompt: input.prompt, params: input.params, workflow_instance_id: workflowId, created_at: Date.now(),
   }).returning()
+  if (input.references.length) await db.insert(artifactRunInputs).values(
+    input.references.map((attachment_id, position) => ({ run_id: run!.id, attachment_id, position })),
+  )
   try {
     disposeRpcStub(await ctx.env.ARTIFACT_WORKFLOW.create({ id: workflowId, params: { userId, runId: run!.id } }))
   } catch {
