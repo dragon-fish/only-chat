@@ -1,5 +1,5 @@
 import type { TextStreamPart, ToolSet } from 'ai'
-import type { Part, ProviderOptions, ReasoningPart, TextPart, ToolCallPart, ToolResultPart } from '@/shared/parts'
+import { toolResultPart, type Part, type ProviderOptions, type ReasoningPart, type TextPart, type ToolCallPart, type ToolResultPart } from '@/shared/parts'
 import {
   completedResponsesReasoningOptions, completedResponsesReasoningText, readResponsesReasoningDelta,
   streamedResponsesReasoningOptions, type ResponsesReasoningBuffers, type ResponsesReasoningDelta,
@@ -128,8 +128,11 @@ export class PartAccumulator {
         return [this._partEvent(idx)]
       }
       case 'tool-result': {
-        const idx = this._ensure(part.toolCallId, { type: 'tool_result', call_id: part.toolCallId, name: part.toolName, content: part.output })
-        ;(this.parts[idx] as ToolResultPart).content = part.output
+        const result = toolResultPart(part.toolCallId, part.toolName, part.output)
+        const idx = this._ensure(part.toolCallId, result)
+        const target = this.parts[idx] as ToolResultPart
+        target.content = result.content
+        if (result.attachments) target.attachments = result.attachments
         this._setMeta(idx, part.providerMetadata)
         return [this._partEvent(idx)]
       }

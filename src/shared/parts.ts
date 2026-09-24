@@ -37,6 +37,12 @@ export const ToolResultPartSchema = z.object({
   call_id: z.string(),
   name: z.string(),
   content: z.unknown(),
+  /**
+   * Images the tool showed the model. They reach it as a user message right after the tool results,
+   * not inside them: a tool result can only carry base-64, resent on every later turn, and one
+   * protocol cannot carry it at all.
+   */
+  attachments: z.array(z.number().int()).optional(),
   providerOptions: ProviderOptionsSchema.optional(),
 })
 
@@ -70,6 +76,30 @@ export type ToolCallPart = z.infer<typeof ToolCallPartSchema>
 export type ToolResultPart = z.infer<typeof ToolResultPartSchema>
 export type TaskNotificationPart = z.infer<typeof TaskNotificationPartSchema>
 export type Part = z.infer<typeof PartSchema>
+
+/**
+ * The key under which a tool's output hands over attachment ids for the model to see. Reserved:
+ * `toolResultPart` lifts it onto the part, so it never persists inside `content`.
+ */
+export const TOOL_ATTACHMENTS_KEY = '__attachments'
+
+export function toolResultPart(callId: string, name: string, output: unknown): ToolResultPart {
+  if (output === null || typeof output !== 'object' || Array.isArray(output) || !(TOOL_ATTACHMENTS_KEY in output)) {
+    return { type: 'tool_result', call_id: callId, name, content: output }
+  }
+  const { [TOOL_ATTACHMENTS_KEY]: ids, ...content } = output as Record<string, unknown>
+  const attachments = Array.isArray(ids) ? ids.filter((id): id is number => Number.isSafeInteger(id)) : []
+  return { type: 'tool_result', call_id: callId, name, content, ...(attachments.length ? { attachments } : {}) }
+}
+
+/**
+ * What the model reads of a tool output that handed over attachments: everything but the reserved
+ * key. A tool doing so must pass this through `toModelOutput`, because the SDK builds its own
+ * in-turn messages from the raw output, and the rebuilt history — from the stored part — has no key.
+ */
+export function stripToolAttachments(output: unknown): unknown {
+  return toolResultPart('', '', output).content
+}
 
 /** A user message made only of notifications was written by the server, not the person. */
 export function isNotificationOnly(parts: readonly Part[]): boolean {

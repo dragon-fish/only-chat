@@ -126,6 +126,8 @@ function assistantMessages(
   )
   let assistant: AssistantPart[] = []
   let tool: ToolPart[] = []
+  /** Results that showed images: they follow the tool message they belong to, see `toolImagesMessage`. */
+  let shown: ToolResultPart[] = []
   const flushAssistant = () => {
     if (assistant.length > 0) out.push({ role: 'assistant', content: assistant })
     assistant = []
@@ -133,6 +135,8 @@ function assistantMessages(
   const flushTool = () => {
     if (tool.length > 0) out.push({ role: 'tool', content: tool })
     tool = []
+    if (shown.length > 0) out.push(toolImagesMessage(shown, attachments))
+    shown = []
   }
   const appendAssistant = (part: AssistantPart) => { flushTool(); assistant.push(part) }
   for (const p of parts) {
@@ -171,6 +175,7 @@ function assistantMessages(
       case 'tool_result':
         flushAssistant()
         tool.push(withOptions({ type: 'tool-result', toolCallId: p.call_id, toolName: p.name, output: { type: 'json', value: p.content as never } }, options))
+        if (p.attachments?.length) shown.push(p)
         break
       case 'image':
         // Generated images are not replayed to the model in MVP. `requiredAttachmentIds` below is
@@ -196,10 +201,26 @@ function assistantMessages(
 export function requiredAttachmentIds(path: readonly Message[]): Set<number> {
   const ids = new Set<number>()
   for (const m of path) {
-    if (m.role !== 'user') continue
-    for (const p of m.parts) if (p.type === 'image') ids.add(p.attachment_id)
+    for (const p of m.parts) {
+      if (m.role === 'user' && p.type === 'image') ids.add(p.attachment_id)
+      if (p.type === 'tool_result') for (const id of p.attachments ?? []) ids.add(id)
+    }
   }
   return ids
+}
+
+/**
+ * Images a tool showed the model, as the user message that follows its tool results. A user
+ * message because every protocol accepts images there, while tool results carry them on only some,
+ * and only as base-64 resent on every later turn. Built identically mid-turn (`prepareStep`) and
+ * when the history is rebuilt, so the prompt prefix stays byte-identical.
+ */
+export function toolImagesMessage(results: readonly ToolResultPart[], attachments: ReadonlyMap<number, AttachmentInput>): UserModelMessage {
+  const parts: Part[] = results.flatMap((result): Part[] => [
+    { type: 'text', text: `Image returned by ${result.name}:` },
+    ...(result.attachments ?? []).map((attachment_id): Part => ({ type: 'image', attachment_id })),
+  ])
+  return { role: 'user', content: userParts(parts, attachments) }
 }
 
 /**

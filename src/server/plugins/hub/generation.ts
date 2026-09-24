@@ -1,7 +1,7 @@
-import { stepCountIs, streamText, type LanguageModel, type StopCondition, type ToolSet } from 'ai'
+import { stepCountIs, streamText, type LanguageModel, type ModelMessage, type StopCondition, type ToolSet } from 'ai'
 import { INFLIGHT_FLUSH_INTERVAL_MS, TOOL_MAX_STEPS } from '@/shared/constants'
 import type { Message, PersistedStatus, ConversationParams, ConversationPluginSettings, StepUsage, Usage } from '@/shared/models'
-import type { Part, ToolCallPart, ToolResultPart } from '@/shared/parts'
+import { toolResultPart, type Part, type ToolCallPart, type ToolResultPart } from '@/shared/parts'
 import type { SendCommand, WsCommand } from '@/shared/ws'
 import { ASK_USER_TOOL_ID, parseConversationPluginSettings } from '@/shared/plugins'
 import { pluginManifests } from '@/shared/plugin-manifests'
@@ -10,7 +10,7 @@ import { createAskUserToolCallRepair } from '@/plugins/ask-user/server/repair'
 import type { ModelRow, ProviderInterfaceRow, ProviderRow, ConversationRow } from '../../db/schema'
 import { PartAccumulator } from '../llm/accumulator'
 import { logLifecycle, partsBytes } from './lifecycle-log'
-import { buildModelMessages, buildProviderOptions, carriesToolResultImages, INTERJECTED, interjectedUserMessage, requiredAttachmentIds, type AttachmentInput } from '../llm/messages'
+import { buildModelMessages, buildProviderOptions, carriesToolResultImages, INTERJECTED, interjectedUserMessage, requiredAttachmentIds, toolImagesMessage, type AttachmentInput } from '../llm/messages'
 import { generationDurationMs, toStepUsage, toUsage, type GenerationStepPerformance } from '../llm/usage'
 import type { Hub, InflightJob } from './index'
 import {
@@ -273,6 +273,8 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
   // Rotated by `handOff` when the operator speaks mid-turn: what they said becomes a real user
   // message, so the reply above it has to end and a new one has to begin.
   let acc = new PartAccumulator()
+  /** Tool calls whose images the model has already been shown this turn. */
+  const shown = new Set<string>()
   const job = { message: shell, conversationId: target.conversation.id, controller, startedAt: Date.now(), parts: acc.parts, stash: [] as Part[] }
   // `trackInflight` assigns `settled` onto this very object, so the reference stays usable.
   await hub.trackInflight(job)
@@ -377,17 +379,31 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
        * neither the tree nor the screen has any use for it.
        */
       prepareStep: async ({ messages }) => {
+        // Images a tool showed in the step just finished, in the message `buildModelMessages` puts
+        // right after that step's tool results. Taken before a handoff rotates the accumulator.
+        const shownNow = acc.parts.filter((part): part is ToolResultPart =>
+          part.type === 'tool_result' && (part.attachments?.length ?? 0) > 0 && !shown.has(part.call_id))
+        const extra: ModelMessage[] = []
+        if (shownNow.length > 0) {
+          const missing = shownNow.flatMap(part => part.attachments!).filter(id => !attachments.has(id))
+          if (missing.length > 0) {
+            const deps = { db: hub.db, userId: hub.userId, assets: hub.app.assets, llm: hub.app.llm }
+            for (const [id, input] of await resolveAttachmentInputs(deps, target.provider, target.providerInterface, missing)) attachments.set(id, input)
+          }
+          extra.push(toolImagesMessage(shownNow, attachments))
+          for (const part of shownNow) shown.add(part.call_id)
+        }
         // Notifications first, then what the person said: the order the stored message keeps.
         const notices = await takeTurnNotifications(hub, target.conversation.id)
         const said = [...notices.map(entry => entry.notification), ...hub.takeStash(shell.id)]
-        if (said.length === 0) return {}
+        if (said.length === 0) return extra.length > 0 ? { messages: [...messages, ...extra] } : {}
         const interrupted = said.length > notices.length
         await handOff(said, interrupted)
         for (const entry of notices) await hub.dropTask(entry.notification.task_id)
         // Writing the row is not enough — the SDK would carry on with the list it built at the
         // start, and the model would never hear what was said. The override carries forward, so
         // every later step sees it too.
-        return { messages: [...messages, interjectedUserMessage(said, attachments, interrupted)] }
+        return { messages: [...messages, ...extra, interjectedUserMessage(said, attachments, interrupted)] }
       },
       providerOptions: buildProviderOptions(target.providerInterface.protocol, params, target.model.metadata_resolved),
     })
@@ -625,7 +641,7 @@ async function recordLateResult(
   output: unknown,
 ): Promise<void> {
   if (!callId) return
-  const part = { type: 'tool_result' as const, call_id: callId, name, content: output }
+  const part = toolResultPart(callId, name, output)
   // Loses to whatever closed the call out first; the row guard makes that decision once.
   if (!(await appendToolResult(hub.db, messageId, hub.userId, conversationId, part))) return
   const updated = await getMessage(hub.db, messageId, hub.userId)

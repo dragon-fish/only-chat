@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { buildModelMessages, buildProviderOptions, interjectedUserMessage, renderTaskNotification, requiredAttachmentIds, type AttachmentInput, type BuildInput } from '@/server/plugins/llm/messages'
-import { isNotificationOnly, type TaskNotificationPart } from '@/shared/parts'
+import { buildModelMessages, buildProviderOptions, interjectedUserMessage, renderTaskNotification, requiredAttachmentIds, toolImagesMessage, type AttachmentInput, type BuildInput } from '@/server/plugins/llm/messages'
+import { isNotificationOnly, TOOL_ATTACHMENTS_KEY, toolResultPart, type TaskNotificationPart, type ToolResultPart } from '@/shared/parts'
 import type { Message } from '@/shared/models'
 import type { ModelMetadata } from '@/shared/model-metadata'
 import type { InterfaceProtocol } from '@/shared/models'
@@ -534,5 +534,31 @@ describe('task notifications', () => {
     expect(isNotificationOnly([notice])).toBe(true)
     expect(isNotificationOnly([notice, { type: 'text', text: 'and also' }])).toBe(false)
     expect(isNotificationOnly([])).toBe(false)
+  })
+})
+
+describe('images returned by a tool', () => {
+  const reading: Message = msg({ id: 2, role: 'assistant', parts: [
+    { type: 'tool_call', id: 'call_r', name: 'read_file', args: { path: '/artifacts/33.png' } },
+    { type: 'tool_result', call_id: 'call_r', name: 'read_file', content: { path: '/artifacts/33.png', mime: 'image/png' }, attachments: [9] },
+    { type: 'text', text: 'It is an otter.' },
+  ] })
+
+  it('follow the tool message as a user message, so every protocol can carry them', () => {
+    const out = buildModelMessages({ protocol: 'responses', systemPrompt: null, attachments: new Map([[9, inlinePng]]), path: [msg({ id: 1, role: 'user', parts: [{ type: 'text', text: 'look' }] }), reading] })
+    expect(out.map(m => m.role)).toEqual(['user', 'assistant', 'tool', 'user', 'assistant'])
+    expect(out[3]).toEqual(toolImagesMessage([reading.parts[1] as ToolResultPart], new Map([[9, inlinePng]])))
+    expect(out[3]).toEqual({ role: 'user', content: [{ type: 'text', text: 'Image returned by read_file:' }, { type: 'file', mediaType: 'image/png', data: inlinePng.data }] })
+  })
+
+  it('are resolved with the rest of the request', () => {
+    expect(requiredAttachmentIds([reading])).toEqual(new Set([9]))
+  })
+
+  it('are handed over by the tool under a reserved key that never reaches the stored content', () => {
+    expect(toolResultPart('call_r', 'read_file', { path: '/a.png', [TOOL_ATTACHMENTS_KEY]: [9, 10] }))
+      .toEqual({ type: 'tool_result', call_id: 'call_r', name: 'read_file', content: { path: '/a.png' }, attachments: [9, 10] })
+    expect(toolResultPart('call_x', 'web_search', { results: [] }))
+      .toEqual({ type: 'tool_result', call_id: 'call_x', name: 'web_search', content: { results: [] } })
   })
 })
