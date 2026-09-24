@@ -29,6 +29,7 @@ const STATUS: Record<WorkspaceError, 400 | 404 | 409> = {
   // Only tools edit by pattern today; these are here because the map is exhaustive by type.
   NO_MATCH: 400,
   AMBIGUOUS_MATCH: 409,
+  READ_ONLY: 409,
 }
 
 /**

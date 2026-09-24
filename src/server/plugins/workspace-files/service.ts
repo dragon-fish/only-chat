@@ -8,7 +8,8 @@ import {
   type WorkspaceFileRow, type WorkspaceFileVersionRow,
 } from '../../db/schema'
 import { r2Key } from '../api/attachments'
-import { countLines, formatWorkspacePath, parseWorkspacePath, WORKSPACE_MOUNTS, type WorkspaceMount } from './path'
+import { countLines, formatWorkspacePath, isProjectedMount, parseWorkspacePath, WORKSPACE_MOUNTS, type WorkspaceMount } from './path'
+import { listProjected } from './projections'
 
 export type { FileRecord }
 
@@ -26,6 +27,7 @@ export type WorkspaceError =
   | 'READ_RANGE_TOO_LARGE'
   | 'NO_MATCH'
   | 'AMBIGUOUS_MATCH'
+  | 'READ_ONLY'
 
 export type Result<T> = { ok: true, value: T } | { ok: false, error: WorkspaceError }
 
@@ -231,6 +233,9 @@ export class WorkspaceFiles {
 
   /** Resolves a mount to the row scope it addresses, or reports why it cannot be used. */
   private scopeOf(mount: WorkspaceMount, scope: WorkspaceScope): Result<{ projectId: number | null, conversationId: number | null }> {
+    // Projected mounts hold no rows. Everything that would address one through this method is a
+    // write, a rename or a stored-file read; `list` handles them itself and `read_file` reads their images.
+    if (isProjectedMount(mount)) return fail('READ_ONLY')
     if (mount === 'conversation') return succeed({ projectId: null, conversationId: scope.conversationId })
     // A Conversation outside any Project has nowhere to put shared files. That is a state the model
     // should see and work around, not an error.
@@ -1039,6 +1044,11 @@ export class WorkspaceFiles {
     if (mount === null) {
       const entries: ListEntry[] = []
       for (const name of WORKSPACE_MOUNTS) {
+        if (isProjectedMount(name)) {
+          const images = await listProjected(this.db, this.userId, input.conversationId, name)
+          entries.push({ path: `/${name}`, type: 'mount', status: images.length === 0 ? 'empty' : 'ready' })
+          continue
+        }
         const resolved = this.scopeOf(name, input)
         if (!resolved.ok) {
           entries.push({ path: `/${name}`, type: 'mount', status: 'unavailable' })
@@ -1050,6 +1060,17 @@ export class WorkspaceFiles {
         entries.push({ path: `/${name}`, type: 'mount', status: rows.length === 0 ? 'empty' : 'ready' })
       }
       return succeed({ path: '/', entries, truncated: false, nextCursor: null })
+    }
+
+    if (isProjectedMount(mount)) {
+      // Flat by construction: a projected mount has files and nothing else.
+      if (relativePath !== '') return fail('FILE_NOT_FOUND')
+      const images = await listProjected(this.db, this.userId, input.conversationId, mount)
+      const limit = Math.max(1, input.limit ?? 100)
+      const entries = images.slice(0, limit).map((image): ListEntry => ({
+        path: image.path, type: 'file', fileSize: image.size, updatedAt: image.createdAt,
+      }))
+      return succeed({ path: `/${mount}`, entries, truncated: images.length > entries.length, nextCursor: null })
     }
 
     const scope = this.scopeOf(mount, input)

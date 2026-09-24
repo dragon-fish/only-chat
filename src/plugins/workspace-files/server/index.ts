@@ -18,7 +18,7 @@ import { absolutePreviewUrl, PREVIEW_TICKET_TTL_SECONDS, previewTypeFor, preview
 
 /** Each expected failure reads as a fact the model can act on, never as a malfunction. */
 const MESSAGES: Record<WorkspaceError, string> = {
-  INVALID_PATH: 'Not a valid workspace path. Paths are absolute and start with /project or /conversation, with no . or .. segments.',
+  INVALID_PATH: 'Not a valid workspace path. Paths are absolute and start with /project, /conversation, /artifacts or /uploads, with no . or .. segments.',
   MOUNT_UNAVAILABLE: 'This conversation does not belong to a project, so /project has nowhere to store files. Use /conversation instead.',
   FILE_NOT_FOUND: 'No such file. Use list_files to see what exists.',
   IS_DIRECTORY: 'That path holds other files rather than being one. Pass recursive: true to act on everything under it.',
@@ -29,6 +29,7 @@ const MESSAGES: Record<WorkspaceError, string> = {
   INVALID_UTF8: 'Content must be valid UTF-8 text.',
   READ_RANGE_TOO_LARGE: 'That range is past the end of the file, or too large to return. Use a smaller offset and limit.',
   NO_MATCH: 'That text is not in the file. Copy it from read_file exactly, without the line numbers printed in front of each line, and keep the original indentation.',
+  READ_ONLY: '/artifacts and /uploads show images this conversation already has and cannot be changed. Write your own files under /conversation or /project.',
   AMBIGUOUS_MATCH: 'That text appears in more than one place, and editing the first of several is the one outcome nobody can review. Include enough surrounding lines to name a single place, or pass replaceAll to change all of them.',
 }
 

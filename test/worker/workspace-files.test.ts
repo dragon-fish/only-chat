@@ -265,13 +265,15 @@ describe('workspace files service', () => {
     expect(result).toMatchObject({ ok: false, error: 'MOUNT_UNAVAILABLE' })
   })
 
-  it('lists both mounts at the root with their availability', async () => {
+  it('lists every mount at the root with its availability', async () => {
     const listed = await f.files.list({ path: '/', conversationId: f.conversationId, projectId: null })
     expect(listed.ok).toBe(true)
     if (!listed.ok) return
     expect(listed.value.entries).toEqual([
       expect.objectContaining({ path: '/project', type: 'mount', status: 'unavailable' }),
       expect.objectContaining({ path: '/conversation', type: 'mount', status: 'empty' }),
+      expect.objectContaining({ path: '/artifacts', type: 'mount', status: 'empty' }),
+      expect.objectContaining({ path: '/uploads', type: 'mount', status: 'empty' }),
     ])
   })
 
