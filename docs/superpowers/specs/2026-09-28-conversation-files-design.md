@@ -38,7 +38,7 @@
 - 图片沿用现有预处理，大小限制在压缩之后检查；非图片原件存 R2，宽高为空。
 - 服务端校验：二进制按文件签名核对声明的 MIME；文本按严格 UTF-8 解码核对。拒绝空文件、类型不符和超限文件。
 - 发送消息时校验每个 `file` / `image` part 的 attachment 属于该用户，且 `file` part 的 `mime` 与 attachment 记录一致。
-- 附件下载接口支持 `Range` 请求（`206`），供音视频播放与拖动。
+- 附件下载接口支持 `Range` 请求（`206`），供音视频播放与拖动；文本类附件一律以 `text/plain; charset=utf-8` 加 `Content-Security-Policy: sandbox` 返回，上传的页面只显示不执行。
 
 ### 3.2 文本文件
 
@@ -63,7 +63,7 @@
 | `chat-completions` | image、pdf、audio（mp3 / wav）、video |
 | `vertex-compatible` | image、pdf、audio、video |
 
-音视频内联传输，不走原生 Files 上传。发给供应商的文件名由插件决定（§4.5）；无插件时不带文件名，图片以外的内联文件以 `file.<ext>` 命名。
+音视频内联传输，不走原生 Files 上传；文本以文本内联。发给供应商的文件名一律为 `file.<ext>`（图片不带文件名）：供应商会把它展示给模型，其中不放 attachment id 或用户文件名。
 
 ### 3.5 交给模型
 
@@ -118,16 +118,20 @@ Agent 只能引用它在上下文中见过的 asset。本轮工具含 `read_file
 interface FileReaderService {
   /** 解析引用。`turn` 携带 userId、conversationId、projectId、本轮工具 id 与可见集合。 */
   resolve(turn: FileTurn, ref: string): Promise<Result<ResolvedFile>>
-  /** 把二进制文件交给当前模型（§4.6）。 */
-  deliver(turn: FileTurn, file: ResolvedBinary): Result<DeliveredFile>
+  /** 把二进制文件交给当前模型（§4.6）；`cited` 为调用方所用的引用，出现在提示中。 */
+  deliver(turn: FileTurn, file: ResolvedBinary, cited: string): Result<DeliveredFile>
   /** 插件注册 scheme 解析器；`barePaths` 表示同时认领裸绝对路径。返回注销函数，随注册方 dispose。 */
   registerScheme(scheme: string, resolver: SchemeResolver, options?: { barePaths?: boolean }): () => void
+  /** 插件注册「读不了时还能去哪」的提示，接在不可读说明之后。 */
+  registerHint(hint: (turn: FileTurn, mime: string, cited: string) => string | undefined): () => void
+  /** 本轮状态存放在 `GenerationTurn.state`（即 `ToolContext.turn`）中；工具经 `turnOf` 取得。 */
+  turnOf(state: Map<string, unknown>): FileTurn
 }
 
 type ResolvedFile = ResolvedBinary | ResolvedText
 interface ResolvedBinary { kind: 'binary', attachmentId, sha256, ref, mime, size, width, height, filename }
 interface ResolvedText {
-  kind: 'text', ref, mime, filename, attachmentId?, sha256?
+  kind: 'text', ref, mime, size, filename, attachmentId?
   /** 读取一段；提供方可返回 version 与 unchanged（§5.2）。 */
   read(range: { offset?: number, limit?: number }): Promise<Result<TextRead>>
 }
@@ -139,11 +143,10 @@ interface ResolvedText {
 
 本轮工具含 `read_file` 时，`file_reader` 向 `buildModelMessages` 提供文件标注器：
 
-- 用户上传的二进制：`[image asset:3f9a2c1e "cat.png"]`、`[file asset:b41d07a9 "report.pdf" application/pdf]`，无文件名时省略引号部分；后接文件 part 或不可读说明。本轮工具含 `analyze_file` 时，不可读说明提示用它。
+- 用户上传的二进制：`[image asset:3f9a2c1e "cat.png"]`、`[file asset:b41d07a9 "report.pdf" application/pdf]`，无文件名时省略引号部分；后接文件 part 或不可读说明；不可读说明之后接已注册的提示（§4.4），`file_understanding` 在本轮含 `analyze_file` 且其模型能读该 MIME 时提示用它。
 - 用户上传的文本：不超过 32 KiB 时内联为 `<file asset="3f9a2c1e" name="page.html">` + 原文 + `</file>`；更大时只放 `[file asset:3f9a2c1e "page.html" text/html, 18432 lines — read it with read_file]`。
 - 模型直接生成的图片：`[generated image asset:5c2e8f10]`。
 - 工具交付的文件：tool 消息后紧跟 user 消息，每个结果一组 `<tool_attachment call_id="…" asset="3f9a2c1e">`、文件 part 或不可读说明、`</tool_attachment>`；该批工具结果全部返回后再追加。本轮由 `prepareStep` 追加，历史由同一构造器重建，两者逐字节一致。只被工具结果引用的附件在轮次持久化前可能被清理，缺失时包装内说明文件已不存在，不抛错；其他缺失的附件照常报错。
-- 发给供应商的文件名为 `asset-<前缀>.<ext>`。
 
 标注随 `read_file` 的启用而出现或消失；会话中途切换时历史渲染随之变化，前缀缓存失效一次。
 
@@ -152,7 +155,7 @@ interface ResolvedText {
 `read_file({ file, offset?, limit? })`，`file` 接受 `asset:`、其他已注册 scheme 与裸路径：
 
 - 文本：带行号的内容（`cat -n` 格式），`offset` / `limit` 分段；asset 文本无版本。
-- 二进制：当前模型能读时返回回执 `{ file: 'asset:<前缀>', mime, message }`，以保留键 `__attachments` 交出 attachment id，文件随后按 §4.5 交付，并加入本轮可见集合；`offset` / `limit` 不适用。不能读时返回 `UNSUPPORTED_FILE`；本轮工具含 `analyze_file` 且文件理解模型能读该 MIME 时，建议 `analyze_file` 并给出原引用。
+- 二进制：当前模型能读时返回回执 `{ file: 'asset:<前缀>', mime, message }`，以保留键 `__attachments` 交出 attachment id，文件随后按 §4.5 交付，并加入本轮可见集合；`offset` / `limit` 不适用。不能读时返回 `UNSUPPORTED_FILE`，其后接已注册的提示，并给出原引用。
 
 ### 4.7 附件列表
 

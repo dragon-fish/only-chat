@@ -136,9 +136,11 @@ model's image output is validated, hashed and written to R2 before anything else
 provider file id, a URL, or inline bytes — is decided per turn by `hub/attachment-transport.ts`
 together with `llm/files/`.
 
-The model never sees an `attachment_id`: it names files as `asset:<sha256 prefix>` or through a
-plugin scheme such as `vfs:`, and every tool that takes a file goes through `resolveFileRef` /
-`deliverFile` in `src/server/plugins/file-refs/`.
+The core never puts tool context into a conversation: it hands attachments to the model and nothing
+more. Naming files (`asset:<sha256 prefix>`), reading them on demand and resolving plugin schemes
+such as `vfs:` belong to the `file_reader` plugin, which reaches the prompt only through the
+`generation/prepare` event and the optional `FileLabeler` in `llm/messages.ts`. Every tool that takes
+a file goes through the `fileReader` service. The model never sees an `attachment_id`.
 
 ### Feature plugins
 
@@ -147,6 +149,10 @@ tools run in the hub root; its HTTP routes run in the Worker root. **Those are d
 roots**, so a single plugin object injecting both would hang PENDING forever — the two halves are
 registered as separate plugins (see `workspace-files`, which has both `server/index.ts` and
 `server/api.ts`).
+
+A plugin that cannot work without another declares it in its manifest's `requires` and injects that
+plugin's service on the server; `test/worker/plugin-requirements.test.ts` holds the two to each
+other. Switches and tool selections cascade along `requires` (`src/shared/plugins.ts`).
 
 Registration is explicit in three lists, and adding a plugin means editing all three:
 `src/shared/plugin-manifests.ts` (the declarations both sides read), `src/client/plugins/loaders.ts`
