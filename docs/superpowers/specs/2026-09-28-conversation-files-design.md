@@ -2,8 +2,8 @@
 
 ## 1. 范围
 
-- **asset（核心）**：会话里的每个文件（用户上传的、模型生成的）都是一个不可变的 asset，以 attachment id 编号。
-- **文件引用（核心）**：所有接受文件的工具只认 `asset:<id>`；其他协议由提供方插件经钩子翻译为 asset。
+- **asset（核心）**：会话里的每个文件（用户上传的、模型生成的）都是一个不可变的 asset，对 Agent 以 sha256 前缀标识，Agent 只能引用上下文中见过的 asset。
+- **文件引用（核心）**：所有接受文件的工具只认 `asset:<sha256 前 8 位>`；其他协议由提供方插件经钩子翻译为 asset。
 - **附件链路（核心）**：上传从图片扩展到 PDF、音频、视频；上传格式与大小由管理员配置。
 - **workspace-files 插件**：提供 `vfs:` 协议；工作区可存放二进制文件；新增 `copy_file`。
 - **文件理解插件（新）**：`view_file` 与 `analyze_file`，以及用户级文件理解服务模型。
@@ -13,21 +13,32 @@
 
 ## 2. asset
 
-会话的 asset 集合在读取时派生，不另存表：
+### 2.1 标识
 
-| 来源 | 条件 |
+asset 对外（模型、标注、工具结果、面板提示）的标识是其 attachment `sha256` 的前 8 位小写十六进制，如 `3f9a2c1e`。自增 attachment id 只在内部使用（外键、下载 URL、WebSocket 帧、Part 字段），不出现在模型可见的任何文本中。
+
+按前缀查找使用 `(user_id, sha256)` 唯一索引上的范围条件 `sha256 >= prefix AND sha256 < next(prefix)`，不用 `LIKE`（后者不走 `sha256` 列）。
+
+### 2.2 模型可见集合
+
+Agent 只能引用它在上下文中见过的 asset。生成开始时，hub 从当前路径（root → leaf）构建可见集合，映射「前缀 → asset」：
+
+| 来源 | 路径上的位置 |
 |---|---|
-| 上传 | 本会话任一 user 消息中的 `image` / `file` part（含所有分支） |
-| 模型直接生成 | 本会话 assistant 消息中不带 `artifact_id` 的 `image` part |
-| `generate_image` 产物 | `artifact_runs.conversation_id` 为本会话、`artifacts.deleted_at` 为空 |
+| 上传 | user 消息中的 `image` / `file` part |
+| 模型直接生成 | assistant 消息中的 `image` part |
+| `generate_image` 产物 | `task_notification` part 的 `attachments` |
+| 工具交付的文件 | `tool_result` part 的 `attachments` |
 
-模块 `src/server/plugins/assets/conversation-assets.ts`：
+附件行（含 `sha256`）与本轮附件输入一起查询，不额外扫描消息 JSON。本轮内新交付的文件加入集合。其他分支上的 asset 不在集合中。
 
-- `listConversationAssets(db, userId, conversationId)` → `ConversationAsset[]`
-- `findConversationAsset(db, userId, conversationId, attachmentId)` → `ConversationAsset | null`
-- `ConversationAsset = { attachmentId, source: 'upload' | 'generated', mime, size, width, height, filename, createdAt }`
+`TaskNotificationPart` 增加 `attachments?: number[]`，记录产物的 attachment id。
 
-消息 part 的匹配在 SQL 中用 `json_each(parts)` 完成，不把整段会话的 parts 取回内存。`findConversationAsset` 是 `asset:` 的唯一权限边界：id 不属于该用户的该会话时返回 null，不泄露存在性。
+### 2.3 会话附件列表
+
+`listConversationAssets(db, userId, conversationId)` 列出本会话所有分支的 asset，供文件面板使用：`{ attachmentId, ref, source: 'upload' | 'generated', mime, size, width, height, filename, createdAt }`，`ref` 为 §2.1 的前缀。来源为 user 消息的 `image` / `file` part、assistant 消息中不带 `artifact_id` 的 `image` part、`artifact_runs.conversation_id` 为本会话且未删除的产物。消息 part 用 `json_each(parts)` 在 SQL 中匹配。
+
+### 2.4 文件名
 
 `ImagePart` 增加可选 `filename`，composer 上传图片时带上原始文件名；粘贴的图片没有文件名。
 
@@ -37,27 +48,27 @@
 
 引用是无 authority 的 URI：
 
-- `asset:<id>` —— 核心协议。
+- `asset:<前缀>` —— 核心协议，前缀为 8–64 位小写十六进制，如 `asset:3f9a2c1e`。
 - `vfs:<绝对路径>`，如 `vfs:/project/refs/cat.png` —— workspace-files 插件提供。
 
-裸路径（`/project/…`）、未知 scheme、格式错误一律报错，不猜测。裸路径的错误信息给出对应的 `vfs:` 写法。
+未知 scheme、格式错误一律报错，不猜测。只接受文件引用的工具收到裸路径（`/project/…`）时报错，错误信息给出对应的 `vfs:` 写法。
 
 ### 3.2 解析
 
-核心函数 `resolveFileRef(ctx, turn, ref) → Result<ResolvedFile>`，`ResolvedFile = { attachmentId, mime, size, width, height, filename }`：
+核心函数 `resolveFileRef(ctx, turn, ref) → Result<ResolvedFile>`，`ResolvedFile = { attachmentId, ref, mime, size, width, height, filename }`：
 
-- `asset:<id>`：核心经 `findConversationAsset` 解析。
+- `asset:<前缀>`：在本轮可见集合（§2.2）中按前缀查找；无匹配返回 `FILE_NOT_FOUND`，多个匹配返回 `AMBIGUOUS_ASSET` 并列出各自更长的前缀。可见集合是 `asset:` 的唯一权限边界，集合外的 asset（其他分支、其他会话、其他用户）一律 `FILE_NOT_FOUND`，不泄露存在性。
 - 其他 scheme：`ctx.serial('file/resolve', ref, turn)`，取第一个非空结果；无人认领返回 `UNSUPPORTED_SCHEME`。钩子自行负责其 scheme 的权限校验。
 
-`turn` 携带 `userId`、`conversationId`、`projectId` 与本轮工具 id 列表。接受文件的工具（`view_file`、`analyze_file`、`generate_image.reference_images`、`copy_file` 的来源）全部经此函数解析，不直接依赖任何提供方插件。
+`turn` 携带 `userId`、`conversationId`、`projectId`、本轮工具 id 列表与可见集合。接受文件的工具全部经此函数解析，不直接依赖任何提供方插件：`view_file`、`analyze_file`、`generate_image.reference_images`，以及 workspace-files 工具中接受 `asset:` 的参数（§4）。
 
-错误码：`INVALID_FILE_REF`、`UNSUPPORTED_SCHEME`、`FILE_NOT_FOUND`、`UNSUPPORTED_FILE`。
+错误码：`INVALID_FILE_REF`、`UNSUPPORTED_SCHEME`、`FILE_NOT_FOUND`、`AMBIGUOUS_ASSET`、`UNSUPPORTED_FILE`。
 
 ### 3.3 交付给当前模型
 
 核心函数 `deliverFile(runtime, file)`：
 
-- 当前模型能读该 MIME（§6.3 的判定）：返回工具回执 `{ file, mime, message }`，并以保留键 `__attachments` 交出 attachment id，文件随后作为 user 消息交付（§7.2）。
+- 当前模型能读该 MIME（§6.3 的判定）：返回工具回执 `{ file: 'asset:<前缀>', mime, message }`，并以保留键 `__attachments` 交出 attachment id，文件随后作为 user 消息交付（§7.2）；该 asset 加入本轮可见集合。
 - 否则返回 `UNSUPPORTED_FILE`；本轮工具含 `analyze_file` 且文件理解模型能读该 MIME 时，错误信息建议 `analyze_file` 并给出原引用。
 
 `view_file` 与 `read_file` 的二进制分支共用它。
@@ -66,12 +77,22 @@
 
 - 挂载只有 `/conversation` 与 `/project`；不存在只读投影挂载。
 - 注册 `file/resolve` 钩子：本轮工具含 workspace-files 工具时认领 `vfs:`，解析为该文件当前版本的 attachment，按挂载作用域校验权限；否则返回 undefined。
+- 路径参数同时接受裸路径与 `vfs:` 写法（`/project/a.md` ≡ `vfs:/project/a.md`）；结果中的路径为裸路径。
+- 各工具对 `asset:` 的处理（asset 不可变）：
+
+  | 工具 / 参数 | `asset:` |
+  |---|---|
+  | `read_file` | 经 `resolveFileRef` → `deliverFile` |
+  | `copy_file` 的 `from` | 经 `resolveFileRef` |
+  | `write_file`、`edit_file`、`rename_file`、`delete_file`、`copy_file` 的 `to` | `READ_ONLY`，提示先 `copy_file` 到工作区 |
+  | `restore_file`、`list_files`、`preview_file` | `INVALID_PATH` |
+
 - 工作区文件可为二进制，按当前版本的 `mime` 区分（非 `text/*` 即二进制）：
   - `read_file`：文本照旧（行号、`offset`/`limit`、`version`、`unchanged`）；二进制经 `deliverFile` 交付，`offset`/`limit` 不适用。
   - `write_file` / `edit_file`：目标为二进制时返回 `BINARY_FILE`。
-  - `rename` / `delete_file` / `restore_file`：不区分类型。
-- `copy_file(from, to)`：`from` 为文件引用（经 `resolveFileRef`），`to` 为 VFS 路径。新文件版本 1 直接指向来源的 attachment，不复制字节；`to` 已存在时返回 `FILE_ALREADY_EXISTS`。
-- 附件引用检查（`attachmentInUse`）覆盖 `tool_result.attachments`，与 `attachment_id` 一样按 `json_each` 精确匹配。
+  - `rename_file` / `delete_file` / `restore_file`：不区分类型。
+- `copy_file(from, to)`：`from` 为文件引用或 VFS 路径，`to` 为 VFS 路径。新文件版本 1 直接指向来源的 attachment，不复制字节；`to` 已存在时返回 `FILE_ALREADY_EXISTS`。
+- 附件引用检查（`attachmentInUse`）覆盖 `tool_result.attachments` 与 `task_notification.attachments`，与 `attachment_id` 一样按 `json_each` 精确匹配。
 
 ## 5. 文件理解插件
 
@@ -124,9 +145,9 @@
 
 附件标注始终加入，不随本轮工具变化：
 
-- 用户上传：`[image asset:123 "cat.png"]`、`[file asset:124 "report.pdf" application/pdf]`，无文件名时省略引号部分。
-- 模型直接生成的图片（不回放像素）：`[generated image asset:130]`。
-- 任务通知摘要：`Generated 2 image(s): asset:130, asset:131`。
+- 用户上传：`[image asset:3f9a2c1e "cat.png"]`、`[file asset:b41d07a9 "report.pdf" application/pdf]`，无文件名时省略引号部分。
+- 模型直接生成的图片（不回放像素）：`[generated image asset:5c2e8f10]`。
+- 任务通知摘要：`Generated 2 image(s): asset:5c2e8f10, asset:9a01d3c4`，产物 attachment id 同时记入 part 的 `attachments`。
 
 当前模型不能读的用户附件：保留标注，文件 part 替换为一句不可读说明；本轮工具含 `analyze_file` 时说明中提示用它。历史回放按同一判定，切换模型后不重放不受支持的文件。
 
@@ -135,7 +156,7 @@
 ### 7.2 工具结果中的文件
 
 - 工具输出用保留键 `__attachments` 交出 attachment id；累加器将其移到 `tool_result.attachments`，不写入 `content`。
-- `buildModelMessages` 在含这些结果的 tool 消息后紧跟 user 消息，每个结果一组：`<tool_attachment call_id="…">`、文件 part、`</tool_attachment>`。本轮由 `prepareStep` 追加，历史由同一构造器重建，两者逐字节一致（前缀缓存）。
+- `buildModelMessages` 在含这些结果的 tool 消息后紧跟 user 消息，每个结果一组：`<tool_attachment call_id="…" asset="3f9a2c1e">`、文件 part、`</tool_attachment>`。本轮由 `prepareStep` 追加，历史由同一构造器重建，两者逐字节一致（前缀缓存）。
 - 并行调用：该批工具回执全部返回后再追加 user 消息。
 - 历史回放时当前模型不能读该文件：包装内以引用、MIME 与不可读说明替代文件 part。
 
@@ -171,7 +192,7 @@
 | 当前项目 | `/project` | 这个 Project 下的所有会话都能读到。 | 下载、删除、打包 |
 
 - 附件组为空时不显示；组内平铺，与文件树行同一行样式。
-- 行：图片为缩略图，PDF / 音频 / 视频为类型图标，文本沿用语言图标；名称为原始文件名，生成图为「图片 · 时间」；元信息为大小，图片附尺寸。附件行悬停显示 `asset:<id>`，工作区文件行悬停显示 `vfs:<路径>`。
+- 行：图片为缩略图，PDF / 音频 / 视频为类型图标，文本沿用语言图标；名称为原始文件名，生成图为「图片 · 时间」；元信息为大小，图片附尺寸。附件行悬停显示 `asset:<前缀>`，工作区文件行悬停显示 `vfs:<路径>`。
 - 预览统一由 `WorkspaceFilePreview` 承担，入参 `{ kind: 'file', id } | { kind: 'asset', attachmentId }`：文本沿用现有渲染；图片直接显示；PDF 用浏览器内置阅读器；音视频用播放器。
 - 刷新：本会话 `isStreaming` 状态切换时与手动刷新按钮；不监听消息内容。
 - 附件接口属于核心 API（`GET /api/conversations/:id/assets`），不经 workspace-files 插件路由。
@@ -189,8 +210,9 @@
 
 ## 11. 验证
 
-- asset 权限：别的用户、别的会话、已删除产物的 id 在 `asset:` 下均为 `FILE_NOT_FOUND`。
-- 文件引用：裸路径、未知 scheme、本轮无 VFS 时的 `vfs:` 均报对应错误；VFS 钩子可解析复制进 `/project` 的二进制文件。
+- asset 可见集合：别的用户、别的会话、其他分支上的 asset 在 `asset:` 下均为 `FILE_NOT_FOUND`；任务通知产物与本轮交付的文件可引用；前缀冲突返回 `AMBIGUOUS_ASSET`；模型可见文本中不出现自增 id。
+- 文件引用：未知 scheme、格式错误、只接受引用的工具收到裸路径、本轮无 VFS 时的 `vfs:` 均报对应错误；VFS 钩子可解析复制进 `/project` 的二进制文件。
+- workspace-files 工具：裸路径与 `vfs:` 等价；`read_file(asset:)` 交付文件；写入类工具对 `asset:` 返回 `READ_ONLY`。
 - `copy_file` 从 `asset:` 与 `vfs:` 复制，新文件共享 attachment；删除并清理副本不删除仍被消息引用的字节；`tool_result.attachments` 引用的字节不被清理。
 - `read_file` / `view_file` 交付：能读时回执 + 包装 user 消息，本轮与历史重建一致，并行调用顺序正确，Anthropic 合并相邻 user 消息后工具结果块在前；不能读时的错误与 `analyze_file` 建议条件正确。
 - `write_file` / `edit_file` 对二进制返回 `BINARY_FILE`。

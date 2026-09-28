@@ -111,7 +111,7 @@ Workflow 结束一个 `source = 'tool'` 的 run 后调用 `settleTask`：
 
 | 状态 | 摘要 |
 |---|---|
-| completed | `Generated N image(s): asset:31, asset:32`（attachment id） |
+| completed | `Generated N image(s): asset:5c2e8f10, asset:9a01d3c4`（sha256 前缀），产物 attachment id 记入通知 part 的 `attachments` |
 | failed | `Image generation failed: <run.error>` |
 | cancelled | `Cancelled by the user.` |
 
