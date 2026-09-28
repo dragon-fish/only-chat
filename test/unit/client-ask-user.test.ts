@@ -11,6 +11,8 @@ import { canContinueToolMessage, hasPendingToolCalls, pendingHumanCalls } from '
 import { useSyncStore } from '@/client/stores/sync'
 import type { Message } from '@/shared/models'
 import { TooltipProvider } from '@/client/ui/tooltip'
+import { api } from '@/client/lib/api'
+import { DEFAULT_UPLOAD_POLICY } from '@/shared/upload-policy'
 
 const input: AskUserInput = {
   questions: [
@@ -238,6 +240,7 @@ describe('ask_user answer serialization', () => {
   })
 
   it('replaces the composer input without discarding its draft', async () => {
+    vi.spyOn(api, 'siteConfig').mockResolvedValue({ allowRegister: false, uploads: DEFAULT_UPLOAD_POLICY })
     const replaced = ref(false)
     const root = document.createElement('div')
     document.body.append(root)
@@ -245,7 +248,7 @@ describe('ask_user answer serialization', () => {
       render: () => h(TooltipProvider, null, { default: () => h(Composer, {
         streaming: false, connected: true, canSend: true, replaced: replaced.value,
       }, { replacement: () => h('div', { 'data-test': 'questionnaire-slot' }, 'questionnaire') }) }),
-    })
+    }).use(createPinia())
     app.mount(root)
     const textarea = root.querySelector<HTMLTextAreaElement>('textarea')!
     textarea.value = '保留这段草稿'
@@ -373,4 +376,7 @@ describe('ask_user answer serialization', () => {
 
 })
 
-afterEach(() => { document.body.innerHTML = '' })
+afterEach(() => {
+  document.body.innerHTML = ''
+  vi.restoreAllMocks()
+})
