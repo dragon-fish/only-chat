@@ -129,11 +129,16 @@ allow-lists and reasoning stay on their normal path.
 
 ### Attachments and generated images
 
-R2 is the only durable store for image bytes. A model's image output is validated, hashed and written
-to R2 before anything else sees it (`hub/generated-images.ts`), so D1 JSON, the DO snapshot and every
-WebSocket frame carry an `attachment_id` and never base64, raw bytes or a provider URL. What actually
-gets sent upstream — a provider file id, a URL, or inline bytes — is decided per turn by
-`hub/attachment-transport.ts` together with `llm/files/`.
+R2 is the only durable store for file bytes — uploads, generated images and binary workspace files. A
+model's image output is validated, hashed and written to R2 before anything else sees it
+(`hub/generated-images.ts`), so D1 JSON, the DO snapshot and every WebSocket frame carry an
+`attachment_id` and never base64, raw bytes or a provider URL. What actually gets sent upstream — a
+provider file id, a URL, or inline bytes — is decided per turn by `hub/attachment-transport.ts`
+together with `llm/files/`.
+
+The model never sees an `attachment_id`: it names files as `asset:<sha256 prefix>` or through a
+plugin scheme such as `vfs:`, and every tool that takes a file goes through `resolveFileRef` /
+`deliverFile` in `src/server/plugins/file-refs/`.
 
 ### Feature plugins
 

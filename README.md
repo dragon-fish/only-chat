@@ -11,7 +11,7 @@ Personal AI chat on Cloudflare Workers. Every device sees the same conversations
 - Prompt, model and reasoning are configurable *before* the first message: the draft and the first
   message create the Conversation in one command.
 - Tree-shaped messages: editing or regenerating creates a sibling, with a branch switcher on the bubble.
-- Text (markdown), pasted/dropped images, PDF, audio and video uploads (site-configurable formats and size, 20 MiB by default), model-generated images, collapsible reasoning blocks.
+- Text (markdown), pasted/dropped images, PDF, audio and video uploads (site-configurable formats and size, 20 MiB by default, 50 MiB at most), model-generated images, collapsible reasoning blocks.
 - Desktop turn navigation uses a slim rail beside the transcript: hover for a question/reply
   preview, click to jump, or scroll the rail independently in long conversations. Mobile uses
   an outline button. Both mark the turn currently being read.
@@ -52,7 +52,9 @@ Directives at the start of the newest user message shape the reply:
 | `/error [message]` | a provider failure |
 | `/slow [ms]` | text streamed with a delay between chunks |
 
-Anything else — including a malformed directive — streams ordinary generated text.
+Anything else — including a malformed directive — streams ordinary generated text. A file a tool
+delivers arrives as a user message of its own; the mock skips those, so a script of several
+`/tool_call` steps keeps going after a delivery.
 
 The `mock-image` model serves Image Studio: each run downloads a placeholder photo from
 `picsum.photos` at the requested size (the dev server needs direct internet access for this; it does
@@ -185,7 +187,8 @@ metadata overrides take precedence, including explicit false, zero and nullable 
 refreshes never add models: remote `/models` results and manual entries determine membership.
 
 `reasoning_options` controls available effort levels and whether explicit reasoning disablement is
-supported. `modalities` describes image input and output; `tool_call` describes tool support.
+supported. `modalities` describes input (`image`, `pdf`, `audio`, `video`) and image output — an
+input it does not declare is one the model is never sent; `tool_call` describes tool support.
 Reasoning settings affect the current request only. Returned reasoning and its provider metadata
 are stored and replayed regardless of the toggle or capability metadata.
 
@@ -219,36 +222,101 @@ With it on:
   invalidated pointers are removed and old credentials are never retained for retries.
 - Expired pointers never participate in generation. Cleanup never deletes R2 originals.
 
-## File understanding
+## Files
 
-Settings → 全局服务模型 includes a file understanding model and an editable system instruction.
-`analyze_file(path, question?)` delegates an uploaded or generated attachment to that model and
-returns its detailed text analysis. The question travels separately from the system instruction.
+### Uploads
+
+Chat uploads accept PNG, JPEG, WebP, GIF, PDF, MP3, WAV, Ogg audio, FLAC, M4A, WebM audio/video,
+MP4 and QuickTime video. Uploading is independent of model capabilities. PDFs appear as file cards
+with open and download links; audio and video use browser players with download links. The
+attachment route answers `Range` requests (`206`), which media seeking needs.
+
+Administrators configure the allowed formats and the per-file size limit in `/admin/settings`:
+every supported format and 20 MiB by default, 50 MiB at most, and an empty format list turns chat
+uploads off. The policy covers chat attachments only — Project icons and other uploads are not
+subject to it. Every upload, including deduplication, checks the current policy; existing
+downloads remain available. Files are checked against their container signatures, and a message
+part must name an attachment of the sender with the MIME type it was stored as. No transcoding,
+frame extraction or local OCR is run.
+
+### Asset references
+
+Every file of a conversation — uploaded or generated — is an immutable asset. The model knows it by
+the first 8 hex digits of its SHA-256, and only by that: attachment ids never appear in model-visible
+text. Labels are added to every turn regardless of which tools are on:
+
+    [image asset:3f9a2c1e "cat.png"]                          an uploaded image
+    [file asset:b41d07a9 "report.pdf" application/pdf]        an uploaded PDF, audio or video
+    [generated image asset:5c2e8f10]                          an image the chat model produced
+    Generated 2 image(s): asset:5c2e8f10, asset:9a01d3c4      a generate_image task notification
+
+`asset:<prefix>` resolves only against the assets on the branch the model is answering — the path
+from the root to the current message, plus files delivered earlier in the same turn. An asset on
+another branch, in another conversation or of another user is `FILE_NOT_FOUND`, never a hint that it
+exists; a prefix matching two assets is `AMBIGUOUS_ASSET` and lists longer prefixes.
+
+Every tool that takes a file resolves it through one function. `asset:` is the core scheme; any other
+scheme is offered to plugins through the `file/resolve` hook, and the first to claim it answers and
+enforces its own permissions. An unknown scheme or a malformed reference is an error, never a guess.
+
+### Delivery to the model
+
+A model reads a file only if its metadata declares that input modality (`image`, `pdf`, `audio`,
+`video`) **and** its protocol adapter can encode it: Responses and Anthropic carry images and PDFs,
+Chat Completions adds MP3/WAV audio and video, Vertex-compatible carries all four. An undeclared
+modality means the model cannot read the file — there is no optimistic attempt. Audio and video
+travel inline; native Files references are used for images and PDFs where configured. DashScope
+endpoints receive audio as a complete Data URL rather than bare Base64, as their compatible API
+requires.
+
+A user attachment the current model cannot read keeps its label, with a sentence saying so in place
+of the file. History follows the same check when switching models, so a file the new model cannot
+read is not replayed.
+
+`read_file` on a binary file or an `asset:` reference, and `view_file`, deliver the file itself: the
+tool result is a short receipt (`{ file, mime, message }`), and the file follows in a user message
+wrapped in `<tool_attachment call_id="…" asset="…">` … `</tool_attachment>`. Parallel calls finish
+all their receipts before the file messages are appended, and the history rebuilds the same bytes.
+Tool results never contain attachment ids, base64 or bytes. A file the model cannot read is an
+`UNSUPPORTED_FILE` error, which suggests `analyze_file` only when that tool is enabled and its
+service model can read the file.
+
+### Workspace files
+
+The workspace-files plugin keeps model-written files under `/conversation` and `/project` and
+provides the `vfs:` scheme (`vfs:/project/refs/cat.png`): it claims `vfs:` references while the
+turn has workspace tools, checking the mount's scope. Path arguments accept a bare path or its
+`vfs:` form interchangeably.
+
+Workspace files can be binary; anything whose type is not `text/*` is. `copy_file(from, to)` copies
+an asset or another workspace file into the workspace — the new file points at the same stored bytes
+rather than duplicating them. `read_file` delivers a binary file as above; `write_file` and
+`edit_file` refuse one with `BINARY_FILE`. Assets are immutable: tools that would change an
+`asset:` reference answer `READ_ONLY` and point to `copy_file`.
+
+The file panel lists 当前会话, 本会话的附件 (the conversation's uploads and generated files across all
+branches, read-only) and 当前项目. Hovering a row shows the `asset:` or `vfs:` reference to cite
+in chat.
+
+### File understanding
+
+The `file_understanding` plugin provides two tools, neither depending on workspace files:
+
+- `view_file({ file })` delivers the file to the current model, as `read_file` does.
+- `analyze_file({ file, question? })` hands the file to the file understanding model and returns
+  `{ file, mime, model, text, truncated }`. Use it for a file the chat model cannot read, or for a
+  careful second reading.
+
+Settings → 全局服务模型 selects the file understanding model and edits its system instruction. The
+question travels separately from the instruction; without one, the model describes the file fully.
 The default instruction focuses on detailed visual descriptions and preserves transcribed text in
-its original language. Existing custom prompts remain unchanged; the conversation naming default
-uses the Task / Guidelines / Output Examples format.
-
-Uploads accept PNG, JPEG, WebP, GIF, PDF, MP3, WAV, Ogg audio, FLAC, M4A, WebM audio/video, MP4 and
-QuickTime video. Uploading is independent of model capabilities. PDFs appear as downloadable file
-cards; audio and video use browser players with download links. Administrators configure allowed formats and the per-file size limit in `/admin/settings` (20 MiB by default). Every upload, including deduplication, checks the current policy; existing downloads remain available. Files are checked against their container signatures. No transcoding, frame extraction or local OCR is run.
-
-`read_file` returns text directly. Supported non-text files follow a short tool receipt as a user
-message containing `<read_file_result id="…">`, the file part, and the closing tag. The receipt's
-`request_id` is stable across history replay. Tool results never contain file IDs, base64 or bytes.
-Concurrent tool receipts finish before the file messages are appended.
-
-Model modalities and protocol serialization capabilities both govern delivery. Unsupported user
-attachments remain visible to the model as paths and MIME types; `read_file` reports an error.
-Both suggest `analyze_file` only when that tool is enabled and its service model supports the file.
-If neither model can read the file, the limitation is explicit. Historical attachments follow the
-same checks when switching models. Analysis is an explicit tool call, not an automatic upload hook.
-Audio/video travel inline; native Files references continue to be used for images and PDFs where
-configured. Chat Completions audio encoding supports MP3/WAV; Anthropic and Responses support images/PDFs on these adapters; audio/video use Chat Completions or Vertex-compatible interfaces with matching model capabilities.
-The configured provider still determines which formats its model accepts. DashScope endpoints receive audio as a complete Data URL rather than bare Base64, as required by their compatible API.
+its original language. A prompt equal to its default is stored as unset, so a changed default takes
+effect. The analysis is stored as an ordinary tool result: replaying history does not analyse again.
 
 ## Images
 
-R2 is the only durable store for image bytes, uploaded and generated alike. A model's image output
+R2 is the only durable store for file bytes — uploads, generated images and binary workspace files
+alike; everything else carries an `attachment_id`. A model's image output
 is validated, hashed, written to R2 and reduced to an `attachment_id` *before* anything else sees
 it, so D1 message JSON, the Durable Object's in-flight snapshot and every WebSocket frame carry the
 id and nothing else — never base64, never raw bytes, never the provider's temporary URL. Identical
@@ -302,6 +370,8 @@ Design notes: `docs/superpowers/specs/2026-09-05-only-chat-mvp-design.md` and
 interfaces, catalog metadata, reasoning and file lifecycle behavior.
 `docs/superpowers/specs/2026-09-08-user-auth-and-conversation-naming-design.md` defines
 authentication, authorization, account administration, and Conversation naming.
+`docs/superpowers/specs/2026-09-28-conversation-files-design.md` defines assets, file references,
+binary workspace files and file understanding.
 
 ## Known gaps
 
@@ -311,4 +381,3 @@ authentication, authorization, account administration, and Conversation naming.
 - **Anthropic model listing only reads the first page.** `fetch-models` calls `GET /models` once
   and ignores `has_more`/pagination, so an Anthropic account with more models than fit on one page
   will only import the first page's worth.
-- **Generated images are read on demand.** The model receives their `/artifacts` paths when file or image tools are enabled; `read_file` delivers the image when supported, and `analyze_file` can provide a text description.
