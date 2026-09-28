@@ -20,10 +20,10 @@ const props = withDefaults(defineProps<{
 }>(), { search: true, lab: true, status: false, chips: true })
 const emit = defineEmits<{ 'update:modelValue': [value: Partial<ModelQuery>] }>()
 const isDesktop = useMediaQuery('(min-width: 768px)')
-const filterKeys = ['vision', 'reasoning', 'tools', 'image_output', 'enabled', 'lab_id', 'min_context', 'interface_id'] as const
+const filterKeys = ['vision', 'pdf', 'audio', 'video', 'reasoning', 'tools', 'image_output', 'enabled', 'lab_id', 'min_context', 'interface_id'] as const
 const activeFilters = computed(() => filterKeys.filter(key => props.modelValue[key] !== undefined && props.modelValue[key] !== ''))
 const labels: Record<typeof filterKeys[number], string> = {
-  vision: '视觉', reasoning: '推理', tools: '工具', image_output: '图片输出', enabled: '状态',
+  vision: '图片输入', pdf: 'PDF 输入', audio: '音频输入', video: '视频输入', reasoning: '推理', tools: '工具', image_output: '图片输出', enabled: '状态',
   lab_id: 'Lab', min_context: '上下文', interface_id: '接口',
 }
 function updateSearch(value: string | number) {

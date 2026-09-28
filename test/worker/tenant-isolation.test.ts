@@ -97,7 +97,7 @@ describe('authenticated REST tenant isolation', () => {
 
   it('isolates attachment deduplication, downloads, and object keys for identical bytes', async () => {
     const { ctx, request, client: alice, bob, bobRequest, aliceId, bobId } = await tenants()
-    const bytes = new Uint8Array([1, 2, 3, 4])
+    const bytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 1])
     const sha = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(b => b.toString(16).padStart(2, '0')).join('')
     const upload = (client: typeof bob) => client.request(`/api/attachments/${sha}`, { method: 'PUT', headers: { 'content-type': 'image/png' }, body: bytes })
     const aliceAttachment = await (await upload(alice)).json() as { attachment_id: number }

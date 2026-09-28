@@ -4,16 +4,16 @@ import { WorkspaceFiles, type Result, type WorkspaceError } from '@/server/plugi
 import type { ToolContext } from '@/server/plugins/tools'
 import { formatWorkspacePath, isProjectedMount, parseWorkspacePath } from '@/server/plugins/workspace-files/path'
 import { resolveProjected } from '@/server/plugins/workspace-files/projections'
-import { stripToolAttachments, TOOL_ATTACHMENTS_KEY } from '@/shared/parts'
+import { stripToolAttachments, TOOL_ATTACHMENT_PATHS_KEY, TOOL_ATTACHMENTS_KEY } from '@/shared/parts'
 import {
-  DELETE_FILE_TOOL_ID, LIST_FILES_TOOL_ID, PREVIEW_FILE_TOOL_ID, READ_FILE_TOOL_ID, RENAME_FILE_TOOL_ID,
+  ANALYZE_FILE_TOOL_ID, DELETE_FILE_TOOL_ID, LIST_FILES_TOOL_ID, PREVIEW_FILE_TOOL_ID, READ_FILE_TOOL_ID, RENAME_FILE_TOOL_ID,
   RESTORE_FILE_TOOL_ID, WORKSPACE_FILES_PLUGIN_ID, WRITE_FILE_TOOL_ID, EDIT_FILE_TOOL_ID,
 } from '@/shared/plugins'
 import {
-  DeleteFileInputSchema, EditFileInputSchema, ListFilesInputSchema, PreviewFileInputSchema, ReadFileInputSchema,
+  AnalyzeFileInputSchema, type ReadAttachmentOutput, DeleteFileInputSchema, EditFileInputSchema, ListFilesInputSchema, PreviewFileInputSchema, ReadFileInputSchema,
   RenameFileInputSchema, RestoreFileInputSchema, WriteFileInputSchema,
   type DeleteFileOutput, type EditFileOutput, type ListFilesOutput, type PreviewFileOutput,
-  type ReadFileOutput, type ReadFileUnchangedOutput, type ReadImageOutput,
+  type ReadFileOutput, type ReadFileUnchangedOutput,
   type RenameFileOutput, type RestoreFileOutput, type WriteFileOutput, type WorkspaceToolError,
 } from '../shared'
 import { absolutePreviewUrl, PREVIEW_TICKET_TTL_SECONDS, previewTypeFor, previewUrlFor } from './preview'
@@ -31,7 +31,7 @@ const MESSAGES: Record<WorkspaceError, string> = {
   INVALID_UTF8: 'Content must be valid UTF-8 text.',
   READ_RANGE_TOO_LARGE: 'That range is past the end of the file, or too large to return. Use a smaller offset and limit.',
   NO_MATCH: 'That text is not in the file. Copy it from read_file exactly, without the line numbers printed in front of each line, and keep the original indentation.',
-  READ_ONLY: '/artifacts and /uploads show images this conversation already has and cannot be changed. Write your own files under /conversation or /project.',
+  READ_ONLY: '/artifacts and /uploads show attachments this conversation already has and cannot be changed. Write your own files under /conversation or /project.',
   AMBIGUOUS_MATCH: 'That text appears in more than one place, and editing the first of several is the one outcome nobody can review. Include enough surrounding lines to name a single place, or pass replaceAll to change all of them.',
 }
 
@@ -160,6 +160,26 @@ export const WorkspaceFilesServerPlugin = {
       },
     }))
 
+    ctx.tools.register(WORKSPACE_FILES_PLUGIN_ID, ANALYZE_FILE_TOOL_ID, runtime => tool({
+      description: 'Ask the configured file understanding model to describe an image, PDF, audio or video in detail. Pass its /uploads or /artifacts path and optionally a question. Use read_file for plain text. You may delegate even when you can read the file directly.',
+      inputSchema: AnalyzeFileInputSchema,
+      async execute({ path, question }) {
+        const parsed = parseWorkspacePath(path)
+        if (parsed.ok && !isProjectedMount(parsed.value.mount)) return { error: 'UNSUPPORTED_FILE', message: 'This is a text workspace. Use read_file for text.' }
+        const file = await resolveProjected(runtime.db, runtime.userId, runtime.conversationId, path)
+        if (!file) return { error: 'FILE_NOT_FOUND', message: MESSAGES.FILE_NOT_FOUND }
+        if (!runtime.fileUnderstanding) return { error: 'SERVICE_UNAVAILABLE', message: 'Configure an enabled file understanding model in service model settings.' }
+        if (!runtime.fileUnderstanding.canRead(file.mime)) return { error: 'UNSUPPORTED_FILE', message: `The file understanding model or its interface cannot read ${file.mime}.` }
+        try {
+          const result = await runtime.fileUnderstanding.analyze(file.attachmentId, question, runtime.signal)
+          return { path, mime: file.mime, ...result }
+        } catch (error) {
+          if (runtime.signal.aborted) throw error
+          return { error: 'ANALYSIS_FAILED', message: error instanceof Error ? error.message : String(error) }
+        }
+      },
+    }))
+
     ctx.tools.register(WORKSPACE_FILES_PLUGIN_ID, READ_FILE_TOOL_ID, runtime => tool({
       description: [
         'Read a UTF-8 text file from the workspace. Results are returned using cat -n format, with line numbers starting at 1, so you can cite positions back — strip that prefix before passing text to edit_file.',
@@ -169,21 +189,28 @@ export const WorkspaceFilesServerPlugin = {
         'Keep the version from the result: write_file needs it to replace this file.',
         'Reading a file this turn already read whole, with nothing written to it since, answers `unchanged` instead of the content — the earlier result is still above you and says what the file holds.',
         'Do not re-read a file immediately after write_file returned its metadata — you already have the version and line count.',
-        'Images under /artifacts (generated in this conversation) and /uploads (sent by the user) are shown to you as images when you read them; offset and limit do not apply.',
+        'Non-text files under /artifacts and /uploads follow the tool receipt in a user message tagged with its request_id. Unsupported inputs return an error and, when available, suggest analyze_file. offset and limit only apply to text.',
       ].join(' '),
       inputSchema: ReadFileInputSchema,
       // The model reads the output without the reserved key; the images arrive in the message after it.
       toModelOutput: ({ output }) => ({ type: 'json', value: stripToolAttachments(output) as never }),
-      async execute(input): Promise<ReadFileOutput | ReadFileUnchangedOutput | ReadImageOutput | WorkspaceToolError> {
+      async execute(input): Promise<ReadFileOutput | ReadFileUnchangedOutput | ReadAttachmentOutput | WorkspaceToolError> {
         const target = parseWorkspacePath(input.path)
         if (target.ok && isProjectedMount(target.value.mount)) {
           const image = await resolveProjected(runtime.db, runtime.userId, runtime.conversationId, input.path)
           if (!image) return { error: 'FILE_NOT_FOUND', message: MESSAGES.FILE_NOT_FOUND }
-          const facts = { path: image.path, mime: image.mime, width: image.width, height: image.height, fileSize: image.size }
-          if (!runtime.acceptsImages) {
-            return { ...facts, image: 'unsupported', message: 'This model cannot view images.' }
+          const supported = runtime.canReadFile?.(image.mime) ?? (runtime.acceptsImages && image.mime.startsWith('image/'))
+          if (!supported) {
+            const suggestion = runtime.toolIds?.includes(ANALYZE_FILE_TOOL_ID) && runtime.fileUnderstanding?.canRead(image.mime)
+              ? ` Use analyze_file with path ${input.path} and an optional question.` : ''
+            return { error: 'UNSUPPORTED_FILE', message: `The current model cannot read ${image.mime}.${suggestion}` }
           }
-          return { ...facts, image: 'shown', message: 'The image follows this result.', [TOOL_ATTACHMENTS_KEY]: [image.attachmentId] } as ReadImageOutput
+          return {
+            request_id: crypto.randomUUID(), message: 'The file follows in a user message with the matching read_file_result id.',
+            [TOOL_ATTACHMENTS_KEY]: [image.attachmentId],
+            [TOOL_ATTACHMENT_PATHS_KEY]: { [image.attachmentId]: image.path },
+          } as ReadAttachmentOutput
+
         }
         const { files, scope } = servicesFor(runtime)
         const result = await files.read({ path: input.path, offset: input.offset, limit: input.limit, ...scope })

@@ -1,6 +1,6 @@
 import type { PluginManifest } from '@/shared/plugins'
 import {
-  DELETE_FILE_TOOL_ID, EDIT_FILE_TOOL_ID, LIST_FILES_TOOL_ID, PREVIEW_FILE_TOOL_ID, READ_FILE_TOOL_ID,
+  ANALYZE_FILE_TOOL_ID, DELETE_FILE_TOOL_ID, EDIT_FILE_TOOL_ID, LIST_FILES_TOOL_ID, PREVIEW_FILE_TOOL_ID, READ_FILE_TOOL_ID,
   RENAME_FILE_TOOL_ID, RESTORE_FILE_TOOL_ID, WORKSPACE_FILES_PLUGIN_ID, WRITE_FILE_TOOL_ID,
 } from '@/shared/plugins'
 import { WORKSPACE_FILES_CONFIG_SCHEMA } from './shared'
@@ -10,6 +10,7 @@ const manifest = {
   name: '工作区文件',
   description: '让模型在 Project 与会话中读写持久化的文本文件。写入会保留历史版本。',
   tools: [
+    { id: ANALYZE_FILE_TOOL_ID, name: '分析文件', description: '委托文件理解模型详细描述图片、PDF、音频或视频，可附带问题。' },
     {
       id: LIST_FILES_TOOL_ID,
       name: '列出文件',

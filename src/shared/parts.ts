@@ -13,6 +13,12 @@ export const ImagePartSchema = z.object({
   attachment_id: z.number().int(),
   artifact_id: z.number().int().optional(),
 })
+export const FilePartSchema = z.object({
+  type: z.literal('file'),
+  attachment_id: z.number().int(),
+  mime: z.string().min(1),
+  filename: z.string().max(255).optional(),
+})
 export const ReasoningPartSchema = z.object({
   type: z.literal('reasoning'),
   text: z.string(),
@@ -38,11 +44,12 @@ export const ToolResultPartSchema = z.object({
   name: z.string(),
   content: z.unknown(),
   /**
-   * Images the tool showed the model. They reach it as a user message right after the tool results,
+   * Files the tool showed the model. They reach it as user messages right after the tool results,
    * not inside them: a tool result can only carry base-64, resent on every later turn, and one
    * protocol cannot carry it at all.
    */
   attachments: z.array(z.number().int()).optional(),
+  attachment_paths: z.record(z.string(), z.string()).optional(),
   providerOptions: ProviderOptionsSchema.optional(),
 })
 
@@ -62,6 +69,7 @@ export const TaskNotificationPartSchema = z.object({
 export const PartSchema = z.discriminatedUnion('type', [
   TextPartSchema,
   ImagePartSchema,
+  FilePartSchema,
   ReasoningPartSchema,
   ToolCallPartSchema,
   ToolResultPartSchema,
@@ -70,6 +78,7 @@ export const PartSchema = z.discriminatedUnion('type', [
 export const PartsSchema = z.array(PartSchema)
 
 export type TextPart = z.infer<typeof TextPartSchema>
+export type FilePart = z.infer<typeof FilePartSchema>
 export type ImagePart = z.infer<typeof ImagePartSchema>
 export type ReasoningPart = z.infer<typeof ReasoningPartSchema>
 export type ToolCallPart = z.infer<typeof ToolCallPartSchema>
@@ -82,14 +91,16 @@ export type Part = z.infer<typeof PartSchema>
  * `toolResultPart` lifts it onto the part, so it never persists inside `content`.
  */
 export const TOOL_ATTACHMENTS_KEY = '__attachments'
+export const TOOL_ATTACHMENT_PATHS_KEY = '__attachment_paths'
 
 export function toolResultPart(callId: string, name: string, output: unknown): ToolResultPart {
   if (output === null || typeof output !== 'object' || Array.isArray(output) || !(TOOL_ATTACHMENTS_KEY in output)) {
     return { type: 'tool_result', call_id: callId, name, content: output }
   }
-  const { [TOOL_ATTACHMENTS_KEY]: ids, ...content } = output as Record<string, unknown>
+  const { [TOOL_ATTACHMENTS_KEY]: ids, [TOOL_ATTACHMENT_PATHS_KEY]: rawPaths, ...content } = output as Record<string, unknown>
   const attachments = Array.isArray(ids) ? ids.filter((id): id is number => Number.isSafeInteger(id)) : []
-  return { type: 'tool_result', call_id: callId, name, content, ...(attachments.length ? { attachments } : {}) }
+  const paths = z.record(z.string(), z.string()).safeParse(rawPaths)
+  return { type: 'tool_result', call_id: callId, name, content, ...(attachments.length ? { attachments } : {}), ...(paths.success ? { attachment_paths: paths.data } : {}) }
 }
 
 /**

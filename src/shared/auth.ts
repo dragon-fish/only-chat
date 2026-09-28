@@ -1,15 +1,18 @@
 import { z } from 'zod'
+import { UploadPolicySchema, type UploadPolicy } from './upload-policy'
 
 /** `GET /api/site-config`: every site-wide setting in one response. */
 export interface SiteConfig {
   allowRegister: boolean
+  uploads: UploadPolicy
   /** Present only for the owner: whether the deployment enables the owner audit pages. */
   audit?: boolean
 }
 
-export const AdminSiteSettingsSchema = z.object({ allowRegister: z.boolean(), source: z.enum(['db', 'env', 'default']) })
+export const AdminSiteSettingsSchema = z.object({ allowRegister: z.boolean(), source: z.enum(['db', 'env', 'default']), uploads: UploadPolicySchema })
 export type AdminSiteSettings = z.infer<typeof AdminSiteSettingsSchema>
-export const AdminSiteSettingsUpdateSchema = z.object({ allowRegister: z.boolean().nullable() }).strict()
+export const AdminSiteSettingsUpdateSchema = z.object({ allowRegister: z.boolean().nullable().optional(), uploads: UploadPolicySchema.nullable().optional() }).strict()
+  .refine(value => value.allowRegister !== undefined || value.uploads !== undefined, 'No settings supplied')
 export type AdminSiteSettingsUpdate = z.infer<typeof AdminSiteSettingsUpdateSchema>
 
 export const AuthRoleSchema = z.enum(['user', 'admin'])

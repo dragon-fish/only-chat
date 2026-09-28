@@ -45,6 +45,8 @@ export async function createImageRun(ctx: Context, userId: number, input: Create
   const references = await Promise.all(input.reference_attachment_ids.map(id => getAttachment(db, id, userId)))
   if (references.some(value => value === undefined)) throw new ArtifactRunInputError('reference attachment not found', 404)
 
+  if (references.some(value => !value!.mime.startsWith('image/'))) throw new ArtifactRunInputError('reference must be an image')
+
   const createdConversation = input.conversation_id === undefined
   let conversation = input.conversation_id === undefined
     ? await createConversation(db, {

@@ -34,6 +34,9 @@ export interface ToolContext {
   signal: AbortSignal
   /** Whether the generating model declares image input, so a tool knows if a picture is worth sending. */
   acceptsImages: boolean
+  canReadFile?: (mime: string) => boolean
+  fileUnderstanding?: import('../hub/file-understanding').FileUnderstanding
+  toolIds?: readonly string[]
   /**
    * Whether a picture survives the trip *inside a tool result*, which is a narrower question than
    * `acceptsImages` and is answered by the protocol rather than the model.

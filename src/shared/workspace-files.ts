@@ -18,3 +18,14 @@ export interface FileRecord {
   sourceConversationId: number | null
   sourceMessageId: number | null
 }
+
+/** Read-only view of an attachment already linked to this conversation. */
+export interface ProjectedFileRecord {
+  path: string
+  attachmentId: number
+  mime: string
+  size: number
+  width: number | null
+  height: number | null
+  createdAt: number
+}

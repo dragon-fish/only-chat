@@ -5,7 +5,7 @@ import type { AdminSiteSettings, AdminSiteSettingsUpdate, SiteConfig } from '@/s
 import { useAuthStore } from '@/client/stores/auth'
 import type { ArtifactDto, ArtifactPage, ArtifactRunDto, CreateImageRunInput, CreateImageRunResponse } from '@/shared/artifacts'
 import type { PluginConfigStatusMap } from '@/shared/plugins'
-import type { FileRecord } from '@/shared/workspace-files'
+import type { FileRecord, ProjectedFileRecord } from '@/shared/workspace-files'
 import { WORKSPACE_FILES_PLUGIN_ID } from '@/shared/plugins'
 
 /** A plugin's HTTP surface lives under its own id, so two plugins can never claim the same path. */
@@ -105,7 +105,7 @@ export const api = {
   refreshCatalog: () => request<CatalogRefreshStartResponse>('POST', '/api/model-catalog/refresh'),
   catalogRefreshStatus: (instanceId: string) => request<CatalogRefreshJobStatus>('GET', `/api/model-catalog/refresh/${encodeURIComponent(instanceId)}`),
   checkAttachment: (sha256: string) => request<AttachmentCheckResponse>('POST', '/api/attachments/check', { sha256 }),
-  uploadAttachment: (sha256: string, blob: Blob, w: number, h: number) =>
+  uploadAttachment: (sha256: string, blob: Blob, w = 0, h = 0) =>
     request<AttachmentUploadResponse>('PUT', `/api/attachments/${sha256}?w=${w}&h=${h}`, blob, { headers: { 'content-type': blob.type } }),
   attachmentUrl: (id: number) => `/api/attachments/${id}`,
   createImageRun: (input: CreateImageRunInput) => request<CreateImageRunResponse>('POST', '/api/artifact-runs/image', input),
@@ -118,7 +118,7 @@ export const api = {
   artifactContentUrl: (id: number, variant?: 'gallery' | 'preview') => `/api/artifacts/${id}/content${queryString({ variant })}`,
   projectFiles: (projectId: number) => request<{ files: FileRecord[] }>('GET', `${WORKSPACE_FILES_API}/projects/${projectId}/files`),
   conversationFiles: (conversationId: number) =>
-    request<{ files: FileRecord[]; projectFiles: FileRecord[]; projectId: number | null }>('GET', `${WORKSPACE_FILES_API}/conversations/${conversationId}/files`),
+    request<{ files: FileRecord[]; projectFiles: FileRecord[]; projectId: number | null; uploads: ProjectedFileRecord[]; artifacts: ProjectedFileRecord[] }>('GET', `${WORKSPACE_FILES_API}/conversations/${conversationId}/files`),
   workspaceFile: (id: number) => request<{ record: FileRecord; content: string; mime: string; previewUrl: string | null; canRenderPage: boolean }>('GET', `${WORKSPACE_FILES_API}/files/${id}`),
   // A link, not a fetch: the download is served as an attachment and the browser owns saving it.
   workspaceFileDownloadUrl: (id: number) => `${WORKSPACE_FILES_API}/files/${id}/download`,

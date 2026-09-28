@@ -88,7 +88,7 @@ describe('an image a tool shows the model', () => {
 
     const midTurn = prompts[1] as Array<{ role: string, content: Array<{ type: string, text?: string }> }>
     const toolAt = midTurn.findIndex(m => m.role === 'tool')
-    expect(midTurn[toolAt + 1]).toMatchObject({ role: 'user', content: [{ type: 'text', text: 'Image returned by peek:' }, { type: 'file', mediaType: 'image/png' }] })
+    expect(midTurn[toolAt + 1]).toMatchObject({ role: 'user', content: [{ type: 'text', text: '<read_file_result id="call-peek">' }, { type: 'file', mediaType: 'image/png' }, { type: 'text', text: '</read_file_result>' }] })
     expect(JSON.stringify(midTurn[toolAt])).not.toContain(TOOL_ATTACHMENTS_KEY)
 
     c.ws.send(JSON.stringify({

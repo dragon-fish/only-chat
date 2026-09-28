@@ -89,3 +89,18 @@ describe('model list view models', () => {
     expect(filterModelEntries(entries, { min_context: 999_999 })).toEqual([])
   })
 })
+
+describe('file modality filters', () => {
+  const entry = (id: string, input: Array<'text' | 'image' | 'pdf' | 'audio' | 'video'>) => ({
+    provider, model: { ...modelRecords[0]!, model_id: id, metadata: { modalities: { input, output: ['text' as const] } } },
+  })
+  const entries = [entry('text', ['text']), entry('pdf', ['text', 'pdf']), entry('audio', ['text', 'audio']), entry('video', ['text', 'video']), entry('all', ['text', 'pdf', 'audio', 'video'])]
+
+  it.each(['pdf', 'audio', 'video'] as const)('filters %s input independently', key => {
+    expect(filterModelEntries(entries, { [key]: true }).map(entry => entry.model.model_id)).toEqual([key, 'all'])
+  })
+
+  it('intersects selected modalities and excludes unknown capabilities', () => {
+    expect(filterModelEntries([...entries, { provider, model: { ...modelRecords[0]!, metadata: {} } }], { pdf: true, audio: true }).map(entry => entry.model.model_id)).toEqual(['all'])
+  })
+})

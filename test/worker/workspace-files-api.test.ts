@@ -3,7 +3,7 @@ import { unzipSync } from 'fflate'
 import { eq } from 'drizzle-orm'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createDb, type DB } from '@/server/db/client'
-import { attachments, conversations, pluginConfigs, projects, users, workspaceFileVersions, workspaceFiles } from '@/server/db/schema'
+import { attachments, conversations, messages, pluginConfigs, projects, users, workspaceFileVersions, workspaceFiles } from '@/server/db/schema'
 import { sweepTrash, TRASH_RETENTION_MS, WorkspaceFiles, type WorkspaceStorage } from '@/server/plugins/workspace-files/service'
 import { ensureTestUser, workerFetch, type AuthTestClient } from './auth-helper'
 
@@ -79,6 +79,20 @@ describe('workspace files REST', () => {
     const body = await response.json() as { files: unknown[], projectFiles: Array<{ path: string }> }
     expect(body.files).toEqual([])
     expect(body.projectFiles.map(file => file.path)).toEqual(['/project/report.md'])
+  })
+
+  it('includes uploaded and generated attachments as read-only projected mounts', async () => {
+    const [upload] = await f.db.insert(attachments).values({ user_id: 1, sha256: crypto.randomUUID(), mime: 'audio/mpeg', size: 42, r2_key: 'panel-audio', origin: 'upload', created_at: 0 }).returning()
+    const [image] = await f.db.insert(attachments).values({ user_id: 1, sha256: crypto.randomUUID(), mime: 'image/png', size: 50, r2_key: 'panel-image', origin: 'generated', created_at: 0 }).returning()
+    await f.db.insert(messages).values([
+      { conversation_id: f.conversationId, seq: 1, role: 'user', status: 'done', parts: [{ type: 'file', attachment_id: upload!.id, mime: 'audio/mpeg', filename: 'audio.mp3' }], created_at: 0 },
+      { conversation_id: f.conversationId, seq: 2, role: 'assistant', status: 'done', parts: [{ type: 'image', attachment_id: image!.id }], created_at: 0 },
+    ])
+    const response = await f.client.request(`${API}/conversations/${f.conversationId}/files`)
+    expect(await response.json()).toMatchObject({
+      uploads: [{ path: `/uploads/${upload!.id}.mp3`, attachmentId: upload!.id, mime: 'audio/mpeg' }],
+      artifacts: [{ path: `/artifacts/msg-${image!.id}.png`, attachmentId: image!.id }],
+    })
   })
 
   it('returns the current content for preview', async () => {

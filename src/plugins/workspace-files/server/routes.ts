@@ -6,6 +6,7 @@ import { conversations, projects } from '@/server/db/schema'
 import { WORKSPACE_FILES_PLUGIN_ID } from '@/shared/plugins'
 import { PLUGIN_API_PREFIX } from '@/server/plugins/api'
 import { parseWorkspacePath, type WorkspaceMount } from '@/server/plugins/workspace-files/path'
+import { listProjected } from '@/server/plugins/workspace-files/projections'
 import { WorkspaceFiles, type WorkspaceError } from '@/server/plugins/workspace-files/service'
 import type { FileRecord } from '@/shared/workspace-files'
 import { authUserId, type ApiEnv } from '@/server/plugins/api/auth'
@@ -181,7 +182,11 @@ export function workspaceFileRoutes(ctx: Context) {
       ? { ok: true as const, value: [] }
       : await files.listRecords('project', { conversationId, projectId: conversation.project_id })
     if (!shared.ok) return c.json({ error: shared.error }, STATUS[shared.error])
-    return c.json({ files: own.value, projectFiles: shared.value, projectId: conversation.project_id })
+    const [uploads, artifacts] = await Promise.all([
+      listProjected(db, userId, conversationId, 'uploads'),
+      listProjected(db, userId, conversationId, 'artifacts'),
+    ])
+    return c.json({ files: own.value, projectFiles: shared.value, projectId: conversation.project_id, uploads, artifacts })
   })
 
   r.get('/projects/:id/files/archive', async (c) => {

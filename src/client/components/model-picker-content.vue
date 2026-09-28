@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from 'vue'
 import { Settings2Icon, SlidersHorizontalIcon } from '@lucide/vue'
+import ModelInfo from '@/client/components/model-info.vue'
+import ModelCapabilityIcons from '@/client/components/model-capability-icons.vue'
 import LabAvatar from '@/client/components/lab-avatar.vue'
 import CollectionState from '@/client/components/collection-state.vue'
 import ModelFilterMenu from '@/client/components/model-filter-menu.vue'
@@ -9,7 +11,7 @@ import { Button } from '@/client/ui/button'
 import { Badge } from '@/client/ui/badge'
 import { InputGroupButton } from '@/client/ui/input-group'
 import { RouterLink } from 'vue-router'
-import { filterModelEntries, modelBadges, modelName, sortModelEntries, type EnabledModelEntry } from '@/client/lib/ui-models'
+import { filterModelEntries, modelName, sortModelEntries, type EnabledModelEntry } from '@/client/lib/ui-models'
 import { useConfigStore } from '@/client/stores/config'
 import { Command, CommandInput, CommandItem, CommandList } from '@/client/ui/command'
 import type { ModelRef } from '@/shared/api'
@@ -88,12 +90,10 @@ function onSelect(value: unknown) {
             Button(type="button" variant="ghost" size="icon-sm" class="size-8" :aria-label="`设置供应商 ${provider.name}`" @click.stop="emit('editProvider', provider.id)")
               Settings2Icon
           template(#default="{ entry }")
-            CommandItem(:value="keyFor(entry)" class="min-h-10 md:min-h-0")
-              LabAvatar(:model-id="entry.model.model_id" :lab-id="entry.model.lab_id" :family="entry.model.metadata.family" :provider-name="entry.provider.name" size="sm")
-              .min-w-0.flex-1
-                p.truncate {{ modelName(entry.model) }}
-                p.truncate.text-xs.text-muted-foreground {{ entry.model.model_id }}
-                .mt-1.flex.flex-wrap.gap-1
-                  Badge(v-for="badge in modelBadges(entry.model)" :key="badge.key" variant="secondary") {{ badge.label }}
-              span.sr-only {{ entry.provider.name }}
+            ModelInfo(:entry="entry")
+              CommandItem(:value="keyFor(entry)" class="min-h-10 min-w-0 gap-2 md:min-h-8")
+                LabAvatar(:model-id="entry.model.model_id" :lab-id="entry.model.lab_id" :family="entry.model.metadata.family" :provider-name="entry.provider.name" size="sm")
+                span.min-w-0.flex-1.truncate {{ modelName(entry.model) }}
+                ModelCapabilityIcons(:model="entry.model")
+                span.sr-only {{ entry.provider.name }}
 </template>

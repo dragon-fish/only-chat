@@ -8,6 +8,7 @@ function partMarkdown(message: Message, attachmentUrl: (id: number) => string): 
   return message.parts.map(part => {
     if (part.type === 'text') return part.text
     if (part.type === 'reasoning') return `<details>\n<summary>思考过程</summary>\n\n${part.text}\n\n</details>`
+    if (part.type === 'file') return `[${part.filename || part.mime}](${attachmentUrl(part.attachment_id)})`
     if (part.type === 'image') return `![图片](${attachmentUrl(part.attachment_id)})`
     if (part.type === 'task_notification') return `> 后台任务（${part.status}）：${part.text}`
     if (part.type === 'tool_call') return `**工具调用：${part.name}**\n\n\`\`\`json\n${typeof part.args === 'string' ? part.args : JSON.stringify(part.args, null, 2)}\n\`\`\``

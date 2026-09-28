@@ -102,8 +102,9 @@ export const SettingsUpdateCommandSchema = z.object({
     service_models: z.object({
       text: ModelRefSchema.nullable().optional(),
       image: ModelRefSchema.nullable().optional(),
+      file_understanding: ModelRefSchema.nullable().optional(),
     }).optional(),
-    service_prompts: z.object({ conversation_title: z.string().optional() }).optional(),
+    service_prompts: z.object({ conversation_title: z.string().optional(), file_understanding: z.string().refine(value => value.trim().length > 0, 'File understanding prompt cannot be blank').optional() }).optional(),
   }),
 })
 export const ProjectCreateCommandSchema = z.object({

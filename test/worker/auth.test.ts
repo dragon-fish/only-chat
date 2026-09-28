@@ -55,12 +55,12 @@ describe('registration policy and route protection', () => {
 
   it('keeps health and public settings available without a session', async () => {
     expect((await json('GET', '/api/health')).status).toBe(200)
-    expect(await (await json('GET', '/api/site-config')).json()).toEqual({ allowRegister: false })
+    expect(await (await json('GET', '/api/site-config')).json()).toMatchObject({ allowRegister: false })
   })
 
   it('allows administrators to change registration and create users while closed', async () => {
     const admin = await registerAndLogin()
-    expect(await (await admin.json('PUT', '/api/admin/settings', { allowRegister: false })).json()).toEqual({ allowRegister: false, source: 'db' })
+    expect(await (await admin.json('PUT', '/api/admin/settings', { allowRegister: false })).json()).toMatchObject({ allowRegister: false, source: 'db' })
     expect((await json('POST', '/api/auth/sign-up/email', { ...signupBody, email: 'blocked@example.com' })).status).toBe(403)
     expect((await admin.json('POST', '/api/auth/admin/create-user', { ...signupBody, email: 'invited@example.com', role: 'admin' })).status).toBe(200)
     const invited = await login({ ...signupBody, email: 'invited@example.com' })
@@ -73,7 +73,7 @@ describe('registration policy and route protection', () => {
     const user = await registerAndLogin({ ...signupBody, email: 'user@example.com' })
     expect((await user.request('/api/admin/settings')).status).toBe(403)
     expect((await user.json('PUT', '/api/admin/settings', { allowRegister: false, role: 'admin', userId: '1' })).status).toBe(403)
-    expect(await (await json('GET', '/api/site-config')).json()).toEqual({ allowRegister: true })
+    expect(await (await json('GET', '/api/site-config')).json()).toMatchObject({ allowRegister: true })
   })
 
   it.each([
@@ -98,7 +98,7 @@ describe('registration policy and route protection', () => {
     const admin = await registerAndLogin()
     expect((await admin.json('PUT', '/api/admin/settings', { allowRegister: 'true' })).status).toBe(400)
     await setAllowRegister(false)
-    expect(await (await json('GET', '/api/site-config')).json()).toEqual({ allowRegister: false })
+    expect(await (await json('GET', '/api/site-config')).json()).toMatchObject({ allowRegister: false })
   })
 
   it.each([

@@ -6,8 +6,12 @@ import { AttachmentCheckRequestSchema } from '@/shared/api'
 import { attachments, type AttachmentRow } from '../../db/schema'
 import { parseId } from './params'
 
-/** One limit for everything that becomes an attachment, uploaded or generated (spec §4.7). */
-export const MAX_UPLOAD_BYTES = 20 * 1024 * 1024
+import { uploadProblem } from '@/shared/upload-policy'
+import { resolveUploadPolicy } from '../upload-policy'
+import { MAX_ATTACHMENT_BYTES, matchesFileSignature } from '@/shared/file-media'
+
+/** Generated images retain their own fixed validation limit; uploads use the site policy. */
+export const MAX_UPLOAD_BYTES = MAX_ATTACHMENT_BYTES
 
 function hex(buf: ArrayBuffer): string {
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('')
@@ -26,6 +30,10 @@ export function attachmentRoutes(ctx: Context) {
     const parsed = AttachmentCheckRequestSchema.safeParse(await c.req.json())
     if (!parsed.success) return c.json({ error: 'invalid input' }, 400)
     const row = await db.query.attachments.findFirst({ where: and(eq(attachments.user_id, userId), eq(attachments.sha256, parsed.data.sha256)) })
+    if (row) {
+      const problem = uploadProblem(await resolveUploadPolicy(db), row.mime, row.size)
+      if (problem) return c.json({ error: problem.message }, problem.status)
+    }
     return c.json(row ? { exists: true, attachment_id: row.id } : { exists: false })
   })
 
@@ -33,19 +41,28 @@ export function attachmentRoutes(ctx: Context) {
     const userId = authUserId(c)
     const claimed = c.req.param('sha256')
     const mime = c.req.header('content-type') ?? ''
-    if (!/^image\/(png|jpeg|webp|gif)$/.test(mime)) return c.json({ error: 'unsupported mime' }, 415)
+    const policy = await resolveUploadPolicy(db)
+    const declaredSize = Number(c.req.header('content-length'))
+    const earlyProblem = uploadProblem(policy, mime, declaredSize > 0 ? declaredSize : 1)
+    if (earlyProblem) return c.json({ error: earlyProblem.message }, earlyProblem.status)
     const bytes = await c.req.arrayBuffer()
-    if (bytes.byteLength === 0 || bytes.byteLength > MAX_UPLOAD_BYTES) return c.json({ error: 'bad size' }, 400)
+    const problem = uploadProblem(policy, mime, bytes.byteLength)
+    if (problem) return c.json({ error: problem.message }, problem.status)
+    if (!matchesFileSignature(mime, new Uint8Array(bytes))) return c.json({ error: 'file content does not match mime' }, 415)
     const actual = hex(await crypto.subtle.digest('SHA-256', bytes))
     if (actual !== claimed) return c.json({ error: 'sha256 mismatch' }, 400)
 
     const existing = await db.query.attachments.findFirst({ where: and(eq(attachments.user_id, userId), eq(attachments.sha256, actual)) })
-    if (existing) return c.json({ attachment_id: existing.id }, 201)
+    if (existing) {
+      const existingProblem = uploadProblem(policy, existing.mime, existing.size)
+      if (existingProblem) return c.json({ error: existingProblem.message }, existingProblem.status)
+      return c.json({ attachment_id: existing.id }, 201)
+    }
 
     const key = r2Key(userId, actual)
     await ctx.assets.put(key, bytes, mime)
-    const w = Number(c.req.query('w')) || null
-    const h = Number(c.req.query('h')) || null
+    const w = mime.startsWith('image/') ? Number(c.req.query('w')) || null : null
+    const h = mime.startsWith('image/') ? Number(c.req.query('h')) || null : null
     const [row] = await db.insert(attachments).values({
       user_id: userId, sha256: actual, mime, size: bytes.byteLength, width: w, height: h,
       r2_key: key, origin: 'upload', created_at: Date.now(),

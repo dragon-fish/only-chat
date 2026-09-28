@@ -15,3 +15,8 @@ export function canServeAsServiceModel(metadata: { modalities?: ModelModalities 
   if (!modalities) return false
   return modalities.input.includes('text') && modalities.output.includes('text')
 }
+
+/** File analysis needs a readable non-text modality and text output. */
+export function canServeAsFileModel(metadata: { modalities?: ModelModalities }): boolean {
+  return canServeAsServiceModel(metadata) && metadata.modalities!.input.some(mode => ['image', 'pdf', 'audio', 'video'].includes(mode))
+}

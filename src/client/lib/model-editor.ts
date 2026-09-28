@@ -15,23 +15,38 @@ export function createModelDraft(model: ModelWithMetadata): ModelDraft {
 }
 
 /** A display row may contain pending writes; only a server acknowledgement can advance the baseline. */
-export function createModelEditorSession(authoritative: ModelWithMetadata, initial: ModelWithMetadata = authoritative) {
+export function createModelEditorSession(authoritative: ModelWithMetadata, initial: ModelWithMetadata = authoritative, creating = false) {
   const target = Object.freeze({ id: authoritative.id, provider_id: authoritative.provider_id })
   const acknowledged = shallowRef(clone(authoritative))
   const form = reactive(createModelDraft(initial))
   const dirty = computed(() => JSON.stringify({ ...form, model_id: form.model_id.trim() }) !== JSON.stringify(createModelDraft(acknowledged.value)))
   return {
     target,
+    creating,
     form,
     get model() { return acknowledged.value },
     get dirty() { return dirty.value },
-    patch(interfaces: readonly ProviderInterface[]) { return modelWriteFromDraft(acknowledged.value, form, interfaces) },
+    patch(interfaces: readonly ProviderInterface[]) {
+      const patch = modelWriteFromDraft(acknowledged.value, form, interfaces)
+      return creating ? ModelWriteInputSchema.parse({ ...form, model_id: form.model_id.trim() }) : patch
+    },
     acknowledge(model: ModelWithMetadata) {
       if (model.id !== target.id || model.provider_id !== target.provider_id) throw new Error('Cannot acknowledge a different model')
       acknowledged.value = clone(model)
     },
   }
 }
+/** An unsaved draft never enters the provider model list or database. */
+export function createNewModelEditorSession(providerId: number) {
+  const draft: ModelWithMetadata = {
+    id: -1, provider_id: providerId, model_id: '', interface_id: null, enabled: true,
+    metadata: {}, metadata_override: {}, image_extra_body: {},
+    catalog_matches: { operator: null, lab: null, global: null }, lab_id: null,
+    manual_pinned: true, upstream_available: null, sort: 0,
+  }
+  return createModelEditorSession(draft, draft, true)
+}
+
 export type ModelEditorSession = ReturnType<typeof createModelEditorSession>
 
 export function metadataValue(value: unknown, path: string): unknown {

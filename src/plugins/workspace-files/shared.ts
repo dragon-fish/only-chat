@@ -196,3 +196,6 @@ export interface PreviewFileOutput {
   expiresInSeconds: number
   message: string
 }
+
+export const AnalyzeFileInputSchema = z.strictObject({ path: PathSchema, question: z.string().min(1).optional() })
+export interface ReadAttachmentOutput { request_id: string; message: string }

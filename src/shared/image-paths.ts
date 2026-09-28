@@ -3,10 +3,10 @@
  * labels in the prompt, task notifications, `generate_image` references, and — when workspace
  * files are on — the read-only `/artifacts` and `/uploads` mounts that `read_file` can open.
  */
-const EXTENSIONS: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif' }
+import { FILE_EXTENSIONS } from './file-media'
 
 export function imageExtension(mime: string): string {
-  return EXTENSIONS[mime] ?? 'bin'
+  return FILE_EXTENSIONS[mime] ?? 'bin'
 }
 
 /** An image a run produced. Named by artifact id: task notifications already hand the model these paths. */

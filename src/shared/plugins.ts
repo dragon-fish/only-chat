@@ -279,3 +279,5 @@ export function isSecretConfigKey(manifest: PluginManifest, key: string): boolea
   const field = manifest.config?.find(candidate => candidate.key === key)
   return field === undefined || field.type === 'secret'
 }
+
+export const ANALYZE_FILE_TOOL_ID = 'analyze_file'

@@ -1,9 +1,11 @@
+import { canReadFile } from '@/shared/file-media'
+import { resolveFileUnderstanding, type FileUnderstanding } from './file-understanding'
 import { stepCountIs, streamText, type LanguageModel, type ModelMessage, type StopCondition, type ToolSet } from 'ai'
 import { INFLIGHT_FLUSH_INTERVAL_MS, TOOL_MAX_STEPS } from '@/shared/constants'
 import type { Message, PersistedStatus, ConversationParams, ConversationPluginSettings, StepUsage, Usage } from '@/shared/models'
 import { toolResultPart, type Part, type ToolCallPart, type ToolResultPart } from '@/shared/parts'
 import type { SendCommand, WsCommand } from '@/shared/ws'
-import { ASK_USER_TOOL_ID, GENERATE_IMAGE_TOOL_ID, parseConversationPluginSettings, READ_FILE_TOOL_ID } from '@/shared/plugins'
+import { ASK_USER_TOOL_ID, ANALYZE_FILE_TOOL_ID, GENERATE_IMAGE_TOOL_ID, parseConversationPluginSettings, READ_FILE_TOOL_ID } from '@/shared/plugins'
 import { pluginManifests } from '@/shared/plugin-manifests'
 import { AskUserInputSchema } from '@/plugins/ask-user/shared'
 import { createAskUserToolCallRepair } from '@/plugins/ask-user/server/repair'
@@ -52,6 +54,7 @@ interface Target {
   toolIds: string[]
   /** Snapshotted with the rest of the config (spec §3.2) so it is not re-read mid-stream. */
   enabledPlugins: Record<string, boolean>
+  fileUnderstanding?: FileUnderstanding
 }
 
 /** The conversation-init draft carried by the first `send` of a new conversation (spec §5.2). */
@@ -151,7 +154,8 @@ async function resolveTarget(hub: Hub, args: ResolveArgs): Promise<Target> {
     void hub.nameConversation(conversation.id, conversation.title, titleTextFromParts(args.firstParts))
       .catch(() => {})
   }
-  return { conversation, provider, providerInterface, model, config, toolIds, enabledPlugins: user.settings.plugins }
+  const fileUnderstanding = await resolveFileUnderstanding({ db: hub.db, userId: hub.userId, assets: hub.app.assets, llm: hub.app.llm }, user.settings)
+  return { conversation, provider, providerInterface, model, config, toolIds, enabledPlugins: user.settings.plugins, fileUnderstanding }
 }
 
 // ---- stage 2: persist a user message
@@ -255,6 +259,14 @@ async function openContinuationShell(hub: Hub, target: Target, parentId: number)
 
 // ---- stage 4: context assembly
 
+function unavailableFile(target: Target) {
+  return (mime: string): string | undefined => {
+    if (canReadFile(target.model.metadata_resolved, target.providerInterface.protocol, mime)) return
+    return `The current model cannot read ${mime}.` + (target.toolIds.includes(ANALYZE_FILE_TOOL_ID) && target.fileUnderstanding?.canRead(mime)
+      ? ' Call analyze_file with this path and an optional question.' : ' No enabled file analysis tool supports this file.')
+  }
+}
+
 async function assembleContext(hub: Hub, target: Target, leafMessageId: number): Promise<{ path: Message[]; attachments: Map<number, AttachmentInput> }> {
   const rows = await listMessages(hub.db, target.conversation.id, hub.userId)
   const byId = new Map(rows.map((r) => [r.id, toMessage(r)]))
@@ -264,12 +276,12 @@ async function assembleContext(hub: Hub, target: Target, leafMessageId: number):
   const ids = requiredAttachmentIds(path)
   // Attachment transport shares this generation's resolved interface and credentials snapshot.
   const deps = { db: hub.db, userId: hub.userId, assets: hub.app.assets, llm: hub.app.llm }
-  return { path, attachments: await resolveAttachmentInputs(deps, target.provider, target.providerInterface, ids) }
+  return { path, attachments: await resolveAttachmentInputs(deps, target.provider, target.providerInterface, ids, unavailableFile(target)) }
 }
 
 /** Tools that refer to images by path; with either on, the prompt names every image (spec §4.0). */
 function labelsImages(toolIds: readonly string[]): boolean {
-  return toolIds.includes(READ_FILE_TOOL_ID) || toolIds.includes(GENERATE_IMAGE_TOOL_ID)
+  return toolIds.includes(ANALYZE_FILE_TOOL_ID) || toolIds.includes(READ_FILE_TOOL_ID) || toolIds.includes(GENERATE_IMAGE_TOOL_ID)
 }
 
 /** MIME of each image the assistant messages on the path hold, which is what names their files. */
@@ -335,6 +347,9 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
       assets: hub.app.assets,
       signal: controller.signal,
       pluginSettings: target.conversation.plugin_settings ?? null,
+      canReadFile: mime => canReadFile(target.model.metadata_resolved, target.providerInterface.protocol, mime),
+      fileUnderstanding: target.fileUnderstanding,
+      toolIds: target.toolIds,
       acceptsImages: target.model.metadata_resolved.modalities?.input.includes('image') ?? false,
       acceptsToolResultImages: carriesToolResultImages(target.providerInterface.protocol),
       publicOrigin: hub.publicOrigin,
@@ -406,9 +421,9 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
           const missing = shownNow.flatMap(part => part.attachments!).filter(id => !attachments.has(id))
           if (missing.length > 0) {
             const deps = { db: hub.db, userId: hub.userId, assets: hub.app.assets, llm: hub.app.llm }
-            for (const [id, input] of await resolveAttachmentInputs(deps, target.provider, target.providerInterface, missing)) attachments.set(id, input)
+            for (const [id, input] of await resolveAttachmentInputs(deps, target.provider, target.providerInterface, missing, unavailableFile(target))) attachments.set(id, input)
           }
-          extra.push(toolImagesMessage(shownNow, attachments))
+          extra.push(...shownNow.map(result => toolImagesMessage([result], attachments)))
           for (const part of shownNow) shown.add(part.call_id)
         }
         // Notifications first, then what the person said: the order the stored message keeps.
@@ -463,7 +478,7 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
       // Pictures they attached are not in the map assembled before the run began. Which ids are
       // needed stays the message builder's answer, so the row just written is what gets asked.
       const deps = { db: hub.db, userId: hub.userId, assets: hub.app.assets, llm: hub.app.llm }
-      const added = await resolveAttachmentInputs(deps, target.provider, target.providerInterface, requiredAttachmentIds([interjection]))
+      const added = await resolveAttachmentInputs(deps, target.provider, target.providerInterface, requiredAttachmentIds([interjection]), unavailableFile(target))
       for (const [id, input] of added) attachments.set(id, input)
 
       shell = await openReservedAssistantShell(hub, target, interjection.id)

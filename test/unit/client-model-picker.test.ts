@@ -106,13 +106,17 @@ describe('model picker modality', () => {
     await vi.waitFor(() => expect(revealed.some(text => text.includes('Test model'))).toBe(true))
   })
 
-  it('shows only declared true capabilities on each selectable model', async () => {
-    // Dropping capability presentation or treating a declared false flag as enabled mislabels models.
+  it('reveals declared capabilities on hover while keeping the option compact', async () => {
     const host = await mountPicker(false, true)
     host.querySelector<HTMLButtonElement>('button')!.click()
     await vi.waitFor(() => expect(document.querySelector('[role="option"]')).not.toBeNull())
-    const badges = [...document.querySelectorAll('[role="option"] [data-slot="badge"]')].map(badge => badge.textContent?.trim())
-    expect(badges).toEqual(['视觉'])
+    const option = document.querySelector<HTMLElement>('[role="option"]')!
+    expect(option.querySelector('[role="img"][aria-label="图片输入"]')).not.toBeNull()
+    expect(option.querySelector('[role="img"][aria-label="工具"]')).toBeNull()
+    option.closest('[data-slot=hover-card-trigger]')!.dispatchEvent(new PointerEvent('pointerenter', { pointerType: 'mouse' }))
+    await vi.waitFor(() => expect(document.querySelector('[data-model-details]')).not.toBeNull())
+    const badges = [...document.querySelectorAll('[data-model-details] [data-slot="badge"]')].map(badge => badge.textContent?.trim())
+    expect(badges).toEqual(['图片输入'])
   })
 
   it('opens the matching provider in a quick settings dialog and saves without changing the selected model', async () => {
@@ -188,4 +192,18 @@ describe('model picker modality', () => {
     await vi.waitFor(() => expect(host.querySelector('button')!.getAttribute('aria-expanded')).toBe('false'))
     expect(document.querySelector('[role="dialog"]')).toBeNull()
   })
+})
+
+it('opens mobile model details without selecting or closing the picker', async () => {
+  const host = await mountPicker(false, false)
+  host.querySelector<HTMLButtonElement>('button')!.click()
+  await vi.waitFor(() => expect(document.querySelector('[role="option"]')).not.toBeNull())
+  expect(document.querySelector('[role="option"]')!.textContent).not.toContain('test-model')
+  const info = document.querySelector<HTMLButtonElement>('[aria-label="查看 Test model 详情"]')
+  expect(info).not.toBeNull()
+  info!.click()
+  await nextTick()
+  await vi.waitFor(() => expect(document.querySelector('[data-model-details]')?.textContent).toContain('test-model'))
+  expect(document.querySelector('[data-slot="drawer-content"]')).not.toBeNull()
+  expect(document.querySelector('[role="option"]')).not.toBeNull()
 })

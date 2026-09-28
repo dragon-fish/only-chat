@@ -13,7 +13,7 @@ import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/client/ui/fie
 import { Spinner } from '@/client/ui/spinner'
 import { Textarea } from '@/client/ui/textarea'
 import type { ModelRef } from '@/shared/model-ref'
-import { canServeAsServiceModel } from '@/shared/service-model'
+import { canServeAsServiceModel, canServeAsFileModel } from '@/shared/service-model'
 import {
   MAX_PLACEHOLDER_CHARS, missingRequiredPlaceholders, SERVICE_PROMPT_DEFAULTS,
 } from '@/shared/service-prompts'
@@ -22,6 +22,8 @@ const config = useConfigStore()
 const sync = useSyncStore()
 const textKey = ref('')
 const imageKey = ref('')
+const fileKey = ref('')
+const filePrompt = ref('')
 const titlePrompt = ref('')
 const loading = ref(true)
 const saving = ref(false)
@@ -52,6 +54,15 @@ const imageOptions = computed(() => [
   })),
 ])
 
+const fileOptions = computed(() => [
+  { value: '', label: '不使用' },
+  ...config.enabledModels().filter(entry => canServeAsFileModel(entry.model.metadata)).map(entry => ({
+    value: `${entry.provider.id}:${entry.model.model_id}`, label: entry.model.metadata.name || entry.model.model_id,
+    description: `${entry.provider.name} · ${entry.model.metadata.modalities?.input.join(', ')}`,
+  })),
+])
+const savedFile = computed(() => keyOf(sync.settings.service_models?.file_understanding))
+const savedFilePrompt = computed(() => sync.settings.service_prompts?.file_understanding ?? SERVICE_PROMPT_DEFAULTS.file_understanding)
 const savedText = computed(() => keyOf(sync.settings.service_models?.text))
 const savedImage = computed(() => keyOf(sync.settings.service_models?.image))
 const savedPrompt = computed(() =>
@@ -59,8 +70,10 @@ const savedPrompt = computed(() =>
 
 const missing = computed(() => missingRequiredPlaceholders(titlePrompt.value))
 const changed = computed(() =>
-  textKey.value !== savedText.value || imageKey.value !== savedImage.value || titlePrompt.value !== savedPrompt.value)
+  fileKey.value !== savedFile.value || filePrompt.value !== savedFilePrompt.value || textKey.value !== savedText.value || imageKey.value !== savedImage.value || titlePrompt.value !== savedPrompt.value)
 
+watch(savedFile, value => { fileKey.value = value; saving.value = false })
+watch(savedFilePrompt, value => { filePrompt.value = value; saving.value = false })
 watch(savedText, value => { textKey.value = value; saving.value = false })
 watch(savedImage, value => { imageKey.value = value; saving.value = false })
 watch(savedPrompt, value => { titlePrompt.value = value; saving.value = false })
@@ -71,6 +84,8 @@ async function load() {
   try {
     if (!config.loaded) await config.load()
     await config.loadEnabledModelList()
+    fileKey.value = savedFile.value
+    filePrompt.value = savedFilePrompt.value
     textKey.value = savedText.value
     imageKey.value = savedImage.value
     titlePrompt.value = savedPrompt.value
@@ -80,13 +95,13 @@ async function load() {
 }
 
 function save() {
-  if (missing.value.length > 0) return
+  if (missing.value.length > 0 || !filePrompt.value.trim()) return
   saving.value = true
   const sent = sync.send({
     type: 'settings.update', request_id: crypto.randomUUID(),
     settings: {
-      service_models: { text: refOf(textKey.value), image: refOf(imageKey.value) },
-      service_prompts: { conversation_title: titlePrompt.value },
+      service_models: { text: refOf(textKey.value), image: refOf(imageKey.value), file_understanding: refOf(fileKey.value) },
+      service_prompts: { conversation_title: titlePrompt.value, file_understanding: filePrompt.value },
     },
   })
   if (!sent) {
@@ -132,11 +147,16 @@ onMounted(load)
 
               Field
                 FieldLabel(for="service-title-prompt") 对话命名提示词
-                Textarea#service-title-prompt(v-model="titlePrompt" rows="7" class="font-mono text-sm" :disabled="saving")
+                Textarea#service-title-prompt(v-model="titlePrompt" rows="7" class="max-h-96 overflow-y-auto font-mono text-sm" :disabled="saving")
                 FieldDescription
                   | 用 {{ '{' }}user_message:1{{ '}' }} 引用对话的第一条消息，最多取前 {{ MAX_PLACEHOLDER_CHARS }} 个字符。
                 FieldDescription(v-if="missing.length" class="text-destructive")
                   | 必须包含 {{ missing.join('、') }}，否则模型看不到要命名的内容。
+          CardFooter
+            Button(
+              type="button" variant="ghost" class="min-h-10"
+              :disabled="saving || titlePrompt === SERVICE_PROMPT_DEFAULTS.conversation_title"
+              @click="titlePrompt = SERVICE_PROMPT_DEFAULTS.conversation_title") 恢复对话命名默认提示词
 
         Card
           CardHeader
@@ -153,11 +173,27 @@ onMounted(load)
                   placeholder="选择生图模型" search-placeholder="搜索供应商、模型名称或 ID…")
 
         Card
-          CardFooter.flex.items-center.justify-between.gap-2.pt-6
+          CardHeader
+            CardTitle 文件理解
+            CardDescription analyze_file 使用的模型。可分析图片、PDF、音频或视频，具体取决于所选模型和接口。
+          CardContent
+            FieldGroup
+              Field
+                FieldLabel(for="service-file-model") 模型
+                SearchableSelect#service-file-model(v-model="fileKey" :options="fileOptions" :disabled="saving" placeholder="选择文件理解模型" search-placeholder="搜索供应商、模型名称或 ID…")
+              Field
+                FieldLabel(for="service-file-prompt") 系统提示词
+                Textarea#service-file-prompt(v-model="filePrompt" rows="12" class="max-h-96 overflow-y-auto font-mono text-sm" :disabled="saving")
+                FieldDescription 本次问题和文件单独传入。默认提示词侧重详细视觉描述，可按用途修改。
+          CardFooter
             Button(
               type="button" variant="ghost" class="min-h-10"
-              :disabled="saving || titlePrompt === SERVICE_PROMPT_DEFAULTS.conversation_title"
-              @click="titlePrompt = SERVICE_PROMPT_DEFAULTS.conversation_title") 恢复默认提示词
-            Button(type="button" class="min-h-10" :disabled="saving || !changed || missing.length > 0" @click="save")
-              | {{ saving ? '保存中' : '保存' }}
+              :disabled="saving || filePrompt === SERVICE_PROMPT_DEFAULTS.file_understanding"
+              @click="filePrompt = SERVICE_PROMPT_DEFAULTS.file_understanding") 恢复文件理解默认提示词
+
+        .sticky.bottom-0.-mx-4.flex.items-center.justify-end.gap-3.border-t.p-4.backdrop-blur(class="bg-background/95 pb-[calc(1rem+env(safe-area-inset-bottom))] md:-mx-6 md:px-6 lg:-mx-8 lg:px-8")
+          .flex.items-center.gap-2(aria-label="服务模型操作")
+            span.text-sm.text-muted-foreground {{ changed ? '有未保存的更改' : '更改已保存' }}
+            Button(type="button" class="min-h-10" :disabled="saving || !changed || missing.length > 0 || !filePrompt.trim()" @click="save")
+              | {{ saving ? '保存中…' : '保存' }}
 </template>

@@ -11,7 +11,7 @@ Personal AI chat on Cloudflare Workers. Every device sees the same conversations
 - Prompt, model and reasoning are configurable *before* the first message: the draft and the first
   message create the Conversation in one command.
 - Tree-shaped messages: editing or regenerating creates a sibling, with a branch switcher on the bubble.
-- Text (markdown), pasted/dropped images, model-generated images, collapsible reasoning blocks.
+- Text (markdown), pasted/dropped images, PDF, audio and video uploads (site-configurable formats and size, 20 MiB by default), model-generated images, collapsible reasoning blocks.
 - Desktop turn navigation uses a slim rail beside the transcript: hover for a question/reply
   preview, click to jump, or scroll the rail independently in long conversations. Mobile uses
   an outline button. Both mark the turn currently being read.
@@ -219,6 +219,33 @@ With it on:
   invalidated pointers are removed and old credentials are never retained for retries.
 - Expired pointers never participate in generation. Cleanup never deletes R2 originals.
 
+## File understanding
+
+Settings → 全局服务模型 includes a file understanding model and an editable system instruction.
+`analyze_file(path, question?)` delegates an uploaded or generated attachment to that model and
+returns its detailed text analysis. The question travels separately from the system instruction.
+The default instruction focuses on detailed visual descriptions and preserves transcribed text in
+its original language. Existing custom prompts remain unchanged; the conversation naming default
+uses the Task / Guidelines / Output Examples format.
+
+Uploads accept PNG, JPEG, WebP, GIF, PDF, MP3, WAV, Ogg audio, FLAC, M4A, WebM audio/video, MP4 and
+QuickTime video. Uploading is independent of model capabilities. PDFs appear as downloadable file
+cards; audio and video use browser players with download links. Administrators configure allowed formats and the per-file size limit in `/admin/settings` (20 MiB by default). Every upload, including deduplication, checks the current policy; existing downloads remain available. Files are checked against their container signatures. No transcoding, frame extraction or local OCR is run.
+
+`read_file` returns text directly. Supported non-text files follow a short tool receipt as a user
+message containing `<read_file_result id="…">`, the file part, and the closing tag. The receipt's
+`request_id` is stable across history replay. Tool results never contain file IDs, base64 or bytes.
+Concurrent tool receipts finish before the file messages are appended.
+
+Model modalities and protocol serialization capabilities both govern delivery. Unsupported user
+attachments remain visible to the model as paths and MIME types; `read_file` reports an error.
+Both suggest `analyze_file` only when that tool is enabled and its service model supports the file.
+If neither model can read the file, the limitation is explicit. Historical attachments follow the
+same checks when switching models. Analysis is an explicit tool call, not an automatic upload hook.
+Audio/video travel inline; native Files references continue to be used for images and PDFs where
+configured. Chat Completions audio encoding supports MP3/WAV; Anthropic and Responses support images/PDFs on these adapters; audio/video use Chat Completions or Vertex-compatible interfaces with matching model capabilities.
+The configured provider still determines which formats its model accepts. DashScope endpoints receive audio as a complete Data URL rather than bare Base64, as required by their compatible API.
+
 ## Images
 
 R2 is the only durable store for image bytes, uploaded and generated alike. A model's image output
@@ -284,5 +311,4 @@ authentication, authorization, account administration, and Conversation naming.
 - **Anthropic model listing only reads the first page.** `fetch-models` calls `GET /models` once
   and ignores `has_more`/pagination, so an Anthropic account with more models than fit on one page
   will only import the first page's worth.
-- **Generated images are not replayed to the model.** They are stored, broadcast and rendered, but
-  a later turn does not send them back as context.
+- **Generated images are read on demand.** The model receives their `/artifacts` paths when file or image tools are enabled; `read_file` delivers the image when supported, and `analyze_file` can provide a text description.

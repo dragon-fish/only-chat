@@ -36,7 +36,7 @@ export function messageTurns(path: readonly Message[]): MessageTurn[] {
   for (const message of path) {
     if (message.role === 'user') {
       const prompt = plainText(text(message))
-      turns.push({ id: message.id, prompt: prompt || (message.parts.some(part => part.type === 'image') ? '[图片]' : message.parts.some(part => part.type === 'task_notification') ? '[后台任务]' : ''), reply: '' })
+      turns.push({ id: message.id, prompt: prompt || (message.parts.some(part => part.type === 'image') ? '[图片]' : message.parts.some(part => part.type === 'file') ? '[文件]' : message.parts.some(part => part.type === 'task_notification') ? '[后台任务]' : ''), reply: '' })
       replies.push([])
     } else if (message.role === 'assistant' && replies.length) {
       replies.at(-1)!.push(text(message))

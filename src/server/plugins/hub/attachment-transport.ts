@@ -23,6 +23,7 @@ export interface TransportDeps {
   userId: number
   assets: Assets
   llm: Llm
+  signal?: AbortSignal
 }
 
 /**
@@ -53,6 +54,7 @@ export async function resolveAttachmentInputs(
   provider: ProviderRow,
   providerInterface: ProviderInterfaceRow,
   attachmentIds: Iterable<number>,
+  unavailable?: (mime: string) => string | undefined,
 ): Promise<Map<number, AttachmentInput>> {
   const out = new Map<number, AttachmentInput>()
   const useFiles = deps.llm.hasFiles(providerInterface)
@@ -60,11 +62,18 @@ export async function resolveAttachmentInputs(
   let client: ScopedFilesClient | undefined
 
   for (const id of attachmentIds) {
+    deps.signal?.throwIfAborted()
     if (out.has(id)) continue
     const attachment = await getAttachment(deps.db, id, deps.userId)
     if (!attachment) throw new Error(`attachment ${id} missing`)
 
-    if (useFiles) {
+    const reason = unavailable?.(attachment.mime)
+    if (reason) {
+      out.set(id, { mime: attachment.mime, unavailable: reason, data: { type: 'data', data: new Uint8Array() } })
+      continue
+    }
+
+    if (useFiles && !attachment.mime.startsWith('audio/') && !attachment.mime.startsWith('video/')) {
       client ??= await deps.llm.createFiles(provider, providerInterface)
       const pointer = await findReusableProviderFile(deps.db, { ...client, providerId: provider.id }, id, Date.now(), deps.userId)
       if (pointer) {
@@ -76,7 +85,7 @@ export async function resolveAttachmentInputs(
     const stored = await deps.assets.getBytes(attachment.r2_key)
     if (!stored) throw new Error(`attachment ${id} bytes missing`)
 
-    if (!client) {
+    if (!client || attachment.mime.startsWith('audio/') || attachment.mime.startsWith('video/')) {
       out.set(id, { mime: attachment.mime, data: { type: 'data', data: stored.bytes } })
       continue
     }
@@ -88,6 +97,7 @@ export async function resolveAttachmentInputs(
         mediaType: attachment.mime,
         filename: filenameFor(attachment),
         providerOptions: UPLOAD_OPTIONS,
+        abortSignal: deps.signal,
       })
     } catch (error) {
       // A compatible gateway may expose chat while omitting the OpenAI Files contract, or reject

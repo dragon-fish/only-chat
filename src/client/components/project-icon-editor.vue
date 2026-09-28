@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { currentUploadPolicy, validateUpload } from '@/client/lib/upload-policy'
 import { computed, ref } from 'vue'
 import { ImageIcon, Trash2Icon } from '@lucide/vue'
 import { toast } from 'vue-sonner'
@@ -29,6 +30,7 @@ async function applyCrop() {
   try {
     const blob = await cropper.value.getCroppedImage()
     const sha256 = await sha256Hex(await blob.arrayBuffer())
+    validateUpload(await currentUploadPolicy(), blob.type, blob.size)
     const checked = await api.checkAttachment(sha256)
     const attachmentId = checked.exists && checked.attachment_id !== undefined
       ? checked.attachment_id

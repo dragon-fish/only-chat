@@ -72,7 +72,9 @@ export function searchConversations(
 }
 
 export const MODEL_CAPABILITY_FILTERS = [
-  { key: 'vision', label: '视觉' }, { key: 'reasoning', label: '推理' },
+  { key: 'vision', label: '图片输入' }, { key: 'pdf', label: 'PDF 输入' },
+  { key: 'audio', label: '音频输入' }, { key: 'video', label: '视频输入' },
+  { key: 'reasoning', label: '推理' },
   { key: 'tools', label: '工具' }, { key: 'image_output', label: '图片输出' },
 ] as const
 
@@ -83,7 +85,11 @@ export function modelName(model: ModelListItem): string {
 export function modelBadges(model: ModelListItem) {
   const metadata = model.metadata
   const values = {
-    vision: metadata.modalities?.input.includes('image'), reasoning: metadata.reasoning,
+    vision: metadata.modalities?.input.includes('image'),
+    pdf: metadata.modalities?.input.includes('pdf'),
+    audio: metadata.modalities?.input.includes('audio'),
+    video: metadata.modalities?.input.includes('video'),
+    reasoning: metadata.reasoning,
     tools: metadata.tool_call, image_output: metadata.modalities?.output.includes('image'),
   }
   return MODEL_CAPABILITY_FILTERS.filter(option => values[option.key] === true)
@@ -96,6 +102,9 @@ export function filterModelEntries(entries: readonly EnabledModelEntry[], query:
     if (query.interface_id !== undefined && (model.interface_id ?? provider.default_interface_id) !== query.interface_id) return false
     if (query.lab_id !== undefined && model.lab_id !== query.lab_id) return false
     if (query.vision !== undefined && model.metadata.modalities?.input.includes('image') !== query.vision) return false
+    for (const modality of ['pdf', 'audio', 'video'] as const) {
+      if (query[modality] !== undefined && model.metadata.modalities?.input.includes(modality) !== query[modality]) return false
+    }
     if (query.reasoning !== undefined && model.metadata.reasoning !== query.reasoning) return false
     if (query.tools !== undefined && model.metadata.tool_call !== query.tools) return false
     if (query.image_output !== undefined && model.metadata.modalities?.output.includes('image') !== query.image_output) return false

@@ -36,6 +36,7 @@ export const ImageGenerationServerPlugin = {
         const references: number[] = []
         for (const path of input.reference_images ?? []) {
           const image = await resolveProjected(toolCtx.db, toolCtx.userId, conversation.id, path)
+          if (image && !image.mime.startsWith('image/')) return { error: 'Reference must be an image.' }
           if (!image) return { error: `No image at ${path} in this conversation. Use a path it labels an image with, such as /uploads/12.png or /artifacts/33.png.` }
           references.push(image.attachmentId)
         }

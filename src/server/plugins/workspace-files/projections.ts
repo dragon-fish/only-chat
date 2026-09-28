@@ -5,16 +5,8 @@ import type { Part } from '@/shared/parts'
 import { artifactPath, generatedPath, uploadPath } from '@/shared/image-paths'
 import { parseWorkspacePath, type ProjectedMount } from './path'
 
-/** One image a projected mount shows. Derived on every read; nothing about it is stored. */
-export interface ProjectedEntry {
-  path: string
-  attachmentId: number
-  mime: string
-  size: number
-  width: number | null
-  height: number | null
-  createdAt: number
-}
+export type { ProjectedFileRecord as ProjectedEntry } from '@/shared/workspace-files'
+import type { ProjectedFileRecord as ProjectedEntry } from '@/shared/workspace-files'
 
 /** Messages of a conversation this user owns; an empty list for anyone else's. */
 async function ownedMessageParts(db: DB, userId: number, conversationId: number, role: 'user' | 'assistant') {
@@ -44,7 +36,7 @@ async function attachmentEntries(db: DB, userId: number, found: Array<{ attachme
 export async function listProjected(db: DB, userId: number, conversationId: number, mount: ProjectedMount): Promise<ProjectedEntry[]> {
   if (mount === 'uploads') {
     const found = (await ownedMessageParts(db, userId, conversationId, 'user')).flatMap(message =>
-      message.parts.flatMap(part => (part.type === 'image' ? [{ attachmentId: part.attachment_id, createdAt: message.createdAt }] : [])))
+      message.parts.flatMap(part => ((part.type === 'image' || part.type === 'file') ? [{ attachmentId: part.attachment_id, createdAt: message.createdAt }] : [])))
     return attachmentEntries(db, userId, found, uploadPath)
   }
 

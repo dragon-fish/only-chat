@@ -67,19 +67,20 @@ export const UserSettingsSchema = z.object({
   /**
    * App-level models, one slot per capability rather than per job: a single text model does every
    * text chore (naming a conversation, rewriting a prompt), and the image slot is what Studio and
-   * the image tools fall back to. A slot that is unset, or points at something no longer usable,
+   * the image tools fall back to. File understanding serves explicit analyze_file calls. A slot that is unset, or points at something no longer usable,
    * means the job it serves simply does not happen.
    */
   service_models: z.object({
     text: ModelRefSchema.nullable().optional(),
     image: ModelRefSchema.nullable().optional(),
+    file_understanding: ModelRefSchema.nullable().optional(),
   }).optional(),
   /**
    * One template per service job. Stored unvalidated: a template that stopped being usable must
    * still load, or a bad save would lock the user out of the settings page that repairs it. The
    * write path is where a template is refused.
    */
-  service_prompts: z.object({ conversation_title: z.string().optional() }).optional(),
+  service_prompts: z.object({ conversation_title: z.string().optional(), file_understanding: z.string().optional() }).optional(),
 })
 export type UserSettings = z.infer<typeof UserSettingsSchema>
 
@@ -246,6 +247,9 @@ export const ModelQuerySchema = z.strictObject({
   interface_id: z.number().int().optional(),
   lab_id: z.string().min(1).optional(),
   vision: z.boolean().optional(),
+  pdf: z.boolean().optional(),
+  audio: z.boolean().optional(),
+  video: z.boolean().optional(),
   reasoning: z.boolean().optional(),
   tools: z.boolean().optional(),
   image_output: z.boolean().optional(),

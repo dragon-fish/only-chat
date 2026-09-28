@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+import { DEFAULT_UPLOAD_POLICY } from '@/shared/upload-policy'
 import { createApp, h, nextTick, type Component } from 'vue'
 import { createPinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
@@ -15,7 +16,7 @@ vi.mock('@/client/lib/auth-client', async importOriginal => ({
 let cleanup = () => {}
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.clearAllMocks(); vi.unstubAllGlobals(); document.body.innerHTML = '' })
 async function mount(component: Component, auditEnabled = false) {
-  if (!vi.isMockFunction(api.siteConfig)) vi.spyOn(api, 'siteConfig').mockResolvedValue({ allowRegister: false, audit: auditEnabled })
+  if (!vi.isMockFunction(api.siteConfig)) vi.spyOn(api, 'siteConfig').mockResolvedValue({ uploads: DEFAULT_UPLOAD_POLICY, allowRegister: false, audit: auditEnabled })
   document.body.innerHTML = '<div id="page-header"></div>'
   const pinia = createPinia()
   const auth = useAuthStore(pinia)
@@ -101,13 +102,13 @@ it('saves and restores registration settings then refetches public settings', as
   const requests: Array<{ method: string; body: unknown }> = []
   let overridden = true
   vi.stubGlobal('fetch', async (path: string, init?: RequestInit) => {
-    if (path === '/api/site-config') return Response.json({ allowRegister: overridden })
+    if (path === '/api/site-config') return Response.json({ uploads: DEFAULT_UPLOAD_POLICY, allowRegister: overridden })
     if (init?.method === 'PUT') {
       const body = JSON.parse(String(init.body))
       requests.push({ method: 'PUT', body })
       overridden = body.allowRegister !== null
     }
-    return Response.json({ allowRegister: overridden, source: overridden ? 'db' : 'default' })
+    return Response.json({ uploads: DEFAULT_UPLOAD_POLICY, allowRegister: overridden, source: overridden ? 'db' : 'default' })
   })
   const publicSettings = vi.spyOn(api, 'siteConfig')
   await mount(view.default)
@@ -206,4 +207,16 @@ it('requires confirmation before banning the selected account and keeps errors a
   expect(authClient.admin.banUser).toHaveBeenCalledWith({ userId: '2' })
   expect(authClient.admin.listUsers).toHaveBeenCalledTimes(1)
   expect(button('确认').disabled).toBe(false)
+})
+
+it('saves upload settings independently from registration', async () => {
+  const view = await import('@/client/views/admin-settings.vue')
+  vi.spyOn(api, 'adminSettings').mockResolvedValue({ allowRegister: false, source: 'db', uploads: DEFAULT_UPLOAD_POLICY })
+  const save = vi.spyOn(api, 'updateAdminSettings').mockResolvedValue({ allowRegister: false, source: 'db', uploads: { ...DEFAULT_UPLOAD_POLICY, maxBytes: 5 * 1024 * 1024 } })
+  await mount(view.default)
+  await vi.waitFor(() => expect(document.querySelector('#upload-max-size')).not.toBeNull())
+  await type('#upload-max-size', '5')
+  document.querySelector<HTMLButtonElement>('[data-save-uploads]')!.click()
+  await vi.waitFor(() => expect(save).toHaveBeenCalledWith({ uploads: { maxBytes: 5 * 1024 * 1024, allowedMimeTypes: DEFAULT_UPLOAD_POLICY.allowedMimeTypes } }))
+  await vi.waitFor(() => expect(document.body.textContent).toContain('上传设置已保存'))
 })

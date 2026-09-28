@@ -928,3 +928,28 @@ describe('provider model editor', () => {
     await vi.waitFor(() => expect(document.activeElement === opener).toBe(true))
   })
 })
+
+it('adds a model through the editor and requires a nonblank model ID', async () => {
+  await mountEditor()
+  const create = vi.spyOn(api, 'createModel').mockResolvedValue({ ...modelRecords[0]!, id: 99, model_id: 'new-model' })
+  const add = document.querySelector<HTMLButtonElement>('[aria-label="添加模型"]')
+  expect(add).not.toBeNull()
+  add!.click()
+  await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')?.textContent).toContain('添加模型'))
+  const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!
+  const save = [...dialog.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.trim() === '保存模型')!
+  expect(save.disabled).toBe(true)
+  const id = dialog.querySelector<HTMLInputElement>('input[id$="-id"]')!
+  await type(id, '   ')
+  expect(save.disabled).toBe(true)
+  await type(id, 'first-model')
+  expect(save.disabled).toBe(true)
+  expect(dialog.textContent).toContain('模型已存在')
+  await type(id, 'new-model')
+  expect(save.disabled).toBe(false)
+  expect(save.closest('[data-slot="sheet-footer"]')).not.toBeNull()
+  expect(dialog.textContent).not.toContain('删除模型')
+  save.click()
+  await vi.waitFor(() => expect(create).toHaveBeenCalledWith(1, expect.objectContaining({ model_id: 'new-model' })))
+  await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull())
+})

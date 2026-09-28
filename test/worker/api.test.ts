@@ -306,7 +306,7 @@ describe('REST api', () => {
   })
 
   it('uploads, dedupes and serves an attachment', async () => {
-    const bytes = new Uint8Array([1, 2, 3, 4])
+    const bytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 1])
     const sha = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map((b) => b.toString(16).padStart(2, '0')).join('')
     const check1 = await (await json('POST', '/api/attachments/check', { sha256: sha })).json() as { exists: boolean }
     expect(check1.exists).toBe(false)
@@ -322,7 +322,7 @@ describe('REST api', () => {
   })
 
   it('lets a browser keep an attachment, and never a shared cache', async () => {
-    const bytes = new Uint8Array([9, 9, 9, 1])
+    const bytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 9])
     const sha = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map((b) => b.toString(16).padStart(2, '0')).join('')
     const up = await authenticatedFetch(new Request(`https://x/api/attachments/${sha}`, { method: 'PUT', headers: { 'content-type': 'image/png' }, body: bytes }))
     const { attachment_id } = (await up.json()) as { attachment_id: number }
@@ -373,7 +373,7 @@ describe('REST api', () => {
   })
 
   it('rejects an upload whose hash does not match', async () => {
-    const res = await authenticatedFetch(new Request(`https://x/api/attachments/${'0'.repeat(64)}`, { method: 'PUT', headers: { 'content-type': 'image/png' }, body: new Uint8Array([9]) }))
+    const res = await authenticatedFetch(new Request(`https://x/api/attachments/${'0'.repeat(64)}`, { method: 'PUT', headers: { 'content-type': 'image/png' }, body: new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 9]) }))
     expect(res.status).toBe(400)
   })
 

@@ -548,7 +548,7 @@ describe('images returned by a tool', () => {
     const out = buildModelMessages({ protocol: 'responses', systemPrompt: null, attachments: new Map([[9, inlinePng]]), path: [msg({ id: 1, role: 'user', parts: [{ type: 'text', text: 'look' }] }), reading] })
     expect(out.map(m => m.role)).toEqual(['user', 'assistant', 'tool', 'user', 'assistant'])
     expect(out[3]).toEqual(toolImagesMessage([reading.parts[1] as ToolResultPart], new Map([[9, inlinePng]])))
-    expect(out[3]).toEqual({ role: 'user', content: [{ type: 'text', text: 'Image returned by read_file:' }, { type: 'file', mediaType: 'image/png', data: inlinePng.data }] })
+    expect(out[3]).toEqual({ role: 'user', content: [{ type: 'text', text: '<read_file_result id="call_r">' }, { type: 'file', mediaType: 'image/png', data: inlinePng.data }, { type: 'text', text: '</read_file_result>' }] })
   })
 
   it('are resolved with the rest of the request', () => {

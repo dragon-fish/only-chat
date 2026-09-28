@@ -3,18 +3,19 @@ import type { LlmProtocolAdapter } from '../index'
 import { COMPAT_PROVIDER_NAME } from '../messages'
 import { createOpenAIFiles } from '../files/openai'
 import { createFileAwareChatModel } from '../files/references'
+import { dashscopeAudioFetch } from './dashscope-audio'
 import { observedProviderFetch } from '../observability'
 import { createOpenAIImagesClient } from '../images/openai'
 
 export const chatCompletionsAdapter: LlmProtocolAdapter = {
   createModel(provider, providerInterface, model, apiKey, trace) {
-    const fetch = trace ? observedProviderFetch(trace, apiKey) : undefined
+    const fetch = dashscopeAudioFetch(providerInterface.base_url, trace ? observedProviderFetch(trace, apiKey) : undefined)
     return createFileAwareChatModel({
       name: COMPAT_PROVIDER_NAME,
       baseURL: providerInterface.base_url,
       apiKey,
       includeUsage: true,
-      ...(fetch ? { fetch } : {}),
+      fetch,
     }, model.model_id, {
       fileReferenceStyle: provider.models_dev_provider_id === 'deepseek' ? 'flat' : 'nested',
     })

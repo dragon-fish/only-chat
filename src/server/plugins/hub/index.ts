@@ -10,7 +10,7 @@ import {
   getModel, getProvider, getUser, renameIfTitleUnchanged, toMessage, updateConversation, updateUserSettings,
 } from './conversations'
 import { suggestConversationTitle } from './service-model'
-import { canServeAsServiceModel } from '@/shared/service-model'
+import { canServeAsServiceModel, canServeAsFileModel } from '@/shared/service-model'
 import { missingRequiredPlaceholders } from '@/shared/service-prompts'
 import { parseConversationPluginSettings } from '@/shared/plugins'
 import { pluginManifests } from '@/shared/plugin-manifests'
@@ -349,6 +349,12 @@ export class Hub extends Service {
       if (!provider?.enabled || !model?.enabled || !canServeAsServiceModel(model.metadata_resolved)) {
         throw new Error('service model not found')
       }
+    }
+    const fileModel = patch.service_models?.file_understanding
+    if (fileModel) {
+      const provider = await getProvider(this.db, fileModel.provider_id, this.userId)
+      const model = await getModel(this.db, fileModel.provider_id, fileModel.model_id, this.userId)
+      if (!provider?.enabled || !model?.enabled || !canServeAsFileModel(model.metadata_resolved)) throw new Error('file understanding model not found')
     }
     const titlePrompt = patch.service_prompts?.conversation_title
     if (titlePrompt !== undefined) {

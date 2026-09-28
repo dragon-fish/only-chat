@@ -63,7 +63,7 @@ component(:is="isDesktop ? Popover : Drawer" v-model:open="open")
   component(
     :is="isDesktop ? PopoverContent : DrawerContent"
     :align="isDesktop ? 'start' : undefined" :side-offset="isDesktop ? 8 : undefined"
-    :class="cn(isDesktop ? 'w-[32rem] max-h-[calc(100dvh-2rem)] max-w-[calc(100vw-2rem)] overflow-y-auto p-0' : 'overflow-y-auto pb-[max(1rem,env(safe-area-inset-bottom))]')")
+    :class="cn(isDesktop ? 'w-[24rem] max-h-[calc(100dvh-2rem)] max-w-[calc(100vw-2rem)] overflow-y-auto p-0' : 'overflow-y-auto pb-[max(1rem,env(safe-area-inset-bottom))]')")
     DrawerHeader(v-if="!isDesktop")
       DrawerTitle 选择模型
       DrawerDescription 搜索模型，或按已声明的能力筛选。

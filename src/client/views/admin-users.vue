@@ -44,7 +44,7 @@ const role = ref<AuthRole>('user')
 const actionTitles = { role: '更改账户角色', ban: '封禁账户', unban: '解除封禁', revoke: '撤销全部登录会话' }
 const nextRole = computed<AuthRole>(() => selected.value && isAuthAdmin(selected.value) ? 'user' : 'admin')
 const confirmationDescription = computed(() => {
-  if (confirmation.value === 'role') return `将此账户设为${nextRole.value === 'admin' ? '管理员，可管理本站账户与注册设置' : '普通用户'}。`
+  if (confirmation.value === 'role') return `将此账户设为${nextRole.value === 'admin' ? '管理员，可管理本站账户与站点设置' : '普通用户'}。`
   if (confirmation.value === 'ban') return '此账户将无法登录，当前连接也会断开。'
   if (confirmation.value === 'unban') return '此账户将可以重新登录。'
   return '此账户在所有设备上的登录会话将失效，需要重新登录。'

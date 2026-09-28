@@ -37,6 +37,6 @@ describe('images returned by a tool, as Anthropic receives them', () => {
     await generateText({ model: anthropic('claude-test'), messages })
 
     expect(body!.messages.map(m => m.role)).toEqual(['user', 'assistant', 'user'])
-    expect(body!.messages[2]!.content.map(block => block.type)).toEqual(['tool_result', 'text', 'image'])
+    expect(body!.messages[2]!.content.map(block => block.type)).toEqual(['tool_result', 'text', 'image', 'text'])
   })
 })

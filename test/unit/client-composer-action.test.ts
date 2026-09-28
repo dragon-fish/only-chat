@@ -2,17 +2,20 @@
 import { createApp, h, nextTick, ref } from 'vue'
 import { createPinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
-import { afterEach, expect, it } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
+import { api } from '@/client/lib/api'
+import { DEFAULT_UPLOAD_POLICY } from '@/shared/upload-policy'
 import Composer from '@/client/components/composer.vue'
 import { TooltipProvider } from '@/client/ui/tooltip'
 import type { Part } from '@/shared/parts'
 
 let cleanup = () => {}
-afterEach(() => { cleanup(); document.body.innerHTML = '' })
+afterEach(() => { cleanup(); vi.restoreAllMocks(); document.body.innerHTML = '' })
 
 interface Fired { send: Part[][], queue: Part[][], interrupt: Part[][], stop: number, withdraw: number }
 
 function mount(options: { streaming: boolean, stash?: Part[] }) {
+  vi.spyOn(api, 'siteConfig').mockResolvedValue({ allowRegister: false, uploads: DEFAULT_UPLOAD_POLICY })
   const host = document.createElement('div')
   document.body.append(host)
   const fired: Fired = { send: [], queue: [], interrupt: [], stop: 0, withdraw: 0 }

@@ -3,6 +3,8 @@ import { computed, onBeforeUnmount, reactive, ref, shallowRef, watch } from 'vue
 import { DownloadIcon, PlusIcon, Settings2Icon, Trash2Icon } from '@lucide/vue'
 import { useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
+import ModelInfo from '@/client/components/model-info.vue'
+import ModelCapabilityIcons from '@/client/components/model-capability-icons.vue'
 import ModelEditor from '@/client/components/model-editor.vue'
 import LabAvatar from '@/client/components/lab-avatar.vue'
 import ModelFilterMenu from '@/client/components/model-filter-menu.vue'
@@ -16,16 +18,14 @@ import ProviderSettingsForm from '@/client/components/provider-settings-form.vue
 import SearchableSelect from '@/client/components/searchable-select.vue'
 import { api } from '@/client/lib/api'
 import { providerSettingsDraft } from '@/client/lib/provider-settings'
-import { filterModelEntries, modelBadges, modelName, sortModelEntries } from '@/client/lib/ui-models'
+import { filterModelEntries, modelName, sortModelEntries } from '@/client/lib/ui-models'
 import { createModelWriteQueue } from '@/client/lib/settings'
-import { createModelEditorSession, type ModelEditorSession } from '@/client/lib/model-editor'
+import { createModelEditorSession, createNewModelEditorSession, type ModelEditorSession } from '@/client/lib/model-editor'
 import { useConfigStore } from '@/client/stores/config'
 import { Badge } from '@/client/ui/badge'
 import { Button } from '@/client/ui/button'
-import { ButtonGroup } from '@/client/ui/button-group'
-import { Field, FieldGroup, FieldLabel } from '@/client/ui/field'
-import { Input } from '@/client/ui/input'
-import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemTitle } from '@/client/ui/item'
+import { Field, FieldLabel } from '@/client/ui/field'
+import { ItemGroup } from '@/client/ui/item'
 import { Separator } from '@/client/ui/separator'
 import { Skeleton } from '@/client/ui/skeleton'
 import { Spinner } from '@/client/ui/spinner'
@@ -71,8 +71,12 @@ const providerImageModel = computed({
   set: (value: string) => { form.default_image_model_id = value || null },
 })
 const modelLoadError = ref<string | null>(null)
-const newModelId = ref('')
-function focusNewModel() { document.getElementById('new-model-id')?.focus() }
+function addModel() {
+  if (busyModels.value || deletingProvider.value) return
+  editRequestToken++
+  editingSession.value = createNewModelEditorSession(requireId())
+  editorOpen.value = true
+}
 const loading = ref(true)
 const refreshing = ref(false)
 const ready = ref(false)
@@ -176,7 +180,6 @@ async function load() {
       models.value = JSON.parse(JSON.stringify(config.modelsByProvider[provider.id] ?? []))
       modelFilters.value = {}
       debouncedSearch.value = ''
-      newModelId.value = ''
       editorOpen.value = false
       saving.value = modelAction.value = deletingProvider.value = false
       loadedProviderId = id
@@ -264,25 +267,6 @@ async function fetchModels() {
     if (token !== loadToken) return
     if (loadedModels && modelToken === modelLoadToken) models.value = loadedModels
     toast.success(`导入 ${result.imported} 个新模型`)
-  } catch (error) { report(error) }
-  finally { if (token === loadToken) modelAction.value = false }
-}
-
-async function addModel() {
-  const model_id = newModelId.value.trim()
-  if (!model_id || busyModels.value) return
-  const id = requireId()
-  const token = loadToken
-  modelAction.value = true
-  try {
-    await api.createModel(id, { model_id })
-    const loadedModels = await readModels(id)
-    const modelToken = modelLoadToken
-    await config.load()
-    if (token !== loadToken) return
-    newModelId.value = ''
-    if (loadedModels && modelToken === modelLoadToken) models.value = loadedModels
-    toast.success('已添加模型')
   } catch (error) { report(error) }
   finally { if (token === loadToken) modelAction.value = false }
 }
@@ -428,6 +412,26 @@ async function saveModel(patch: Partial<ModelWriteInput>) {
   if (!session || !editor) return
   const token = loadToken
   const snapshot = editor.captureSnapshot()
+  if (session.creating) {
+    const id = requireId()
+    modelAction.value = true
+    try {
+      const created = await api.createModel(id, { ...patch, model_id: session.form.model_id.trim() })
+      config.retainModels([created])
+      const loadedModels = await readModels(id)
+      const modelToken = modelLoadToken
+      await config.load()
+      if (token !== loadToken) return
+      if (loadedModels && modelToken === modelLoadToken) models.value = loadedModels
+      if (editingSession.value === session && modelEditor.value === editor) {
+        if (editor.captureSnapshot() === snapshot) editorOpen.value = false
+        else editingSession.value = createModelEditorSession(created, { ...created, ...session.form })
+      }
+      toast.success('已添加模型')
+    } catch (error) { report(error) }
+    finally { if (token === loadToken) modelAction.value = false }
+    return
+  }
   const saved = await applyModel(session.target, patch)
   // Reopening the same model creates a new draft owner that an earlier save must not close.
   if (!saved || token !== loadToken || modelEditor.value !== editor || editingSession.value !== session) return
@@ -515,38 +519,26 @@ async function removeModel() {
             Button(type="button" variant="outline" size="sm" class="min-h-10" :disabled="dirty || !canFetchModels || busyModels || deletingProvider" @click="fetchModels")
               DownloadIcon(data-icon="inline-start")
               | {{ modelAction ? '处理中…' : '拉取模型' }}
+            Button(type="button" variant="outline" size="icon" class="size-10" aria-label="添加模型" :disabled="busyModels || deletingProvider" @click="addModel")
+              PlusIcon
             Button(type="button" variant="ghost" size="sm" class="min-h-10" :disabled="busyModels || deletingProvider" @click="setModelsEnabled(true)") 全部启用
             Button(type="button" variant="ghost" size="sm" class="min-h-10" :disabled="busyModels || deletingProvider" @click="setModelsEnabled(false)") 全部禁用
           p.text-sm.text-muted-foreground 通过供应商拉取或手动添加模型。目录只提供元数据。
           ModelFilterMenu(v-model="modelFilters" :providers="savedProvider ? [savedProvider] : []" status)
           p.min-h-5.text-sm.text-muted-foreground(role="status") {{ modelLoadError ?? '' }}
-          form(@submit.prevent="addModel")
-            FieldGroup
-              Field
-                FieldLabel.sr-only(for="new-model-id") 新模型 ID
-                ButtonGroup(class="w-full" aria-label="添加模型")
-                  Input#new-model-id(v-model="newModelId" placeholder="模型 ID，例如 gpt-5.1" class="min-h-10 min-w-0" :disabled="modelAction")
-                  Button(type="submit" variant="outline" class="min-h-10" :disabled="!newModelId.trim() || busyModels || deletingProvider")
-                    PlusIcon(data-icon="inline-start")
-                    | 添加
           ItemGroup(class="gap-2")
             ModelGroupList(:entries="modelEntries" :catalog-providers="catalogProviders" :show-providers="false" collapsible show-single-lab)
               template(#lab-actions="{ lab }")
                 Button(type="button" variant="ghost" size="xs" class="min-h-10" :aria-label="`启用 ${lab.id ?? '其他'} 分组`" :disabled="busyModels || deletingProvider" @click="setModelsEnabled(true, lab.id)") 启用
                 Button(type="button" variant="ghost" size="xs" class="min-h-10" :aria-label="`禁用 ${lab.id ?? '其他'} 分组`" :disabled="busyModels || deletingProvider" @click="setModelsEnabled(false, lab.id)") 禁用
-              template(#default="{ entry: { model, provider } }")
-                Item(variant="outline")
-                  LabAvatar(:model-id="model.model_id" :lab-id="model.lab_id" :family="model.metadata.family" :provider-name="provider.name" size="sm")
-                  ItemContent(class="min-w-0")
-                    ItemTitle {{ modelName(model) }}
-                    ItemDescription(class="break-all") {{ model.model_id }}
-                    .flex.flex-wrap.gap-1
-                      Badge(v-for="badge in modelBadges(model)" :key="badge.key" variant="secondary") {{ badge.label }}
-                      Badge(v-if="model.manual_pinned" variant="outline") 手动
-                      Badge(v-else-if="model.upstream_available === false" variant="outline" class="border-warning text-warning") 运营商已移除
-                  ItemActions(class="gap-4")
-                    Switch(:model-value="model.enabled" :aria-label="`启用 ${modelName(model)}`" class="after:-inset-y-3" :disabled="modelAction || deletingProvider" @update:model-value="setModelEnabled(model, $event)")
-                    Button(variant="ghost" size="icon" class="size-10" :aria-label="`编辑 ${modelName(model)}`" :disabled="modelAction || deletingProvider" @click="openModel(model)")
+              template(#default="{ entry }")
+                ModelInfo(:entry="entry")
+                  .flex.min-h-10.min-w-0.items-center.gap-2.rounded-md.px-2(class="hover:bg-muted/50")
+                    LabAvatar(:model-id="entry.model.model_id" :lab-id="entry.model.lab_id" :family="entry.model.metadata.family" :provider-name="entry.provider.name" size="sm")
+                    span.min-w-0.flex-1.truncate.text-sm {{ modelName(entry.model) }}
+                    ModelCapabilityIcons(:model="entry.model")
+                    Switch(:model-value="entry.model.enabled" :aria-label="`启用 ${modelName(entry.model)}`" class="shrink-0 after:-inset-y-3" :disabled="modelAction || deletingProvider" @update:model-value="setModelEnabled(entry.model, $event)")
+                    Button(variant="ghost" size="icon" class="size-8 shrink-0" :aria-label="`编辑 ${modelName(entry.model)}`" :disabled="modelAction || deletingProvider" @click="openModel(entry.model)")
                       Settings2Icon
             template(v-if="refreshing && !visibleModels.length")
               Skeleton(v-for="index in 3" :key="index" class="h-16 w-full")
@@ -557,7 +549,7 @@ async function removeModel() {
               EmptyContent
                 Button(v-if="hasModelFilters" variant="outline" class="min-h-10" @click="modelFilters = {}") 清除筛选
                 Button(v-else-if="canFetchModels" variant="outline" class="min-h-10" :disabled="dirty || busyModels || deletingProvider" @click="fetchModels") 拉取模型
-                Button(v-else variant="outline" class="min-h-10" @click="focusNewModel") 输入模型 ID
+                Button(v-else variant="outline" class="min-h-10" @click="addModel") 添加模型
         .sticky.bottom-0.-mx-4.flex.items-center.justify-between.gap-3.border-t.p-4.backdrop-blur(data-provider-save-bar class="bg-background/95 pb-[calc(1rem+env(safe-area-inset-bottom))] md:-mx-6 md:px-6 lg:-mx-8 lg:px-8")
           AlertDialog(v-model:open="providerDeleteOpen")
             AlertDialogTrigger(as-child)
@@ -573,7 +565,7 @@ async function removeModel() {
           .flex.items-center.gap-2(aria-label="供应商操作")
             span.text-sm.text-muted-foreground {{ dirty ? '有未保存的更改' : '更改已保存' }}
             Button(type="submit" form="provider-settings-form" class="min-h-10" :disabled="saving || deletingProvider || !validProvider || !dirty") {{ saving ? '保存中…' : '保存' }}
-  ModelEditor(v-if="editorOpen && editingSession && savedProvider && providerId !== null" ref="modelEditor" v-model:open="editorOpen" :key="editingSession.target.id" :session="editingSession" :interfaces="savedProvider.interfaces" :default-interface-id="savedProvider.default_interface_id" :saving="busyModels" @save="saveModel" @delete="confirmModelDelete")
+  ModelEditor(v-if="editorOpen && editingSession && savedProvider && providerId !== null" ref="modelEditor" v-model:open="editorOpen" :key="editingSession.target.id" :session="editingSession" :interfaces="savedProvider.interfaces" :default-interface-id="savedProvider.default_interface_id" :existing-model-ids="models.map(model => model.model_id)" :saving="busyModels" @save="saveModel" @delete="confirmModelDelete")
   AlertDialog(v-model:open="modelDeleteOpen")
     AlertDialogContent
       AlertDialogHeader

@@ -38,7 +38,7 @@ export const useSettingsNavStore = defineStore('settingsNav', () => {
     if (isAuthAdmin(auth.authUser)) {
       groups.push({ id: 'admin', label: '站点管理', items: [
         { label: '用户管理', description: '管理账户、角色与登录权限', to: '/admin/users', icon: markRaw(UsersIcon) },
-        { label: '注册设置', description: '设置本站是否开放注册', to: '/admin/settings', icon: markRaw(SettingsIcon) },
+        { label: '站点设置', description: '管理注册与文件上传限制', to: '/admin/settings', icon: markRaw(SettingsIcon) },
       ] })
     }
     if (auditEnabled.value) {

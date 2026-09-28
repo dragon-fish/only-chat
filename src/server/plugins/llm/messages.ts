@@ -1,3 +1,4 @@
+import { attachmentFilename } from '@/shared/file-media'
 import type { ModelMessage, AssistantModelMessage, UserModelMessage, ToolModelMessage } from 'ai'
 import type { SharedV4ProviderReference } from '@ai-sdk/provider'
 import type { AnthropicProviderOptions } from '@ai-sdk/anthropic'
@@ -18,6 +19,8 @@ export const COMPAT_PROVIDER_NAME = 'compat'
  */
 export interface AttachmentInput {
   mime: string
+  path?: string
+  unavailable?: string
   data:
     | { type: 'reference'; reference: SharedV4ProviderReference }
     | { type: 'data'; data: Uint8Array }
@@ -63,11 +66,16 @@ function userParts(parts: Part[], attachments: ReadonlyMap<number, AttachmentInp
   for (const p of parts) {
     if (p.type === 'text') {
       out.push({ type: 'text', text: p.text })
-    } else if (p.type === 'image') {
+    } else if (p.type === 'image' || p.type === 'file') {
       const att = attachments.get(p.attachment_id)
       if (!att) throw new Error(`attachment ${p.attachment_id} input not provided`)
-      if (labelImages) out.push({ type: 'text', text: `[image: ${uploadPath(p.attachment_id, att.mime)}]` })
-      out.push({ type: 'file', mediaType: att.mime, data: att.data })
+      if (att.unavailable) {
+        out.push({ type: 'text', text: `[file: ${att.path ?? uploadPath(p.attachment_id, att.mime)}; ${att.mime}] ${att.unavailable}` })
+        continue
+      }
+      if (labelImages) out.push({ type: 'text', text: `[${att.mime.startsWith('image/') ? 'image' : 'file'}: ${att.path ?? uploadPath(p.attachment_id, att.mime)}]` })
+      const filename = p.type === 'file' && p.filename ? p.filename : !att.mime.startsWith('image/') ? attachmentFilename(p.attachment_id, att.mime) : undefined
+      out.push({ type: 'file', mediaType: att.mime, data: att.data, ...(filename ? { filename } : {}) })
     } else if (p.type === 'task_notification') {
       out.push({ type: 'text', text: renderTaskNotification(p) })
     }
@@ -134,6 +142,7 @@ function assistantMessages(
   const answered = new Set(
     parts.filter((part): part is ToolResultPart => part.type === 'tool_result').map(part => part.call_id),
   )
+  const pendingCalls = new Set<string>()
   let assistant: AssistantPart[] = []
   let tool: ToolPart[] = []
   /** Results that showed images: they follow the tool message they belong to, see `toolImagesMessage`. */
@@ -143,12 +152,15 @@ function assistantMessages(
     assistant = []
   }
   const flushTool = () => {
-    if (tool.length > 0) out.push({ role: 'tool', content: tool })
+    if (tool.length > 0) {
+      flushAssistant()
+      out.push({ role: 'tool', content: tool })
+    }
     tool = []
-    if (shown.length > 0) out.push(toolImagesMessage(shown, attachments))
+    if (shown.length > 0) out.push(...shown.map(result => toolImagesMessage([result], attachments)))
     shown = []
   }
-  const appendAssistant = (part: AssistantPart) => { flushTool(); assistant.push(part) }
+  const appendAssistant = (part: AssistantPart) => { if (pendingCalls.size === 0) flushTool(); assistant.push(part) }
   for (const p of parts) {
     const options = targetOptions(protocol, 'providerOptions' in p ? p.providerOptions : undefined)
     switch (p.type) {
@@ -169,8 +181,8 @@ function assistantMessages(
       }
       case 'tool_call':
         appendAssistant(withOptions({ type: 'tool-call', toolCallId: p.id, toolName: p.name, input: p.args }, options))
-        if (!answered.has(p.id)) {
-          flushAssistant()
+        if (answered.has(p.id)) pendingCalls.add(p.id)
+        else {
           tool.push({
             type: 'tool-result',
             toolCallId: p.id,
@@ -183,9 +195,11 @@ function assistantMessages(
         }
         break
       case 'tool_result':
-        flushAssistant()
+        pendingCalls.delete(p.call_id)
         tool.push(withOptions({ type: 'tool-result', toolCallId: p.call_id, toolName: p.name, output: { type: 'json', value: p.content as never } }, options))
         if (p.attachments?.length) shown.push(p)
+        // Streaming tools can finish before the model has emitted its remaining calls.
+        if (pendingCalls.size === 0) flushTool()
         break
       case 'image': {
         // The pixels are never replayed: `requiredAttachmentIds` must skip exactly what this drops.
@@ -217,25 +231,35 @@ export function requiredAttachmentIds(path: readonly Message[]): Set<number> {
   const ids = new Set<number>()
   for (const m of path) {
     for (const p of m.parts) {
-      if (m.role === 'user' && p.type === 'image') ids.add(p.attachment_id)
+      if (m.role === 'user' && (p.type === 'image' || p.type === 'file')) ids.add(p.attachment_id)
       if (p.type === 'tool_result') for (const id of p.attachments ?? []) ids.add(id)
     }
   }
   return ids
 }
 
-/**
- * Images a tool showed the model, as the user message that follows its tool results. A user
- * message because every protocol accepts images there, while tool results carry them on only some,
- * and only as base-64 resent on every later turn. Built identically mid-turn (`prepareStep`) and
- * when the history is rebuilt, so the prompt prefix stays byte-identical.
- */
+function readRequestId(result: ToolResultPart): string {
+  const raw = (result.content as { request_id?: unknown } | null)?.request_id
+  const id = typeof raw === 'string' ? raw : result.call_id
+  return id.replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+}
+
+/** Files follow tool receipts in user messages; current steps and history use the same builder. */
 export function toolImagesMessage(results: readonly ToolResultPart[], attachments: ReadonlyMap<number, AttachmentInput>): UserModelMessage {
-  const parts: Part[] = results.flatMap((result): Part[] => [
-    { type: 'text', text: `Image returned by ${result.name}:` },
-    ...(result.attachments ?? []).map((attachment_id): Part => ({ type: 'image', attachment_id })),
-  ])
-  return { role: 'user', content: userParts(parts, attachments) }
+  const content = results.flatMap(result => {
+    const resolved = new Map(attachments)
+    for (const [id, path] of Object.entries(result.attachment_paths ?? {})) {
+      const attachment = resolved.get(Number(id))
+      if (attachment) resolved.set(Number(id), { ...attachment, path })
+    }
+    const parts: Part[] = [
+      { type: 'text', text: `<read_file_result id="${readRequestId(result)}">` },
+      ...(result.attachments ?? []).map((attachment_id): Part => ({ type: 'image', attachment_id })),
+      { type: 'text', text: '</read_file_result>' },
+    ]
+    return userParts(parts, resolved)
+  })
+  return { role: 'user', content }
 }
 
 /**

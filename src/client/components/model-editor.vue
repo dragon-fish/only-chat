@@ -11,7 +11,6 @@ import { Checkbox } from '@/client/ui/checkbox'
 import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel, FieldLegend, FieldSet } from '@/client/ui/field'
 import { Input } from '@/client/ui/input'
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/client/ui/select'
-import { Separator } from '@/client/ui/separator'
 import { Switch } from '@/client/ui/switch'
 import { Textarea } from '@/client/ui/textarea'
 import type { ModelWriteInput } from '@/shared/api'
@@ -23,7 +22,7 @@ import {
 } from '@/shared/model-metadata'
 import type { ProviderInterface } from '@/shared/models'
 
-const props = defineProps<{ open: boolean; session: ModelEditorSession; interfaces: ProviderInterface[]; defaultInterfaceId: number | null; saving?: boolean }>()
+const props = defineProps<{ open: boolean; session: ModelEditorSession; interfaces: ProviderInterface[]; defaultInterfaceId: number | null; existingModelIds?: string[]; saving?: boolean }>()
 const emit = defineEmits<{ 'update:open': [value: boolean]; save: [patch: Partial<ModelWriteInput>]; delete: [] }>()
 const form = props.session.form
 const model = computed(() => props.session.model)
@@ -177,7 +176,9 @@ const leaveGuard = ref<InstanceType<typeof UnsavedChangesGuard> | null>(null)
 async function setOpen(next: boolean) {
   if (next || await leaveGuard.value?.confirmLeave()) emit('update:open', next)
 }
+const duplicateId = computed(() => props.session.creating && props.existingModelIds?.includes(form.model_id.trim()) === true)
 const valid = computed(() => {
+  if (duplicateId.value) return false
   if (Object.keys(errors).length) return false
   try { props.session.patch(ownInterfaces.value); return true }
   catch { return false }
@@ -217,14 +218,15 @@ function save() {
 </script>
 
 <template lang="pug">
-ResponsiveOverlay(:open="open" title="编辑模型" @update:open="setOpen")
-  form.flex.flex-col.gap-6(@submit.prevent="save")
+ResponsiveOverlay(:open="open" :title="session.creating ? '添加模型' : '编辑模型'" @update:open="setOpen")
+  form.flex.flex-col.gap-6(:id="`${prefix}-form`" @submit.prevent="save")
     UnsavedChangesGuard(ref="leaveGuard" :dirty="dirty")
     FieldGroup
-      Field
+      Field(:data-invalid="duplicateId || undefined")
         FieldLabel(:for="`${prefix}-id`") 模型 ID
-        Input(:id="`${prefix}-id`" v-model="form.model_id" required class="min-h-10")
-        FieldDescription 供应商 API 使用的模型标识。
+        Input(:id="`${prefix}-id`" v-model="form.model_id" required :aria-invalid="duplicateId || undefined" class="min-h-10")
+        FieldDescription(v-if="duplicateId" role="alert") 模型已存在，请在列表中编辑。
+        FieldDescription(v-else) 供应商 API 使用的模型标识。
       Field
         FieldLabel(:for="`${prefix}-interface`") 模型接口
         Select(:model-value="String(form.interface_id ?? 'default')" @update:model-value="form.interface_id = $event === 'default' ? null : Number($event)")
@@ -356,10 +358,10 @@ ResponsiveOverlay(:open="open" title="编辑模型" @update:open="setOpen")
             Input(v-else :id="`${prefix}-${field.path.replaceAll('.', '-')}`" :model-value="inputs[field.path]" :type="field.kind === 'number' ? 'number' : 'text'" :min="field.kind === 'number' ? 0 : undefined" :step="field.path.startsWith('limit.') ? 1 : 'any'" :placeholder="placeholder(field.path)" :aria-invalid="!!errors[field.path]" class="min-h-10" @update:model-value="update(field, $event)")
             FieldDescription(:data-metadata-source="field.path") {{ source(field.path) }} · 当前有效值：{{ format(metadataValue(model.metadata, field.path)) || '未提供' }}
             FieldDescription(v-if="errors[field.path]" role="alert") {{ errors[field.path] }}
-    Separator
-    .flex.flex-wrap.items-center.justify-between.gap-2
-      Button(type="button" variant="destructive" class="min-h-10" @click="emit('delete')")
+  template(#footer)
+    .flex.items-center.justify-between.gap-2
+      Button(v-if="!session.creating" type="button" variant="destructive" class="min-h-10" :disabled="saving" @click="emit('delete')")
         Trash2Icon(data-icon="inline-start")
         | 删除模型
-      Button(type="submit" class="min-h-10" :disabled="!valid || saving") {{ saving ? '保存中…' : '保存模型' }}
+      Button(type="submit" :form="`${prefix}-form`" class="ml-auto min-h-10" :disabled="!valid || saving") {{ saving ? '保存中…' : '保存模型' }}
 </template>
