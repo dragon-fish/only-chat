@@ -364,11 +364,12 @@ The file modal shows source text, path, current version, size, line count, updat
 
 ## Binary Files and File References
 
-The VFS has no read-only projected mounts. A conversation's uploads and generated images are core
-assets addressed as `asset:<id>`; the plugin contributes the `vfs:` scheme through the core
-`file/resolve` hook, stores binary files by pointing a version at an existing attachment, and adds
-`copy_file` to bring an asset into the workspace. `read_file` delivers binary files the same way
-`view_file` does. See [conversation files spec](2026-09-28-conversation-files-design.md) §3–§4.
+The VFS has no read-only projected mounts. A conversation's uploads and generated images are assets
+owned by the `file_reader` plugin and addressed as `asset:<sha256 prefix>`. This plugin requires
+`file_reader`: it registers the `vfs:` scheme (and bare paths) with the `fileReader` service,
+supplies the versioned text reader that `read_file` uses, stores binary files by pointing a version
+at an existing attachment, and adds `copy_file` to bring an asset into the workspace. See
+[conversation files spec](2026-09-28-conversation-files-design.md) §4–§5.
 
 ## Errors and Security
 
