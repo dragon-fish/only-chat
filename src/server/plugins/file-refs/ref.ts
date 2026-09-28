@@ -58,7 +58,7 @@ export function isAssetRef(ref: ParsedFileRef): ref is { scheme: typeof ASSET_SC
  */
 export function parseFileRef(input: string): FileResult<ParsedFileRef> {
   if (input.startsWith('/')) {
-    return refFailure('INVALID_FILE_REF', `"${input}" is a bare path, not a file reference. Workspace files are referenced as ${vfsRef(input)}.`)
+    return refFailure('INVALID_FILE_REF', `"${input}" is a bare path, not a file reference. When workspace file tools are on, a workspace file is referenced as ${vfsRef(input)}.`)
   }
   const match = SCHEME.exec(input)
   if (!match) {

@@ -3,7 +3,7 @@ import { tool } from 'ai'
 import { isTextMime, WorkspaceFiles, type Result, type WorkspaceError } from '@/server/plugins/workspace-files/service'
 import type { ToolContext } from '@/server/plugins/tools'
 import { formatWorkspacePath, parseWorkspacePath, pathFromArgument } from '@/server/plugins/workspace-files/path'
-import { parseFileRef, refFailure, vfsRef, VFS_SCHEME } from '@/server/plugins/file-refs/ref'
+import { ASSET_SCHEME, parseFileRef, refFailure, vfsRef, VFS_SCHEME } from '@/server/plugins/file-refs/ref'
 import { resolvedFromAttachment } from '@/server/plugins/file-refs/resolve'
 import { fileToolError, withoutToolAttachments, type DeliveredFile } from '@/server/plugins/file-refs/deliver'
 import {
@@ -62,11 +62,11 @@ function argumentOf(input: string): PathArgument {
   return parseFileRef(input).ok ? { kind: 'ref', ref: input } : { kind: 'invalid' }
 }
 
-/** A path for a tool that changes files: a reference names something immutable, so it is `READ_ONLY`. */
+/** A path for a tool that changes files: an asset is immutable, so it is `READ_ONLY`; any other scheme is no path at all. */
 function writablePath(input: string): string | WorkspaceToolError {
   const argument = argumentOf(input)
   if (argument.kind === 'path') return argument.path
-  return failure(argument.kind === 'ref' ? 'READ_ONLY' : 'INVALID_PATH')
+  return failure(argument.kind === 'ref' && argument.ref.startsWith(`${ASSET_SCHEME}:`) ? 'READ_ONLY' : 'INVALID_PATH')
 }
 
 /** A path for a tool that only makes sense on the workspace itself. */
@@ -164,6 +164,10 @@ export const WorkspaceFilesServerPlugin = {
       const found = await files.current({ path: ref.slice(VFS_SCHEME.length + 1), conversationId: turn.conversationId, projectId: turn.projectId })
       if (!found.ok) return refFailure(found.error === 'INVALID_PATH' ? 'INVALID_FILE_REF' : 'FILE_NOT_FOUND', MESSAGES[found.error])
       const { attachment, relativePath } = found.value
+      // Every consumer of a reference wants media; text has read_file, which reads it properly.
+      if (isTextMime(attachment.mime)) {
+        return refFailure('UNSUPPORTED_FILE', `${ref} is a text file. Read it with read_file ${ref.slice(VFS_SCHEME.length + 1)}.`)
+      }
       return { ok: true, value: resolvedFromAttachment(attachment, relativePath.slice(relativePath.lastIndexOf('/') + 1)) }
     })
 
@@ -344,14 +348,16 @@ export const WorkspaceFilesServerPlugin = {
         if (!path) return { error: 'MOUNT_UNAVAILABLE', message: MESSAGES.MOUNT_UNAVAILABLE }
 
         const config = await ctx.pluginConfig.read(runtime.userId, WORKSPACE_FILES_PLUGIN_ID)
-        const renders = config.html_preview === true && previewTypeFor(relativePath) !== undefined
-          ? 'page' as const
-          : 'text' as const
+        const renders = !isTextMime(record.mime)
+          ? 'file' as const
+          : config.html_preview === true && previewTypeFor(relativePath) !== undefined ? 'page' as const : 'text' as const
         const minutes = Math.round(PREVIEW_TICKET_TTL_SECONDS / 60)
         const message = renders === 'page'
           ? `Opens as a page. The link works for about ${minutes} minutes.`
-          : 'Opens as source text, not as a rendered page — the operator has not turned on HTML preview '
-            + `for the workspace files plugin. The link works for about ${minutes} minutes.`
+          : renders === 'file'
+            ? `Opens as the ${record.mime} file itself. The link works for about ${minutes} minutes.`
+            : 'Opens as source text, not as a rendered page — the operator has not turned on HTML preview '
+              + `for the workspace files plugin. The link works for about ${minutes} minutes.`
 
         return {
           path: formatWorkspacePath(parsed.value),

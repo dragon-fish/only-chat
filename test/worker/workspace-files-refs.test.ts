@@ -129,6 +129,8 @@ describe('workspace files and file references', () => {
     expect(await run(f, 'copy_file', { from: 'vfs:/conversation/notes.md', to: '/project/notes.md' })).toMatchObject({ path: '/project/notes.md', version: 1 })
     expect(await run(f, 'read_file', { path: '/project/notes.md' })).toMatchObject({ path: '/project/notes.md', content: '1 | one\n2 | two', totalLines: 2 })
     expect(await run(f, 'copy_file', { from: '/conversation/notes.md', to: 'vfs:/project/notes.md' })).toMatchObject({ error: 'FILE_ALREADY_EXISTS' })
+    // A reference is for media; a text file named by one points the model back at read_file.
+    expect(await f.runtime.files.resolve('vfs:/project/notes.md')).toMatchObject({ ok: false, error: 'UNSUPPORTED_FILE', message: expect.stringContaining('read_file') })
   })
 
   it('refuses to change an asset, and refuses one where only a workspace path makes sense', async () => {
@@ -146,6 +148,7 @@ describe('workspace files and file references', () => {
       ['restore_file', { path: ref, version: 1, toPath: '/project/x.png' }],
       ['list_files', { path: ref }],
       ['preview_file', { path: ref }],
+      ['write_file', { path: 'https://example.com/x.png', content: 'x' }],
     ] as const) expect(await run(f, tool, input), tool).toMatchObject({ error: 'INVALID_PATH' })
   })
 

@@ -183,10 +183,11 @@ export interface PreviewFileOutput {
   /** Absolute, so it can be opened by a browser that is not already on this origin. */
   url: string
   /**
-   * `page` when the link opens as a rendered page, `text` when it only shows source. Off is the
-   * default, so a link is worth far less than it looks until the operator turns preview on.
+   * `page` when the link opens as a rendered page, `text` when it only shows source, `file` for a
+   * binary file, which opens as itself. Page preview is off by default, so a text link is worth far
+   * less than it looks until the operator turns it on.
    */
-  renders: 'page' | 'text'
+  renders: 'page' | 'text' | 'file'
   /** The link stops working after this. Tickets are deliberately short-lived. */
   expiresInSeconds: number
   message: string
