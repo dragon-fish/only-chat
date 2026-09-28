@@ -15,7 +15,7 @@ export const chatCompletionsAdapter: LlmProtocolAdapter = {
       baseURL: providerInterface.base_url,
       apiKey,
       includeUsage: true,
-      fetch,
+      ...(fetch ? { fetch } : {}),
     }, model.model_id, {
       fileReferenceStyle: provider.models_dev_provider_id === 'deepseek' ? 'flat' : 'nested',
     })

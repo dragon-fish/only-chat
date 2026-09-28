@@ -1,11 +1,18 @@
 import type { FetchFunction } from '@ai-sdk/provider-utils'
 
-/** DashScope input_audio.data takes a URL or data URI, unlike OpenAI's bare Base64 field. */
-export function dashscopeAudioFetch(baseURL: string, upstream: FetchFunction = globalThis.fetch): FetchFunction {
+/**
+ * DashScope input_audio.data takes a URL or data URI, unlike OpenAI's bare Base64 field.
+ *
+ * Any other host gets `upstream` back untouched, `undefined` included, so the SDK keeps reading
+ * `globalThis.fetch` per request. Do not default `upstream` to `globalThis.fetch` here: that pins
+ * the function at model creation and bypasses anything that replaces it later, test doubles included.
+ */
+export function dashscopeAudioFetch(baseURL: string, upstream?: FetchFunction): FetchFunction | undefined {
   const host = new URL(baseURL).hostname
   if (!['dashscope.aliyuncs.com', 'dashscope-intl.aliyuncs.com', 'dashscope-us.aliyuncs.com'].includes(host) && !host.endsWith('.maas.aliyuncs.com')) return upstream
+  const send: FetchFunction = upstream ?? ((input, init) => globalThis.fetch(input, init))
   return (input, init) => {
-    if (typeof init?.body !== 'string') return upstream(input, init)
+    if (typeof init?.body !== 'string') return send(input, init)
     const body = JSON.parse(init.body)
     let changed = false
     for (const message of body.messages ?? []) {
@@ -19,6 +26,6 @@ export function dashscopeAudioFetch(baseURL: string, upstream: FetchFunction = g
         changed = true
       }
     }
-    return upstream(input, changed ? { ...init, body: JSON.stringify(body) } : init)
+    return send(input, changed ? { ...init, body: JSON.stringify(body) } : init)
   }
 }
