@@ -34,7 +34,7 @@
 
 ### 3.1 上传
 
-- `file` part `{ type: 'file', attachment_id, mime, filename?, source_encoding? }` 承载 PDF、音频、视频与文本；`image` part `{ type: 'image', attachment_id, artifact_id?, filename? }` 语义不变，composer 上传图片时带原始文件名，粘贴的图片没有文件名。D1、DO 快照与 WebSocket 帧只携带 attachment id。
+- `file` part `{ type: 'file', attachment_id, mime, filename? }` 承载 PDF、音频、视频与文本；`image` part `{ type: 'image', attachment_id, artifact_id?, filename? }` 语义不变，composer 上传图片时带原始文件名，粘贴的图片没有文件名。D1、DO 快照与 WebSocket 帧只携带 attachment id。
 - 图片沿用现有预处理，大小限制在压缩之后检查；非图片原件存 R2，宽高为空。
 - 服务端校验：二进制按文件签名核对声明的 MIME；文本按严格 UTF-8 解码核对。拒绝空文件、类型不符和超限文件。
 - 发送消息时校验每个 `file` / `image` part 的 attachment 属于该用户，且 `file` part 的 `mime` 与 attachment 记录一致。
@@ -44,7 +44,7 @@
 
 - 允许的文本 MIME：`text/plain`、`text/markdown`、`text/html`、`text/css`、`text/javascript`、`application/json`、`text/csv`。
 - 代码与其他纯文本文件以扩展名为准：浏览器报告的 MIME 不在上述列表时，按扩展名白名单（如 `.py`、`.ts`、`.vue`、`.go`、`.rs`、`.java`、`.sh`、`.yaml`、`.toml`、`.xml`、`.sql`）规范为 `text/plain`；原始扩展名保留在 `filename` 中。
-- 编码在浏览器中统一转为 UTF-8 后再上传与计算 sha256，依次：BOM → 文件自身声明（HTML `<meta charset>`、CSS `@charset`）→ 严格 UTF-8 → GB18030。发生转换时 `source_encoding` 记录原编码，附件卡片注明「已从 <编码> 转为 UTF-8」。服务端只接受合法 UTF-8，不做检测。
+- 只接受 UTF-8（允许 UTF-8 BOM）。浏览器在加入附件时按严格 UTF-8 解码，失败则在附件托盘标错「只支持 UTF-8 编码的文本文件」，该附件不能发送；服务端同样只接受合法 UTF-8。不做编码检测或转换。
 
 ### 3.3 上传策略
 
@@ -228,7 +228,7 @@ Worker 端路由 `GET /api/plugins/file_reader/conversations/:id/assets` 列出�
 - `read_file`：asset 文本、工作区文本（`version`、`unchanged`、先读后写）、二进制交付；本轮与历史重建一致；并行调用顺序；Anthropic 合并相邻 user 消息后工具结果块在前；不能读时的错误与 `analyze_file` 建议条件。
 - 工作区：`copy_file` 从 `asset:`、`vfs:`、裸路径复制并共享 attachment；清理副本不删除仍被引用的字节；写入类工具对二进制与 `asset:` 的错误。
 - 标注：上传、生成、任务通知的 asset 标注；32 KiB 阈值两侧的文本；清理后缺失的工具附件；模型切换后的历史回放。
-- 文本上传：UTF-8、带 BOM、HTML 声明的 GBK、无声明的 GBK 转换；非法 UTF-8 被服务端拒绝；按扩展名规范为 `text/plain`。
+- 文本上传：UTF-8 与带 BOM 的 UTF-8 通过；非 UTF-8 在浏览器被标错且不能发送，绕过浏览器时被服务端拒绝；按扩展名规范为 `text/plain`。
 - `generate_image` 引用解析与非图片拒绝。
 - `analyze_file`：服务模型实际收到原样 system、独立 question 与正确文件；未配置、类型不支持、调用失败、取消。
 - 上传：大图压缩后通过、空文件、超限、签名不符、策略关闭、MIME 不一致的 part 被拒；Range 请求。
@@ -242,7 +242,7 @@ Worker 端路由 `GET /api/plugins/file_reader/conversations/:id/assets` 列出�
 
 ### 11.1 消息
 
-- 图片沿用现有预览；PDF 为文件卡片（类型图标、文件名、大小、打开与下载）；文本为文件卡片（语言图标、文件名、行数、打开与下载，转换过编码的注明）；音频、视频为播放器，浏览器无法播放时显示明确状态并保留下载。多个附件之间保持间距，编辑消息不改变 part 顺序。
+- 图片沿用现有预览；PDF 为文件卡片（类型图标、文件名、大小、打开与下载）；文本为文件卡片（语言图标、文件名、行数、打开与下载）；音频、视频为播放器，浏览器无法播放时显示明确状态并保留下载。多个附件之间保持间距，编辑消息不改变 part 顺序。
 - 拖拽遮罩在聊天上传关闭时显示「本站已关闭文件上传」。
 
 ### 11.2 文件面板（`workspace_files`）
