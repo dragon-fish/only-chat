@@ -9,21 +9,8 @@
  */
 
 /** Top-level mounts. Models cannot create, rename or delete them. */
-export const WORKSPACE_MOUNTS = ['project', 'conversation', 'artifacts', 'uploads'] as const
+export const WORKSPACE_MOUNTS = ['project', 'conversation'] as const
 export type WorkspaceMount = (typeof WORKSPACE_MOUNTS)[number]
-
-/**
- * Read-only views of images the conversation already holds: `/artifacts` for images generated in
- * it, `/uploads` for images the person attached. They store nothing; entries are derived on read.
- */
-export const PROJECTED_MOUNTS = ['artifacts', 'uploads'] as const
-export type ProjectedMount = (typeof PROJECTED_MOUNTS)[number]
-/** The mounts that hold `workspace_files` rows. */
-export type StoredMount = Exclude<WorkspaceMount, ProjectedMount>
-
-export function isProjectedMount(mount: WorkspaceMount | null): mount is ProjectedMount {
-  return mount !== null && (PROJECTED_MOUNTS as readonly string[]).includes(mount)
-}
 
 /** Comfortably below D1's limits while leaving no doubt about where the boundary is. */
 export const MAX_RELATIVE_PATH_LENGTH = 512
@@ -75,6 +62,16 @@ export function parseWorkspacePath(input: string): ParseResult {
   const relativePath = rest.join('/')
   if (relativePath.length > MAX_RELATIVE_PATH_LENGTH) return INVALID
   return { ok: true, value: { mount: mount as WorkspaceMount, relativePath } }
+}
+
+/**
+ * A path argument as a tool receives it: a bare absolute path, or the same path as a `vfs:`
+ * reference (`/project/a.md` ≡ `vfs:/project/a.md`). Anything else is not a path — the caller
+ * decides whether it is a file reference to resolve or an error.
+ */
+export function pathFromArgument(input: string): string | null {
+  if (input.startsWith('vfs:')) return input.slice(4)
+  return input.startsWith('/') ? input : null
 }
 
 /** Renders a parsed path back to its canonical absolute form. */

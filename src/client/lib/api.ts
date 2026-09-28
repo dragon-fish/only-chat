@@ -5,7 +5,7 @@ import type { AdminSiteSettings, AdminSiteSettingsUpdate, SiteConfig } from '@/s
 import { useAuthStore } from '@/client/stores/auth'
 import type { ArtifactDto, ArtifactPage, ArtifactRunDto, CreateImageRunInput, CreateImageRunResponse } from '@/shared/artifacts'
 import type { PluginConfigStatusMap } from '@/shared/plugins'
-import type { FileRecord, ProjectedFileRecord } from '@/shared/workspace-files'
+import type { FileRecord } from '@/shared/workspace-files'
 import type { ConversationAsset } from '@/shared/conversation-assets'
 import { WORKSPACE_FILES_PLUGIN_ID } from '@/shared/plugins'
 
@@ -120,8 +120,8 @@ export const api = {
   artifactContentUrl: (id: number, variant?: 'gallery' | 'preview') => `/api/artifacts/${id}/content${queryString({ variant })}`,
   projectFiles: (projectId: number) => request<{ files: FileRecord[] }>('GET', `${WORKSPACE_FILES_API}/projects/${projectId}/files`),
   conversationFiles: (conversationId: number) =>
-    request<{ files: FileRecord[]; projectFiles: FileRecord[]; projectId: number | null; uploads: ProjectedFileRecord[]; artifacts: ProjectedFileRecord[] }>('GET', `${WORKSPACE_FILES_API}/conversations/${conversationId}/files`),
-  workspaceFile: (id: number) => request<{ record: FileRecord; content: string; mime: string; previewUrl: string | null; canRenderPage: boolean }>('GET', `${WORKSPACE_FILES_API}/files/${id}`),
+    request<{ files: FileRecord[]; projectFiles: FileRecord[]; projectId: number | null }>('GET', `${WORKSPACE_FILES_API}/conversations/${conversationId}/files`),
+  workspaceFile: (id: number) => request<{ record: FileRecord; content: string | null; mime: string; attachmentId: number; previewUrl: string | null; canRenderPage: boolean }>('GET', `${WORKSPACE_FILES_API}/files/${id}`),
   // A link, not a fetch: the download is served as an attachment and the browser owns saving it.
   workspaceFileDownloadUrl: (id: number) => `${WORKSPACE_FILES_API}/files/${id}/download`,
   deleteWorkspaceFile: (id: number) => request<void>('DELETE', `${WORKSPACE_FILES_API}/files/${id}`),

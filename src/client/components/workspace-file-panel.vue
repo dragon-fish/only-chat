@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { ChevronDownIcon, ChevronRightIcon, DownloadIcon, FileArchiveIcon, FileIcon, FolderIcon, RefreshCwIcon, Trash2Icon } from '@lucide/vue'
+import { ChevronDownIcon, ChevronRightIcon, DownloadIcon, FileArchiveIcon, RefreshCwIcon, Trash2Icon } from '@lucide/vue'
 import { Alert, AlertDescription, AlertTitle } from '@/client/ui/alert'
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
@@ -10,12 +10,8 @@ import { Button } from '@/client/ui/button'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/client/ui/empty'
 import { Skeleton } from '@/client/ui/skeleton'
 import { api } from '@/client/lib/api'
-import type { ProjectedFileRecord } from '@/shared/workspace-files'
-import { useSyncStore } from '@/client/stores/sync'
-import ResponsiveOverlay from './layout/responsive-overlay.vue'
-import FileAttachment from './file-attachment.vue'
 import WorkspaceFilePreview from './workspace-file-preview.vue'
-import { fileIcon, fileRowMeta, fileTreeRows, formatFileSize, type FileRecord } from './workspace-files'
+import { fileIcon, fileRowMeta, fileTreeRows, type FileRecord } from './workspace-files'
 
 const props = defineProps<{
   /** Which mount to list. A conversation also shows the Project mount it can reach. */
@@ -25,15 +21,6 @@ const props = defineProps<{
 
 const files = ref<FileRecord[]>([])
 const projectFiles = ref<FileRecord[]>([])
-const uploads = ref<ProjectedFileRecord[]>([])
-const artifacts = ref<ProjectedFileRecord[]>([])
-const attachmentPreview = ref<ProjectedFileRecord | null>(null)
-const sync = useSyncStore()
-const filename = (path: string) => path.slice(path.lastIndexOf('/') + 1)
-const projectedGroups = computed(() => props.mount === 'conversation' ? [
-  { key: 'uploads', title: '/uploads', hint: '上传的附件 · 只读', files: uploads.value },
-  { key: 'artifacts', title: '/artifacts', hint: '生成的附件 · 只读', files: artifacts.value },
-] : [])
 /** The Project a conversation can also reach, so its archive can be offered beside its files. */
 const projectId = ref<number | null>(null)
 const loading = ref(false)
@@ -41,7 +28,7 @@ const error = ref<string | null>(null)
 const previewId = ref<number | null>(null)
 const busyId = ref<number | null>(null)
 /** Open folders, keyed by `${section}:${path}` so two mounts cannot open each other's. */
-const expanded = ref(new Set<string>(['uploads:', 'artifacts:']))
+const expanded = ref(new Set<string>())
 
 /**
  * Mount paths are the model's addressing scheme, not a concept to teach a reader. The panel says
@@ -88,16 +75,12 @@ async function load() {
       const body = await api.projectFiles(props.scopeId)
       if (epoch !== loadEpoch) return
       files.value = body.files
-      uploads.value = []
-      artifacts.value = []
       projectFiles.value = []
       projectId.value = props.scopeId
     }
     else {
       const body = await api.conversationFiles(props.scopeId)
       if (epoch !== loadEpoch) return
-      uploads.value = body.uploads
-      artifacts.value = body.artifacts
       files.value = body.files
       projectFiles.value = body.projectFiles
       projectId.value = body.projectId
@@ -112,16 +95,9 @@ async function load() {
 }
 
 watch(() => [props.mount, props.scopeId] as const, () => {
-  files.value = []; projectFiles.value = []; uploads.value = []; artifacts.value = []
-  attachmentPreview.value = null
+  files.value = []; projectFiles.value = []
   void load()
 }, { immediate: true })
-// Observe attachment membership, not streaming text deltas.
-watch(() => props.mount === 'conversation' ? [...(sync.messages.get(props.scopeId)?.values() ?? [])].flatMap(message =>
-  message.parts.flatMap(part => part.type === 'image' || part.type === 'file'
-    ? [`${message.id}:${part.attachment_id}`]
-    : part.type === 'task_notification' ? [`${part.task_id}:${part.status}`] : []),
-).join('|') : '', () => { void load() })
 
 function toggleFolder(sectionKey: string, path: string) {
   const key = `${sectionKey}:${path}`
@@ -172,24 +148,6 @@ async function remove(record: FileRecord) {
     Skeleton(v-for="n in 3" :key="n" class="h-8 w-full")
 
   template(v-else)
-    section.flex.flex-col.gap-1(v-for="group in projectedGroups" :key="group.key")
-      button.flex.min-h-10.items-center.gap-2.text-left(type="button" :aria-expanded="isOpen(group.key, '')" @click="toggleFolder(group.key, '')")
-        ChevronDownIcon(v-if="isOpen(group.key, '')" class="size-4 shrink-0 text-muted-foreground")
-        ChevronRightIcon(v-else class="size-4 shrink-0 text-muted-foreground")
-        FolderIcon(class="size-4 shrink-0 text-muted-foreground")
-        span.font-mono.text-sm {{ group.title }}
-        span.text-xs.text-muted-foreground {{ group.files.length }}
-      template(v-if="isOpen(group.key, '')")
-        p.pl-6.text-xs.text-muted-foreground {{ group.hint }}
-        p.py-2.pl-6.text-xs.text-muted-foreground(v-if="!group.files.length") 暂无文件
-        ul.flex.flex-col.pl-4(v-else)
-          li.flex.min-h-9.items-center.gap-1.rounded-md(v-for="file in group.files" :key="file.path" class="hover:bg-muted/60")
-            button.flex.min-w-0.flex-1.items-center.gap-2.py-1.text-left(type="button" :title="file.path" @click="attachmentPreview = file")
-              FileIcon(class="size-4 shrink-0 text-muted-foreground")
-              span.min-w-0.flex-1.truncate.font-mono.text-sm {{ filename(file.path) }}
-              span.shrink-0.text-xs.text-muted-foreground {{ formatFileSize(file.size) }}
-            Button(as="a" variant="ghost" size="icon-xs" class="size-8 shrink-0" :href="api.attachmentUrl(file.attachmentId)" :download="filename(file.path)" :aria-label="`下载 ${filename(file.path)}`" title="下载")
-              DownloadIcon(data-icon="inline-start")
     section.flex.flex-col.gap-1(v-for="group in sections" :key="group.key")
       .flex.items-start.justify-between.gap-2
         div
@@ -251,14 +209,6 @@ async function remove(record: FileRecord) {
                 AlertDialogFooter
                   AlertDialogCancel 取消
                   AlertDialogAction(@click="remove(row.record)") 删除
-
-ResponsiveOverlay(:open="attachmentPreview !== null" :title="attachmentPreview?.path ?? '附件'" mode="dialog" @update:open="!$event && (attachmentPreview = null)")
-  template(v-if="attachmentPreview")
-    img.mx-auto.max-h-full.max-w-full.rounded-md(v-if="attachmentPreview.mime.startsWith('image/')" :src="api.attachmentUrl(attachmentPreview.attachmentId)" :alt="attachmentPreview.path")
-    FileAttachment(v-else :attachment-id="attachmentPreview.attachmentId" :mime="attachmentPreview.mime" :filename="filename(attachmentPreview.path)")
-  template(#footer)
-    .flex.justify-end(v-if="attachmentPreview")
-      Button(as="a" variant="outline" :href="api.attachmentUrl(attachmentPreview.attachmentId)" target="_blank" rel="noopener noreferrer") 新标签页打开
 
 WorkspaceFilePreview(:file-id="previewId" @update:file-id="previewId = $event")
 </template>

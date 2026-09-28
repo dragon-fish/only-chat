@@ -343,8 +343,6 @@ describe('workspace file tools', () => {
       entries: [
         expect.objectContaining({ path: '/project', status: 'unavailable' }),
         expect.objectContaining({ path: '/conversation', status: 'empty' }),
-        expect.objectContaining({ path: '/artifacts', status: 'empty' }),
-        expect.objectContaining({ path: '/uploads', status: 'empty' }),
       ],
     })
   })

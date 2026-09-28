@@ -2,25 +2,27 @@ import type { Context } from 'cordis'
 import { tool } from 'ai'
 import { WorkspaceFiles, type Result, type WorkspaceError } from '@/server/plugins/workspace-files/service'
 import type { ToolContext } from '@/server/plugins/tools'
-import { formatWorkspacePath, isProjectedMount, parseWorkspacePath } from '@/server/plugins/workspace-files/path'
-import { resolveProjected } from '@/server/plugins/workspace-files/projections'
-import { stripToolAttachments, TOOL_ATTACHMENTS_KEY } from '@/shared/parts'
+import { formatWorkspacePath, parseWorkspacePath, pathFromArgument } from '@/server/plugins/workspace-files/path'
+import { parseFileRef, refFailure, vfsRef, VFS_SCHEME } from '@/server/plugins/file-refs/ref'
+import { resolvedFromAttachment } from '@/server/plugins/file-refs/resolve'
+import { fileToolError, withoutToolAttachments, type DeliveredFile } from '@/server/plugins/file-refs/deliver'
 import {
-  ANALYZE_FILE_TOOL_ID, DELETE_FILE_TOOL_ID, LIST_FILES_TOOL_ID, PREVIEW_FILE_TOOL_ID, READ_FILE_TOOL_ID, RENAME_FILE_TOOL_ID,
-  RESTORE_FILE_TOOL_ID, WORKSPACE_FILES_PLUGIN_ID, WRITE_FILE_TOOL_ID, EDIT_FILE_TOOL_ID,
+  COPY_FILE_TOOL_ID, DELETE_FILE_TOOL_ID, LIST_FILES_TOOL_ID, PREVIEW_FILE_TOOL_ID, READ_FILE_TOOL_ID, RENAME_FILE_TOOL_ID,
+  RESTORE_FILE_TOOL_ID, WORKSPACE_FILES_PLUGIN_ID, WRITE_FILE_TOOL_ID, EDIT_FILE_TOOL_ID, pluginToolIds,
 } from '@/shared/plugins'
+import manifest from '../manifest'
 import {
-  AnalyzeFileInputSchema, type ReadAttachmentOutput, DeleteFileInputSchema, EditFileInputSchema, ListFilesInputSchema, PreviewFileInputSchema, ReadFileInputSchema,
+  CopyFileInputSchema, DeleteFileInputSchema, EditFileInputSchema, ListFilesInputSchema, PreviewFileInputSchema, ReadFileInputSchema,
   RenameFileInputSchema, RestoreFileInputSchema, WriteFileInputSchema,
-  type DeleteFileOutput, type EditFileOutput, type ListFilesOutput, type PreviewFileOutput,
-  type ReadFileOutput, type ReadFileUnchangedOutput,
+  type CopyFileOutput, type DeleteFileOutput, type EditFileOutput, type ListFilesOutput, type PreviewFileOutput,
+  type ReadDeliveredOutput, type ReadFileOutput, type ReadFileUnchangedOutput,
   type RenameFileOutput, type RestoreFileOutput, type WriteFileOutput, type WorkspaceToolError,
 } from '../shared'
 import { absolutePreviewUrl, PREVIEW_TICKET_TTL_SECONDS, previewTypeFor, previewUrlFor } from './preview'
 
 /** Each expected failure reads as a fact the model can act on, never as a malfunction. */
 const MESSAGES: Record<WorkspaceError, string> = {
-  INVALID_PATH: 'Not a valid workspace path. Paths are absolute and start with /project, /conversation, /artifacts or /uploads, with no . or .. segments.',
+  INVALID_PATH: 'Not a valid workspace path. Paths are absolute and start with /project or /conversation (or the same as vfs:/project/…), with no . or .. segments.',
   MOUNT_UNAVAILABLE: 'This conversation does not belong to a project, so /project has nowhere to store files. Use /conversation instead.',
   FILE_NOT_FOUND: 'No such file. Use list_files to see what exists.',
   IS_DIRECTORY: 'That path holds other files rather than being one. Pass recursive: true to act on everything under it.',
@@ -31,7 +33,8 @@ const MESSAGES: Record<WorkspaceError, string> = {
   INVALID_UTF8: 'Content must be valid UTF-8 text.',
   READ_RANGE_TOO_LARGE: 'That range is past the end of the file, or too large to return. Use a smaller offset and limit.',
   NO_MATCH: 'That text is not in the file. Copy it from read_file exactly, without the line numbers printed in front of each line, and keep the original indentation.',
-  READ_ONLY: '/artifacts and /uploads show attachments this conversation already has and cannot be changed. Write your own files under /conversation or /project.',
+  READ_ONLY: 'A file reference such as asset: names a file that cannot change. copy_file it into /conversation or /project first, then work on the copy.',
+  BINARY_FILE: 'This is a binary file, which can be read, copied, renamed or deleted but not written as text. Write text to a new path instead.',
   AMBIGUOUS_MATCH: 'That text appears in more than one place, and editing the first of several is the one outcome nobody can review. Include enough surrounding lines to name a single place, or pass replaceAll to change all of them.',
 }
 
@@ -44,6 +47,35 @@ const NOT_READ: WorkspaceToolError = {
 function unwrap<T>(result: Result<T>): T | WorkspaceToolError {
   return result.ok ? result.value : { error: result.error, message: MESSAGES[result.error] }
 }
+
+const failure = (error: WorkspaceError): WorkspaceToolError => ({ error, message: MESSAGES[error] })
+
+/**
+ * What a path argument names (spec §4): a workspace path — bare or as `vfs:` — or a file reference.
+ * Anything that is neither is an invalid path, never a reference to guess at.
+ */
+type PathArgument = { kind: 'path', path: string } | { kind: 'ref', ref: string } | { kind: 'invalid' }
+
+function argumentOf(input: string): PathArgument {
+  const path = pathFromArgument(input)
+  if (path !== null) return { kind: 'path', path }
+  return parseFileRef(input).ok ? { kind: 'ref', ref: input } : { kind: 'invalid' }
+}
+
+/** A path for a tool that changes files: a reference names something immutable, so it is `READ_ONLY`. */
+function writablePath(input: string): string | WorkspaceToolError {
+  const argument = argumentOf(input)
+  if (argument.kind === 'path') return argument.path
+  return failure(argument.kind === 'ref' ? 'READ_ONLY' : 'INVALID_PATH')
+}
+
+/** A path for a tool that only makes sense on the workspace itself. */
+function workspacePath(input: string): string | WorkspaceToolError {
+  const argument = argumentOf(input)
+  return argument.kind === 'path' ? argument.path : failure('INVALID_PATH')
+}
+
+const WORKSPACE_TOOL_IDS: readonly string[] = pluginToolIds(manifest)
 
 /**
  * What this turn has seen of a file, and how it came to see it.
@@ -123,6 +155,18 @@ export const WorkspaceFilesServerPlugin = {
   name: 'workspace-files',
   inject: ['tools', 'db', 'assets', 'env', 'pluginConfig'] as const,
   apply(ctx: Context) {
+    // `vfs:` exists only while a workspace tool is on in the turn; otherwise it is left unclaimed and
+    // reads as an unsupported scheme. The mount scope is the authorization, as for every tool here.
+    ctx.on('file/resolve', async (ref, turn) => {
+      if (!ref.startsWith(`${VFS_SCHEME}:`)) return undefined
+      if (!turn.toolIds.some(id => WORKSPACE_TOOL_IDS.includes(id))) return undefined
+      const files = new WorkspaceFiles(ctx.db.orm, ctx.assets, turn.userId)
+      const found = await files.current({ path: ref.slice(VFS_SCHEME.length + 1), conversationId: turn.conversationId, projectId: turn.projectId })
+      if (!found.ok) return refFailure(found.error === 'INVALID_PATH' ? 'INVALID_FILE_REF' : 'FILE_NOT_FOUND', MESSAGES[found.error])
+      const { attachment, relativePath } = found.value
+      return { ok: true, value: resolvedFromAttachment(attachment, relativePath.slice(relativePath.lastIndexOf('/') + 1)) }
+    })
+
     // A fork inherits `project_id`, so `/project` needs nothing; `/conversation` is keyed on the
     // conversation itself and would otherwise be empty under messages that talk about its files.
     // Without this the foreign key cascade would delete the rows outright, losing files the user
@@ -146,8 +190,10 @@ export const WorkspaceFilesServerPlugin = {
       ].join(' '),
       inputSchema: ListFilesInputSchema,
       async execute(input): Promise<ListFilesOutput | WorkspaceToolError> {
+        const path = workspacePath(input.path)
+        if (typeof path !== 'string') return path
         const { files, scope } = servicesFor(runtime)
-        const result = await files.list({ path: input.path, limit: input.limit, ...scope })
+        const result = await files.list({ path, limit: input.limit, ...scope })
         if (!result.ok) return unwrap(result) as WorkspaceToolError
         return {
           path: result.value.path,
@@ -156,27 +202,6 @@ export const WorkspaceFilesServerPlugin = {
             updatedAt: entry.updatedAt, version: entry.version,
           })),
           truncated: result.value.truncated,
-        }
-      },
-    }))
-
-    ctx.tools.register(WORKSPACE_FILES_PLUGIN_ID, ANALYZE_FILE_TOOL_ID, runtime => tool({
-      description: 'Ask the configured file understanding model to describe an image, PDF, audio or video in detail. Pass its /uploads or /artifacts path and optionally a question. Use read_file for plain text. You may delegate even when you can read the file directly.',
-      inputSchema: AnalyzeFileInputSchema,
-      async execute({ path, question }) {
-        const parsed = parseWorkspacePath(path)
-        if (parsed.ok && !isProjectedMount(parsed.value.mount)) return { error: 'UNSUPPORTED_FILE', message: 'This is a text workspace. Use read_file for text.' }
-        const file = await resolveProjected(runtime.db, runtime.userId, runtime.conversationId, path)
-        if (!file) return { error: 'FILE_NOT_FOUND', message: MESSAGES.FILE_NOT_FOUND }
-        const understanding = runtime.files.understanding
-        if (!understanding) return { error: 'SERVICE_UNAVAILABLE', message: 'Configure an enabled file understanding model in service model settings.' }
-        if (!understanding.canRead(file.mime)) return { error: 'UNSUPPORTED_FILE', message: `The file understanding model or its interface cannot read ${file.mime}.` }
-        try {
-          const result = await understanding.analyze(file.attachmentId, question, runtime.signal)
-          return { path, mime: file.mime, ...result }
-        } catch (error) {
-          if (runtime.signal.aborted) throw error
-          return { error: 'ANALYSIS_FAILED', message: error instanceof Error ? error.message : String(error) }
         }
       },
     }))
@@ -190,29 +215,31 @@ export const WorkspaceFilesServerPlugin = {
         'Keep the version from the result: write_file needs it to replace this file.',
         'Reading a file this turn already read whole, with nothing written to it since, answers `unchanged` instead of the content — the earlier result is still above you and says what the file holds.',
         'Do not re-read a file immediately after write_file returned its metadata — you already have the version and line count.',
-        'Non-text files under /artifacts and /uploads follow the tool receipt in a user message tagged with its request_id. Unsupported inputs return an error and, when available, suggest analyze_file. offset and limit only apply to text.',
+        'A binary workspace file (an image, a PDF) or a file reference such as asset:3f9a2c1e is shown to you whole instead: the result is a short receipt and the file follows in a user message inside <tool_attachment>. offset and limit only apply to text. If you cannot read that kind of file, the error says so and may suggest analyze_file.',
       ].join(' '),
       inputSchema: ReadFileInputSchema,
-      // The model reads the output without the reserved key; the images arrive in the message after it.
-      toModelOutput: ({ output }) => ({ type: 'json', value: stripToolAttachments(output) as never }),
-      async execute(input): Promise<ReadFileOutput | ReadFileUnchangedOutput | ReadAttachmentOutput | WorkspaceToolError> {
-        const target = parseWorkspacePath(input.path)
-        if (target.ok && isProjectedMount(target.value.mount)) {
-          const image = await resolveProjected(runtime.db, runtime.userId, runtime.conversationId, input.path)
-          if (!image) return { error: 'FILE_NOT_FOUND', message: MESSAGES.FILE_NOT_FOUND }
-          if (!runtime.files.canRead(image.mime)) {
-            const suggestion = runtime.toolIds.includes(ANALYZE_FILE_TOOL_ID) && runtime.files.understanding?.canRead(image.mime)
-              ? ` Use analyze_file with path ${input.path} and an optional question.` : ''
-            return { error: 'UNSUPPORTED_FILE', message: `The current model cannot read ${image.mime}.${suggestion}` }
-          }
-          return {
-            request_id: crypto.randomUUID(), message: 'The file follows in a user message with the matching read_file_result id.',
-            [TOOL_ATTACHMENTS_KEY]: [image.attachmentId],
-          } as ReadAttachmentOutput
-
+      // The model reads the output without the reserved key; the file arrives in the message after it.
+      toModelOutput: withoutToolAttachments,
+      async execute(input): Promise<ReadFileOutput | ReadFileUnchangedOutput | ReadDeliveredOutput | WorkspaceToolError> {
+        const argument = argumentOf(input.path)
+        if (argument.kind === 'invalid') return failure('INVALID_PATH')
+        if (argument.kind === 'ref') {
+          const resolved = await runtime.files.resolve(argument.ref)
+          if (!resolved.ok) return fileToolError(resolved)
+          const delivered = runtime.files.deliver(resolved.value, argument.ref)
+          return delivered.ok ? delivered.value as DeliveredFile : fileToolError(delivered)
         }
+
         const { files, scope } = servicesFor(runtime)
-        const result = await files.read({ path: input.path, offset: input.offset, limit: input.limit, ...scope })
+        const result = await files.read({ path: argument.path, offset: input.offset, limit: input.limit, ...scope })
+        if (!result.ok && result.error === 'BINARY_FILE') {
+          const found = await files.current({ path: argument.path, ...scope })
+          if (!found.ok) return unwrap(found) as WorkspaceToolError
+          const { attachment, path, relativePath } = found.value
+          const file = resolvedFromAttachment(attachment, relativePath.slice(relativePath.lastIndexOf('/') + 1))
+          const delivered = runtime.files.deliver(file, vfsRef(path))
+          return delivered.ok ? delivered.value as DeliveredFile : fileToolError(delivered)
+        }
         if (!result.ok) return unwrap(result) as WorkspaceToolError
         const { updatedAt: _updatedAt, ...output } = result.value
 
@@ -248,9 +275,11 @@ export const WorkspaceFilesServerPlugin = {
       ].join(' '),
       inputSchema: WriteFileInputSchema,
       async execute(input, options): Promise<WriteFileOutput | WorkspaceToolError> {
+        const target = writablePath(input.path)
+        if (typeof target !== 'string') return target
         const { files, scope } = servicesFor(runtime)
         const result = await files.write({
-          path: input.path,
+          path: target,
           content: input.content,
           expectedVersion: input.expectedVersion,
           sourceMessageId: runtime.assistantMessageId,
@@ -296,7 +325,9 @@ export const WorkspaceFilesServerPlugin = {
       inputSchema: PreviewFileInputSchema,
       async execute(input): Promise<PreviewFileOutput | WorkspaceToolError> {
         const { files, scope } = servicesFor(runtime)
-        const parsed = parseWorkspacePath(input.path)
+        const target = workspacePath(input.path)
+        if (typeof target !== 'string') return target
+        const parsed = parseWorkspacePath(target)
         if (!parsed.ok || parsed.value.mount === null || parsed.value.relativePath === '') {
           return { error: 'INVALID_PATH', message: MESSAGES.INVALID_PATH }
         }
@@ -323,7 +354,7 @@ export const WorkspaceFilesServerPlugin = {
             + `for the workspace files plugin. The link works for about ${minutes} minutes.`
 
         return {
-          path: input.path,
+          path: formatWorkspacePath(parsed.value),
           url: runtime.publicOrigin === null ? path : absolutePreviewUrl(runtime.publicOrigin, path),
           renders,
           expiresInSeconds: PREVIEW_TICKET_TTL_SECONDS,
@@ -342,8 +373,10 @@ export const WorkspaceFilesServerPlugin = {
       ].join(' '),
       inputSchema: EditFileInputSchema,
       async execute(input, options): Promise<EditFileOutput | WorkspaceToolError> {
-        const parsed = parseWorkspacePath(input.path)
-        if (!parsed.ok) return { error: 'INVALID_PATH', message: MESSAGES.INVALID_PATH }
+        const target = writablePath(input.path)
+        if (typeof target !== 'string') return target
+        const parsed = parseWorkspacePath(target)
+        if (!parsed.ok) return failure('INVALID_PATH')
         // The ledger is keyed by the canonical path, which is what read_file and write_file record.
         const seen = seenInContext(runtime, formatWorkspacePath(parsed.value))
         // A view that stopped short is not knowing what the file says, even when the text being
@@ -352,7 +385,7 @@ export const WorkspaceFilesServerPlugin = {
 
         const { files, scope } = servicesFor(runtime)
         const result = await files.edit({
-          path: input.path,
+          path: target,
           oldText: input.oldText,
           newText: input.newText,
           replaceAll: input.replaceAll,
@@ -394,11 +427,15 @@ export const WorkspaceFilesServerPlugin = {
       ].join(' '),
       inputSchema: RestoreFileInputSchema,
       async execute(input, options): Promise<RestoreFileOutput | WorkspaceToolError> {
+        const from = workspacePath(input.path)
+        if (typeof from !== 'string') return from
+        const to = workspacePath(input.toPath)
+        if (typeof to !== 'string') return to
         const { files, scope } = servicesFor(runtime)
         const result = await files.restore({
-          path: input.path,
+          path: from,
           version: input.version,
-          toPath: input.toPath,
+          toPath: to,
           sourceMessageId: runtime.assistantMessageId,
           toolCallId: options?.toolCallId ?? null,
           ...scope,
@@ -421,10 +458,14 @@ export const WorkspaceFilesServerPlugin = {
       ].join(' '),
       inputSchema: RenameFileInputSchema,
       async execute(input): Promise<RenameFileOutput | WorkspaceToolError> {
+        const from = writablePath(input.path)
+        if (typeof from !== 'string') return from
+        const to = writablePath(input.toPath)
+        if (typeof to !== 'string') return to
         const { files, scope } = servicesFor(runtime)
         const result = await files.rename({
-          path: input.path,
-          toPath: input.toPath,
+          path: from,
+          toPath: to,
           recursive: input.recursive,
           ...scope,
         })
@@ -457,8 +498,10 @@ export const WorkspaceFilesServerPlugin = {
       ].join(' '),
       inputSchema: DeleteFileInputSchema,
       async execute(input): Promise<DeleteFileOutput | WorkspaceToolError> {
+        const target = writablePath(input.path)
+        if (typeof target !== 'string') return target
         const { files, scope } = servicesFor(runtime)
-        const result = await files.deleteByPath({ path: input.path, recursive: input.recursive, ...scope })
+        const result = await files.deleteByPath({ path: target, recursive: input.recursive, ...scope })
         if (!result.ok) return unwrap(result) as WorkspaceToolError
         const { path, deleted } = result.value
         for (const gone of deleted) runtime.turn.delete(seenKey(gone))
@@ -469,6 +512,36 @@ export const WorkspaceFilesServerPlugin = {
             ? `Deleted ${path}. The user can restore it from their workspace settings for 30 days.`
             : `Deleted ${deleted.length} files under ${path}. The user can restore them from their workspace settings for 30 days.`,
         }
+      },
+    }))
+
+    ctx.tools.register(WORKSPACE_FILES_PLUGIN_ID, COPY_FILE_TOOL_ID, runtime => tool({
+      description: [
+        'Copy a file to a new workspace path, costing no storage: the copy shares the source\'s bytes.',
+        'from is a workspace path, or a file reference such as asset:3f9a2c1e for a file shown in this conversation — which is how an uploaded or generated file gets a place in the workspace, where it can be renamed, shared through /project, or opened again in a later conversation.',
+        'to must be free: copying never overwrites. The copy starts its own history at version 1.',
+        'Works for text and binary files alike.',
+      ].join(' '),
+      inputSchema: CopyFileInputSchema,
+      async execute(input, options): Promise<CopyFileOutput | WorkspaceToolError> {
+        const to = writablePath(input.to)
+        if (typeof to !== 'string') return to
+        const argument = argumentOf(input.from)
+        if (argument.kind === 'invalid') return failure('INVALID_PATH')
+        let from: { path: string } | { attachment: { attachmentId: number, mime: string, size: number } }
+        if (argument.kind === 'ref') {
+          const resolved = await runtime.files.resolve(argument.ref)
+          if (!resolved.ok) return fileToolError(resolved)
+          from = { attachment: resolved.value }
+        } else from = { path: argument.path }
+
+        const { files, scope } = servicesFor(runtime)
+        const result = await files.copy({
+          from, toPath: to, sourceMessageId: runtime.assistantMessageId, toolCallId: options?.toolCallId ?? null, ...scope,
+        })
+        if (!result.ok) return unwrap(result) as WorkspaceToolError
+        const { path, mime, fileSize, version } = result.value
+        return { path, from: input.from, mime, fileSize, version, message: `Copied ${input.from} to ${path}.` }
       },
     }))
   },

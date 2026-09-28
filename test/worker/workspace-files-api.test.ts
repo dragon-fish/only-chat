@@ -81,18 +81,21 @@ describe('workspace files REST', () => {
     expect(body.projectFiles.map(file => file.path)).toEqual(['/project/report.md'])
   })
 
-  it('includes uploaded and generated attachments as read-only projected mounts', async () => {
-    const [upload] = await f.db.insert(attachments).values({ user_id: 1, sha256: crypto.randomUUID(), mime: 'audio/mpeg', size: 42, r2_key: 'panel-audio', origin: 'upload', created_at: 0 }).returning()
-    const [image] = await f.db.insert(attachments).values({ user_id: 1, sha256: crypto.randomUUID(), mime: 'image/png', size: 50, r2_key: 'panel-image', origin: 'generated', created_at: 0 }).returning()
-    await f.db.insert(messages).values([
-      { conversation_id: f.conversationId, seq: 1, role: 'user', status: 'done', parts: [{ type: 'file', attachment_id: upload!.id, mime: 'audio/mpeg', filename: 'audio.mp3' }], created_at: 0 },
-      { conversation_id: f.conversationId, seq: 2, role: 'assistant', status: 'done', parts: [{ type: 'image', attachment_id: image!.id }], created_at: 0 },
-    ])
-    const response = await f.client.request(`${API}/conversations/${f.conversationId}/files`)
-    expect(await response.json()).toMatchObject({
-      uploads: [{ path: `/uploads/${upload!.id}.mp3`, attachmentId: upload!.id, mime: 'audio/mpeg' }],
-      artifacts: [{ path: `/artifacts/msg-${image!.id}.png`, attachmentId: image!.id }],
+  it('serves a binary file as its bytes and type, never as decoded text', async () => {
+    const bytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 0xff, 0xfe])
+    const key = `panel-binary/${crypto.randomUUID()}`
+    await env.BUCKET.put(key, bytes)
+    const [image] = await f.db.insert(attachments).values({ user_id: 1, sha256: crypto.randomUUID(), mime: 'image/png', size: bytes.byteLength, r2_key: key, origin: 'upload', created_at: 0 }).returning()
+    const files = new WorkspaceFiles(f.db, storage, 1)
+    await files.copy({ from: { attachment: { attachmentId: image!.id, mime: 'image/png', size: bytes.byteLength } }, toPath: '/project/cat.png', conversationId: f.conversationId, projectId: f.projectId })
+    const [row] = await f.db.select().from(workspaceFiles).where(eq(workspaceFiles.relative_path, 'cat.png'))
+
+    expect(await (await f.client.request(`${API}/files/${row!.id}`)).json()).toMatchObject({
+      content: null, mime: 'image/png', attachmentId: image!.id, record: { path: '/project/cat.png', mime: 'image/png', totalLines: 0 },
     })
+    const download = await f.client.request(`${API}/files/${row!.id}/download`)
+    expect(download.headers.get('content-type')).toBe('image/png')
+    expect(new Uint8Array(await download.arrayBuffer())).toEqual(bytes)
   })
 
   it('returns the current content for preview', async () => {

@@ -100,7 +100,7 @@ describe('workspace files service', () => {
     expect(edited).toMatchObject({ ok: false, error: 'AMBIGUOUS_MATCH' })
 
     const after = await f.files.readBytes('project', scope(f), 'a.ts')
-    expect(after.ok && new TextDecoder().decode(after.value)).toBe('log()\nlog()')
+    expect(after.ok && new TextDecoder().decode(after.value.bytes)).toBe('log()\nlog()')
   })
 
   it('replaces every occurrence when asked to', async () => {
@@ -111,7 +111,7 @@ describe('workspace files service', () => {
     expect(edited.ok && edited.value.replacements).toBe(2)
 
     const after = await f.files.readBytes('project', scope(f), 'a.ts')
-    expect(after.ok && new TextDecoder().decode(after.value)).toBe('debug()\ndebug()')
+    expect(after.ok && new TextDecoder().decode(after.value.bytes)).toBe('debug()\ndebug()')
   })
 
   it('reports text that is not there instead of writing an unchanged version', async () => {
@@ -133,7 +133,7 @@ describe('workspace files service', () => {
     expect(edited).toMatchObject({ ok: true })
 
     const after = await f.files.readBytes('project', scope(f), 'a.ts')
-    expect(after.ok && new TextDecoder().decode(after.value)).toBe('cost: $& $1 $$')
+    expect(after.ok && new TextDecoder().decode(after.value.bytes)).toBe('cost: $& $1 $$')
   })
 
   it('matches text whose quotes are typed the other way', async () => {
@@ -146,7 +146,7 @@ describe('workspace files service', () => {
     expect(edited).toMatchObject({ ok: true })
 
     const after = await f.files.readBytes('project', scope(f), 'q.ts')
-    expect(after.ok && new TextDecoder().decode(after.value)).toBe("const greeting = 'bye'\nsay(greeting)")
+    expect(after.ok && new TextDecoder().decode(after.value.bytes)).toBe("const greeting = 'bye'\nsay(greeting)")
   })
 
   it('counts a quote-insensitive match as a match when deciding it is ambiguous', async () => {
@@ -272,8 +272,6 @@ describe('workspace files service', () => {
     expect(listed.value.entries).toEqual([
       expect.objectContaining({ path: '/project', type: 'mount', status: 'unavailable' }),
       expect.objectContaining({ path: '/conversation', type: 'mount', status: 'empty' }),
-      expect.objectContaining({ path: '/artifacts', type: 'mount', status: 'empty' }),
-      expect.objectContaining({ path: '/uploads', type: 'mount', status: 'empty' }),
     ])
   })
 

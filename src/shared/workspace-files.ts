@@ -10,22 +10,14 @@ export interface FileRecord {
   projectId: number | null
   conversationId: number | null
   fileSize: number
+  /** 0 for a binary file, which has no lines to address. */
   totalLines: number
+  /** The current version's type. Anything but `text/*` is binary: read by delivery, never as text. */
+  mime: string
   version: number
   updatedAt: number
   createdAt: number
   /** Where the newest version came from, when it came from a conversation. */
   sourceConversationId: number | null
   sourceMessageId: number | null
-}
-
-/** Read-only view of an attachment already linked to this conversation. */
-export interface ProjectedFileRecord {
-  path: string
-  attachmentId: number
-  mime: string
-  size: number
-  width: number | null
-  height: number | null
-  createdAt: number
 }

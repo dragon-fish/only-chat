@@ -1,7 +1,7 @@
 import { z } from 'zod'
 
 export {
-  DELETE_FILE_TOOL_ID, EDIT_FILE_TOOL_ID, LIST_FILES_TOOL_ID, PREVIEW_FILE_TOOL_ID, READ_FILE_TOOL_ID,
+  COPY_FILE_TOOL_ID, DELETE_FILE_TOOL_ID, EDIT_FILE_TOOL_ID, LIST_FILES_TOOL_ID, PREVIEW_FILE_TOOL_ID, READ_FILE_TOOL_ID,
   RENAME_FILE_TOOL_ID, RESTORE_FILE_TOOL_ID, WRITE_FILE_TOOL_ID, WORKSPACE_FILES_PLUGIN_ID,
 } from '@/shared/plugins'
 
@@ -18,7 +18,7 @@ export type WorkspaceFilesConfig = z.infer<typeof WORKSPACE_FILES_CONFIG_SCHEMA>
  * Paths are validated again by the service; this only keeps obvious nonsense out of the model's
  * way early enough to be corrected in the same turn.
  */
-const PathSchema = z.string().min(1).max(600).describe('Absolute workspace path, for example /project/report.md')
+const PathSchema = z.string().min(1).max(600).describe('Absolute workspace path, for example /project/report.md (vfs:/project/report.md means the same)')
 
 export const ListFilesInputSchema = z.strictObject({
   path: PathSchema.default('/'),
@@ -27,7 +27,7 @@ export const ListFilesInputSchema = z.strictObject({
 export type ListFilesInput = z.infer<typeof ListFilesInputSchema>
 
 export const ReadFileInputSchema = z.strictObject({
-  path: PathSchema,
+  path: PathSchema.describe('A workspace path, or a file reference such as asset:3f9a2c1e for a file shown in this conversation.'),
   offset: z.number().int().min(1).optional().describe('1-based first line to return.'),
   limit: z.number().int().min(1).max(5000).optional().describe('How many lines to return.'),
 })
@@ -99,17 +99,12 @@ export interface ReadFileOutput {
 }
 
 /**
- * Reading an image under `/artifacts` or `/uploads`. `shown` means the model receives the image
- * itself right after this result; `unsupported` means this model cannot take images, which is a
- * fact to act on, not a failure.
+ * Reading a binary file or a file reference: the receipt `deliverFile` returns. The file itself
+ * follows in a user message; the attachment id travels on the stored part, not in here.
  */
-export interface ReadImageOutput {
-  path: string
+export interface ReadDeliveredOutput {
+  file: string
   mime: string
-  width: number | null
-  height: number | null
-  fileSize: number
-  image: 'shown' | 'unsupported'
   message: string
 }
 
@@ -197,5 +192,19 @@ export interface PreviewFileOutput {
   message: string
 }
 
-export const AnalyzeFileInputSchema = z.strictObject({ path: PathSchema, question: z.string().min(1).optional() })
-export interface ReadAttachmentOutput { request_id: string; message: string }
+export const CopyFileInputSchema = z.strictObject({
+  from: z.string().min(1).max(600)
+    .describe('What to copy: a workspace path, or a file reference such as asset:3f9a2c1e for a file shown in this conversation.'),
+  to: PathSchema.describe('Where to put the copy. Must not already exist.'),
+})
+export type CopyFileInput = z.infer<typeof CopyFileInputSchema>
+
+export interface CopyFileOutput {
+  path: string
+  /** The `from` argument as given. */
+  from: string
+  mime: string
+  fileSize: number
+  version: number
+  message: string
+}

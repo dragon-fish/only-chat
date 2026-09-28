@@ -3,8 +3,6 @@ import {
   DELETE_FILE_TOOL_ID, EDIT_FILE_TOOL_ID, LIST_FILES_TOOL_ID, PREVIEW_FILE_TOOL_ID, READ_FILE_TOOL_ID,
   RENAME_FILE_TOOL_ID, RESTORE_FILE_TOOL_ID, WRITE_FILE_TOOL_ID,
 } from '../shared'
-import AnalyzeFileCard from './analyze-file-card.vue'
-import { ANALYZE_FILE_TOOL_ID } from '@/shared/plugins'
 import DeleteFileCard from './delete-file-card.vue'
 import EditFileCard from './edit-file-card.vue'
 import FilesTab from './files-tab.vue'
@@ -18,7 +16,6 @@ import TurnFilesFooter from './turn-files-footer.vue'
 import WriteFileCard from './write-file-card.vue'
 
 export const setup: ClientPluginSetup = (ctx) => {
-  ctx.tools.register(ANALYZE_FILE_TOOL_ID, AnalyzeFileCard)
   ctx.tools.register(LIST_FILES_TOOL_ID, ListFilesCard)
   ctx.tools.register(READ_FILE_TOOL_ID, ReadFileCard)
   ctx.tools.register(WRITE_FILE_TOOL_ID, WriteFileCard)

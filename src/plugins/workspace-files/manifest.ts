@@ -1,6 +1,6 @@
 import type { PluginManifest } from '@/shared/plugins'
 import {
-  ANALYZE_FILE_TOOL_ID, DELETE_FILE_TOOL_ID, EDIT_FILE_TOOL_ID, LIST_FILES_TOOL_ID, PREVIEW_FILE_TOOL_ID, READ_FILE_TOOL_ID,
+  COPY_FILE_TOOL_ID, DELETE_FILE_TOOL_ID, EDIT_FILE_TOOL_ID, LIST_FILES_TOOL_ID, PREVIEW_FILE_TOOL_ID, READ_FILE_TOOL_ID,
   RENAME_FILE_TOOL_ID, RESTORE_FILE_TOOL_ID, WORKSPACE_FILES_PLUGIN_ID, WRITE_FILE_TOOL_ID,
 } from '@/shared/plugins'
 import { WORKSPACE_FILES_CONFIG_SCHEMA } from './shared'
@@ -8,9 +8,8 @@ import { WORKSPACE_FILES_CONFIG_SCHEMA } from './shared'
 const manifest = {
   id: WORKSPACE_FILES_PLUGIN_ID,
   name: '工作区文件',
-  description: '让模型在 Project 与会话中读写持久化的文本文件。写入会保留历史版本。',
+  description: '让模型在 Project 与会话中读写持久化的文件。写入会保留历史版本。',
   tools: [
-    { id: ANALYZE_FILE_TOOL_ID, name: '分析文件', description: '委托文件理解模型详细描述图片、PDF、音频或视频，可附带问题。' },
     {
       id: LIST_FILES_TOOL_ID,
       name: '列出文件',
@@ -19,7 +18,7 @@ const manifest = {
     {
       id: READ_FILE_TOOL_ID,
       name: '读取文件',
-      description: '按行读取文本文件，可指定起始行与行数。',
+      description: '按行读取文本文件，可指定起始行与行数；图片、PDF 等文件直接交给模型查看。',
     },
     {
       id: WRITE_FILE_TOOL_ID,
@@ -35,6 +34,11 @@ const manifest = {
       id: RESTORE_FILE_TOOL_ID,
       name: '还原文件',
       description: '把某个历史版本还原为一个新文件，不会覆盖任何现有文件。',
+    },
+    {
+      id: COPY_FILE_TOOL_ID,
+      name: '复制文件',
+      description: '把工作区文件或对话里的附件复制到一个新位置，不占用额外存储。',
     },
     {
       id: RENAME_FILE_TOOL_ID,

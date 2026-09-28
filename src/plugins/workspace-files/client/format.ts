@@ -15,8 +15,6 @@ export function basename(path: string): string {
 export const MOUNT_LABELS: Record<string, string> = {
   '/project': 'Project 共享',
   '/conversation': '本会话私有',
-  '/artifacts': '本会话生成的图片',
-  '/uploads': '本会话上传的文件',
 }
 
 export const MOUNT_STATUS_LABELS: Record<string, string> = {

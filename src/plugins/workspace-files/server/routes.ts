@@ -6,8 +6,7 @@ import { conversations, projects } from '@/server/db/schema'
 import { WORKSPACE_FILES_PLUGIN_ID } from '@/shared/plugins'
 import { PLUGIN_API_PREFIX } from '@/server/plugins/api'
 import { parseWorkspacePath, type WorkspaceMount } from '@/server/plugins/workspace-files/path'
-import { listProjected } from '@/server/plugins/workspace-files/projections'
-import { WorkspaceFiles, type WorkspaceError } from '@/server/plugins/workspace-files/service'
+import { isTextMime, WorkspaceFiles, type WorkspaceError } from '@/server/plugins/workspace-files/service'
 import type { FileRecord } from '@/shared/workspace-files'
 import { authUserId, type ApiEnv } from '@/server/plugins/api/auth'
 import { parseId } from '@/server/plugins/api/params'
@@ -31,6 +30,7 @@ const STATUS: Record<WorkspaceError, 400 | 404 | 409> = {
   NO_MATCH: 400,
   AMBIGUOUS_MATCH: 409,
   READ_ONLY: 409,
+  BINARY_FILE: 400,
 }
 
 /**
@@ -87,10 +87,12 @@ export function workspacePreviewRoutes(ctx: Context) {
 
     // The setting decides one thing: whether a page is served as a page. Off, every file is text —
     // which a browser shows rather than runs, so opening one in a tab is always safe.
+    // A binary file is served as what it is; only text is subject to the page setting.
     const config = await ctx.pluginConfig.read(ticket.userId, WORKSPACE_FILES_PLUGIN_ID)
     const extension = parsed.value.relativePath.split('.').pop()?.toLowerCase() ?? ''
-    const type = config.html_preview === true ? PREVIEW_TYPES[extension] : undefined
-    return new Response(result.value as unknown as BodyInit, {
+    const type = !isTextMime(result.value.mime) ? result.value.mime
+      : config.html_preview === true ? PREVIEW_TYPES[extension] : undefined
+    return new Response(result.value.bytes as unknown as BodyInit, {
       headers: {
         'content-type': type ?? 'text/plain; charset=utf-8',
         'content-security-policy': 'sandbox allow-scripts allow-forms allow-modals',
@@ -182,11 +184,7 @@ export function workspaceFileRoutes(ctx: Context) {
       ? { ok: true as const, value: [] }
       : await files.listRecords('project', { conversationId, projectId: conversation.project_id })
     if (!shared.ok) return c.json({ error: shared.error }, STATUS[shared.error])
-    const [uploads, artifacts] = await Promise.all([
-      listProjected(db, userId, conversationId, 'uploads'),
-      listProjected(db, userId, conversationId, 'artifacts'),
-    ])
-    return c.json({ files: own.value, projectFiles: shared.value, projectId: conversation.project_id, uploads, artifacts })
+    return c.json({ files: own.value, projectFiles: shared.value, projectId: conversation.project_id })
   })
 
   r.get('/projects/:id/files/archive', async (c) => {
@@ -282,8 +280,10 @@ export function workspaceFileRoutes(ctx: Context) {
     const result = await filesFor(userId).readById(fileId)
     if (!result.ok) return c.json({ error: result.error }, STATUS[result.error])
     const config = await ctx.pluginConfig.read(userId, WORKSPACE_FILES_PLUGIN_ID)
+    // Bytes stay out of JSON: a binary file is shown from its attachment, text from `content`.
+    const { bytes: _bytes, ...file } = result.value
     return c.json({
-      ...result.value,
+      ...file,
       previewUrl: await previewUrlFor(ctx, userId, result.value.record),
       canRenderPage: config.html_preview === true,
     })
@@ -297,10 +297,12 @@ export function workspaceFileRoutes(ctx: Context) {
     if (!result.ok) return c.json({ error: result.error }, STATUS[result.error])
 
     const name = result.value.record.relativePath.split('/').pop() ?? 'file.txt'
-    return new Response(result.value.content, {
+    const text = isTextMime(result.value.mime)
+    return new Response(result.value.bytes as unknown as BodyInit, {
       headers: {
-        // Always a download and never a rendered page: this content was written by a model.
-        'content-type': 'text/plain; charset=utf-8',
+        // Always a download and never a rendered page: text was written by a model, and binary is
+        // labelled with its stored type so the saved file opens as what it is.
+        'content-type': text ? 'text/plain; charset=utf-8' : result.value.mime,
         'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(name)}`,
         'x-content-type-options': 'nosniff',
       },

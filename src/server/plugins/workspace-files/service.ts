@@ -1,15 +1,13 @@
 import type { FileRecord } from '@/shared/workspace-files'
 import { and, asc, desc, eq, inArray, isNotNull, isNull, like, lt, or, sql, type SQL } from 'drizzle-orm'
 import type { DB } from '../../db/client'
-import type { SQLiteColumn } from 'drizzle-orm/sqlite-core'
 import {
-  artifactRunInputs, artifacts, attachments, conversations, messages, projects,
+  artifactRunInputs, artifacts, attachments, projects,
   workspaceFileVersions, workspaceFiles,
-  type WorkspaceFileRow, type WorkspaceFileVersionRow,
+  type AttachmentRow, type WorkspaceFileRow, type WorkspaceFileVersionRow,
 } from '../../db/schema'
 import { r2Key } from '../api/attachments'
-import { countLines, formatWorkspacePath, isProjectedMount, parseWorkspacePath, WORKSPACE_MOUNTS, type WorkspaceMount } from './path'
-import { listProjected } from './projections'
+import { countLines, formatWorkspacePath, parseWorkspacePath, WORKSPACE_MOUNTS, type WorkspaceMount } from './path'
 
 export type { FileRecord }
 
@@ -28,6 +26,7 @@ export type WorkspaceError =
   | 'NO_MATCH'
   | 'AMBIGUOUS_MATCH'
   | 'READ_ONLY'
+  | 'BINARY_FILE'
 
 export type Result<T> = { ok: true, value: T } | { ok: false, error: WorkspaceError }
 
@@ -61,6 +60,14 @@ export const MAX_FILE_BYTES = 1024 * 1024
 export const DEFAULT_READ_LINES = 2000
 export const MAX_RESULT_BYTES = 100 * 1024
 const MIME = 'text/markdown; charset=utf-8'
+
+/**
+ * Whether a stored version is text. Everything `write_file` stores is; anything else arrived by
+ * `copy_file` and is only ever delivered whole, never decoded as UTF-8 or edited.
+ */
+export function isTextMime(mime: string): boolean {
+  return mime.startsWith('text/')
+}
 
 /**
  * Only what the filesystem needs from object storage.
@@ -155,6 +162,32 @@ export interface RestoreResult {
   updatedAt: number
 }
 
+export interface CopyInput extends WorkspaceScope {
+  /** A workspace path, or an attachment a file reference already resolved to. */
+  from: { path: string } | { attachment: { attachmentId: number, mime: string, size: number } }
+  /** Must not exist. Copying never overwrites. */
+  toPath: string
+  sourceMessageId?: number | null
+  toolCallId?: string | null
+}
+
+export interface CopyResult {
+  path: string
+  version: number
+  mime: string
+  fileSize: number
+  totalLines: number
+  updatedAt: number
+}
+
+/** A file's current version, down to the attachment holding its bytes. */
+export interface CurrentFile {
+  path: string
+  relativePath: string
+  version: WorkspaceFileVersionRow
+  attachment: AttachmentRow
+}
+
 export interface ReadInput extends WorkspaceScope {
   path: string
   offset?: number
@@ -216,6 +249,7 @@ function recordOf(file: WorkspaceFileRow, version: WorkspaceFileVersionRow | nul
     conversationId: file.conversation_id,
     fileSize: version?.file_size ?? 0,
     totalLines: version?.total_lines ?? 0,
+    mime: version?.mime ?? MIME,
     version: file.current_version,
     updatedAt: file.updated_at,
     createdAt: file.created_at,
@@ -233,9 +267,6 @@ export class WorkspaceFiles {
 
   /** Resolves a mount to the row scope it addresses, or reports why it cannot be used. */
   private scopeOf(mount: WorkspaceMount, scope: WorkspaceScope): Result<{ projectId: number | null, conversationId: number | null }> {
-    // Projected mounts hold no rows. Everything that would address one through this method is a
-    // write, a rename or a stored-file read; `list` handles them itself and `read_file` reads their images.
-    if (isProjectedMount(mount)) return fail('READ_ONLY')
     if (mount === 'conversation') return succeed({ projectId: null, conversationId: scope.conversationId })
     // A Conversation outside any Project has nowhere to put shared files. That is a state the model
     // should see and work around, not an error.
@@ -309,6 +340,9 @@ export class WorkspaceFiles {
 
     const existing = await this.findFile(target, relativePath)
     if (!existing && input.expectedVersion !== undefined) return fail('FILE_NOT_FOUND')
+    // Replacing a binary file with text would hide the bytes behind a text history; the model
+    // copies or deletes it instead.
+    if (existing && !isTextMime((await this.versionOf(existing))?.mime ?? MIME)) return fail('BINARY_FILE')
     // Omitting the version is not an error: refusing would throw away whatever the caller spent
     // producing this content, to protect a version that stays restorable either way. Passing one is
     // a claim about the current state, and a wrong claim means someone else moved the file — that
@@ -378,9 +412,10 @@ export class WorkspaceFiles {
       return fail('VERSION_CONFLICT')
     }
 
-    const bytes = await this.readBytes(mount, input, relativePath)
-    if (!bytes.ok) return bytes
-    const content = new TextDecoder().decode(bytes.value)
+    const stored = await this.readBytes(mount, input, relativePath)
+    if (!stored.ok) return stored
+    if (!isTextMime(stored.value.mime)) return fail('BINARY_FILE')
+    const content = new TextDecoder().decode(stored.value.bytes)
 
     const starts = matchStarts(content, input.oldText)
     if (starts.length === 0) return fail('NO_MATCH')
@@ -573,29 +608,11 @@ export class WorkspaceFiles {
     )).limit(1)
     if (!version) return fail('VERSION_NOT_FOUND')
 
-    if (await this.findFile(toScope.value, to.value.relativePath)) return fail('FILE_ALREADY_EXISTS')
-
-    const now = Date.now()
-    let fileId: number
-    try {
-      const [created] = await this.db.insert(workspaceFiles).values({
-        user_id: this.userId, project_id: toScope.value.projectId, conversation_id: toScope.value.conversationId,
-        relative_path: to.value.relativePath, current_version: 0, created_at: now, updated_at: now, deleted_at: null,
-      }).returning()
-      fileId = created!.id
-    } catch {
-      return fail('FILE_ALREADY_EXISTS')
-    }
-
-    await this.db.batch([
-      this.db.insert(workspaceFileVersions).values({
-        file_id: fileId, version: 1, attachment_id: version.attachment_id, mime: version.mime,
-        file_size: version.file_size, total_lines: version.total_lines,
-        source_conversation_id: input.conversationId, source_message_id: input.sourceMessageId ?? null,
-        tool_call_id: input.toolCallId ?? null, created_at: now,
-      }),
-      this.db.update(workspaceFiles).set({ current_version: 1, updated_at: now }).where(eq(workspaceFiles.id, fileId)),
-    ])
+    const created = await this.createWithVersion(toScope.value, to.value.relativePath, {
+      attachmentId: version.attachment_id, mime: version.mime, fileSize: version.file_size, totalLines: version.total_lines,
+    }, input)
+    if (!created.ok) return created
+    const now = created.value
 
     return succeed({
       path: formatWorkspacePath(to.value),
@@ -606,6 +623,111 @@ export class WorkspaceFiles {
       totalLines: version.total_lines,
       updatedAt: now,
     })
+  }
+
+  /**
+   * A new file whose version 1 is an existing attachment, under a name that is free. Costs one
+   * pointer row and one version row and no storage: the bytes already exist. Returns its timestamp.
+   */
+  private async createWithVersion(
+    target: { projectId: number | null, conversationId: number | null },
+    relativePath: string,
+    content: { attachmentId: number, mime: string, fileSize: number, totalLines: number },
+    provenance: WorkspaceScope & { sourceMessageId?: number | null, toolCallId?: string | null },
+  ): Promise<Result<number>> {
+    if (await this.findFile(target, relativePath)) return fail('FILE_ALREADY_EXISTS')
+
+    const now = Date.now()
+    let fileId: number
+    try {
+      const [created] = await this.db.insert(workspaceFiles).values({
+        user_id: this.userId, project_id: target.projectId, conversation_id: target.conversationId,
+        relative_path: relativePath, current_version: 0, created_at: now, updated_at: now, deleted_at: null,
+      }).returning()
+      fileId = created!.id
+    } catch {
+      return fail('FILE_ALREADY_EXISTS')
+    }
+
+    await this.db.batch([
+      this.db.insert(workspaceFileVersions).values({
+        file_id: fileId, version: 1, attachment_id: content.attachmentId, mime: content.mime,
+        file_size: content.fileSize, total_lines: content.totalLines,
+        source_conversation_id: provenance.conversationId, source_message_id: provenance.sourceMessageId ?? null,
+        tool_call_id: provenance.toolCallId ?? null, created_at: now,
+      }),
+      this.db.update(workspaceFiles).set({ current_version: 1, updated_at: now }).where(eq(workspaceFiles.id, fileId)),
+    ])
+    return succeed(now)
+  }
+
+  /**
+   * Puts a file under a free name without copying bytes: version 1 is the source's attachment,
+   * whether the source is another workspace file or an asset a reference resolved to. Text stays
+   * text and binary stays binary, because the type travels with the attachment.
+   */
+  async copy(input: CopyInput): Promise<Result<CopyResult>> {
+    const to = parseWorkspacePath(input.toPath)
+    if (!to.ok || to.value.mount === null || to.value.relativePath === '') return fail('INVALID_PATH')
+    const toScope = this.scopeOf(to.value.mount, input)
+    if (!toScope.ok) return toScope
+
+    let content: { attachmentId: number, mime: string, fileSize: number, totalLines: number }
+    if ('path' in input.from) {
+      const source = await this.current({ path: input.from.path, conversationId: input.conversationId, projectId: input.projectId })
+      if (!source.ok) return source
+      const { version } = source.value
+      content = { attachmentId: version.attachment_id, mime: version.mime, fileSize: version.file_size, totalLines: version.total_lines }
+    } else {
+      const { attachment } = input.from
+      const [row] = await this.db.select().from(attachments)
+        .where(and(eq(attachments.id, attachment.attachmentId), eq(attachments.user_id, this.userId))).limit(1)
+      if (!row) return fail('FILE_NOT_FOUND')
+      // Assets are uploads and generated media, so this is almost always 0 — but a text asset
+      // still needs lines `read_file` can address.
+      const totalLines = isTextMime(row.mime) ? await this.linesOf(row.r2_key) : 0
+      content = { attachmentId: row.id, mime: row.mime, fileSize: row.size, totalLines }
+    }
+
+    const created = await this.createWithVersion(toScope.value, to.value.relativePath, content, input)
+    if (!created.ok) return created
+    return succeed({
+      path: formatWorkspacePath(to.value), version: 1, mime: content.mime,
+      fileSize: content.fileSize, totalLines: content.totalLines, updatedAt: created.value,
+    })
+  }
+
+  private async linesOf(key: string): Promise<number> {
+    const stored = await this.storage.getBytes(key)
+    if (!stored) throw new Error('attachment bytes missing')
+    return countLines(new TextDecoder().decode(stored.bytes))
+  }
+
+  private async versionOf(file: WorkspaceFileRow): Promise<WorkspaceFileVersionRow | undefined> {
+    const [version] = await this.db.select().from(workspaceFileVersions).where(and(
+      eq(workspaceFileVersions.file_id, file.id),
+      eq(workspaceFileVersions.version, file.current_version),
+    )).limit(1)
+    return version
+  }
+
+  /**
+   * The current version of the file at a path, authorized by the mount scope, down to its
+   * attachment. What a `vfs:` reference resolves to, and how a binary file is delivered.
+   */
+  async current(input: WorkspaceScope & { path: string }): Promise<Result<CurrentFile>> {
+    const parsed = parseWorkspacePath(input.path)
+    if (!parsed.ok || parsed.value.mount === null || parsed.value.relativePath === '') return fail('INVALID_PATH')
+    const scope = this.scopeOf(parsed.value.mount, input)
+    if (!scope.ok) return scope
+    const file = await this.findFile(scope.value, parsed.value.relativePath)
+    if (!file) return fail('FILE_NOT_FOUND')
+    const version = await this.versionOf(file)
+    if (!version) return fail('FILE_NOT_FOUND')
+    const [attachment] = await this.db.select().from(attachments)
+      .where(and(eq(attachments.id, version.attachment_id), eq(attachments.user_id, this.userId))).limit(1)
+    if (!attachment) return fail('FILE_NOT_FOUND')
+    return succeed({ path: formatWorkspacePath(parsed.value), relativePath: parsed.value.relativePath, version, attachment })
   }
 
   /** Every live file in one mount, with the metadata the human panel displays. */
@@ -626,20 +748,7 @@ export class WorkspaceFiles {
       ))
       .orderBy(asc(workspaceFiles.relative_path))
 
-    return succeed(rows.map(({ file, version }) => ({
-      id: file.id,
-      path: `/${mount}/${file.relative_path}`,
-      relativePath: file.relative_path,
-      projectId: file.project_id,
-      conversationId: file.conversation_id,
-      fileSize: version?.file_size ?? 0,
-      totalLines: version?.total_lines ?? 0,
-      version: file.current_version,
-      updatedAt: file.updated_at,
-      createdAt: file.created_at,
-      sourceConversationId: version?.source_conversation_id ?? null,
-      sourceMessageId: version?.source_message_id ?? null,
-    })))
+    return succeed(rows.map(({ file, version }) => recordOf(file, version)))
   }
 
   /**
@@ -685,11 +794,11 @@ export class WorkspaceFiles {
   }
 
   /** The current bytes of one path, for serving a page's own stylesheet and script beside it. */
-  async readBytes(mount: WorkspaceMount, scope: WorkspaceScope, relativePath: string): Promise<Result<Uint8Array>> {
+  async readBytes(mount: WorkspaceMount, scope: WorkspaceScope, relativePath: string): Promise<Result<{ bytes: Uint8Array, mime: string }>> {
     const target = this.scopeOf(mount, scope)
     if (!target.ok) return target
 
-    const [row] = await this.db.select({ r2Key: attachments.r2_key })
+    const [row] = await this.db.select({ r2Key: attachments.r2_key, mime: workspaceFileVersions.mime })
       .from(workspaceFiles)
       .innerJoin(workspaceFileVersions, and(
         eq(workspaceFileVersions.file_id, workspaceFiles.id),
@@ -706,7 +815,7 @@ export class WorkspaceFiles {
     if (!row) return fail('FILE_NOT_FOUND')
 
     const stored = await this.storage.getBytes(row.r2Key)
-    return stored ? succeed(stored.bytes) : fail('FILE_NOT_FOUND')
+    return stored ? succeed({ bytes: stored.bytes, mime: row.mime }) : fail('FILE_NOT_FOUND')
   }
 
   /**
@@ -882,9 +991,10 @@ export class WorkspaceFiles {
   }
 
   /**
-   * Whether anything still points at an attachment. Message parts carry `attachment_id` inside JSON
-   * rather than in a column, so that one is matched as text — imprecise matching here would delete
-   * bytes a message still renders.
+   * Whether anything still points at an attachment. Message parts carry attachment ids inside JSON
+   * rather than in a column, so they are matched with `json_each` — a part's own `attachment_id`,
+   * and every id in a tool result's or task notification's `attachments` — never as text, where 12
+   * would match 120 and imprecise matching would delete bytes a message still renders.
    */
   private async attachmentInUse(attachmentId: number): Promise<boolean> {
     const [version] = await this.db.select({ id: workspaceFileVersions.id }).from(workspaceFileVersions)
@@ -900,17 +1010,17 @@ export class WorkspaceFiles {
       .where(eq(projects.icon_attachment_id, attachmentId)).limit(1)
     if (icon) return true
 
-    // `"attachment_id":12` must not match 120, and the key may be followed by either `,` or `}`.
-    const [message] = await this.db.select({ id: messages.id }).from(messages)
-      .innerJoin(conversations, eq(conversations.id, messages.conversation_id))
-      .where(and(
-        eq(conversations.user_id, this.userId),
-        or(
-          like(messages.parts as unknown as SQLiteColumn, `%"attachment_id":${attachmentId},%`),
-          like(messages.parts as unknown as SQLiteColumn, `%"attachment_id":${attachmentId}}%`),
-        ),
-      )).limit(1)
-    return message !== undefined
+    const message = await this.db.$client.prepare(`
+      SELECT 1 FROM messages m
+        JOIN conversations c ON c.id = m.conversation_id AND c.user_id = ?1
+       WHERE EXISTS (
+         SELECT 1 FROM json_each(m.parts) p
+          WHERE json_extract(p.value, '$.attachment_id') = ?2
+             OR EXISTS (SELECT 1 FROM json_each(p.value, '$.attachments') a WHERE a.value = ?2)
+       )
+       LIMIT 1
+    `).bind(this.userId, attachmentId).first()
+    return message !== null
   }
 
   /** Ownership is re-checked here rather than trusted from the route. */
@@ -923,8 +1033,11 @@ export class WorkspaceFiles {
     return row
   }
 
-  /** The current bytes of one file, for preview and download. */
-  async readById(fileId: number): Promise<Result<{ record: FileRecord, content: string, mime: string }>> {
+  /**
+   * The current bytes of one file, for preview and download. `content` is the decoded text, or null
+   * for a binary file: decoding those bytes as UTF-8 would only produce garbage.
+   */
+  async readById(fileId: number): Promise<Result<{ record: FileRecord, content: string | null, bytes: Uint8Array, mime: string, attachmentId: number }>> {
     const file = await this.ownedFile(fileId)
     if (!file) return fail('FILE_NOT_FOUND')
 
@@ -939,24 +1052,12 @@ export class WorkspaceFiles {
     const stored = await this.storage.getBytes(attachment.r2_key)
     if (!stored) return fail('FILE_NOT_FOUND')
 
-    const mount: WorkspaceMount = file.project_id === null ? 'conversation' : 'project'
     return succeed({
-      record: {
-        id: file.id,
-        path: `/${mount}/${file.relative_path}`,
-        relativePath: file.relative_path,
-        projectId: file.project_id,
-        conversationId: file.conversation_id,
-        fileSize: version.file_size,
-        totalLines: version.total_lines,
-        version: file.current_version,
-        updatedAt: file.updated_at,
-        createdAt: file.created_at,
-        sourceConversationId: version.source_conversation_id,
-        sourceMessageId: version.source_message_id,
-      },
-      content: new TextDecoder().decode(stored.bytes),
+      record: recordOf(file, version),
+      content: isTextMime(version.mime) ? new TextDecoder().decode(stored.bytes) : null,
+      bytes: stored.bytes,
       mime: version.mime,
+      attachmentId: attachment.id,
     })
   }
 
@@ -986,11 +1087,10 @@ export class WorkspaceFiles {
     const file = await this.findFile(scope.value, relativePath)
     if (!file) return fail('FILE_NOT_FOUND')
 
-    const [version] = await this.db.select().from(workspaceFileVersions).where(and(
-      eq(workspaceFileVersions.file_id, file.id),
-      eq(workspaceFileVersions.version, file.current_version),
-    )).limit(1)
+    const version = await this.versionOf(file)
     if (!version) return fail('FILE_NOT_FOUND')
+    // Checked before any bytes are fetched: a binary file is delivered whole, never read as lines.
+    if (!isTextMime(version.mime)) return fail('BINARY_FILE')
 
     const [attachment] = await this.db.select().from(attachments).where(eq(attachments.id, version.attachment_id)).limit(1)
     if (!attachment) return fail('FILE_NOT_FOUND')
@@ -1044,11 +1144,6 @@ export class WorkspaceFiles {
     if (mount === null) {
       const entries: ListEntry[] = []
       for (const name of WORKSPACE_MOUNTS) {
-        if (isProjectedMount(name)) {
-          const images = await listProjected(this.db, this.userId, input.conversationId, name)
-          entries.push({ path: `/${name}`, type: 'mount', status: images.length === 0 ? 'empty' : 'ready' })
-          continue
-        }
         const resolved = this.scopeOf(name, input)
         if (!resolved.ok) {
           entries.push({ path: `/${name}`, type: 'mount', status: 'unavailable' })
@@ -1060,17 +1155,6 @@ export class WorkspaceFiles {
         entries.push({ path: `/${name}`, type: 'mount', status: rows.length === 0 ? 'empty' : 'ready' })
       }
       return succeed({ path: '/', entries, truncated: false, nextCursor: null })
-    }
-
-    if (isProjectedMount(mount)) {
-      // Flat by construction: a projected mount has files and nothing else.
-      if (relativePath !== '') return fail('FILE_NOT_FOUND')
-      const images = await listProjected(this.db, this.userId, input.conversationId, mount)
-      const limit = Math.max(1, input.limit ?? 100)
-      const entries = images.slice(0, limit).map((image): ListEntry => ({
-        path: image.path, type: 'file', fileSize: image.size, updatedAt: image.createdAt,
-      }))
-      return succeed({ path: `/${mount}`, entries, truncated: images.length > entries.length, nextCursor: null })
     }
 
     const scope = this.scopeOf(mount, input)

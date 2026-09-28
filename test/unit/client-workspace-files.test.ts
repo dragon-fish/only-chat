@@ -37,7 +37,7 @@ describe('workspace file panel', () => {
 function file(id: number, relativePath: string): FileRecord {
   return {
     id, path: '/conversation/' + relativePath, relativePath, projectId: null, conversationId: 1,
-    fileSize: 10, totalLines: 1, version: 1, updatedAt: 0, createdAt: 0,
+    fileSize: 10, totalLines: 1, mime: 'text/markdown; charset=utf-8', version: 1, updatedAt: 0, createdAt: 0,
     sourceConversationId: null, sourceMessageId: null,
   }
 }

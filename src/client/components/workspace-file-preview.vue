@@ -62,7 +62,7 @@ watch(() => props.fileId, async (fileId) => {
     // A second click while the first was in flight wins; this answer is already stale.
     if (props.fileId !== fileId) return
     record.value = body.record
-    content.value = body.content
+    content.value = body.content ?? ''
     frameSrc.value = body.previewUrl
     canRenderPage.value = body.canRenderPage
     // Markdown is written to be read, so it opens read. Source is one click away either way.
