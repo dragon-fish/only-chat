@@ -24,7 +24,7 @@ type Attached = { filename?: string; attachment_id: number; preview: string; sta
 
 function toPart(item: Attached): Part {
   return item.kind === 'image'
-    ? { type: 'image', attachment_id: item.attachment_id }
+    ? { type: 'image', attachment_id: item.attachment_id, ...(item.filename ? { filename: item.filename } : {}) }
     : { type: 'file', attachment_id: item.attachment_id, mime: item.mime, filename: item.filename }
 }
 
@@ -157,7 +157,8 @@ function autoGrow() {
 }
 
 /** Takes a materialised array: a live `FileList` empties out across the `await`s below. */
-async function addFiles(files: File[]) {
+/** `pasted`: a clipboard image has only a name the browser made up, so it is sent without one. */
+async function addFiles(files: File[], pasted = false) {
   pending.value++
   try {
     const policy = (await siteConfig.load()).uploads
@@ -166,7 +167,7 @@ async function addFiles(files: File[]) {
       if (!mime) { toast.error(`不支持的文件：${f.name}`); continue }
       // Pushed before the await so the chip appears immediately and can show its own spinner.
       const item = reactive<Attached>(mime.startsWith('image/')
-        ? { kind: 'image', filename: f.name, attachment_id: -1, preview: URL.createObjectURL(f), state: 'uploading' }
+        ? { kind: 'image', ...(pasted ? {} : { filename: f.name }), attachment_id: -1, preview: URL.createObjectURL(f), state: 'uploading' }
         : { kind: 'file', mime, filename: f.name, attachment_id: -1, preview: URL.createObjectURL(f), state: 'uploading' })
       attachments.value.push(item)
       try {
@@ -190,7 +191,7 @@ function removeAttachment(index: number) {
 }
 function onPaste(e: ClipboardEvent) {
   const files = [...(e.clipboardData?.files ?? [])]
-  if (files.length) { e.preventDefault(); void addFiles(files) }
+  if (files.length) { e.preventDefault(); void addFiles(files, true) }
 }
 /** Page-wide dropping shares the same allow-list as the file picker. */
 const { isOverDropZone } = useDropZone(document, {
@@ -257,7 +258,7 @@ function restore(parts: Part[]) {
     if (part.type !== 'image' && part.type !== 'file') continue
     const preview = api.attachmentUrl(part.attachment_id)
     attachments.value.push(part.type === 'image'
-      ? { kind: 'image', attachment_id: part.attachment_id, preview, state: 'done' }
+      ? { kind: 'image', filename: part.filename, attachment_id: part.attachment_id, preview, state: 'done' }
       : { kind: 'file', mime: part.mime, filename: part.filename, attachment_id: part.attachment_id, preview, state: 'done' })
   }
   void nextTick().then(autoGrow)

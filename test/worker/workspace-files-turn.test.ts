@@ -72,6 +72,8 @@ async function fixture(): Promise<Fixture> {
     assets: assets as never,
     signal: new AbortController().signal,
     acceptsImages: false,
+    toolIds: ['read_file', 'write_file'],
+    files: {} as ToolContext['files'],
     acceptsToolResultImages: false,
     publicOrigin: 'https://chat.test',
     path: [],

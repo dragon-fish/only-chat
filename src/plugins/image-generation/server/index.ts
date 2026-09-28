@@ -3,14 +3,13 @@ import { tool } from 'ai'
 import { resolveImageModel } from '@/server/plugins/artifacts/image-model'
 import { createToolImageRun } from '@/server/plugins/artifacts/runs'
 import { getConversation, getUser } from '@/server/plugins/hub/conversations'
-import { resolveProjected } from '@/server/plugins/workspace-files/projections'
 import { GENERATE_IMAGE_TOOL_ID, IMAGE_GENERATION_PLUGIN_ID } from '@/shared/plugins'
 import { GenerateImageInputSchema, type GenerateImageOutput } from '../shared'
 
 const DESCRIPTION = [
   'Generate or edit images in the background with the image model the user configured.',
-  'To edit, or to draw from existing images, pass reference_images: the paths this conversation labels its images with — [image: /uploads/…] for images the user sent, [generated image: /artifacts/…] and task notifications for generated ones.',
-  'Returns immediately with a task_id. The result arrives later as a <task-notification> message listing the image paths;',
+  'To edit, or to draw from existing images, pass reference_images as file references: the asset: in [image asset:…] labels of images the user sent, in [generated image asset:…] labels, or in task notifications.',
+  'Returns immediately with a task_id. The result arrives later as a <task-notification> message listing the new images as asset: references;',
   'do not wait, poll, or call again for the same request. Tell the user it is on its way, or continue with other work.',
   'If the notification says generation failed, read the provider\'s reason, adjust the prompt if that helps, and try again at most once.',
 ].join('\n')
@@ -32,13 +31,15 @@ export const ImageGenerationServerPlugin = {
         if (!conversation || !user) return { error: 'Conversation not found.' }
         const model = await resolveImageModel(toolCtx.db, toolCtx.userId, conversation, user.settings)
         if (!model) return { error: NO_IMAGE_MODEL }
-        // Resolved by the core, so this works whether or not workspace files are on.
+        // Through the runtime resolver, so any scheme an enabled plugin provides works here too.
         const references: number[] = []
-        for (const path of input.reference_images ?? []) {
-          const image = await resolveProjected(toolCtx.db, toolCtx.userId, conversation.id, path)
-          if (image && !image.mime.startsWith('image/')) return { error: 'Reference must be an image.' }
-          if (!image) return { error: `No image at ${path} in this conversation. Use a path it labels an image with, such as /uploads/12.png or /artifacts/33.png.` }
-          references.push(image.attachmentId)
+        for (const ref of input.reference_images ?? []) {
+          const resolved = await toolCtx.files.resolve(ref)
+          if (!resolved.ok) return { error: resolved.message, code: resolved.error }
+          if (!resolved.value.mime.startsWith('image/')) {
+            return { error: `${ref} is ${resolved.value.mime}, not an image. reference_images takes images only.`, code: 'UNSUPPORTED_FILE' }
+          }
+          references.push(resolved.value.attachmentId)
         }
         const count = input.count ?? 1
         try {

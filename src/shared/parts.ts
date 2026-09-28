@@ -12,6 +12,8 @@ export const ImagePartSchema = z.object({
   type: z.literal('image'),
   attachment_id: z.number().int(),
   artifact_id: z.number().int().optional(),
+  /** The name the person's file had. Absent for a pasted image and for anything generated. */
+  filename: z.string().max(255).optional(),
 })
 export const FilePartSchema = z.object({
   type: z.literal('file'),
@@ -49,7 +51,6 @@ export const ToolResultPartSchema = z.object({
    * protocol cannot carry it at all.
    */
   attachments: z.array(z.number().int()).optional(),
-  attachment_paths: z.record(z.string(), z.string()).optional(),
   providerOptions: ProviderOptionsSchema.optional(),
 })
 
@@ -64,6 +65,8 @@ export const TaskNotificationPartSchema = z.object({
   tool_call_id: z.string().min(1),
   status: z.enum(['completed', 'failed', 'cancelled']),
   text: z.string().max(20_000),
+  /** Attachment ids of what the task produced, so the model can refer to them by the refs in `text`. */
+  attachments: z.array(z.number().int()).optional(),
 })
 
 export const PartSchema = z.discriminatedUnion('type', [
@@ -91,16 +94,14 @@ export type Part = z.infer<typeof PartSchema>
  * `toolResultPart` lifts it onto the part, so it never persists inside `content`.
  */
 export const TOOL_ATTACHMENTS_KEY = '__attachments'
-export const TOOL_ATTACHMENT_PATHS_KEY = '__attachment_paths'
 
 export function toolResultPart(callId: string, name: string, output: unknown): ToolResultPart {
   if (output === null || typeof output !== 'object' || Array.isArray(output) || !(TOOL_ATTACHMENTS_KEY in output)) {
     return { type: 'tool_result', call_id: callId, name, content: output }
   }
-  const { [TOOL_ATTACHMENTS_KEY]: ids, [TOOL_ATTACHMENT_PATHS_KEY]: rawPaths, ...content } = output as Record<string, unknown>
+  const { [TOOL_ATTACHMENTS_KEY]: ids, ...content } = output as Record<string, unknown>
   const attachments = Array.isArray(ids) ? ids.filter((id): id is number => Number.isSafeInteger(id)) : []
-  const paths = z.record(z.string(), z.string()).safeParse(rawPaths)
-  return { type: 'tool_result', call_id: callId, name, content, ...(attachments.length ? { attachments } : {}), ...(paths.success ? { attachment_paths: paths.data } : {}) }
+  return { type: 'tool_result', call_id: callId, name, content, ...(attachments.length ? { attachments } : {}) }
 }
 
 /**

@@ -8,7 +8,7 @@ export const GenerateImageInputSchema = z.strictObject({
     height: z.number().int().min(256).max(4096),
   }).optional().describe('Output size in pixels. Omit to let the image model choose.'),
   reference_images: z.array(z.string().min(1)).min(1).max(10).optional()
-    .describe('Images to edit or draw from, by the paths this conversation labels them with: /uploads/… for images the user sent, /artifacts/… for generated ones.'),
+    .describe('Images to edit or draw from, as file references such as asset:3f9a2c1e — the asset: in the label of an image the user sent, a generated image, or a task notification.'),
 })
 export type GenerateImageInput = z.infer<typeof GenerateImageInputSchema>
 
@@ -21,7 +21,8 @@ export const GenerateImageStartedSchema = z.object({
 })
 export type GenerateImageStarted = z.infer<typeof GenerateImageStartedSchema>
 
-export const GenerateImageErrorSchema = z.object({ error: z.string() })
+/** `code` is set for a reference that could not be used, with the file-reference error code. */
+export const GenerateImageErrorSchema = z.object({ error: z.string(), code: z.string().optional() })
 export type GenerateImageError = z.infer<typeof GenerateImageErrorSchema>
 
 export type GenerateImageOutput = GenerateImageStarted | GenerateImageError

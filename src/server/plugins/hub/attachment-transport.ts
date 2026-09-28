@@ -74,7 +74,7 @@ export async function resolveAttachmentInputs(
 
     const reason = unavailable?.(attachment.mime)
     if (reason) {
-      out.set(id, { mime: attachment.mime, unavailable: reason, data: { type: 'data', data: new Uint8Array() } })
+      out.set(id, { mime: attachment.mime, unavailable: reason })
       continue
     }
 

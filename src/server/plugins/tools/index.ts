@@ -5,6 +5,7 @@ import { conversationConfigOf, pluginAvailableIn, pluginToolGroups, type Convers
 import { findPluginManifest } from '@/shared/plugin-manifests'
 import type { DB } from '../../db/client'
 import type { Assets } from '../assets'
+import type { ToolFiles } from '../file-refs/deliver'
 
 /**
  * What a tool factory is handed for one generation.
@@ -34,9 +35,13 @@ export interface ToolContext {
   signal: AbortSignal
   /** Whether the generating model declares image input, so a tool knows if a picture is worth sending. */
   acceptsImages: boolean
-  canReadFile?: (mime: string) => boolean
-  fileUnderstanding?: import('../hub/file-understanding').FileUnderstanding
-  toolIds?: readonly string[]
+  /** Every tool this generation offers, so one tool can tell whether suggesting another would help. */
+  toolIds: readonly string[]
+  /**
+   * File references and delivery (spec §3). Tools accept files only through this, never by reaching
+   * for a provider plugin or the hub, so a scheme a plugin adds is usable by every tool at once.
+   */
+  files: ToolFiles
   /**
    * Whether a picture survives the trip *inside a tool result*, which is a narrower question than
    * `acceptsImages` and is answered by the protocol rather than the model.

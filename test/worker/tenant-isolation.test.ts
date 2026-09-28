@@ -95,6 +95,15 @@ describe('authenticated REST tenant isolation', () => {
     expect.soft(await listMessages(ctx.db.orm, aliceConversation.id, bobId)).toEqual([])
   })
 
+  it('lists a conversation\'s assets only to its owner', async () => {
+    const { ctx, request, bobRequest, aliceId } = await tenants()
+    const conversation = await createConversation(ctx.db.orm, { user_id: aliceId, title: 'Alice files', provider_id: null, model_id: null })
+    const [attachment] = await ctx.db.orm.insert(attachments).values({ user_id: aliceId, sha256: '3f9a2c1e'.padEnd(64, '0'), mime: 'image/png', size: 1, r2_key: 'alice-asset', origin: 'upload', created_at: 0 }).returning()
+    await insertMessage(ctx.db.orm, aliceId, { conversation_id: conversation.id, parent_id: null, seq: 1, role: 'user', parts: [{ type: 'image', attachment_id: attachment!.id }], provider_id: null, model_id: null, usage: null, status: 'done', error: null, created_at: 1 })
+    expect.soft(await (await request('GET', `/conversations/${conversation.id}/assets`)).json()).toMatchObject({ assets: [{ attachmentId: attachment!.id, ref: '3f9a2c1e' }] })
+    expect.soft((await bobRequest('GET', `/conversations/${conversation.id}/assets`)).status).toBe(404)
+  })
+
   it('isolates attachment deduplication, downloads, and object keys for identical bytes', async () => {
     const { ctx, request, client: alice, bob, bobRequest, aliceId, bobId } = await tenants()
     const bytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 1])

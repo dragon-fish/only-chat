@@ -1661,7 +1661,7 @@ describe('provider metadata round trip', () => {
     const fromD1 = (await listMessages(db, conversation.id, 1)).map((r) => toMessage(r))
     expect(fromD1).toEqual(inMemory)
     for (const protocol of ['chat-completions', 'responses', 'anthropic', 'vertex-compatible'] as const) {
-      const args = { protocol, systemPrompt: null, attachments: new Map() }
+      const args = { protocol, systemPrompt: null, attachments: new Map(), assets: new Map() }
       expect(buildModelMessages({ ...args, path: fromD1 })).toEqual(buildModelMessages({ ...args, path: inMemory }))
     }
   })

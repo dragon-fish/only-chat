@@ -33,6 +33,8 @@ const resolution = {
   signal: new AbortController().signal,
   pluginSettings: null,
   acceptsImages: false,
+  toolIds: [],
+  files: {} as ToolContext['files'],
   acceptsToolResultImages: false,
   publicOrigin: 'https://chat.test',
   path: [],

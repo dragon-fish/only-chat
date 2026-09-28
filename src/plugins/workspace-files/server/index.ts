@@ -4,7 +4,7 @@ import { WorkspaceFiles, type Result, type WorkspaceError } from '@/server/plugi
 import type { ToolContext } from '@/server/plugins/tools'
 import { formatWorkspacePath, isProjectedMount, parseWorkspacePath } from '@/server/plugins/workspace-files/path'
 import { resolveProjected } from '@/server/plugins/workspace-files/projections'
-import { stripToolAttachments, TOOL_ATTACHMENT_PATHS_KEY, TOOL_ATTACHMENTS_KEY } from '@/shared/parts'
+import { stripToolAttachments, TOOL_ATTACHMENTS_KEY } from '@/shared/parts'
 import {
   ANALYZE_FILE_TOOL_ID, DELETE_FILE_TOOL_ID, LIST_FILES_TOOL_ID, PREVIEW_FILE_TOOL_ID, READ_FILE_TOOL_ID, RENAME_FILE_TOOL_ID,
   RESTORE_FILE_TOOL_ID, WORKSPACE_FILES_PLUGIN_ID, WRITE_FILE_TOOL_ID, EDIT_FILE_TOOL_ID,
@@ -168,10 +168,11 @@ export const WorkspaceFilesServerPlugin = {
         if (parsed.ok && !isProjectedMount(parsed.value.mount)) return { error: 'UNSUPPORTED_FILE', message: 'This is a text workspace. Use read_file for text.' }
         const file = await resolveProjected(runtime.db, runtime.userId, runtime.conversationId, path)
         if (!file) return { error: 'FILE_NOT_FOUND', message: MESSAGES.FILE_NOT_FOUND }
-        if (!runtime.fileUnderstanding) return { error: 'SERVICE_UNAVAILABLE', message: 'Configure an enabled file understanding model in service model settings.' }
-        if (!runtime.fileUnderstanding.canRead(file.mime)) return { error: 'UNSUPPORTED_FILE', message: `The file understanding model or its interface cannot read ${file.mime}.` }
+        const understanding = runtime.files.understanding
+        if (!understanding) return { error: 'SERVICE_UNAVAILABLE', message: 'Configure an enabled file understanding model in service model settings.' }
+        if (!understanding.canRead(file.mime)) return { error: 'UNSUPPORTED_FILE', message: `The file understanding model or its interface cannot read ${file.mime}.` }
         try {
-          const result = await runtime.fileUnderstanding.analyze(file.attachmentId, question, runtime.signal)
+          const result = await understanding.analyze(file.attachmentId, question, runtime.signal)
           return { path, mime: file.mime, ...result }
         } catch (error) {
           if (runtime.signal.aborted) throw error
@@ -199,16 +200,14 @@ export const WorkspaceFilesServerPlugin = {
         if (target.ok && isProjectedMount(target.value.mount)) {
           const image = await resolveProjected(runtime.db, runtime.userId, runtime.conversationId, input.path)
           if (!image) return { error: 'FILE_NOT_FOUND', message: MESSAGES.FILE_NOT_FOUND }
-          const supported = runtime.canReadFile?.(image.mime) ?? (runtime.acceptsImages && image.mime.startsWith('image/'))
-          if (!supported) {
-            const suggestion = runtime.toolIds?.includes(ANALYZE_FILE_TOOL_ID) && runtime.fileUnderstanding?.canRead(image.mime)
+          if (!runtime.files.canRead(image.mime)) {
+            const suggestion = runtime.toolIds.includes(ANALYZE_FILE_TOOL_ID) && runtime.files.understanding?.canRead(image.mime)
               ? ` Use analyze_file with path ${input.path} and an optional question.` : ''
             return { error: 'UNSUPPORTED_FILE', message: `The current model cannot read ${image.mime}.${suggestion}` }
           }
           return {
             request_id: crypto.randomUUID(), message: 'The file follows in a user message with the matching read_file_result id.',
             [TOOL_ATTACHMENTS_KEY]: [image.attachmentId],
-            [TOOL_ATTACHMENT_PATHS_KEY]: { [image.attachmentId]: image.path },
           } as ReadAttachmentOutput
 
         }

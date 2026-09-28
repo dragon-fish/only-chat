@@ -10,6 +10,8 @@ import type { ModelCatalog } from './plugins/model-catalog'
 import type { ToolRegistry } from './plugins/tools'
 import type { PluginConfig } from './plugins/plugin-config'
 import type { PluginChannel } from './plugins/plugin-channel'
+import type { FileRefTurn, ResolvedFile } from './plugins/file-refs/resolve'
+import type { FileResult } from './plugins/file-refs/ref'
 import type { Message, Project, Conversation } from '@/shared/models'
 
 declare module 'cordis' {
@@ -45,6 +47,13 @@ declare module 'cordis' {
      * that would otherwise be cascaded away can carry them somewhere the user can still reach.
      */
     'conversation/before-purge'(payload: { userId: number, conversationId: number }): Promise<void>
+    /**
+     * Translates a non-`asset:` file reference to the asset behind it (spec §3.2). Dispatched with
+     * `ctx.serial`: the first listener to return anything claims the reference, so a listener must
+     * return `undefined` for a scheme that is not its own — or that it does not serve this turn — and
+     * a result, success or failure, for one that is. The listener authorizes its own scheme.
+     */
+    'file/resolve'(ref: string, turn: FileRefTurn): Promise<FileResult<ResolvedFile> | undefined>
     'message/before-send'(payload: BeforeSendPayload): void
     'message/done'(message: Message): void
     'project/created'(project: Project): void

@@ -5,15 +5,16 @@ import { INFLIGHT_FLUSH_INTERVAL_MS, TOOL_MAX_STEPS } from '@/shared/constants'
 import type { Message, PersistedStatus, ConversationParams, ConversationPluginSettings, StepUsage, Usage } from '@/shared/models'
 import { toolResultPart, type Part, type ToolCallPart, type ToolResultPart } from '@/shared/parts'
 import type { SendCommand, WsCommand } from '@/shared/ws'
-import { ASK_USER_TOOL_ID, ANALYZE_FILE_TOOL_ID, GENERATE_IMAGE_TOOL_ID, parseConversationPluginSettings, READ_FILE_TOOL_ID } from '@/shared/plugins'
+import { ASK_USER_TOOL_ID, ANALYZE_FILE_TOOL_ID, parseConversationPluginSettings } from '@/shared/plugins'
 import { pluginManifests } from '@/shared/plugin-manifests'
 import { AskUserInputSchema } from '@/plugins/ask-user/shared'
 import { createAskUserToolCallRepair } from '@/plugins/ask-user/server/repair'
-import { attachments as attachmentRows, type ModelRow, type ProviderInterfaceRow, type ProviderRow, type ConversationRow } from '../../db/schema'
-import { and, eq, inArray } from 'drizzle-orm'
+import type { ModelRow, ProviderInterfaceRow, ProviderRow, ConversationRow } from '../../db/schema'
 import { PartAccumulator } from '../llm/accumulator'
 import { logLifecycle, partsBytes } from './lifecycle-log'
-import { buildModelMessages, buildProviderOptions, carriesToolResultImages, INTERJECTED, interjectedUserMessage, requiredAttachmentIds, toolImagesMessage, type AttachmentInput } from '../llm/messages'
+import { buildModelMessages, buildProviderOptions, carriesToolResultImages, INTERJECTED, interjectedUserMessage, requiredAttachmentIds, toolAttachmentsMessage, type AttachmentInput } from '../llm/messages'
+import { createToolFiles, suggestsAnalyze, type FileReader } from '../file-refs/deliver'
+import { addShownAttachments, addVisibleAssets, loadVisibleAssets } from '../file-refs/visible'
 import { generationDurationMs, toStepUsage, toUsage, type GenerationStepPerformance } from '../llm/usage'
 import type { Hub, InflightJob } from './index'
 import {
@@ -262,11 +263,21 @@ async function openContinuationShell(hub: Hub, target: Target, parentId: number)
 
 // ---- stage 4: context assembly
 
+/** What this generation's model can read, and who to hand the rest to (spec §6.3). */
+function fileReader(target: Target): FileReader {
+  return {
+    canRead: mime => canReadFile(target.model.metadata_resolved, target.providerInterface.protocol, mime),
+    ...(target.fileUnderstanding ? { understanding: target.fileUnderstanding } : {}),
+  }
+}
+
+/** The sentence that replaces a file this model cannot read (spec §7.1). */
 function unavailableFile(target: Target) {
+  const reader = fileReader(target)
   return (mime: string): string | undefined => {
-    if (canReadFile(target.model.metadata_resolved, target.providerInterface.protocol, mime)) return
-    return `The current model cannot read ${mime}.` + (target.toolIds.includes(ANALYZE_FILE_TOOL_ID) && target.fileUnderstanding?.canRead(mime)
-      ? ' Call analyze_file with this path and an optional question.' : ' No enabled file analysis tool supports this file.')
+    if (reader.canRead(mime)) return
+    return `The current model cannot read ${mime}.` + (suggestsAnalyze(target.toolIds, reader, mime)
+      ? ' Call analyze_file with its asset: reference and an optional question.' : '')
   }
 }
 
@@ -282,22 +293,6 @@ async function assembleContext(hub: Hub, target: Target, leafMessageId: number):
   return { path, attachments: await resolveAttachmentInputs(deps, target.provider, target.providerInterface, ids, unavailableFile(target)) }
 }
 
-/** Tools that refer to images by path; with either on, the prompt names every image (spec §4.0). */
-function labelsImages(toolIds: readonly string[]): boolean {
-  return toolIds.includes(ANALYZE_FILE_TOOL_ID) || toolIds.includes(READ_FILE_TOOL_ID) || toolIds.includes(GENERATE_IMAGE_TOOL_ID)
-}
-
-/** MIME of each image the assistant messages on the path hold, which is what names their files. */
-async function generatedImageMimes(hub: Hub, path: readonly Message[]): Promise<Map<number, string>> {
-  const ids = [...new Set(path.flatMap(message => (message.role === 'assistant'
-    ? message.parts.flatMap(part => (part.type === 'image' ? [part.attachment_id] : []))
-    : [])))]
-  if (ids.length === 0) return new Map()
-  const rows = await hub.db.select({ id: attachmentRows.id, mime: attachmentRows.mime }).from(attachmentRows)
-    .where(and(eq(attachmentRows.user_id, hub.userId), inArray(attachmentRows.id, ids)))
-  return new Map(rows.map(row => [row.id, row.mime]))
-}
-
 // ---- stage 5/6: stream + finalize
 
 async function generate(hub: Hub, target: Target, shell: Message, leafMessageId: number): Promise<void> {
@@ -305,7 +300,7 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
   // Rotated by `handOff` when the operator speaks mid-turn: what they said becomes a real user
   // message, so the reply above it has to end and a new one has to begin.
   let acc = new PartAccumulator()
-  /** Tool calls whose images the model has already been shown this turn. */
+  /** Tool calls whose files the model has already been shown this turn. */
   const shown = new Set<string>()
   const job = { message: shell, conversationId: target.conversation.id, controller, startedAt: Date.now(), parts: acc.parts, stash: [] as Part[] }
   // `trackInflight` assigns `settled` onto this very object, so the reference stays usable.
@@ -323,8 +318,9 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
     const payload: BeforeSendPayload = { conversationId: target.conversation.id, systemPrompt: target.config.systemPrompt, path }
     hub.app.emit('message/before-send', payload)
 
-    const imageLabels = labelsImages(target.toolIds) ? await generatedImageMimes(hub, payload.path) : undefined
-    const messages = buildModelMessages({ protocol: target.providerInterface.protocol, systemPrompt: payload.systemPrompt, path: payload.path, attachments, imageLabels })
+    // What the model can name by `asset:` this turn (spec §2.2); files delivered later join it.
+    const visible = await loadVisibleAssets(hub.db, hub.userId, payload.path)
+    const messages = buildModelMessages({ protocol: target.providerInterface.protocol, systemPrompt: payload.systemPrompt, path: payload.path, attachments, assets: visible.prefixes })
     const params: ConversationParams = target.config.params
     const trace = {
       conversationId: target.conversation.id,
@@ -350,9 +346,11 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
       assets: hub.app.assets,
       signal: controller.signal,
       pluginSettings: target.conversation.plugin_settings ?? null,
-      canReadFile: mime => canReadFile(target.model.metadata_resolved, target.providerInterface.protocol, mime),
-      fileUnderstanding: target.fileUnderstanding,
       toolIds: target.toolIds,
+      files: createToolFiles(hub.app, hub.db, {
+        userId: hub.userId, conversationId: target.conversation.id, projectId: target.conversation.project_id,
+        toolIds: target.toolIds, visible,
+      }, fileReader(target)),
       acceptsImages: target.model.metadata_resolved.modalities?.input.includes('image') ?? false,
       acceptsToolResultImages: carriesToolResultImages(target.providerInterface.protocol),
       publicOrigin: hub.publicOrigin,
@@ -415,18 +413,22 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
        * neither the tree nor the screen has any use for it.
        */
       prepareStep: async ({ messages }) => {
-        // Images a tool showed in the step just finished, in the message `buildModelMessages` puts
-        // right after that step's tool results. Taken before a handoff rotates the accumulator.
+        // Files a tool delivered in the step just finished, in the one message `buildModelMessages`
+        // puts right after that batch of tool results. Taken before a handoff rotates the accumulator.
         const shownNow = acc.parts.filter((part): part is ToolResultPart =>
           part.type === 'tool_result' && (part.attachments?.length ?? 0) > 0 && !shown.has(part.call_id))
         const extra: ModelMessage[] = []
         if (shownNow.length > 0) {
-          const missing = shownNow.flatMap(part => part.attachments!).filter(id => !attachments.has(id))
+          const delivered = shownNow.flatMap(part => part.attachments!)
+          const missing = delivered.filter(id => !attachments.has(id))
           if (missing.length > 0) {
             const deps = { db: hub.db, userId: hub.userId, assets: hub.app.assets, llm: hub.app.llm }
             for (const [id, input] of await resolveAttachmentInputs(deps, target.provider, target.providerInterface, missing, unavailableFile(target))) attachments.set(id, input)
           }
-          extra.push(...shownNow.map(result => toolImagesMessage([result], attachments)))
+          // A tool that handed over ids without `deliverFile` has still shown the model those files.
+          const unlabelled = new Map(delivered.filter(id => !visible.has(id)).map(id => [id, null] as const))
+          await addShownAttachments(hub.db, hub.userId, unlabelled, visible)
+          extra.push(toolAttachmentsMessage(shownNow, attachments, visible.prefixes))
           for (const part of shownNow) shown.add(part.call_id)
         }
         // Notifications first, then what the person said: the order the stored message keeps.
@@ -439,7 +441,7 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
         // Writing the row is not enough — the SDK would carry on with the list it built at the
         // start, and the model would never hear what was said. The override carries forward, so
         // every later step sees it too.
-        return { messages: [...messages, ...extra, interjectedUserMessage(said, attachments, interrupted, imageLabels !== undefined)] }
+        return { messages: [...messages, ...extra, interjectedUserMessage(said, attachments, visible.prefixes, interrupted)] }
       },
       providerOptions: buildProviderOptions(target.providerInterface.protocol, params, target.model.metadata_resolved),
     })
@@ -483,6 +485,7 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
       const deps = { db: hub.db, userId: hub.userId, assets: hub.app.assets, llm: hub.app.llm }
       const added = await resolveAttachmentInputs(deps, target.provider, target.providerInterface, requiredAttachmentIds([interjection]), unavailableFile(target))
       for (const [id, input] of added) attachments.set(id, input)
+      await addVisibleAssets(hub.db, hub.userId, [interjection], visible)
 
       shell = await openReservedAssistantShell(hub, target, interjection.id)
       acc = new PartAccumulator()

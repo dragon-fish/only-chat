@@ -10,7 +10,7 @@ import { listMessages } from '@/server/plugins/hub/conversations'
 import { hasToolResult } from '@/server/plugins/mock-provider'
 import { NO_IMAGE_MODEL } from '@/plugins/image-generation/server'
 import type { UserHub } from '@/server/index'
-import type { ToolResultPart } from '@/shared/parts'
+import type { Part, ToolResultPart } from '@/shared/parts'
 import { ensureTestUser } from './auth-helper'
 import { connect } from './ws-helper'
 
@@ -86,24 +86,25 @@ async function installModel() {
   })
 }
 
-async function uploadedImage(): Promise<number> {
+async function uploaded(mime = 'image/png'): Promise<{ id: number, ref: string, part: Part }> {
   const bytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])
   const key = `image-tool/${Date.now()}-${Math.random()}`
-  // The chat turn sends the person's image to the chat model, so its bytes must exist.
+  // The chat turn may send the person's file to the chat model, so its bytes must exist.
   await env.BUCKET.put(key, bytes)
+  const sha256 = (crypto.randomUUID() + crypto.randomUUID()).replaceAll('-', '').slice(0, 64)
   const [row] = await createDb(env.DB).insert(attachments).values({
-    user_id: 1, sha256: `image-tool-${Date.now()}-${Math.random()}`.slice(0, 64).padEnd(64, '0'), mime: 'image/png', size: bytes.byteLength,
-    width: 1, height: 1, r2_key: key, origin: 'upload', created_at: 0,
+    user_id: 1, sha256, mime, size: bytes.byteLength, width: 1, height: 1, r2_key: key, origin: 'upload', created_at: 0,
   }).returning()
-  return row!.id
+  const part: Part = mime.startsWith('image/') ? { type: 'image', attachment_id: row!.id } : { type: 'file', attachment_id: row!.id, mime }
+  return { id: row!.id, ref: `asset:${sha256.slice(0, 8)}`, part }
 }
 
-async function callGenerateImage(providerId: number, input: unknown, uploaded?: number) {
+async function callGenerateImage(providerId: number, input: unknown, sent?: Part) {
   toolInput = input
   const c = await connect(await ensureTestUser())
   c.ws.send(JSON.stringify({
     type: 'send', conversation_id: null, parent_id: null,
-    parts: [...(uploaded === undefined ? [] : [{ type: 'image', attachment_id: uploaded }]), { type: 'text', text: 'draw' }],
+    parts: [...(sent === undefined ? [] : [sent]), { type: 'text', text: 'draw' }],
     provider_id: providerId, model_id: 'chat-model', tools: ['generate_image'],
   }))
   await c.next('message.done')
@@ -132,31 +133,37 @@ describe('generate_image', () => {
     expect(result?.content).toEqual({ error: NO_IMAGE_MODEL })
   })
 
-  it('edits an image the user sent, by the path the conversation labels it with', async () => {
+  it('edits an image the user sent, by the asset reference the conversation labels it with', async () => {
     const providerId = await seed(true)
     await installModel()
-    const uploaded = await uploadedImage()
-    const result = await callGenerateImage(providerId, { prompt: 'make it blue', reference_images: [`/uploads/${uploaded}.png`] }, uploaded)
+    const image = await uploaded()
+    const result = await callGenerateImage(providerId, { prompt: 'make it blue', reference_images: [image.ref] }, image.part)
     const runId = Number((result!.content as { task_id: string }).task_id.split(':')[1])
     const db = createDb(env.DB)
     expect(await db.query.artifactRuns.findFirst({ where: eq(artifactRuns.id, runId) })).toMatchObject({ operation: 'edit' })
-    expect(await db.select().from(artifactRunInputs).where(eq(artifactRunInputs.run_id, runId))).toEqual([expect.objectContaining({ attachment_id: uploaded, position: 0 })])
+    expect(await db.select().from(artifactRunInputs).where(eq(artifactRunInputs.run_id, runId))).toEqual([expect.objectContaining({ attachment_id: image.id, position: 0 })])
   })
 
-  it('refuses a reference that is not an image of this conversation', async () => {
+  it.each([
+    ['an asset this conversation never showed', async () => ({ ref: (await uploaded()).ref, sent: undefined, code: 'FILE_NOT_FOUND' })],
+    ['a file that is not an image', async () => { const pdf = await uploaded('application/pdf'); return { ref: pdf.ref, sent: pdf.part, code: 'UNSUPPORTED_FILE' } }],
+    ['a bare path', async () => ({ ref: '/project/cat.png', sent: undefined, code: 'INVALID_FILE_REF' })],
+  ])('refuses %s without starting a run', async (_, make) => {
     const providerId = await seed(true)
     await installModel()
-    const elsewhere = await uploadedImage()
-    const result = await callGenerateImage(providerId, { prompt: 'make it blue', reference_images: [`/uploads/${elsewhere}.png`] })
-    expect(result?.content).toEqual({ error: expect.stringContaining(`No image at /uploads/${elsewhere}.png`) })
+    const { ref, sent, code } = await make()
+    const before = (await createDb(env.DB).select().from(artifactRuns)).length
+    const result = await callGenerateImage(providerId, { prompt: 'make it blue', reference_images: [ref] }, sent)
+    expect(result?.content).toMatchObject({ code, error: expect.any(String) })
+    expect((await createDb(env.DB).select().from(artifactRuns)).length).toBe(before)
   })
 
   it('refuses references the image model cannot take, without starting a run', async () => {
     const providerId = await seed(true, false)
     await installModel()
-    const uploaded = await uploadedImage()
+    const image = await uploaded()
     const before = (await createDb(env.DB).select().from(artifactRuns)).length
-    const result = await callGenerateImage(providerId, { prompt: 'make it blue', reference_images: [`/uploads/${uploaded}.png`] }, uploaded)
+    const result = await callGenerateImage(providerId, { prompt: 'make it blue', reference_images: [image.ref] }, image.part)
     expect(result?.content).toEqual({ error: 'model does not support image input' })
     expect((await createDb(env.DB).select().from(artifactRuns)).length).toBe(before)
   })

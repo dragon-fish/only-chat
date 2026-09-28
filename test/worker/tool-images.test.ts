@@ -20,7 +20,9 @@ const finish = (unified: 'stop' | 'tool-calls') => ({
 }) as StreamPart
 const CALL: StreamPart[] = [
   { type: 'stream-start', warnings: [] },
+  // Two in one step: their files follow the whole batch of results, in one message.
   { type: 'tool-call', toolCallId: 'call-peek', toolName: 'peek', input: '{}' },
+  { type: 'tool-call', toolCallId: 'call-peek-2', toolName: 'peek', input: '{}' },
   finish('tool-calls'),
 ]
 const TEXT: StreamPart[] = [
@@ -49,7 +51,7 @@ describe('an image a tool shows the model', () => {
     const key = `tool-images/${Date.now()}`
     await env.BUCKET.put(key, bytes)
     const [attachment] = await db.insert(attachments).values({
-      user_id: 1, sha256: `tool-images-${Date.now()}`.padEnd(64, '0'), mime: 'image/png', size: bytes.byteLength,
+      user_id: 1, sha256: (crypto.randomUUID() + crypto.randomUUID()).replaceAll('-', '').slice(0, 64), mime: 'image/png', size: bytes.byteLength,
       width: 1, height: 1, r2_key: key, origin: 'generated', created_at: 0,
     }).returning()
 
@@ -88,7 +90,15 @@ describe('an image a tool shows the model', () => {
 
     const midTurn = prompts[1] as Array<{ role: string, content: Array<{ type: string, text?: string }> }>
     const toolAt = midTurn.findIndex(m => m.role === 'tool')
-    expect(midTurn[toolAt + 1]).toMatchObject({ role: 'user', content: [{ type: 'text', text: '<read_file_result id="call-peek">' }, { type: 'file', mediaType: 'image/png' }, { type: 'text', text: '</read_file_result>' }] })
+    const asset = attachment!.sha256.slice(0, 8)
+    expect(midTurn[toolAt + 1]).toMatchObject({ role: 'user', content: [
+      { type: 'text', text: `<tool_attachment call_id="call-peek" asset="${asset}">` },
+      { type: 'file', mediaType: 'image/png' },
+      { type: 'text', text: '</tool_attachment>' },
+      { type: 'text', text: `<tool_attachment call_id="call-peek-2" asset="${asset}">` },
+      { type: 'file', mediaType: 'image/png' },
+      { type: 'text', text: '</tool_attachment>' },
+    ] })
     expect(JSON.stringify(midTurn[toolAt])).not.toContain(TOOL_ATTACHMENTS_KEY)
 
     c.ws.send(JSON.stringify({

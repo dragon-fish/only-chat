@@ -20,6 +20,10 @@ exports[`buildModelMessages > matches the golden snapshot (anthropic) 1`] = `
         "type": "text",
       },
       {
+        "text": "[image asset:3f9a2c1e]",
+        "type": "text",
+      },
+      {
         "data": {
           "data": Uint8Array [
             137,
@@ -119,6 +123,10 @@ exports[`buildModelMessages > matches the golden snapshot (chat-completions) 1`]
         "type": "text",
       },
       {
+        "text": "[image asset:3f9a2c1e]",
+        "type": "text",
+      },
+      {
         "data": {
           "data": Uint8Array [
             137,
@@ -215,6 +223,10 @@ exports[`buildModelMessages > matches the golden snapshot (responses) 1`] = `
         "type": "text",
       },
       {
+        "text": "[image asset:3f9a2c1e]",
+        "type": "text",
+      },
+      {
         "data": {
           "data": Uint8Array [
             137,
@@ -304,6 +316,10 @@ exports[`buildModelMessages > matches the golden snapshot (vertex-compatible) 1`
     "content": [
       {
         "text": "look",
+        "type": "text",
+      },
+      {
+        "text": "[image asset:3f9a2c1e]",
         "type": "text",
       },
       {

@@ -7,8 +7,7 @@ import type { OpenResponsesLanguageModelOptions } from '@ai-sdk/open-responses'
 import type { OpenAICompatibleProviderOptions } from '@ai-sdk/openai-compatible'
 import type { Message, InterfaceProtocol, ReasoningEffort, ConversationParams } from '@/shared/models'
 import type { ModelMetadata } from '@/shared/model-metadata'
-import type { Part, ProviderOptions, TaskNotificationPart, ToolResultPart } from '@/shared/parts'
-import { artifactPath, generatedPath, uploadPath } from '@/shared/image-paths'
+import type { FilePart, ImagePart, Part, ProviderOptions, TaskNotificationPart, ToolResultPart } from '@/shared/parts'
 import { RESPONSES_PROVIDER_NAME, responsesReasoningReplayOptions } from './responses-reasoning'
 
 export const COMPAT_PROVIDER_NAME = 'compat'
@@ -16,15 +15,18 @@ export const COMPAT_PROVIDER_NAME = 'compat'
 /**
  * How one attachment travels to the model: as the provider's own short-lived file pointer, or as
  * raw bytes inlined into the request (spec §5.6). Both are the AI SDK's own tagged file-data shapes.
+ *
+ * A file the current model cannot read is its own variant carrying the sentence that replaces it,
+ * with no bytes at all: nothing about it is sent upstream, so nothing is fetched for it either.
  */
-export interface AttachmentInput {
-  mime: string
-  path?: string
-  unavailable?: string
-  data:
-    | { type: 'reference'; reference: SharedV4ProviderReference }
-    | { type: 'data'; data: Uint8Array }
-}
+export type AttachmentInput =
+  | {
+    mime: string
+    data:
+      | { type: 'reference'; reference: SharedV4ProviderReference }
+      | { type: 'data'; data: Uint8Array }
+  }
+  | { mime: string; unavailable: string }
 
 export interface BuildInput {
   protocol: InterfaceProtocol
@@ -33,12 +35,11 @@ export interface BuildInput {
   path: Message[]
   attachments: ReadonlyMap<number, AttachmentInput>
   /**
-   * Present when this turn has a tool that refers to images by name (`read_file`, `generate_image`):
-   * every image is then labelled with its path from `@/shared/image-paths`. Maps the attachment id of
-   * each image an assistant message holds to its MIME, which names the file; user images carry
-   * theirs in `attachments`. Absent, the prompt carries no labels at all.
+   * Attachment id → the `asset:` prefix every file on the path is labelled with (spec §7.1). Labels
+   * are always present, whatever tools the turn has, so the prefix of the prompt never changes with
+   * the tool selection.
    */
-  imageLabels?: ReadonlyMap<number, string>
+  assets: ReadonlyMap<number, string>
 }
 
 const ANTHROPIC_CACHE = { anthropic: { cacheControl: { type: 'ephemeral' } } } as const
@@ -61,21 +62,44 @@ export function renderTaskNotification(part: TaskNotificationPart): string {
   ].join('\n')
 }
 
-function userParts(parts: Part[], attachments: ReadonlyMap<number, AttachmentInput>, labelImages = false): UserPart[] {
+function prefixOf(assets: ReadonlyMap<number, string>, attachmentId: number): string {
+  const prefix = assets.get(attachmentId)
+  if (prefix === undefined) throw new Error(`attachment ${attachmentId} has no asset label`)
+  return prefix
+}
+
+function inputOf(attachments: ReadonlyMap<number, AttachmentInput>, attachmentId: number): AttachmentInput {
+  const att = attachments.get(attachmentId)
+  if (!att) throw new Error(`attachment ${attachmentId} input not provided`)
+  return att
+}
+
+/**
+ * The file itself, or the sentence standing in for a file this model cannot read. The name sent
+ * upstream is derived from the id and MIME, never the person's filename: that one is theirs, it
+ * reaches the model only through the label, and a provider has no business receiving it.
+ */
+function fileContent(attachmentId: number, att: AttachmentInput): UserPart {
+  if ('unavailable' in att) return { type: 'text', text: att.unavailable }
+  const filename = att.mime.startsWith('image/') ? undefined : attachmentFilename(attachmentId, att.mime)
+  return { type: 'file', mediaType: att.mime, data: att.data, ...(filename ? { filename } : {}) }
+}
+
+/** `[image asset:3f9a2c1e "cat.png"]`, `[file asset:b41d07a9 "report.pdf" application/pdf]` (spec §7.1). */
+function uploadLabel(part: ImagePart | FilePart, prefix: string, mime: string): string {
+  const name = part.filename ? ` ${JSON.stringify(part.filename)}` : ''
+  return part.type === 'image' ? `[image asset:${prefix}${name}]` : `[file asset:${prefix}${name} ${mime}]`
+}
+
+function userParts(parts: Part[], attachments: ReadonlyMap<number, AttachmentInput>, assets: ReadonlyMap<number, string>): UserPart[] {
   const out: UserPart[] = []
   for (const p of parts) {
     if (p.type === 'text') {
       out.push({ type: 'text', text: p.text })
     } else if (p.type === 'image' || p.type === 'file') {
-      const att = attachments.get(p.attachment_id)
-      if (!att) throw new Error(`attachment ${p.attachment_id} input not provided`)
-      if (att.unavailable) {
-        out.push({ type: 'text', text: `[file: ${att.path ?? uploadPath(p.attachment_id, att.mime)}; ${att.mime}] ${att.unavailable}` })
-        continue
-      }
-      if (labelImages) out.push({ type: 'text', text: `[${att.mime.startsWith('image/') ? 'image' : 'file'}: ${att.path ?? uploadPath(p.attachment_id, att.mime)}]` })
-      const filename = p.type === 'file' && p.filename ? p.filename : !att.mime.startsWith('image/') ? attachmentFilename(p.attachment_id, att.mime) : undefined
-      out.push({ type: 'file', mediaType: att.mime, data: att.data, ...(filename ? { filename } : {}) })
+      const att = inputOf(attachments, p.attachment_id)
+      out.push({ type: 'text', text: uploadLabel(p, prefixOf(assets, p.attachment_id), att.mime) })
+      out.push(fileContent(p.attachment_id, att))
     } else if (p.type === 'task_notification') {
       out.push({ type: 'text', text: renderTaskNotification(p) })
     }
@@ -116,7 +140,7 @@ function assistantMessages(
   parts: Part[],
   protocol: InterfaceProtocol,
   attachments: ReadonlyMap<number, AttachmentInput>,
-  imageLabels?: ReadonlyMap<number, string>,
+  assets: ReadonlyMap<number, string>,
 ): Array<AssistantModelMessage | ToolModelMessage | UserModelMessage> {
   const out: Array<AssistantModelMessage | ToolModelMessage | UserModelMessage> = []
   /**
@@ -145,7 +169,7 @@ function assistantMessages(
   const pendingCalls = new Set<string>()
   let assistant: AssistantPart[] = []
   let tool: ToolPart[] = []
-  /** Results that showed images: they follow the tool message they belong to, see `toolImagesMessage`. */
+  /** Results that delivered files: they follow the tool message they belong to, see `toolAttachmentsMessage`. */
   let shown: ToolResultPart[] = []
   const flushAssistant = () => {
     if (assistant.length > 0) out.push({ role: 'assistant', content: assistant })
@@ -157,7 +181,7 @@ function assistantMessages(
       out.push({ role: 'tool', content: tool })
     }
     tool = []
-    if (shown.length > 0) out.push(...shown.map(result => toolImagesMessage([result], attachments)))
+    if (shown.length > 0) out.push(toolAttachmentsMessage(shown, attachments, assets))
     shown = []
   }
   const appendAssistant = (part: AssistantPart) => { if (pendingCalls.size === 0) flushTool(); assistant.push(part) }
@@ -201,15 +225,11 @@ function assistantMessages(
         // Streaming tools can finish before the model has emitted its remaining calls.
         if (pendingCalls.size === 0) flushTool()
         break
-      case 'image': {
+      case 'image':
         // The pixels are never replayed: `requiredAttachmentIds` must skip exactly what this drops.
-        // Only the name is, when a tool can use it — to open the image or to edit it.
-        if (!imageLabels) break
-        const mime = imageLabels.get(p.attachment_id) ?? ''
-        const name = p.artifact_id === undefined ? generatedPath(p.attachment_id, mime) : artifactPath(p.artifact_id, mime)
-        appendAssistant({ type: 'text', text: `[generated image: ${name}]` })
+        // Only the reference is, so a tool can still open or edit the image.
+        appendAssistant({ type: 'text', text: `[generated image asset:${prefixOf(assets, p.attachment_id)}]` })
         break
-      }
     }
   }
   flushAssistant()
@@ -222,10 +242,10 @@ function assistantMessages(
  * deliberately next to the builder: "which attachments does the request need?" and "which ones does
  * it use?" have to be one answer, or the caller resolves bytes for parts that are never sent.
  *
- * Only user images qualify today, because `assistantMessages` drops generated ones. Resolving those
- * too would read them out of R2 on every later turn — the quadratic re-read spec §5.6 exists to
- * remove — upload model output to the provider's Files API, and fail the whole turn on a missing R2
- * object that nothing in the request needed.
+ * User uploads and files tools delivered qualify; images an assistant message holds do not, because
+ * `assistantMessages` sends only their label. Resolving those too would read them out of R2 on every
+ * later turn — the quadratic re-read spec §5.6 exists to remove — upload model output to the
+ * provider's Files API, and fail the whole turn on a missing R2 object nothing in the request needed.
  */
 export function requiredAttachmentIds(path: readonly Message[]): Set<number> {
   const ids = new Set<number>()
@@ -238,27 +258,32 @@ export function requiredAttachmentIds(path: readonly Message[]): Set<number> {
   return ids
 }
 
-function readRequestId(result: ToolResultPart): string {
-  const raw = (result.content as { request_id?: unknown } | null)?.request_id
-  const id = typeof raw === 'string' ? raw : result.call_id
-  return id.replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+function escapeAttribute(value: string): string {
+  return value.replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
 }
 
-/** Files follow tool receipts in user messages; current steps and history use the same builder. */
-export function toolImagesMessage(results: readonly ToolResultPart[], attachments: ReadonlyMap<number, AttachmentInput>): UserModelMessage {
-  const content = results.flatMap(result => {
-    const resolved = new Map(attachments)
-    for (const [id, path] of Object.entries(result.attachment_paths ?? {})) {
-      const attachment = resolved.get(Number(id))
-      if (attachment) resolved.set(Number(id), { ...attachment, path })
-    }
-    const parts: Part[] = [
-      { type: 'text', text: `<read_file_result id="${readRequestId(result)}">` },
-      ...(result.attachments ?? []).map((attachment_id): Part => ({ type: 'image', attachment_id })),
-      { type: 'text', text: '</read_file_result>' },
+/**
+ * Files tools delivered, as the one user message that follows a batch of tool results (spec §7.2).
+ * A user message because every protocol accepts files there, while tool results carry them on only
+ * some, and only as base-64 resent on every later turn. Built identically mid-turn (`prepareStep`)
+ * and when the history is rebuilt, so the prompt prefix stays byte-identical.
+ */
+export function toolAttachmentsMessage(
+  results: readonly ToolResultPart[],
+  attachments: ReadonlyMap<number, AttachmentInput>,
+  assets: ReadonlyMap<number, string>,
+): UserModelMessage {
+  const content = results.flatMap(result => (result.attachments ?? []).flatMap((attachmentId): UserPart[] => {
+    const prefix = prefixOf(assets, attachmentId)
+    const att = inputOf(attachments, attachmentId)
+    return [
+      { type: 'text', text: `<tool_attachment call_id="${escapeAttribute(result.call_id)}" asset="${prefix}">` },
+      'unavailable' in att
+        ? { type: 'text', text: `asset:${prefix} ${att.mime}: ${att.unavailable}` }
+        : fileContent(attachmentId, att),
+      { type: 'text', text: '</tool_attachment>' },
     ]
-    return userParts(parts, resolved)
-  })
+  }))
   return { role: 'user', content }
 }
 
@@ -309,10 +334,10 @@ const INTERRUPT_MESSAGE = '[Request interrupted by user]'
 export function interjectedUserMessage(
   said: Part[],
   attachments: ReadonlyMap<number, AttachmentInput>,
+  assets: ReadonlyMap<number, string>,
   interrupted: boolean,
-  labelImages = false,
 ): ModelMessage {
-  const content = userParts(said, attachments, labelImages)
+  const content = userParts(said, attachments, assets)
   return { role: 'user', content: interrupted ? [{ type: 'text', text: INTERRUPT_MESSAGE }, ...content] : content }
 }
 
@@ -325,7 +350,7 @@ export function interjectedUserMessage(
  * which rejects a `role: 'system'` message inside `messages`.
  */
 export function buildModelMessages(input: BuildInput): ModelMessage[] {
-  const { protocol, systemPrompt, path, attachments, imageLabels } = input
+  const { protocol, systemPrompt, path, attachments, assets } = input
   const out: ModelMessage[] = []
   const cache = protocol === 'anthropic'
 
@@ -343,7 +368,7 @@ export function buildModelMessages(input: BuildInput): ModelMessage[] {
 
   path.forEach((m, i) => {
     if (m.role === 'user') {
-      const said = userParts(m.parts, attachments, imageLabels !== undefined)
+      const said = userParts(m.parts, attachments, assets)
       const content: UserPart[] = pending === null ? said : [{ type: 'text', text: pending }, ...said]
       pending = null
 
@@ -361,7 +386,7 @@ export function buildModelMessages(input: BuildInput): ModelMessage[] {
       return
     }
 
-    const said = assistantMessages(m.parts, protocol, attachments, imageLabels)
+    const said = assistantMessages(m.parts, protocol, attachments, assets)
     if (said.length === 0) {
       // A turn that said nothing, however it ended — stopped by hand, or handed off the moment the
       // operator spoke. There is no turn here to put between two user messages, and leaving a gap
