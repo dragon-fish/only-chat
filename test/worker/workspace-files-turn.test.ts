@@ -7,6 +7,8 @@ import { conversations, messages, projects, workspaceFileVersions, workspaceFile
 import { ToolRegistry, type ToolContext } from '@/server/plugins/tools'
 import { WorkspaceFiles } from '@/server/plugins/workspace-files/service'
 import { WorkspaceFilesServerPlugin } from '@/plugins/workspace-files/server'
+import { FileReaderServerPlugin } from '@/plugins/file-reader/server'
+import type { GenerationTurn } from '@/server/plugins/hub/generation-turn'
 import type { ReadFileOutput, WriteFileOutput } from '@/plugins/workspace-files/shared'
 import { ensureTestUser } from './auth-helper'
 
@@ -37,11 +39,6 @@ async function fixture(): Promise<Fixture> {
     model_id: null, system_prompt: null, params: null, tools: [], created_at: 0, updated_at: 0,
   }).returning()
 
-  const ctx = new Context()
-  ctx.provide('pluginConfig', { readIfConfigurable: async () => ({}) })
-  const registry = new ToolRegistry(ctx)
-  // Constructing the Service provides ctx.tools, which is all the plugin needs to register on.
-  WorkspaceFilesServerPlugin.apply(ctx)
 
   // Provenance has a real foreign key, so the runtime needs a message that exists.
   const [assistant] = await db.insert(messages).values({
@@ -59,7 +56,22 @@ async function fixture(): Promise<Fixture> {
       return bytes ? { bytes } : null
     },
   }
-  const turn = new Map<string, unknown>()
+  const ctx = new Context()
+  ctx.provide('env', env)
+  ctx.provide('pluginConfig', { readIfConfigurable: async () => ({}), read: async () => ({}) })
+  ctx.provide('db', { orm: db })
+  ctx.provide('assets', assets)
+  // Constructing the Service provides ctx.tools, which is all the plugins need to register on.
+  const registry = new ToolRegistry(ctx)
+  await ctx.plugin(FileReaderServerPlugin)
+  await ctx.plugin(WorkspaceFilesServerPlugin)
+  // What the hub does at generation start: plugins prepare the turn their tools then run in.
+  const generation: GenerationTurn = {
+    userId: 1, conversationId: conversation!.id, projectId: project!.id, toolIds: ['read_file', 'write_file'],
+    path: [], state: new Map(), canReadFile: () => false,
+  }
+  await ctx.parallel('generation/prepare', generation)
+  const turn = generation.state
   const runtime: ToolContext = {
     userId: 1,
     conversationId: conversation!.id,
@@ -73,7 +85,7 @@ async function fixture(): Promise<Fixture> {
     signal: new AbortController().signal,
     acceptsImages: false,
     toolIds: ['read_file', 'write_file'],
-    files: {} as ToolContext['files'],
+    canReadFile: generation.canReadFile,
     acceptsToolResultImages: false,
     publicOrigin: 'https://chat.test',
     path: [],
@@ -99,7 +111,7 @@ describe('workspace files per-turn read tracking', () => {
     const scope = { conversationId: f.conversationId, projectId: null }
     await f.files.write({ path: '/conversation/a.md', content: 'v1', ...scope })
 
-    const read = await run(f.tools.read_file!, { path: '/conversation/a.md' }) as ReadFileOutput
+    const read = await run(f.tools.read_file!, { file: '/conversation/a.md' }) as ReadFileOutput
     expect(read.version).toBe(1)
 
     // Replacing exactly what was read is ordinary: no warning, just a note about the displacement.
@@ -119,7 +131,7 @@ describe('workspace files per-turn read tracking', () => {
   it('treats a version it wrote itself as one it has seen', async () => {
     const scope = { conversationId: f.conversationId, projectId: null }
     await f.files.write({ path: '/conversation/c.md', content: 'v1', ...scope })
-    await run(f.tools.read_file!, { path: '/conversation/c.md' })
+    await run(f.tools.read_file!, { file: '/conversation/c.md' })
 
     // read v1 -> write v2 -> write v3. Nothing landed in between, so the turn has seen every
     // version it is replacing, even the ones it never read back.

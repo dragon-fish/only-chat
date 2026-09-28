@@ -90,12 +90,12 @@ describe('an image a tool shows the model', () => {
 
     const midTurn = prompts[1] as Array<{ role: string, content: Array<{ type: string, text?: string }> }>
     const toolAt = midTurn.findIndex(m => m.role === 'tool')
-    const asset = attachment!.sha256.slice(0, 8)
+    // No file reader this turn, so nothing names the file: the wrapper carries only the call.
     expect(midTurn[toolAt + 1]).toMatchObject({ role: 'user', content: [
-      { type: 'text', text: `<tool_attachment call_id="call-peek" asset="${asset}">` },
+      { type: 'text', text: '<tool_attachment call_id="call-peek">' },
       { type: 'file', mediaType: 'image/png' },
       { type: 'text', text: '</tool_attachment>' },
-      { type: 'text', text: `<tool_attachment call_id="call-peek-2" asset="${asset}">` },
+      { type: 'text', text: '<tool_attachment call_id="call-peek-2">' },
       { type: 'file', mediaType: 'image/png' },
       { type: 'text', text: '</tool_attachment>' },
     ] })

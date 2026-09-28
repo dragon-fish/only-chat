@@ -1,27 +1,16 @@
 import { z } from 'zod'
 
-export { ANALYZE_FILE_TOOL_ID, FILE_UNDERSTANDING_PLUGIN_ID, VIEW_FILE_TOOL_ID } from '@/shared/plugins'
-
-const FileRefSchema = z.string().min(1).max(600)
-  .describe('A file reference, such as asset:3f9a2c1e from a file label in this conversation, or vfs:/project/report.pdf for a workspace file.')
-
-export const ViewFileInputSchema = z.strictObject({ file: FileRefSchema })
-export type ViewFileInput = z.infer<typeof ViewFileInputSchema>
+export { ANALYZE_FILE_TOOL_ID, FILE_UNDERSTANDING_PLUGIN_ID } from '@/shared/plugins'
 
 export const AnalyzeFileInputSchema = z.strictObject({
-  file: FileRefSchema,
+  file: z.string().min(1).max(600)
+    .describe('The file: the asset:<hex> a file in this conversation is labelled with, or a workspace path such as /project/report.pdf when workspace files are on.'),
   question: z.string().min(1).optional()
     .describe('What you want to know about the file. Omit it for a complete, detailed description.'),
 })
 export type AnalyzeFileInput = z.infer<typeof AnalyzeFileInputSchema>
 
-/** Tool results are persisted, so these are part of the wire format. */
-export interface ViewFileOutput {
-  file: string
-  mime: string
-  message: string
-}
-
+/** Tool results are persisted, so this is part of the wire format. */
 export interface AnalyzeFileOutput {
   file: string
   mime: string

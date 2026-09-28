@@ -19,7 +19,7 @@ const finish = (unified: 'stop' | 'tool-calls') => ({
 }) as StreamPart
 
 /** What the main model calls on its first step; the file reference is filled in per test. */
-let call: { tool: 'view_file' | 'analyze_file', input: Record<string, unknown> } = { tool: 'view_file', input: {} }
+let call: { tool: 'read_file' | 'analyze_file', input: Record<string, unknown> } = { tool: 'read_file', input: {} }
 const CALL = (): StreamPart[] => [
   { type: 'stream-start', warnings: [] },
   { type: 'tool-call', toolCallId: 'call-file', toolName: call.tool, input: JSON.stringify(call.input) },
@@ -101,7 +101,7 @@ async function install() {
 }
 
 /** One turn: the person sends the file, the model calls the tool on `input(ref)`. */
-async function turn(options: { vision: boolean, service: boolean, mime?: string, analystInput?: string[], tools: string[], tool: 'view_file' | 'analyze_file', input: (ref: string) => Record<string, unknown>, stop?: boolean }) {
+async function turn(options: { vision: boolean, service: boolean, mime?: string, analystInput?: string[], tools: string[], tool: 'read_file' | 'analyze_file', input: (ref: string) => Record<string, unknown>, stop?: boolean }) {
   const mime = options.mime ?? 'image/png'
   const seeded = await seed({ vision: options.vision, service: options.service, mime, analystInput: options.analystInput })
   const c = await connect(await ensureTestUser())
@@ -124,9 +124,9 @@ async function turn(options: { vision: boolean, service: boolean, mime?: string,
   return { ...seeded, result, status: done.status }
 }
 
-describe('view_file', () => {
+describe('read_file with file understanding', () => {
   it('delivers the file after the tool results, with no attachment id anywhere the model reads', async () => {
-    const { attachmentId, ref, result } = await turn({ vision: true, service: false, tools: ['view_file'], tool: 'view_file', input: file => ({ file }) })
+    const { attachmentId, ref, result } = await turn({ vision: true, service: false, tools: ['read_file'], tool: 'read_file', input: file => ({ file }) })
     expect(result).toMatchObject({ content: { file: ref, mime: 'image/png' }, attachments: [attachmentId] })
     const second = prompts[1]!
     const toolAt = second.findIndex(message => message.role === 'tool')
@@ -135,15 +135,15 @@ describe('view_file', () => {
     expect(readable.some(text => new RegExp(`\\b${attachmentId}\\b`).test(text))).toBe(false)
   })
 
-  it('refuses a bare path, naming the vfs: form', async () => {
-    const { result } = await turn({ vision: true, service: false, tools: ['view_file'], tool: 'view_file', input: () => ({ file: '/project/cat.png' }) })
-    expect(result?.content).toMatchObject({ error: 'INVALID_FILE_REF', message: expect.stringContaining('vfs:/project/cat.png') })
+  it('refuses a path when nothing enabled serves paths', async () => {
+    const { result } = await turn({ vision: true, service: false, tools: ['read_file'], tool: 'read_file', input: () => ({ file: '/project/cat.png' }) })
+    expect(result?.content).toMatchObject({ error: 'INVALID_FILE_REF', message: expect.stringContaining('asset:') })
   })
 
   it('points a model that cannot read the file at analyze_file only when that would work', async () => {
-    const withService = await turn({ vision: false, service: true, tools: ['view_file', 'analyze_file'], tool: 'view_file', input: file => ({ file }) })
+    const withService = await turn({ vision: false, service: true, tools: ['read_file', 'analyze_file'], tool: 'read_file', input: file => ({ file }) })
     expect(withService.result?.content).toMatchObject({ error: 'UNSUPPORTED_FILE', message: expect.stringContaining(`analyze_file with file ${withService.ref}`) })
-    const without = await turn({ vision: false, service: false, tools: ['view_file', 'analyze_file'], tool: 'view_file', input: file => ({ file }) })
+    const without = await turn({ vision: false, service: false, tools: ['read_file', 'analyze_file'], tool: 'read_file', input: file => ({ file }) })
     expect(without.result?.content).toMatchObject({ error: 'UNSUPPORTED_FILE' })
     expect((without.result?.content as { message: string }).message).not.toContain('analyze_file')
   })

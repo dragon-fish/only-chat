@@ -35,7 +35,6 @@ it('finishes outstanding tool results before injecting files during replay', asy
   const output = buildModelMessages({
     protocol: 'responses', systemPrompt: null,
     attachments: new Map([[12, { mime: 'application/pdf', data: { type: 'data', data: new TextEncoder().encode('%PDF-1.7') } }]]),
-    assets: new Map([[12, 'b41d07a9']]),
     path: [{ id: 1, conversation_id: 1, parent_id: null, seq: 1, role: 'assistant', provider_id: null, model_id: null, usage: null, status: 'done', error: null, created_at: 0, parts: [
       { type: 'tool_call', id: 'a', name: 'read_file', args: {} },
       { type: 'tool_call', id: 'b', name: 'read_file', args: {} },
@@ -49,7 +48,7 @@ it('finishes outstanding tool results before injecting files during replay', asy
   expect(output[0]!.content).toHaveLength(3)
   expect(output[1]!.content).toHaveLength(3)
   expect((output[2]!.content as Array<{ text?: string }>).filter(part => part.text?.startsWith('<tool_attachment')).map(part => part.text))
-    .toEqual(['a', 'b', 'c'].map(id => `<tool_attachment call_id="${id}" asset="b41d07a9">`))
+    .toEqual(['a', 'b', 'c'].map(id => `<tool_attachment call_id="${id}">`))
 })
 
 it('allows repairing an invalid saved prompt but refuses new blank prompts', async () => {

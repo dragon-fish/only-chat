@@ -146,12 +146,12 @@ describe('edit_file', () => {
     })
 
     const { results } = await callTools(providerId, [
-      { name: 'read_file', input: { path: '/conversation/app.ts' } },
+      { name: 'read_file', input: { file: '/conversation/app.ts' } },
       { name: 'edit_file', input: { path: '/conversation/app.ts', oldText: 'PORT = 3000', newText: 'PORT = 8080' } },
     ], conversationId)
 
     expect(results.at(-1)?.content).toMatchObject({ replacements: 1, version: 2 })
-    const read = await callTool(providerId, 'read_file', { path: '/conversation/app.ts' }, conversationId)
+    const read = await callTool(providerId, 'read_file', { file: '/conversation/app.ts' }, conversationId)
     expect((read.result?.content as { content: string }).content).toContain('const PORT = 8080')
   })
 
@@ -181,8 +181,8 @@ describe('read_file repeat and partial views', () => {
     })
 
     const { results } = await callTools(providerId, [
-      { name: 'read_file', input: { path: '/conversation/app.ts' } },
-      { name: 'read_file', input: { path: '/conversation/app.ts' } },
+      { name: 'read_file', input: { file: '/conversation/app.ts' } },
+      { name: 'read_file', input: { file: '/conversation/app.ts' } },
     ], conversationId)
 
     // The first result is still in context. A second copy buys nothing and is paid for on every
@@ -203,7 +203,7 @@ describe('read_file repeat and partial views', () => {
     // enough, but a read asking for the file has to be answered with the file.
     const { results } = await callTools(providerId, [
       { name: 'write_file', input: { path: '/conversation/app.ts', content: 'second' } },
-      { name: 'read_file', input: { path: '/conversation/app.ts' } },
+      { name: 'read_file', input: { file: '/conversation/app.ts' } },
     ], conversationId)
     expect(results.at(-1)?.content).toMatchObject({ content: expect.stringContaining('second') })
   })
@@ -216,7 +216,7 @@ describe('read_file repeat and partial views', () => {
     const { conversationId } = await callTool(providerId, 'write_file', { path: '/conversation/long.ts', content: lines })
 
     const { results } = await callTools(providerId, [
-      { name: 'read_file', input: { path: '/conversation/long.ts', offset: 1, limit: 5 } },
+      { name: 'read_file', input: { file: '/conversation/long.ts', offset: 1, limit: 5 } },
       { name: 'edit_file', input: { path: '/conversation/long.ts', oldText: 'PORT = 3000', newText: 'PORT = 8080' } },
     ], conversationId)
 
@@ -233,7 +233,7 @@ describe('what the context has already seen', () => {
     const { conversationId } = await callTool(providerId, 'write_file', {
       path: '/conversation/app.ts', content: 'const PORT = 3000\nstart(PORT)',
     })
-    await callTool(providerId, 'read_file', { path: '/conversation/app.ts' }, conversationId)
+    await callTool(providerId, 'read_file', { file: '/conversation/app.ts' }, conversationId)
 
     // That read is still in the conversation the model is looking at. Making it read again costs a
     // whole round trip, which resends everything, to be told what is already on screen.
@@ -247,9 +247,9 @@ describe('what the context has already seen', () => {
     const providerId = await seedProvider()
     await installModel()
     const { conversationId } = await callTool(providerId, 'write_file', { path: '/conversation/b.ts', content: 'hello' })
-    await callTool(providerId, 'read_file', { path: '/conversation/b.ts' }, conversationId)
+    await callTool(providerId, 'read_file', { file: '/conversation/b.ts' }, conversationId)
 
-    const { result } = await callTool(providerId, 'read_file', { path: '/conversation/b.ts' }, conversationId)
+    const { result } = await callTool(providerId, 'read_file', { file: '/conversation/b.ts' }, conversationId)
     expect(result?.content).toMatchObject({ unchanged: true })
   })
 
@@ -257,10 +257,10 @@ describe('what the context has already seen', () => {
     const providerId = await seedProvider()
     await installModel()
     const { conversationId } = await callTool(providerId, 'write_file', { path: '/conversation/c.ts', content: 'one' })
-    await callTool(providerId, 'read_file', { path: '/conversation/c.ts' }, conversationId)
+    await callTool(providerId, 'read_file', { file: '/conversation/c.ts' }, conversationId)
     await callTool(providerId, 'write_file', { path: '/conversation/c.ts', content: 'two' }, conversationId)
 
-    const { result } = await callTool(providerId, 'read_file', { path: '/conversation/c.ts' }, conversationId)
+    const { result } = await callTool(providerId, 'read_file', { file: '/conversation/c.ts' }, conversationId)
     expect(result?.content).toMatchObject({ content: expect.stringContaining('two') })
   })
 })
@@ -306,7 +306,7 @@ describe('workspace file tools', () => {
     const providerId = await seedProvider()
     await installModel()
     const { conversationId } = await callTool(providerId, 'write_file', { path: '/conversation/a.md', content: 'x\ny\nz' })
-    const { result } = await callTool(providerId, 'read_file', { path: '/conversation/a.md', offset: 2, limit: 1 }, conversationId)
+    const { result } = await callTool(providerId, 'read_file', { file: '/conversation/a.md', offset: 2, limit: 1 }, conversationId)
 
     expect(result?.content).toMatchObject({
       content: '2 | y', startLine: 2, returnedLines: 1, totalLines: 3, truncated: true, nextOffset: 3, version: 1,

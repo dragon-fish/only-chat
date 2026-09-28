@@ -1,6 +1,6 @@
 import type { ClientPluginSetup } from '@/client/plugins/host'
 import {
-  COPY_FILE_TOOL_ID, DELETE_FILE_TOOL_ID, EDIT_FILE_TOOL_ID, LIST_FILES_TOOL_ID, PREVIEW_FILE_TOOL_ID, READ_FILE_TOOL_ID,
+  COPY_FILE_TOOL_ID, DELETE_FILE_TOOL_ID, EDIT_FILE_TOOL_ID, LIST_FILES_TOOL_ID, PREVIEW_FILE_TOOL_ID,
   RENAME_FILE_TOOL_ID, RESTORE_FILE_TOOL_ID, WRITE_FILE_TOOL_ID,
 } from '../shared'
 import CopyFileCard from './copy-file-card.vue'
@@ -10,7 +10,6 @@ import FilesTab from './files-tab.vue'
 import ListFilesCard from './list-files-card.vue'
 import PreviewFileCard from './preview-file-card.vue'
 import RenameFileCard from './rename-file-card.vue'
-import ReadFileCard from './read-file-card.vue'
 import RestoreFileCard from './restore-file-card.vue'
 import SettingsPanel from './settings-panel.vue'
 import TurnFilesFooter from './turn-files-footer.vue'
@@ -18,7 +17,6 @@ import WriteFileCard from './write-file-card.vue'
 
 export const setup: ClientPluginSetup = (ctx) => {
   ctx.tools.register(LIST_FILES_TOOL_ID, ListFilesCard)
-  ctx.tools.register(READ_FILE_TOOL_ID, ReadFileCard)
   ctx.tools.register(WRITE_FILE_TOOL_ID, WriteFileCard)
   ctx.tools.register(EDIT_FILE_TOOL_ID, EditFileCard)
   ctx.tools.register(RESTORE_FILE_TOOL_ID, RestoreFileCard)

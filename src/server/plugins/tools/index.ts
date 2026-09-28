@@ -5,7 +5,6 @@ import { conversationConfigOf, effectivePluginSwitches, pluginAvailableIn, plugi
 import { findPluginManifest, pluginManifests } from '@/shared/plugin-manifests'
 import type { DB } from '../../db/client'
 import type { Assets } from '../assets'
-import type { ToolFiles } from '../file-refs/deliver'
 
 /**
  * What a tool factory is handed for one generation.
@@ -17,7 +16,7 @@ import type { ToolFiles } from '../file-refs/deliver'
  *
  * `turn` is a scratchpad shared by every tool built for that generation and discarded with it, so a
  * per-turn call budget lives here rather than in the registry and cannot leak across conversations
- * or users.
+ * or users. It is the same map `generation/prepare` hands plugins as `GenerationTurn.state`.
  */
 export interface ToolContext {
   userId: number
@@ -37,11 +36,8 @@ export interface ToolContext {
   acceptsImages: boolean
   /** Every tool this generation offers, so one tool can tell whether suggesting another would help. */
   toolIds: readonly string[]
-  /**
-   * File references and delivery (spec §3). Tools accept files only through this, never by reaching
-   * for a provider plugin or the hub, so a scheme a plugin adds is usable by every tool at once.
-   */
-  files: ToolFiles
+  /** Whether the generating model can take a file of this MIME (spec §3.4). */
+  canReadFile(mime: string): boolean
   /**
    * Whether a picture survives the trip *inside a tool result*, which is a narrower question than
    * `acceptsImages` and is answered by the protocol rather than the model.

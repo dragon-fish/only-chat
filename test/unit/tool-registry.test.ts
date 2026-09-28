@@ -5,7 +5,7 @@ import { z } from 'zod'
 import { ToolRegistry, ToolRegistryPlugin, type ToolContext } from '@/server/plugins/tools'
 import { AskUserServerPlugin } from '@/plugins/ask-user/server'
 import { TavilyServerPlugin } from '@/plugins/tavily/server'
-import { EDIT_FILE_TOOL_ID, READ_FILE_TOOL_ID, TAVILY_PLUGIN_ID, WORKSPACE_FILES_PLUGIN_ID, WRITE_FILE_TOOL_ID } from '@/shared/plugins'
+import { EDIT_FILE_TOOL_ID, FILE_READER_PLUGIN_ID, READ_FILE_TOOL_ID, TAVILY_PLUGIN_ID, WORKSPACE_FILES_PLUGIN_ID, WRITE_FILE_TOOL_ID } from '@/shared/plugins'
 
 const registeredTool = (description: string) => tool({ description, inputSchema: z.object({}) })
 
@@ -34,7 +34,7 @@ const resolution = {
   pluginSettings: null,
   acceptsImages: false,
   toolIds: [],
-  files: {} as ToolContext['files'],
+  canReadFile: () => false,
   acceptsToolResultImages: false,
   publicOrigin: 'https://chat.test',
   path: [],
@@ -52,15 +52,16 @@ describe('ToolRegistry', () => {
 
   it('resolves a snapshot by group, so a tool added later is not withheld', () => {
     const registry = new ToolRegistry(contextWith())
-    registry.register(WORKSPACE_FILES_PLUGIN_ID, READ_FILE_TOOL_ID, () => registeredTool('read'))
+    registry.register(FILE_READER_PLUGIN_ID, READ_FILE_TOOL_ID, () => registeredTool('read'))
     registry.register(WORKSPACE_FILES_PLUGIN_ID, WRITE_FILE_TOOL_ID, () => registeredTool('write'))
     registry.register(WORKSPACE_FILES_PLUGIN_ID, EDIT_FILE_TOOL_ID, () => registeredTool('edit'))
 
     // The selector has no per-tool switch: a conversation whose snapshot predates a tool never
     // deselected it, because it did not exist yet. Withholding it would strand old conversations.
-    const usable = registry.usable([READ_FILE_TOOL_ID], { [WORKSPACE_FILES_PLUGIN_ID]: true }, { projectId: null })
+    const usable = registry.usable([WRITE_FILE_TOOL_ID], { [WORKSPACE_FILES_PLUGIN_ID]: true }, { projectId: null })
     expect(usable).toContain(EDIT_FILE_TOOL_ID)
-    expect(usable).toContain(WRITE_FILE_TOOL_ID)
+    // …and the plugin it requires comes with it, enabled or not in stored settings that predate it.
+    expect(usable).toContain(READ_FILE_TOOL_ID)
   })
 
   it('leaves a plugin that declares no manifest resolving by exact id', () => {

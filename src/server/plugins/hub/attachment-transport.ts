@@ -5,8 +5,7 @@ import type { AttachmentRow, ProviderInterfaceRow, ProviderRow } from '../../db/
 import type { Assets } from '../assets'
 import type { Llm } from '../llm'
 import { GONE, type AttachmentInput } from '../llm/messages'
-import { assetFilename } from '@/shared/file-media'
-import { assetPrefix } from '../file-refs/ref'
+import { inlineFilename } from '@/shared/file-media'
 import { PROVIDER_FILE_TTL_SECONDS, type ScopedFilesClient } from '../llm/files/types'
 import { findReusableProviderFile, getAttachment, insertProviderFile } from './conversations'
 
@@ -42,9 +41,9 @@ function toReference(stored: Record<string, string>): SharedV4ProviderReference 
 }
 
 /** OpenAI's multipart part carries no type hint of its own without a filename. */
-/** The model can read a Files API name back; see `assetFilename`. */
+/** The model can read a Files API name back; see `inlineFilename`. */
 function filenameFor(attachment: AttachmentRow): string {
-  return assetFilename(assetPrefix(attachment.sha256), attachment.mime)
+  return inlineFilename(attachment.mime)
 }
 
 /**
@@ -61,7 +60,8 @@ export async function resolveAttachmentInputs(
   provider: ProviderRow,
   providerInterface: ProviderInterfaceRow,
   attachmentIds: Iterable<number>,
-  unavailable?: (mime: string) => string | undefined,
+  /** Absent, every file is sent; otherwise a file this says no to is `unreadable`, and nothing is fetched for it. */
+  canRead?: (mime: string) => boolean,
   /** Tool-delivered ids, the only ones allowed to have lost their row; see `toolAttachmentsMessage`. */
   mayBeGone?: ReadonlySet<number>,
 ): Promise<Map<number, AttachmentInput>> {
@@ -81,9 +81,8 @@ export async function resolveAttachmentInputs(
       continue
     }
 
-    const reason = unavailable?.(attachment.mime)
-    if (reason) {
-      out.set(id, { mime: attachment.mime, unavailable: reason })
+    if (canRead && !canRead(attachment.mime)) {
+      out.set(id, { mime: attachment.mime, unavailable: 'unreadable' })
       continue
     }
 

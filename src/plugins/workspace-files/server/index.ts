@@ -3,19 +3,19 @@ import { tool } from 'ai'
 import { isTextMime, WorkspaceFiles, type Result, type WorkspaceError } from '@/server/plugins/workspace-files/service'
 import type { ToolContext } from '@/server/plugins/tools'
 import { formatWorkspacePath, parseWorkspacePath, pathFromArgument } from '@/server/plugins/workspace-files/path'
-import { ASSET_SCHEME, parseFileRef, refFailure, vfsRef, VFS_SCHEME } from '@/server/plugins/file-refs/ref'
-import { resolvedFromAttachment } from '@/server/plugins/file-refs/resolve'
-import { fileToolError, withoutToolAttachments, type DeliveredFile } from '@/server/plugins/file-refs/deliver'
+import { fileToolError, parseFileRef, refFailure, type FileResult } from '@/plugins/file-reader/server/refs'
+import { binaryFromAttachment, type FileTurn, type ResolvedFile } from '@/plugins/file-reader/server/service'
+import type { Message } from '@/shared/models'
 import {
   COPY_FILE_TOOL_ID, DELETE_FILE_TOOL_ID, LIST_FILES_TOOL_ID, PREVIEW_FILE_TOOL_ID, READ_FILE_TOOL_ID, RENAME_FILE_TOOL_ID,
   RESTORE_FILE_TOOL_ID, WORKSPACE_FILES_PLUGIN_ID, WRITE_FILE_TOOL_ID, EDIT_FILE_TOOL_ID, pluginToolIds,
 } from '@/shared/plugins'
 import manifest from '../manifest'
 import {
-  CopyFileInputSchema, DeleteFileInputSchema, EditFileInputSchema, ListFilesInputSchema, PreviewFileInputSchema, ReadFileInputSchema,
+  CopyFileInputSchema, DeleteFileInputSchema, EditFileInputSchema, ListFilesInputSchema, PreviewFileInputSchema,
   RenameFileInputSchema, RestoreFileInputSchema, WriteFileInputSchema,
   type CopyFileOutput, type DeleteFileOutput, type EditFileOutput, type ListFilesOutput, type PreviewFileOutput,
-  type ReadDeliveredOutput, type ReadFileOutput, type ReadFileUnchangedOutput,
+  type ReadFileOutput, type ReadFileUnchangedOutput,
   type RenameFileOutput, type RestoreFileOutput, type WriteFileOutput, type WorkspaceToolError,
 } from '../shared'
 import { absolutePreviewUrl, PREVIEW_TICKET_TTL_SECONDS, previewTypeFor, previewUrlFor } from './preview'
@@ -54,19 +54,21 @@ const failure = (error: WorkspaceError): WorkspaceToolError => ({ error, message
  * What a path argument names (spec §4): a workspace path — bare or as `vfs:` — or a file reference.
  * Anything that is neither is an invalid path, never a reference to guess at.
  */
-type PathArgument = { kind: 'path', path: string } | { kind: 'ref', ref: string } | { kind: 'invalid' }
+type PathArgument = { kind: 'path', path: string } | { kind: 'ref', ref: string, asset: boolean } | { kind: 'invalid' }
 
 function argumentOf(input: string): PathArgument {
   const path = pathFromArgument(input)
   if (path !== null) return { kind: 'path', path }
-  return parseFileRef(input).ok ? { kind: 'ref', ref: input } : { kind: 'invalid' }
+  const parsed = parseFileRef(input)
+  if (!parsed.ok || parsed.value.kind === 'path') return { kind: 'invalid' }
+  return { kind: 'ref', ref: input, asset: parsed.value.kind === 'asset' }
 }
 
 /** A path for a tool that changes files: an asset is immutable, so it is `READ_ONLY`; any other scheme is no path at all. */
 function writablePath(input: string): string | WorkspaceToolError {
   const argument = argumentOf(input)
   if (argument.kind === 'path') return argument.path
-  return failure(argument.kind === 'ref' && argument.ref.startsWith(`${ASSET_SCHEME}:`) ? 'READ_ONLY' : 'INVALID_PATH')
+  return failure(argument.kind === 'ref' && argument.asset ? 'READ_ONLY' : 'INVALID_PATH')
 }
 
 /** A path for a tool that only makes sense on the workspace itself. */
@@ -95,8 +97,8 @@ interface SeenFile {
 
 const seenKey = (path: string) => `workspace_files:read:${path}`
 
-function seenThisTurn(runtime: ToolContext, path: string): SeenFile | null {
-  const value = runtime.turn.get(seenKey(path))
+function seenThisTurn(state: Map<string, unknown>, path: string): SeenFile | null {
+  const value = state.get(seenKey(path))
   return typeof value === 'object' && value !== null ? value as SeenFile : null
 }
 
@@ -127,12 +129,12 @@ function seenInResult(name: string, content: unknown, path: string): SeenFile | 
  * The newest whole view wins over a later partial one: a paged read after a full one does not
  * un-see the file, and a version that has moved since is refused either way.
  */
-function seenInContext(runtime: ToolContext, path: string): SeenFile | null {
-  const live = seenThisTurn(runtime, path)
+function seenInContext(state: Map<string, unknown>, messages: readonly Message[], path: string): SeenFile | null {
+  const live = seenThisTurn(state, path)
   if (live !== null) return live
   let fallback: SeenFile | null = null
-  for (let index = runtime.path.length - 1; index >= 0; index--) {
-    for (const part of [...runtime.path[index]!.parts].reverse()) {
+  for (let index = messages.length - 1; index >= 0; index--) {
+    for (const part of [...messages[index]!.parts].reverse()) {
       if (part.type !== 'tool_result') continue
       const seen = seenInResult(part.name, part.content, path)
       if (seen === null) continue
@@ -141,6 +143,66 @@ function seenInContext(runtime: ToolContext, path: string): SeenFile | null {
     }
   }
   return fallback
+}
+
+const VFS_SCHEME = 'vfs'
+
+/**
+ * A workspace path as `read_file` sees it (spec §5.2): text reads as numbered lines with its version,
+ * recording what this turn has seen so `write_file` and `edit_file` can check it; anything else is
+ * shown whole.
+ */
+async function resolveWorkspaceFile(files: WorkspaceFiles, turn: FileTurn, path: string): Promise<FileResult<ResolvedFile>> {
+  const scope = { conversationId: turn.conversationId, projectId: turn.projectId }
+  const found = await files.current({ path, ...scope })
+  if (!found.ok) return refFailure(found.error === 'INVALID_PATH' ? 'INVALID_FILE_REF' : 'FILE_NOT_FOUND', MESSAGES[found.error])
+  const { attachment, relativePath } = found.value
+  const filename = relativePath.slice(relativePath.lastIndexOf('/') + 1)
+  if (!isTextMime(found.value.version.mime)) return { ok: true, value: binaryFromAttachment(attachment, filename) }
+  return {
+    ok: true,
+    value: {
+      kind: 'text', ref: found.value.path, mime: found.value.version.mime, size: found.value.version.file_size,
+      filename, attachmentId: attachment.id,
+      read: range => readWorkspaceText(files, turn, found.value.path, range),
+    },
+  }
+}
+
+async function readWorkspaceText(
+  files: WorkspaceFiles,
+  turn: FileTurn,
+  path: string,
+  range: { offset?: number, limit?: number },
+): Promise<FileResult<ReadFileOutput | ReadFileUnchangedOutput>> {
+  const result = await files.read({ path, ...range, conversationId: turn.conversationId, projectId: turn.projectId })
+  if (!result.ok) {
+    return refFailure(result.error === 'READ_RANGE_TOO_LARGE' ? 'READ_RANGE_TOO_LARGE' : 'FILE_NOT_FOUND', MESSAGES[result.error])
+  }
+  const { updatedAt: _updatedAt, ...output } = result.value
+
+  const seen = seenInContext(turn.state, turn.path, output.path)
+  // Only against a previous read of the whole file: a write's entry records what was written
+  // rather than a view of the file, and answering `unchanged` from it would point the caller
+  // back at content from before its own edit. A ranged request is answered in full, since
+  // what was seen whole says nothing about which lines this call asked for.
+  const repeat = seen !== null && seen.source === 'read' && !seen.partial
+    && seen.version === output.version && range.offset === undefined && range.limit === undefined
+  turn.state.set(seenKey(output.path), {
+    version: output.version,
+    partial: output.truncated || output.startLine > 1,
+    source: 'read',
+  } satisfies SeenFile)
+  if (!repeat) return { ok: true, value: output }
+  return {
+    ok: true,
+    value: {
+      path: output.path,
+      version: output.version,
+      unchanged: true,
+      message: `Still v${output.version}, unchanged since you read it earlier in this turn. That result is still above you; read it again only after something writes to this file.`,
+    },
+  }
 }
 
 function servicesFor(runtime: ToolContext) {
@@ -153,23 +215,14 @@ function servicesFor(runtime: ToolContext) {
 
 export const WorkspaceFilesServerPlugin = {
   name: 'workspace-files',
-  inject: ['tools', 'db', 'assets', 'env', 'pluginConfig'] as const,
+  inject: ['tools', 'fileReader', 'db', 'assets', 'env', 'pluginConfig'] as const,
   apply(ctx: Context) {
-    // `vfs:` exists only while a workspace tool is on in the turn; otherwise it is left unclaimed and
-    // reads as an unsupported scheme. The mount scope is the authorization, as for every tool here.
-    ctx.on('file/resolve', async (ref, turn) => {
-      if (!ref.startsWith(`${VFS_SCHEME}:`)) return undefined
+    // `vfs:` and bare paths exist only while a workspace tool is on in the turn; otherwise they are
+    // left unclaimed. The mount scope is the authorization, as for every tool here.
+    ctx.fileReader.registerScheme(VFS_SCHEME, async (turn, body) => {
       if (!turn.toolIds.some(id => WORKSPACE_TOOL_IDS.includes(id))) return undefined
-      const files = new WorkspaceFiles(ctx.db.orm, ctx.assets, turn.userId)
-      const found = await files.current({ path: ref.slice(VFS_SCHEME.length + 1), conversationId: turn.conversationId, projectId: turn.projectId })
-      if (!found.ok) return refFailure(found.error === 'INVALID_PATH' ? 'INVALID_FILE_REF' : 'FILE_NOT_FOUND', MESSAGES[found.error])
-      const { attachment, relativePath } = found.value
-      // Every consumer of a reference wants media; text has read_file, which reads it properly.
-      if (isTextMime(attachment.mime)) {
-        return refFailure('UNSUPPORTED_FILE', `${ref} is a text file. Read it with read_file ${ref.slice(VFS_SCHEME.length + 1)}.`)
-      }
-      return { ok: true, value: resolvedFromAttachment(attachment, relativePath.slice(relativePath.lastIndexOf('/') + 1)) }
-    })
+      return resolveWorkspaceFile(new WorkspaceFiles(ctx.db.orm, ctx.assets, turn.userId), turn, body)
+    }, { barePaths: true })
 
     // A fork inherits `project_id`, so `/project` needs nothing; `/conversation` is keyed on the
     // conversation itself and would otherwise be empty under messages that talk about its files.
@@ -210,65 +263,6 @@ export const WorkspaceFilesServerPlugin = {
       },
     }))
 
-    ctx.tools.register(WORKSPACE_FILES_PLUGIN_ID, READ_FILE_TOOL_ID, runtime => tool({
-      description: [
-        'Read a UTF-8 text file from the workspace. Results are returned using cat -n format, with line numbers starting at 1, so you can cite positions back — strip that prefix before passing text to edit_file.',
-        'Reads up to 2,000 lines and 100 KiB per call. If you already know which part you need, pass offset and limit rather than reading the whole file — on a large file that is the difference between one cheap call and several expensive ones.',
-        'When the result is truncated, nextOffset tells you where to continue. Nothing is ever dropped silently.',
-        'An empty file is reported as empty rather than as a blank line, which is how you tell it from a file holding a single newline.',
-        'Keep the version from the result: write_file needs it to replace this file.',
-        'Reading a file this turn already read whole, with nothing written to it since, answers `unchanged` instead of the content — the earlier result is still above you and says what the file holds.',
-        'Do not re-read a file immediately after write_file returned its metadata — you already have the version and line count.',
-        'A binary workspace file (an image, a PDF) or a file reference such as asset:3f9a2c1e is shown to you whole instead: the result is a short receipt and the file follows in a user message inside <tool_attachment>. offset and limit only apply to text. If you cannot read that kind of file, the error says so and may suggest analyze_file.',
-      ].join(' '),
-      inputSchema: ReadFileInputSchema,
-      // The model reads the output without the reserved key; the file arrives in the message after it.
-      toModelOutput: withoutToolAttachments,
-      async execute(input): Promise<ReadFileOutput | ReadFileUnchangedOutput | ReadDeliveredOutput | WorkspaceToolError> {
-        const argument = argumentOf(input.path)
-        if (argument.kind === 'invalid') return failure('INVALID_PATH')
-        if (argument.kind === 'ref') {
-          const resolved = await runtime.files.resolve(argument.ref)
-          if (!resolved.ok) return fileToolError(resolved)
-          const delivered = runtime.files.deliver(resolved.value, argument.ref)
-          return delivered.ok ? delivered.value as DeliveredFile : fileToolError(delivered)
-        }
-
-        const { files, scope } = servicesFor(runtime)
-        const result = await files.read({ path: argument.path, offset: input.offset, limit: input.limit, ...scope })
-        if (!result.ok && result.error === 'BINARY_FILE') {
-          const found = await files.current({ path: argument.path, ...scope })
-          if (!found.ok) return unwrap(found) as WorkspaceToolError
-          const { attachment, path, relativePath } = found.value
-          const file = resolvedFromAttachment(attachment, relativePath.slice(relativePath.lastIndexOf('/') + 1))
-          const delivered = runtime.files.deliver(file, vfsRef(path))
-          return delivered.ok ? delivered.value as DeliveredFile : fileToolError(delivered)
-        }
-        if (!result.ok) return unwrap(result) as WorkspaceToolError
-        const { updatedAt: _updatedAt, ...output } = result.value
-
-        const seen = seenInContext(runtime, output.path)
-        // Only against a previous read of the whole file: a write's entry records what was written
-        // rather than a view of the file, and answering `unchanged` from it would point the caller
-        // back at content from before its own edit. A ranged request is answered in full, since
-        // what was seen whole says nothing about which lines this call asked for.
-        const repeat = seen !== null && seen.source === 'read' && !seen.partial
-          && seen.version === output.version && input.offset === undefined && input.limit === undefined
-        runtime.turn.set(seenKey(output.path), {
-          version: output.version,
-          partial: output.truncated || output.startLine > 1,
-          source: 'read',
-        } satisfies SeenFile)
-        if (!repeat) return output
-        return {
-          path: output.path,
-          version: output.version,
-          unchanged: true,
-          message: `Still v${output.version}, unchanged since you read it earlier in this turn. That result is still above you; read it again only after something writes to this file.`,
-        }
-      },
-    }))
-
     ctx.tools.register(WORKSPACE_FILES_PLUGIN_ID, WRITE_FILE_TOOL_ID, runtime => tool({
       description: [
         'Create a workspace file, or replace one completely. This writes the whole file, so use edit_file to change part of one that already exists.',
@@ -292,7 +286,7 @@ export const WorkspaceFilesServerPlugin = {
         })
         if (!result.ok) return unwrap(result) as WorkspaceToolError
         const { path, operation, fileSize, totalLines, version, replacedVersion } = result.value
-        const read = seenInContext(runtime, path)
+        const read = seenInContext(runtime.turn, runtime.path, path)
         // Older than what was replaced means somebody wrote in between and this write went over
         // content the caller never read.
         const staleReadVersion = read !== null && replacedVersion !== null && read.version < replacedVersion
@@ -384,7 +378,7 @@ export const WorkspaceFilesServerPlugin = {
         const parsed = parseWorkspacePath(target)
         if (!parsed.ok) return failure('INVALID_PATH')
         // The ledger is keyed by the canonical path, which is what read_file and write_file record.
-        const seen = seenInContext(runtime, formatWorkspacePath(parsed.value))
+        const seen = seenInContext(runtime.turn, runtime.path, formatWorkspacePath(parsed.value))
         const { files, scope } = servicesFor(runtime)
         // A view that stopped short is not knowing what the file says, even when the text being
         // named happens to be unique: what makes it unique is the part nobody looked at. Reading a
@@ -541,9 +535,11 @@ export const WorkspaceFilesServerPlugin = {
         if (argument.kind === 'invalid') return failure('INVALID_PATH')
         let from: { path: string } | { attachment: { attachmentId: number, mime: string, size: number } }
         if (argument.kind === 'ref') {
-          const resolved = await runtime.files.resolve(argument.ref)
+          const resolved = await ctx.fileReader.resolve(ctx.fileReader.turnOf(runtime.turn), argument.ref)
           if (!resolved.ok) return fileToolError(resolved)
-          from = { attachment: resolved.value }
+          const { attachmentId, mime, size } = resolved.value
+          if (attachmentId === undefined) return { error: 'INVALID_PATH', message: `${argument.ref} is not a stored file and cannot be copied.` }
+          from = { attachment: { attachmentId, mime, size } }
         } else from = { path: argument.path }
 
         const { files, scope } = servicesFor(runtime)

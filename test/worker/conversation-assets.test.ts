@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { createDb } from '@/server/db/client'
 import { artifactRuns, artifacts, attachments } from '@/server/db/schema'
 import { createConversation, insertMessage } from '@/server/plugins/hub/conversations'
-import { listConversationAssets } from '@/server/plugins/file-refs/list'
+import { listConversationAssets } from '@/plugins/file-reader/server/list'
 import type { Part } from '@/shared/parts'
 import { ensureTestUser } from './auth-helper'
 

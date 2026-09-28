@@ -24,12 +24,12 @@ describe('images returned by a tool, as Anthropic receives them', () => {
       },
     })
     const messages = buildModelMessages({
-      protocol: 'anthropic', systemPrompt: null, attachments: new Map([[9, png]]), assets: new Map([[9, '5c2e8f10']]),
+      protocol: 'anthropic', systemPrompt: null, attachments: new Map([[9, png]]),
       path: [
         msg({ id: 1, role: 'user', parts: [{ type: 'text', text: 'look' }] }),
         msg({ id: 2, role: 'assistant', parts: [
-          { type: 'tool_call', id: 'call_r', name: 'view_file', args: { file: 'asset:5c2e8f10' } },
-          { type: 'tool_result', call_id: 'call_r', name: 'view_file', content: { file: 'asset:5c2e8f10', mime: 'image/png' }, attachments: [9] },
+          { type: 'tool_call', id: 'call_r', name: 'read_file', args: { file: 'asset:5c2e8f10' } },
+          { type: 'tool_result', call_id: 'call_r', name: 'read_file', content: { file: 'asset:5c2e8f10', mime: 'image/png' }, attachments: [9] },
         ] }),
       ],
     })

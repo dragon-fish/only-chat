@@ -1,6 +1,6 @@
 import type { PluginManifest } from '@/shared/plugins'
 import {
-  COPY_FILE_TOOL_ID, DELETE_FILE_TOOL_ID, EDIT_FILE_TOOL_ID, LIST_FILES_TOOL_ID, PREVIEW_FILE_TOOL_ID, READ_FILE_TOOL_ID,
+  COPY_FILE_TOOL_ID, DELETE_FILE_TOOL_ID, EDIT_FILE_TOOL_ID, FILE_READER_PLUGIN_ID, LIST_FILES_TOOL_ID, PREVIEW_FILE_TOOL_ID,
   RENAME_FILE_TOOL_ID, RESTORE_FILE_TOOL_ID, WORKSPACE_FILES_PLUGIN_ID, WRITE_FILE_TOOL_ID,
 } from '@/shared/plugins'
 import { WORKSPACE_FILES_CONFIG_SCHEMA } from './shared'
@@ -9,16 +9,12 @@ const manifest = {
   id: WORKSPACE_FILES_PLUGIN_ID,
   name: '工作区文件',
   description: '让模型在 Project 与会话中读写持久化的文件。写入会保留历史版本。',
+  requires: [FILE_READER_PLUGIN_ID],
   tools: [
     {
       id: LIST_FILES_TOOL_ID,
       name: '列出文件',
       description: '查看工作区里有哪些文件，不读取内容。',
-    },
-    {
-      id: READ_FILE_TOOL_ID,
-      name: '读取文件',
-      description: '按行读取文本文件，可指定起始行与行数；图片、PDF 等文件直接交给模型查看。',
     },
     {
       id: WRITE_FILE_TOOL_ID,

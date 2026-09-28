@@ -6,16 +6,16 @@ import type { Tool } from 'ai'
 import { createDb, type DB } from '@/server/db/client'
 import { attachments, conversations, messages, projects, workspaceFileVersions, workspaceFiles } from '@/server/db/schema'
 import { ToolRegistry, type ToolContext } from '@/server/plugins/tools'
-import { createToolFiles } from '@/server/plugins/file-refs/deliver'
-import { loadVisibleAssets } from '@/server/plugins/file-refs/visible'
+import type { GenerationTurn } from '@/server/plugins/hub/generation-turn'
+import { FileReaderServerPlugin } from '@/plugins/file-reader/server'
 import { WorkspaceFiles } from '@/server/plugins/workspace-files/service'
 import { WorkspaceFilesServerPlugin } from '@/plugins/workspace-files/server'
 import manifest from '@/plugins/workspace-files/manifest'
-import { pluginToolIds } from '@/shared/plugins'
+import { pluginToolIds, READ_FILE_TOOL_ID } from '@/shared/plugins'
 import type { Part } from '@/shared/parts'
 import { ensureTestUser } from './auth-helper'
 
-const WORKSPACE_TOOLS = pluginToolIds(manifest)
+const WORKSPACE_TOOLS = [READ_FILE_TOOL_ID, ...pluginToolIds(manifest)]
 const PNG = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 1])
 
 interface Fixture {
@@ -65,20 +65,26 @@ async function fixture(toolIds: readonly string[] = WORKSPACE_TOOLS, extraParts:
   }).returning()
 
   const ctx = new Context()
+  ctx.provide('env', env)
   ctx.provide('pluginConfig', { readIfConfigurable: async () => ({}), read: async () => ({}) })
   ctx.provide('db', { orm: db })
   ctx.provide('assets', storage)
   const registry = new ToolRegistry(ctx)
-  WorkspaceFilesServerPlugin.apply(ctx)
+  await ctx.plugin(FileReaderServerPlugin)
+  await ctx.plugin(WorkspaceFilesServerPlugin)
 
   const path = [{ id: user!.id, conversation_id: conversation!.id, parent_id: null, seq: 0, role: 'user' as const, parts: user!.parts, provider_id: null, model_id: null, usage: null, status: 'done' as const, error: null, created_at: 0 }]
-  const turn = { userId: 1, conversationId: conversation!.id, projectId: project!.id, toolIds, visible: await loadVisibleAssets(db, 1, path) }
+  // What the hub does at generation start: plugins prepare the turn their tools then run in.
+  const turn: GenerationTurn = {
+    userId: 1, conversationId: conversation!.id, projectId: project!.id, toolIds, path, state: new Map(),
+    canReadFile: mime => mime.startsWith('image/'),
+  }
+  await ctx.parallel('generation/prepare', turn)
   const runtime: ToolContext = {
     userId: 1, conversationId: conversation!.id, projectId: project!.id, assistantMessageId: assistant!.id,
-    config: {}, conversationConfig: {}, turn: new Map(), db, assets: storage as never,
+    config: {}, conversationConfig: {}, turn: turn.state, db, assets: storage as never,
     signal: new AbortController().signal, acceptsImages: true, acceptsToolResultImages: true,
-    toolIds, files: createToolFiles(ctx, db, turn, { canRead: mime => mime.startsWith('image/') }),
-    publicOrigin: 'https://chat.test', path,
+    toolIds, canReadFile: turn.canReadFile, publicOrigin: 'https://chat.test', path,
   }
   const built = toolIds.length === 0 ? [] : await registry.resolve([...toolIds], { workspace_files: true }, { ...runtime, pluginSettings: null })
   return {
@@ -86,6 +92,9 @@ async function fixture(toolIds: readonly string[] = WORKSPACE_TOOLS, extraParts:
     upload: { id: upload!.id, ref: `asset:${sha256.slice(0, 8)}` }, projectId: project!.id, conversationId: conversation!.id,
   }
 }
+
+/** A reference as another plugin's tool resolves it, through the file reader. */
+const resolve = (f: Fixture, ref: string) => f.ctx.fileReader.resolve(f.ctx.fileReader.turnOf(f.runtime.turn), ref)
 
 let calls = 0
 const run = async (f: Fixture, name: string, input: unknown) =>
@@ -101,7 +110,7 @@ async function currentAttachment(f: Fixture, relativePath: string): Promise<numb
 describe('workspace files and file references', () => {
   it('reads an asset: by delivering it, and never as text', async () => {
     const f = await fixture()
-    expect(await run(f, 'read_file', { path: f.upload.ref })).toEqual({
+    expect(await run(f, 'read_file', { file: f.upload.ref })).toEqual({
       file: f.upload.ref, mime: 'image/png', message: expect.any(String), __attachments: [f.upload.id],
     })
   })
@@ -111,11 +120,11 @@ describe('workspace files and file references', () => {
     expect(await run(f, 'copy_file', { from: f.upload.ref, to: '/project/refs/cat.png' })).toMatchObject({ path: '/project/refs/cat.png', mime: 'image/png', version: 1 })
     expect(await currentAttachment(f, 'refs/cat.png')).toBe(f.upload.id)
 
-    const byPath = await run(f, 'read_file', { path: '/project/refs/cat.png' })
+    const byPath = await run(f, 'read_file', { file: '/project/refs/cat.png' })
     expect(byPath).toMatchObject({ file: f.upload.ref, __attachments: [f.upload.id] })
-    expect(await run(f, 'read_file', { path: 'vfs:/project/refs/cat.png' })).toEqual(byPath)
+    expect(await run(f, 'read_file', { file: 'vfs:/project/refs/cat.png' })).toEqual(byPath)
     // The hook resolves the copy for any tool that takes a reference.
-    expect(await f.runtime.files.resolve('vfs:/project/refs/cat.png')).toMatchObject({ ok: true, value: { attachmentId: f.upload.id, filename: 'cat.png' } })
+    expect(await resolve(f, 'vfs:/project/refs/cat.png')).toMatchObject({ ok: true, value: { attachmentId: f.upload.id, filename: 'cat.png' } })
 
     for (const tool of ['write_file', 'edit_file'] as const) {
       const input = tool === 'write_file' ? { path: '/project/refs/cat.png', content: 'x' } : { path: '/project/refs/cat.png', oldText: 'a', newText: 'b' }
@@ -127,10 +136,10 @@ describe('workspace files and file references', () => {
     const f = await fixture()
     expect(await run(f, 'write_file', { path: 'vfs:/conversation/notes.md', content: 'one\ntwo' })).toMatchObject({ path: '/conversation/notes.md' })
     expect(await run(f, 'copy_file', { from: 'vfs:/conversation/notes.md', to: '/project/notes.md' })).toMatchObject({ path: '/project/notes.md', version: 1 })
-    expect(await run(f, 'read_file', { path: '/project/notes.md' })).toMatchObject({ path: '/project/notes.md', content: '1 | one\n2 | two', totalLines: 2 })
+    expect(await run(f, 'read_file', { file: '/project/notes.md' })).toMatchObject({ path: '/project/notes.md', content: '1 | one\n2 | two', totalLines: 2 })
     expect(await run(f, 'copy_file', { from: '/conversation/notes.md', to: 'vfs:/project/notes.md' })).toMatchObject({ error: 'FILE_ALREADY_EXISTS' })
-    // A reference is for media; a text file named by one points the model back at read_file.
-    expect(await f.runtime.files.resolve('vfs:/project/notes.md')).toMatchObject({ ok: false, error: 'UNSUPPORTED_FILE', message: expect.stringContaining('read_file') })
+    // Text resolves as text, which read_file pages through; tools that want media refuse it themselves.
+    expect(await resolve(f, 'vfs:/project/notes.md')).toMatchObject({ ok: true, value: { kind: 'text', ref: '/project/notes.md', mime: expect.stringMatching(/^text\//) } })
   })
 
   it('refuses to change an asset, and refuses one where only a workspace path makes sense', async () => {
@@ -153,8 +162,8 @@ describe('workspace files and file references', () => {
   })
 
   it('leaves vfs: unclaimed in a turn without workspace tools', async () => {
-    const f = await fixture([])
-    expect(await f.runtime.files.resolve('vfs:/project/refs/cat.png')).toMatchObject({ ok: false, error: 'UNSUPPORTED_SCHEME' })
+    const f = await fixture([READ_FILE_TOOL_ID])
+    expect(await resolve(f, 'vfs:/project/refs/cat.png')).toMatchObject({ ok: false, error: 'UNSUPPORTED_SCHEME' })
   })
 
   it('keeps bytes that messages still reference when a copy is purged, and frees them otherwise', async () => {

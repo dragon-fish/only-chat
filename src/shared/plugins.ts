@@ -20,7 +20,6 @@ export const PREVIEW_FILE_TOOL_ID = 'preview_file' as const
 export const COPY_FILE_TOOL_ID = 'copy_file' as const
 export const FILE_READER_PLUGIN_ID = 'file_reader' as const
 export const FILE_UNDERSTANDING_PLUGIN_ID = 'file_understanding' as const
-export const VIEW_FILE_TOOL_ID = 'view_file' as const
 export const ANALYZE_FILE_TOOL_ID = 'analyze_file' as const
 export const CURRENT_TIME_TOOL_ID = 'current_time' as const
 export const BROWSER_RUN_PLUGIN_ID = 'cloudflare_browser_run' as const
@@ -31,11 +30,11 @@ export const GENERATE_IMAGE_TOOL_ID = 'generate_image' as const
 
 export type BuiltInPluginId = typeof ASK_USER_PLUGIN_ID | typeof TAVILY_PLUGIN_ID | typeof DATETIME_PLUGIN_ID
   | typeof WORKSPACE_FILES_PLUGIN_ID | typeof BROWSER_RUN_PLUGIN_ID | typeof IMAGE_GENERATION_PLUGIN_ID
-  | typeof FILE_UNDERSTANDING_PLUGIN_ID
+  | typeof FILE_UNDERSTANDING_PLUGIN_ID | typeof FILE_READER_PLUGIN_ID
 export type BuiltInToolId = typeof ASK_USER_TOOL_ID | typeof WEB_SEARCH_TOOL_ID | typeof WEB_EXTRACT_TOOL_ID | typeof CURRENT_TIME_TOOL_ID
   | typeof LIST_FILES_TOOL_ID | typeof READ_FILE_TOOL_ID | typeof WRITE_FILE_TOOL_ID | typeof EDIT_FILE_TOOL_ID | typeof RESTORE_FILE_TOOL_ID
   | typeof RENAME_FILE_TOOL_ID | typeof DELETE_FILE_TOOL_ID | typeof PREVIEW_FILE_TOOL_ID | typeof COPY_FILE_TOOL_ID
-  | typeof VIEW_FILE_TOOL_ID | typeof ANALYZE_FILE_TOOL_ID
+  | typeof ANALYZE_FILE_TOOL_ID
   | typeof BROWSER_USE_TOOL_ID | typeof BROWSER_HANDOFF_TOOL_ID | typeof GENERATE_IMAGE_TOOL_ID
 
 /**

@@ -20,6 +20,14 @@ export function mimeFromExtension(extension: string): string | undefined {
   return Object.entries(FILE_EXTENSIONS).find(([, ext]) => ext === extension)?.[0]
 }
 
+/**
+ * Text is read as numbered lines by every model; anything else is a file the model has to be able
+ * to take. JSON is text whatever its MIME says.
+ */
+export function isTextMime(mime: string): boolean {
+  return mime.startsWith('text/') || mime === 'application/json'
+}
+
 export function fileModality(mime: string): 'image' | 'pdf' | 'audio' | 'video' | null {
   if (!FILE_EXTENSIONS[mime]) return null
   return mime === 'application/pdf' ? 'pdf' : mime.split('/')[0] as 'image' | 'audio' | 'video'
@@ -64,10 +72,10 @@ export function matchesFileSignature(mime: string, bytes: Uint8Array): boolean {
 
 /**
  * The name a file travels upstream under. Providers show it to the model (Anthropic uses it as the
- * document title), so it is built from the asset prefix the model already knows — never the
- * attachment id, which the model must not see, and never the person's own filename. Inline PDF
- * parsers also need the extension.
+ * document title), so it says nothing: not the attachment id, which the model must never see, and
+ * not the person's own filename, which reaches the model only through a label if at all. Inline
+ * PDF parsers still need the extension.
  */
-export function assetFilename(prefix: string, mime: string): string {
-  return `asset-${prefix}.${FILE_EXTENSIONS[mime] ?? 'bin'}`
+export function inlineFilename(mime: string): string {
+  return `file.${FILE_EXTENSIONS[mime] ?? 'bin'}`
 }

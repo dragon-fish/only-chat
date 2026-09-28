@@ -88,7 +88,7 @@ function toolContext(overrides: Partial<ToolContext>): ToolContext {
     db: {} as ToolContext['db'], assets: {} as ToolContext['assets'],
     signal: new AbortController().signal,
     acceptsImages: true, acceptsToolResultImages: true,
-    toolIds: [], files: {} as ToolContext['files'],
+    toolIds: [], canReadFile: () => false,
     publicOrigin: 'https://chat.test', path: [],
     ...overrides,
   }

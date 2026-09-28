@@ -34,7 +34,7 @@ it('migrates legacy OpenAI metadata into lossless summary and encrypted Response
   ])).run()
   await applyD1Migrations(legacy, env.TEST_MIGRATIONS)
   const [stored, encryptedOnly] = await createDb(legacy).select().from(messages).orderBy(messages.seq)
-  const replay = buildModelMessages({ protocol: 'responses', systemPrompt: null, path: [stored!, encryptedOnly!], attachments: new Map(), assets: new Map() })
+  const replay = buildModelMessages({ protocol: 'responses', systemPrompt: null, path: [stored!, encryptedOnly!], attachments: new Map() })
   let body: { input: unknown[] } | undefined
   const model = createOpenResponses({
     name: 'responses', url: 'https://fixture.test/responses',

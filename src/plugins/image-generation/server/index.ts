@@ -18,7 +18,7 @@ export const NO_IMAGE_MODEL = 'No image model is configured. Ask the user to cho
 
 export const ImageGenerationServerPlugin = {
   name: 'image-generation',
-  inject: ['tools', 'db', 'env'] as const,
+  inject: ['tools', 'fileReader', 'db', 'env'] as const,
   apply(ctx: Context) {
     ctx.tools.register(IMAGE_GENERATION_PLUGIN_ID, GENERATE_IMAGE_TOOL_ID, toolCtx => tool({
       description: DESCRIPTION,
@@ -31,12 +31,12 @@ export const ImageGenerationServerPlugin = {
         if (!conversation || !user) return { error: 'Conversation not found.' }
         const model = await resolveImageModel(toolCtx.db, toolCtx.userId, conversation, user.settings)
         if (!model) return { error: NO_IMAGE_MODEL }
-        // Through the runtime resolver, so any scheme an enabled plugin provides works here too.
+        // Through the file reader, so any scheme an enabled plugin provides works here too.
         const references: number[] = []
         for (const ref of input.reference_images ?? []) {
-          const resolved = await toolCtx.files.resolve(ref)
+          const resolved = await ctx.fileReader.resolve(ctx.fileReader.turnOf(toolCtx.turn), ref)
           if (!resolved.ok) return { error: resolved.message, code: resolved.error }
-          if (!resolved.value.mime.startsWith('image/')) {
+          if (resolved.value.kind !== 'binary' || !resolved.value.mime.startsWith('image/')) {
             return { error: `${ref} is ${resolved.value.mime}, not an image. reference_images takes images only.`, code: 'UNSUPPORTED_FILE' }
           }
           references.push(resolved.value.attachmentId)

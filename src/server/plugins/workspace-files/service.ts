@@ -7,6 +7,8 @@ import {
   type AttachmentRow, type WorkspaceFileRow, type WorkspaceFileVersionRow,
 } from '../../db/schema'
 import { r2Key } from '../api/attachments'
+import { readLines } from '@/shared/text-lines'
+import { isTextMime } from '@/shared/file-media'
 import { countLines, formatWorkspacePath, parseWorkspacePath, WORKSPACE_MOUNTS, type WorkspaceMount } from './path'
 
 export type { FileRecord }
@@ -57,17 +59,14 @@ function matchStarts(content: string, oldText: string): number[] {
 }
 
 export const MAX_FILE_BYTES = 1024 * 1024
-export const DEFAULT_READ_LINES = 2000
-export const MAX_RESULT_BYTES = 100 * 1024
 const MIME = 'text/markdown; charset=utf-8'
 
 /**
  * Whether a stored version is text. Everything `write_file` stores is; anything else arrived by
- * `copy_file` and is only ever delivered whole, never decoded as UTF-8 or edited.
+ * `copy_file` and is only ever delivered whole, never decoded as UTF-8 or edited. The same test
+ * `read_file` applies to assets, so a copied text upload stays text.
  */
-export function isTextMime(mime: string): boolean {
-  return mime.startsWith('text/')
-}
+export { isTextMime }
 
 /**
  * Only what the filesystem needs from object storage.
@@ -1099,40 +1098,12 @@ export class WorkspaceFiles {
     const content = new TextDecoder().decode(stored.bytes)
 
     const path = formatWorkspacePath(parsed.value)
-    const base = {
-      path, totalLines: version.total_lines, fileSize: version.file_size,
-      updatedAt: file.updated_at, version: file.current_version,
-    }
-    if (content === '') {
-      return succeed({ ...base, content: '', startLine: 0, returnedLines: 0, truncated: false, nextOffset: null, empty: true })
-    }
-
-    const lines = content.split('\n')
-    const offset = Math.max(1, input.offset ?? 1)
-    if (offset > lines.length) return fail('READ_RANGE_TOO_LARGE')
-    const limit = Math.max(1, input.limit ?? DEFAULT_READ_LINES)
-
-    const selected: string[] = []
-    let usedBytes = 0
-    for (let index = offset - 1; index < Math.min(lines.length, offset - 1 + limit); index++) {
-      const rendered = `${index + 1} | ${lines[index]}`
-      // Never silently drop content: stop at the budget and report the range that did fit.
-      if (usedBytes + rendered.length > MAX_RESULT_BYTES && selected.length > 0) break
-      selected.push(rendered)
-      usedBytes += rendered.length + 1
-    }
-    if (selected.length === 0) return fail('READ_RANGE_TOO_LARGE')
-
-    const endLine = offset + selected.length - 1
-    const truncated = endLine < lines.length
+    const lines = readLines(content, input)
+    if (lines === null) return fail('READ_RANGE_TOO_LARGE')
+    // The stored count, not the split: it is what every earlier result for this version reported.
     return succeed({
-      ...base,
-      content: selected.join('\n'),
-      startLine: offset,
-      returnedLines: selected.length,
-      truncated,
-      nextOffset: truncated ? endLine + 1 : null,
-      empty: false,
+      ...lines, path, totalLines: version.total_lines, fileSize: version.file_size,
+      updatedAt: file.updated_at, version: file.current_version,
     })
   }
 

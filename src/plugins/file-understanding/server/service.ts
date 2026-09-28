@@ -1,17 +1,15 @@
 import { generateText } from 'ai'
 import type { UserSettings } from '@/shared/models'
 import { canServeAsFileModel } from '@/shared/service-model'
-import { canReadFile, assetFilename } from '@/shared/file-media'
-import { assetPrefix } from '../file-refs/ref'
-import type { ResolvedFile } from '../file-refs/resolve'
+import { canReadFile, inlineFilename } from '@/shared/file-media'
 import { SERVICE_PROMPT_DEFAULTS } from '@/shared/service-prompts'
-import { resolveServiceModel } from './service-model'
-import { resolveAttachmentInputs, type TransportDeps } from './attachment-transport'
-import { buildProviderOptions } from '../llm/messages'
+import { resolveServiceModel } from '@/server/plugins/hub/service-model'
+import { resolveAttachmentInputs, type TransportDeps } from '@/server/plugins/hub/attachment-transport'
+import { buildProviderOptions } from '@/server/plugins/llm/messages'
 
 export interface FileUnderstanding {
   canRead(mime: string): boolean
-  analyze(file: Pick<ResolvedFile, 'attachmentId' | 'sha256'>, question: string | undefined, signal: AbortSignal): Promise<{
+  analyze(attachmentId: number, question: string | undefined, signal: AbortSignal): Promise<{
     model: { provider_id: number, model_id: string }
     text: string
     truncated: boolean
@@ -28,17 +26,17 @@ export async function resolveFileUnderstanding(deps: TransportDeps, settings: Us
   const canRead = (mime: string) => canReadFile(model.metadata_resolved, iface.protocol, mime)
   return {
     canRead,
-    async analyze({ attachmentId, sha256 }, question, signal) {
+    async analyze(attachmentId, question, signal) {
       signal.throwIfAborted()
-      const inputs = await resolveAttachmentInputs({ ...deps, signal }, provider, iface, [attachmentId], mime => canRead(mime) ? undefined : 'Unsupported file type')
+      const inputs = await resolveAttachmentInputs({ ...deps, signal }, provider, iface, [attachmentId], canRead)
       const file = inputs.get(attachmentId)!
-      if ('unavailable' in file) throw new Error(file.unavailable)
+      if ('unavailable' in file) throw new Error(`The file understanding model cannot read ${file.mime}.`)
       signal.throwIfAborted()
       const result = await generateText({
         model: await deps.llm.createModel(provider, iface, model),
         system,
         messages: [{ role: 'user', content: [
-          { type: 'file', mediaType: file.mime, data: file.data, filename: assetFilename(assetPrefix(sha256), file.mime) },
+          { type: 'file', mediaType: file.mime, data: file.data, filename: inlineFilename(file.mime) },
           ...(question ? [{ type: 'text' as const, text: question }] : []),
         ] }],
         providerOptions: buildProviderOptions(iface.protocol, { reasoning_enabled: false }, model.metadata_resolved),

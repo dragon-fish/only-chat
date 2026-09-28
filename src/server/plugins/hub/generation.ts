@@ -1,11 +1,11 @@
 import { canReadFile } from '@/shared/file-media'
-import { resolveFileUnderstanding, type FileUnderstanding } from './file-understanding'
+import type { GenerationTurn } from './generation-turn'
 import { stepCountIs, streamText, type LanguageModel, type ModelMessage, type StopCondition, type ToolSet } from 'ai'
 import { INFLIGHT_FLUSH_INTERVAL_MS, TOOL_MAX_STEPS } from '@/shared/constants'
 import type { Message, PersistedStatus, ConversationParams, ConversationPluginSettings, StepUsage, Usage } from '@/shared/models'
 import { toolResultPart, type Part, type ToolCallPart, type ToolResultPart } from '@/shared/parts'
 import type { SendCommand, WsCommand } from '@/shared/ws'
-import { ASK_USER_TOOL_ID, ANALYZE_FILE_TOOL_ID, parseConversationPluginSettings } from '@/shared/plugins'
+import { ASK_USER_TOOL_ID, parseConversationPluginSettings } from '@/shared/plugins'
 import { pluginManifests } from '@/shared/plugin-manifests'
 import { AskUserInputSchema } from '@/plugins/ask-user/shared'
 import { createAskUserToolCallRepair } from '@/plugins/ask-user/server/repair'
@@ -13,8 +13,6 @@ import type { ModelRow, ProviderInterfaceRow, ProviderRow, ConversationRow } fro
 import { PartAccumulator } from '../llm/accumulator'
 import { logLifecycle, partsBytes } from './lifecycle-log'
 import { buildModelMessages, buildProviderOptions, carriesToolResultImages, INTERJECTED, interjectedUserMessage, requiredAttachmentIds, toolAttachmentsMessage, toolDeliveredAttachmentIds, type AttachmentInput } from '../llm/messages'
-import { createToolFiles, suggestsAnalyze, type FileReader } from '../file-refs/deliver'
-import { addShownAttachments, addVisibleAssets, loadVisibleAssets } from '../file-refs/visible'
 import { generationDurationMs, toStepUsage, toUsage, type GenerationStepPerformance } from '../llm/usage'
 import type { Hub, InflightJob } from './index'
 import {
@@ -55,7 +53,6 @@ interface Target {
   toolIds: string[]
   /** Snapshotted with the rest of the config (spec §3.2) so it is not re-read mid-stream. */
   enabledPlugins: Record<string, boolean>
-  fileUnderstanding?: FileUnderstanding
 }
 
 /** The conversation-init draft carried by the first `send` of a new conversation (spec §5.2). */
@@ -155,11 +152,7 @@ async function resolveTarget(hub: Hub, args: ResolveArgs): Promise<Target> {
     void hub.nameConversation(conversation.id, conversation.title, titleTextFromParts(args.firstParts))
       .catch(() => {})
   }
-  // Only a turn that offers analyze_file needs the file understanding model (spec §5).
-  const fileUnderstanding = toolIds.includes(ANALYZE_FILE_TOOL_ID)
-    ? await resolveFileUnderstanding({ db: hub.db, userId: hub.userId, assets: hub.app.assets, llm: hub.app.llm }, user.settings)
-    : undefined
-  return { conversation, provider, providerInterface, model, config, toolIds, enabledPlugins: user.settings.plugins, fileUnderstanding }
+  return { conversation, provider, providerInterface, model, config, toolIds, enabledPlugins: user.settings.plugins }
 }
 
 // ---- stage 2: persist a user message
@@ -263,22 +256,9 @@ async function openContinuationShell(hub: Hub, target: Target, parentId: number)
 
 // ---- stage 4: context assembly
 
-/** What this generation's model can read, and who to hand the rest to (spec §6.3). */
-function fileReader(target: Target): FileReader {
-  return {
-    canRead: mime => canReadFile(target.model.metadata_resolved, target.providerInterface.protocol, mime),
-    ...(target.fileUnderstanding ? { understanding: target.fileUnderstanding } : {}),
-  }
-}
-
-/** The sentence that replaces a file this model cannot read (spec §7.1). */
-function unavailableFile(target: Target) {
-  const reader = fileReader(target)
-  return (mime: string): string | undefined => {
-    if (reader.canRead(mime)) return
-    return `The current model cannot read ${mime}.` + (suggestsAnalyze(target.toolIds, reader, mime)
-      ? ' Call analyze_file with its asset: reference and an optional question.' : '')
-  }
+/** What this generation's model can take (spec §3.4). */
+function canRead(target: Target): (mime: string) => boolean {
+  return mime => canReadFile(target.model.metadata_resolved, target.providerInterface.protocol, mime)
 }
 
 async function assembleContext(hub: Hub, target: Target, leafMessageId: number): Promise<{ path: Message[]; attachments: Map<number, AttachmentInput> }> {
@@ -290,7 +270,7 @@ async function assembleContext(hub: Hub, target: Target, leafMessageId: number):
   const ids = requiredAttachmentIds(path)
   // Attachment transport shares this generation's resolved interface and credentials snapshot.
   const deps = { db: hub.db, userId: hub.userId, assets: hub.app.assets, llm: hub.app.llm }
-  return { path, attachments: await resolveAttachmentInputs(deps, target.provider, target.providerInterface, ids, unavailableFile(target), toolDeliveredAttachmentIds(path)) }
+  return { path, attachments: await resolveAttachmentInputs(deps, target.provider, target.providerInterface, ids, canRead(target), toolDeliveredAttachmentIds(path)) }
 }
 
 // ---- stage 5/6: stream + finalize
@@ -318,9 +298,14 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
     const payload: BeforeSendPayload = { conversationId: target.conversation.id, systemPrompt: target.config.systemPrompt, path }
     hub.app.emit('message/before-send', payload)
 
-    // What the model can name by `asset:` this turn (spec §2.2); files delivered later join it.
-    const visible = await loadVisibleAssets(hub.db, hub.userId, payload.path)
-    const messages = buildModelMessages({ protocol: target.providerInterface.protocol, systemPrompt: payload.systemPrompt, path: payload.path, attachments, assets: visible.prefixes })
+    // Plugins prepare what their tools will need, and one may name files for the model (spec §4.5).
+    // The same map is every tool's `ToolContext.turn`, so it is created once, here.
+    const turn: GenerationTurn = {
+      userId: hub.userId, conversationId: target.conversation.id, projectId: target.conversation.project_id,
+      toolIds: target.toolIds, path: payload.path, state: new Map<string, unknown>(), canReadFile: canRead(target),
+    }
+    await hub.app.parallel('generation/prepare', turn)
+    const messages = buildModelMessages({ protocol: target.providerInterface.protocol, systemPrompt: payload.systemPrompt, path: payload.path, attachments, labeler: turn.labeler })
     const params: ConversationParams = target.config.params
     const trace = {
       conversationId: target.conversation.id,
@@ -341,16 +326,13 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
       conversationId: target.conversation.id,
       projectId: target.conversation.project_id,
       assistantMessageId: shell.id,
-      turn: new Map<string, unknown>(),
+      turn: turn.state,
       db: hub.db,
       assets: hub.app.assets,
       signal: controller.signal,
       pluginSettings: target.conversation.plugin_settings ?? null,
       toolIds: target.toolIds,
-      files: createToolFiles(hub.app, hub.db, {
-        userId: hub.userId, conversationId: target.conversation.id, projectId: target.conversation.project_id,
-        toolIds: target.toolIds, visible,
-      }, fileReader(target)),
+      canReadFile: turn.canReadFile,
       acceptsImages: target.model.metadata_resolved.modalities?.input.includes('image') ?? false,
       acceptsToolResultImages: carriesToolResultImages(target.providerInterface.protocol),
       publicOrigin: hub.publicOrigin,
@@ -423,12 +405,9 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
           const missing = delivered.filter(id => !attachments.has(id))
           if (missing.length > 0) {
             const deps = { db: hub.db, userId: hub.userId, assets: hub.app.assets, llm: hub.app.llm }
-            for (const [id, input] of await resolveAttachmentInputs(deps, target.provider, target.providerInterface, missing, unavailableFile(target), new Set(missing))) attachments.set(id, input)
+            for (const [id, input] of await resolveAttachmentInputs(deps, target.provider, target.providerInterface, missing, canRead(target), new Set(missing))) attachments.set(id, input)
           }
-          // A tool that handed over ids without `deliverFile` has still shown the model those files.
-          const unlabelled = new Map(delivered.filter(id => !visible.has(id)).map(id => [id, null] as const))
-          await addShownAttachments(hub.db, hub.userId, unlabelled, visible)
-          extra.push(toolAttachmentsMessage(shownNow, attachments, visible.prefixes))
+          extra.push(toolAttachmentsMessage(shownNow, attachments, turn.labeler))
           for (const part of shownNow) shown.add(part.call_id)
         }
         // Notifications first, then what the person said: the order the stored message keeps.
@@ -441,7 +420,7 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
         // Writing the row is not enough — the SDK would carry on with the list it built at the
         // start, and the model would never hear what was said. The override carries forward, so
         // every later step sees it too.
-        return { messages: [...messages, ...extra, interjectedUserMessage(said, attachments, visible.prefixes, interrupted)] }
+        return { messages: [...messages, ...extra, interjectedUserMessage(said, attachments, turn.labeler, interrupted)] }
       },
       providerOptions: buildProviderOptions(target.providerInterface.protocol, params, target.model.metadata_resolved),
     })
@@ -483,9 +462,9 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
       // Pictures they attached are not in the map assembled before the run began. Which ids are
       // needed stays the message builder's answer, so the row just written is what gets asked.
       const deps = { db: hub.db, userId: hub.userId, assets: hub.app.assets, llm: hub.app.llm }
-      const added = await resolveAttachmentInputs(deps, target.provider, target.providerInterface, requiredAttachmentIds([interjection]), unavailableFile(target))
+      const added = await resolveAttachmentInputs(deps, target.provider, target.providerInterface, requiredAttachmentIds([interjection]), canRead(target))
       for (const [id, input] of added) attachments.set(id, input)
-      await addVisibleAssets(hub.db, hub.userId, [interjection], visible)
+      await hub.app.parallel('generation/interjected', turn, [interjection])
 
       shell = await openReservedAssistantShell(hub, target, interjection.id)
       acc = new PartAccumulator()

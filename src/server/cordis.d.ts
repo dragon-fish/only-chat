@@ -10,8 +10,7 @@ import type { ModelCatalog } from './plugins/model-catalog'
 import type { ToolRegistry } from './plugins/tools'
 import type { PluginConfig } from './plugins/plugin-config'
 import type { PluginChannel } from './plugins/plugin-channel'
-import type { FileRefTurn, ResolvedFile } from './plugins/file-refs/resolve'
-import type { FileResult } from './plugins/file-refs/ref'
+import type { GenerationTurn } from './plugins/hub/generation-turn'
 import type { Message, Project, Conversation } from '@/shared/models'
 
 declare module 'cordis' {
@@ -48,12 +47,12 @@ declare module 'cordis' {
      */
     'conversation/before-purge'(payload: { userId: number, conversationId: number }): Promise<void>
     /**
-     * Translates a non-`asset:` file reference to the asset behind it (spec §3.2). Dispatched with
-     * `ctx.serial`: the first listener to return anything claims the reference, so a listener must
-     * return `undefined` for a scheme that is not its own — or that it does not serve this turn — and
-     * a result, success or failure, for one that is. The listener authorizes its own scheme.
+     * A generation is about to be sent (spec §3.5, §4.5). Awaited through `ctx.parallel` before the prompt
+     * is built: a plugin prepares its per-turn state in `turn.state`, and one may set `turn.labeler`.
      */
-    'file/resolve'(ref: string, turn: FileRefTurn): Promise<FileResult<ResolvedFile> | undefined>
+    'generation/prepare'(turn: GenerationTurn): Promise<void>
+    /** Messages joined a running generation (an interjection), after its prompt was first built. */
+    'generation/interjected'(turn: GenerationTurn, messages: readonly Message[]): Promise<void>
     'message/before-send'(payload: BeforeSendPayload): void
     'message/done'(message: Message): void
     'project/created'(project: Project): void

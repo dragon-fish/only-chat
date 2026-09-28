@@ -1,4 +1,4 @@
-import { assetFilename } from '@/shared/file-media'
+import { inlineFilename } from '@/shared/file-media'
 import type { ModelMessage, AssistantModelMessage, UserModelMessage, ToolModelMessage } from 'ai'
 import type { SharedV4ProviderReference } from '@ai-sdk/provider'
 import type { AnthropicProviderOptions } from '@ai-sdk/anthropic'
@@ -16,8 +16,9 @@ export const COMPAT_PROVIDER_NAME = 'compat'
  * How one attachment travels to the model: as the provider's own short-lived file pointer, or as
  * raw bytes inlined into the request (spec §5.6). Both are the AI SDK's own tagged file-data shapes.
  *
- * A file the current model cannot read is its own variant carrying the sentence that replaces it,
- * with no bytes at all: nothing about it is sent upstream, so nothing is fetched for it either.
+ * A file the model cannot take is its own variant with no bytes at all: nothing about it is sent
+ * upstream, so nothing is fetched for it either. `gone` is a tool-delivered file whose row was
+ * purged before the turn was persisted (see `toolAttachmentsMessage`).
  */
 export type AttachmentInput =
   | {
@@ -26,7 +27,24 @@ export type AttachmentInput =
       | { type: 'reference'; reference: SharedV4ProviderReference }
       | { type: 'data'; data: Uint8Array }
   }
-  | { mime: string; unavailable: string }
+  | { mime: string; unavailable: 'unreadable' | 'gone' }
+
+/**
+ * How a plugin names files to the model (spec §4.5). Without one the prompt carries the files and
+ * nothing about them — no labels, no references, no pointers to tools: the core never puts tool
+ * context into a conversation. Every method must be pure over what the turn has seen, so a history
+ * rebuilt on the next turn reads exactly as the request that was sent.
+ */
+export interface FileLabeler {
+  /** Text placed right before a user's attachment. */
+  userFile(part: ImagePart | FilePart, mime: string): string
+  /** What stands in for an image the chat model generated, whose pixels are never replayed. */
+  generatedImage(part: ImagePart): string
+  /** The `asset` attribute of the wrapper around a tool-delivered file. */
+  toolAttachment(attachmentId: number): string | undefined
+  /** Words appended after the statement that the current model cannot read a file. */
+  unreadableHint(mime: string, attachmentId: number): string
+}
 
 export interface BuildInput {
   protocol: InterfaceProtocol
@@ -34,12 +52,7 @@ export interface BuildInput {
   /** Root → leaf. A tool continuation ends at the assistant message that now contains its result. */
   path: Message[]
   attachments: ReadonlyMap<number, AttachmentInput>
-  /**
-   * Attachment id → the `asset:` prefix every file on the path is labelled with (spec §7.1). Labels
-   * are always present, whatever tools the turn has, so the prefix of the prompt never changes with
-   * the tool selection.
-   */
-  assets: ReadonlyMap<number, string>
+  labeler?: FileLabeler
 }
 
 const ANTHROPIC_CACHE = { anthropic: { cacheControl: { type: 'ephemeral' } } } as const
@@ -63,13 +76,7 @@ export function renderTaskNotification(part: TaskNotificationPart): string {
 }
 
 /** A tool-delivered attachment whose row no longer exists; see `toolAttachmentsMessage`. */
-export const GONE: Extract<AttachmentInput, { unavailable: string }> = { mime: 'application/octet-stream', unavailable: 'This file no longer exists.' }
-
-function prefixOf(assets: ReadonlyMap<number, string>, attachmentId: number): string {
-  const prefix = assets.get(attachmentId)
-  if (prefix === undefined) throw new Error(`attachment ${attachmentId} has no asset label`)
-  return prefix
-}
+export const GONE: AttachmentInput = { mime: 'application/octet-stream', unavailable: 'gone' }
 
 function inputOf(attachments: ReadonlyMap<number, AttachmentInput>, attachmentId: number): AttachmentInput {
   const att = attachments.get(attachmentId)
@@ -78,32 +85,32 @@ function inputOf(attachments: ReadonlyMap<number, AttachmentInput>, attachmentId
 }
 
 /**
- * The file itself, or the sentence standing in for a file this model cannot read. The name sent
- * upstream comes from `assetFilename`: the person's filename reaches the model only through the
- * label, and a provider has no business receiving it.
+ * The file itself, or the sentence standing in for one the model cannot take. The name sent
+ * upstream is generic (`inlineFilename`): providers show it to the model, and neither an attachment
+ * id nor the person's own filename belongs there.
  */
-function fileContent(prefix: string, att: AttachmentInput): UserPart {
-  if ('unavailable' in att) return { type: 'text', text: att.unavailable }
-  const filename = att.mime.startsWith('image/') ? undefined : assetFilename(prefix, att.mime)
+function fileContent(att: AttachmentInput, attachmentId: number, labeler: FileLabeler | undefined): UserPart {
+  if ('unavailable' in att) {
+    return {
+      type: 'text',
+      text: att.unavailable === 'gone'
+        ? 'This file no longer exists.'
+        : `The current model cannot read ${att.mime}, so the file was not sent.${labeler?.unreadableHint(att.mime, attachmentId) ?? ''}`,
+    }
+  }
+  const filename = att.mime.startsWith('image/') ? undefined : inlineFilename(att.mime)
   return { type: 'file', mediaType: att.mime, data: att.data, ...(filename ? { filename } : {}) }
 }
 
-/** `[image asset:3f9a2c1e "cat.png"]`, `[file asset:b41d07a9 "report.pdf" application/pdf]` (spec §7.1). */
-function uploadLabel(part: ImagePart | FilePart, prefix: string, mime: string): string {
-  const name = part.filename ? ` ${JSON.stringify(part.filename)}` : ''
-  return part.type === 'image' ? `[image asset:${prefix}${name}]` : `[file asset:${prefix}${name} ${mime}]`
-}
-
-function userParts(parts: Part[], attachments: ReadonlyMap<number, AttachmentInput>, assets: ReadonlyMap<number, string>): UserPart[] {
+function userParts(parts: Part[], attachments: ReadonlyMap<number, AttachmentInput>, labeler: FileLabeler | undefined): UserPart[] {
   const out: UserPart[] = []
   for (const p of parts) {
     if (p.type === 'text') {
       out.push({ type: 'text', text: p.text })
     } else if (p.type === 'image' || p.type === 'file') {
       const att = inputOf(attachments, p.attachment_id)
-      const prefix = prefixOf(assets, p.attachment_id)
-      out.push({ type: 'text', text: uploadLabel(p, prefix, att.mime) })
-      out.push(fileContent(prefix, att))
+      if (labeler) out.push({ type: 'text', text: labeler.userFile(p, att.mime) })
+      out.push(fileContent(att, p.attachment_id, labeler))
     } else if (p.type === 'task_notification') {
       out.push({ type: 'text', text: renderTaskNotification(p) })
     }
@@ -144,7 +151,7 @@ function assistantMessages(
   parts: Part[],
   protocol: InterfaceProtocol,
   attachments: ReadonlyMap<number, AttachmentInput>,
-  assets: ReadonlyMap<number, string>,
+  labeler: FileLabeler | undefined,
 ): Array<AssistantModelMessage | ToolModelMessage | UserModelMessage> {
   const out: Array<AssistantModelMessage | ToolModelMessage | UserModelMessage> = []
   /**
@@ -185,7 +192,7 @@ function assistantMessages(
       out.push({ role: 'tool', content: tool })
     }
     tool = []
-    if (shown.length > 0) out.push(toolAttachmentsMessage(shown, attachments, assets))
+    if (shown.length > 0) out.push(toolAttachmentsMessage(shown, attachments, labeler))
     shown = []
   }
   const appendAssistant = (part: AssistantPart) => { if (pendingCalls.size === 0) flushTool(); assistant.push(part) }
@@ -231,8 +238,8 @@ function assistantMessages(
         break
       case 'image':
         // The pixels are never replayed: `requiredAttachmentIds` must skip exactly what this drops.
-        // Only the reference is, so a tool can still open or edit the image.
-        appendAssistant({ type: 'text', text: `[generated image asset:${prefixOf(assets, p.attachment_id)}]` })
+        // A labeler may name the image, so a tool can still open or edit it; the core says nothing.
+        if (labeler) appendAssistant({ type: 'text', text: labeler.generatedImage(p) })
         break
     }
   }
@@ -292,26 +299,17 @@ function escapeAttribute(value: string): string {
 export function toolAttachmentsMessage(
   results: readonly ToolResultPart[],
   attachments: ReadonlyMap<number, AttachmentInput>,
-  assets: ReadonlyMap<number, string>,
+  labeler: FileLabeler | undefined,
 ): UserModelMessage {
   const content = results.flatMap(result => (result.attachments ?? []).flatMap((attachmentId): UserPart[] => {
-    const prefix = assets.get(attachmentId)
-    const att = inputOf(attachments, attachmentId)
     // A tool can deliver a workspace file whose bytes are purged before the turn is persisted, when
-    // nothing in D1 references it yet. Say so instead of throwing: a throw here fails every later
-    // turn of the conversation, and nothing the user can do brings the bytes back.
-    if (prefix === undefined || att === GONE) {
-      return [
-        { type: 'text', text: `<tool_attachment call_id="${escapeAttribute(result.call_id)}">` },
-        { type: 'text', text: GONE.unavailable },
-        { type: 'text', text: '</tool_attachment>' },
-      ]
-    }
+    // nothing in D1 references it yet: its input is then `gone`, and says so instead of throwing,
+    // since a throw here would fail every later turn and nothing brings the bytes back.
+    const att = inputOf(attachments, attachmentId)
+    const asset = 'unavailable' in att && att.unavailable === 'gone' ? undefined : labeler?.toolAttachment(attachmentId)
     return [
-      { type: 'text', text: `<tool_attachment call_id="${escapeAttribute(result.call_id)}" asset="${prefix}">` },
-      'unavailable' in att
-        ? { type: 'text', text: `asset:${prefix} ${att.mime}: ${att.unavailable}` }
-        : fileContent(prefix, att),
+      { type: 'text', text: `<tool_attachment call_id="${escapeAttribute(result.call_id)}"${asset === undefined ? '' : ` asset="${escapeAttribute(asset)}"`}>` },
+      fileContent(att, attachmentId, labeler),
       { type: 'text', text: '</tool_attachment>' },
     ]
   }))
@@ -365,10 +363,10 @@ const INTERRUPT_MESSAGE = '[Request interrupted by user]'
 export function interjectedUserMessage(
   said: Part[],
   attachments: ReadonlyMap<number, AttachmentInput>,
-  assets: ReadonlyMap<number, string>,
+  labeler: FileLabeler | undefined,
   interrupted: boolean,
 ): ModelMessage {
-  const content = userParts(said, attachments, assets)
+  const content = userParts(said, attachments, labeler)
   return { role: 'user', content: interrupted ? [{ type: 'text', text: INTERRUPT_MESSAGE }, ...content] : content }
 }
 
@@ -381,7 +379,7 @@ export function interjectedUserMessage(
  * which rejects a `role: 'system'` message inside `messages`.
  */
 export function buildModelMessages(input: BuildInput): ModelMessage[] {
-  const { protocol, systemPrompt, path, attachments, assets } = input
+  const { protocol, systemPrompt, path, attachments, labeler } = input
   const out: ModelMessage[] = []
   const cache = protocol === 'anthropic'
 
@@ -399,7 +397,7 @@ export function buildModelMessages(input: BuildInput): ModelMessage[] {
 
   path.forEach((m, i) => {
     if (m.role === 'user') {
-      const said = userParts(m.parts, attachments, assets)
+      const said = userParts(m.parts, attachments, labeler)
       const content: UserPart[] = pending === null ? said : [{ type: 'text', text: pending }, ...said]
       pending = null
 
@@ -417,7 +415,7 @@ export function buildModelMessages(input: BuildInput): ModelMessage[] {
       return
     }
 
-    const said = assistantMessages(m.parts, protocol, attachments, assets)
+    const said = assistantMessages(m.parts, protocol, attachments, labeler)
     if (said.length === 0) {
       // A turn that said nothing, however it ended — stopped by hand, or handed off the moment the
       // operator spoke. There is no turn here to put between two user messages, and leaving a gap

@@ -1,21 +1,19 @@
 import { describe, expect, it } from 'vitest'
-import { parseFileRef, prefixUpperBound } from '@/server/plugins/file-refs/ref'
-import { visibleAttachments } from '@/server/plugins/file-refs/visible'
+import { parseFileRef, prefixUpperBound } from '@/plugins/file-reader/server/refs'
+import { visibleAttachments } from '@/plugins/file-reader/server/visible'
 import type { Message } from '@/shared/models'
 
 describe('parseFileRef', () => {
   it('accepts asset: with 8 to 64 lowercase hex digits', () => {
-    expect(parseFileRef('asset:3f9a2c1e')).toEqual({ ok: true, value: { scheme: 'asset', prefix: '3f9a2c1e' } })
+    expect(parseFileRef('asset:3f9a2c1e')).toEqual({ ok: true, value: { kind: 'asset', prefix: '3f9a2c1e' } })
     expect(parseFileRef(`asset:${'a'.repeat(64)}`)).toMatchObject({ ok: true })
     for (const bad of ['asset:3f9a2c1', `asset:${'a'.repeat(65)}`, 'asset:3F9A2C1E', 'asset:3f9a2c1g', 'asset:']) {
       expect(parseFileRef(bad), bad).toMatchObject({ ok: false, error: 'INVALID_FILE_REF' })
     }
   })
 
-  it('refuses a bare path and names the vfs: form instead', () => {
-    const parsed = parseFileRef('/project/a.md')
-    expect(parsed).toMatchObject({ ok: false, error: 'INVALID_FILE_REF' })
-    expect(!parsed.ok && parsed.message).toContain('vfs:/project/a.md')
+  it('leaves a bare path to whichever plugin serves paths', () => {
+    expect(parseFileRef('/project/a.md')).toEqual({ ok: true, value: { kind: 'path', path: '/project/a.md' } })
   })
 
   it('refuses text with no scheme rather than guessing', () => {
@@ -24,8 +22,8 @@ describe('parseFileRef', () => {
   })
 
   it('leaves any other scheme to the resolver, which decides whether anything claims it', () => {
-    expect(parseFileRef('vfs:/project/a.md')).toEqual({ ok: true, value: { scheme: 'vfs', body: '/project/a.md' } })
-    expect(parseFileRef('s3:bucket/key')).toEqual({ ok: true, value: { scheme: 's3', body: 'bucket/key' } })
+    expect(parseFileRef('vfs:/project/a.md')).toEqual({ ok: true, value: { kind: 'scheme', scheme: 'vfs', body: '/project/a.md' } })
+    expect(parseFileRef('s3:bucket/key')).toEqual({ ok: true, value: { kind: 'scheme', scheme: 's3', body: 'bucket/key' } })
   })
 })
 

@@ -2437,8 +2437,9 @@ describe('cross-feature integration', () => {
       // never replayed to the model, so it must never be read out of R2 or shipped to a provider's
       // Files API either, and only "exactly these uploads happened" can say so.
       expect(uploads.map((u) => [u.providerId, u.options.filename])).toEqual([
-        [providerA, `asset-${(await sha256(uploadBytes)).slice(0, 8)}.png`],
-        [providerB, `asset-${(await sha256(uploadBytes)).slice(0, 8)}.png`],
+        // The name says nothing a model should not see: no id, no person's filename.
+        [providerA, 'file.png'],
+        [providerB, 'file.png'],
       ])
       expect(await pointersOf(generatedId)).toEqual([])
       const pointers = await pointersOf(uploadId)

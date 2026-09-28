@@ -4,7 +4,7 @@ import { artifactRuns, artifacts, attachments, type ArtifactRunRow } from '@/ser
 import { disposeRpcStub } from '@/server/rpc'
 import { IMAGE_GENERATION_PLUGIN_ID } from '@/shared/plugins'
 import type { TaskNotificationPart } from '@/shared/parts'
-import { assetRef } from '@/server/plugins/file-refs/ref'
+import { assetRef } from '@/shared/asset-ref'
 
 /**
  * What the Agent is told about a run it started. A failure keeps the provider's own words so it can

@@ -1,60 +1,64 @@
 import type { Context } from 'cordis'
 import { tool } from 'ai'
-import { fileToolError, withoutToolAttachments } from '@/server/plugins/file-refs/deliver'
-import {
-  AnalyzeFileInputSchema, ANALYZE_FILE_TOOL_ID, FILE_UNDERSTANDING_PLUGIN_ID, VIEW_FILE_TOOL_ID, ViewFileInputSchema,
-  type AnalyzeFileOutput, type FileToolError, type ViewFileOutput,
-} from '../shared'
+import { getUser } from '@/server/plugins/hub/conversations'
+import { fileToolError } from '@/plugins/file-reader/server/refs'
+import { AnalyzeFileInputSchema, ANALYZE_FILE_TOOL_ID, FILE_UNDERSTANDING_PLUGIN_ID, type AnalyzeFileOutput, type FileToolError } from '../shared'
+import { resolveFileUnderstanding, type FileUnderstanding } from './service'
 
-const VIEW_DESCRIPTION = [
-  'Look at a file yourself: an image, PDF, audio or video named by a file reference such as asset:3f9a2c1e.',
-  'The result is a short receipt; the file follows in a user message inside <tool_attachment>.',
-  'If you cannot read that kind of file, the error says so and, when it would help, suggests analyze_file.',
-].join(' ')
-
-const ANALYZE_DESCRIPTION = [
-  'Ask the configured file understanding model to describe an image, PDF, audio or video in detail, named by a file reference such as asset:3f9a2c1e.',
+const DESCRIPTION = [
+  'Ask the configured file understanding model to describe an image, PDF, audio or video in detail.',
+  '`file` is the asset:<hex> a file is labelled with, or a workspace path when workspace files are on.',
   'Pass question to ask something specific; omit it for a complete description. The answer comes back as text.',
-  'Use it for files you cannot read yourself, or when a careful second reading helps. For workspace text files use read_file.',
+  'Use it for files you cannot read yourself, or when a careful second reading helps. Text files are read with read_file.',
 ].join(' ')
+
+const SERVICE_KEY = 'file_understanding:service'
 
 /**
- * `view_file` and `analyze_file`. Both take any file reference through the runtime resolver, so they
- * work on whatever schemes the enabled plugins provide without depending on any of them.
+ * `analyze_file`, and the hint that points `read_file` at it. The service model is resolved once per
+ * turn, and only for a turn that offers the tool; a settings edit mid-turn applies to the next one.
  */
 export const FileUnderstandingServerPlugin = {
   name: 'file-understanding',
-  inject: ['tools'] as const,
+  inject: ['tools', 'fileReader', 'db', 'assets', 'llm'] as const,
   apply(ctx: Context) {
-    ctx.tools.register(FILE_UNDERSTANDING_PLUGIN_ID, VIEW_FILE_TOOL_ID, runtime => tool({
-      description: VIEW_DESCRIPTION,
-      inputSchema: ViewFileInputSchema,
-      // The model reads the receipt without the reserved key; the file arrives in the message after it.
-      toModelOutput: withoutToolAttachments,
-      async execute({ file }): Promise<ViewFileOutput | FileToolError> {
-        const resolved = await runtime.files.resolve(file)
-        if (!resolved.ok) return fileToolError(resolved)
-        const delivered = runtime.files.deliver(resolved.value, file)
-        return delivered.ok ? delivered.value : fileToolError(delivered)
-      },
-    }))
+    ctx.on('generation/prepare', async (turn) => {
+      if (!turn.toolIds.includes(ANALYZE_FILE_TOOL_ID)) return
+      const user = await getUser(ctx.db.orm, turn.userId)
+      if (!user) return
+      const service = await resolveFileUnderstanding({ db: ctx.db.orm, userId: turn.userId, assets: ctx.assets, llm: ctx.llm }, user.settings)
+      if (service) turn.state.set(SERVICE_KEY, service)
+    })
+
+    const serviceOf = (state: Map<string, unknown>) => state.get(SERVICE_KEY) as FileUnderstanding | undefined
+
+    // Suggesting a tool that would refuse is worse than silence: only when it is on and can read this.
+    ctx.fileReader.registerHint((turn, mime, cited) => (
+      turn.toolIds.includes(ANALYZE_FILE_TOOL_ID) && serviceOf(turn.state)?.canRead(mime)
+        ? `Call analyze_file with file ${cited} and an optional question instead.`
+        : undefined
+    ))
 
     ctx.tools.register(FILE_UNDERSTANDING_PLUGIN_ID, ANALYZE_FILE_TOOL_ID, runtime => tool({
-      description: ANALYZE_DESCRIPTION,
+      description: DESCRIPTION,
       inputSchema: AnalyzeFileInputSchema,
       async execute({ file, question }): Promise<AnalyzeFileOutput | FileToolError> {
-        const resolved = await runtime.files.resolve(file)
+        const turn = ctx.fileReader.turnOf(runtime.turn)
+        const resolved = await ctx.fileReader.resolve(turn, file)
         if (!resolved.ok) return fileToolError(resolved)
-        const { ref, mime } = resolved.value
-        const understanding = runtime.files.understanding
-        if (!understanding) {
+        if (resolved.value.kind === 'text') {
+          return { error: 'UNSUPPORTED_FILE', message: `${file} is a text file. Read it with read_file.` }
+        }
+        const { attachmentId, ref, mime } = resolved.value
+        const service = serviceOf(runtime.turn)
+        if (!service) {
           return { error: 'SERVICE_UNAVAILABLE', message: 'No file understanding model is available. Ask the user to choose one in Settings → Service models.' }
         }
-        if (!understanding.canRead(mime)) {
+        if (!service.canRead(mime)) {
           return { error: 'UNSUPPORTED_FILE', message: `The file understanding model or its interface cannot read ${mime}.` }
         }
         try {
-          const result = await understanding.analyze(resolved.value, question, runtime.signal)
+          const result = await service.analyze(attachmentId, question, runtime.signal)
           return { file: ref, mime, ...result }
         } catch (error) {
           // Stopping the generation stops the analysis with it; that is not a failed analysis.

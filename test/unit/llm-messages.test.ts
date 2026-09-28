@@ -4,6 +4,15 @@ import { isNotificationOnly, TOOL_ATTACHMENTS_KEY, toolResultPart, type TaskNoti
 import type { Message } from '@/shared/models'
 import type { ModelMetadata } from '@/shared/model-metadata'
 import type { InterfaceProtocol } from '@/shared/models'
+import { fileLabeler } from '@/plugins/file-reader/server/service'
+import { VisibleAssets } from '@/plugins/file-reader/server/visible'
+
+/** The file reader's own labels, over a turn that has seen exactly these prefixes. */
+function labelerFor(prefixes: ReadonlyMap<number, string>, hint = '') {
+  const visible = new VisibleAssets()
+  for (const [id, prefix] of prefixes) visible.add(id, { prefix, filename: null })
+  return fileLabeler(visible, () => hint)
+}
 
 const png = new Uint8Array([137, 80, 78, 71])
 const inlinePng: AttachmentInput = { mime: 'image/png', data: { type: 'data', data: png } }
@@ -33,7 +42,7 @@ const path: Message[] = [
 ]
 
 function input(protocol: InterfaceProtocol): BuildInput {
-  return { protocol, systemPrompt: 'be brief', path, attachments: new Map([[9, inlinePng]]), assets: new Map([[9, '3f9a2c1e']]) }
+  return { protocol, systemPrompt: 'be brief', path, attachments: new Map([[9, inlinePng]]), labeler: labelerFor(new Map([[9, '3f9a2c1e']])) }
 }
 
 /** The assistant message of the fixture path, whichever index the protocol put it at. */
@@ -98,7 +107,7 @@ describe('buildModelMessages', () => {
       msg({ id: 1, role: 'user', parts: [{ type: 'text', text: 'q' }] }),
       msg({ id: 2, role: 'assistant', parts: [{ type: 'reasoning', text: 'analysis' }, { type: 'text', text: 'answer' }] }),
     ]
-    const out = buildModelMessages({ protocol: 'chat-completions', systemPrompt: null, path: plain, attachments: new Map(), assets: new Map() })
+    const out = buildModelMessages({ protocol: 'chat-completions', systemPrompt: null, path: plain, attachments: new Map() })
     expect(assistantContent(out)).toContainEqual({ type: 'reasoning', text: 'analysis' })
   })
 
@@ -121,7 +130,7 @@ describe('buildModelMessages', () => {
       { type: 'reasoning', text: 'analysis', providerOptions: { responses: { itemId: 'r1' } } },
       { type: 'text', text: 'answer' },
     ] })]
-    const out = buildModelMessages({ protocol: 'anthropic', systemPrompt: null, path: foreign, attachments: new Map(), assets: new Map() })
+    const out = buildModelMessages({ protocol: 'anthropic', systemPrompt: null, path: foreign, attachments: new Map() })
     expect(assistantContent(out)).toEqual([{ type: 'text', text: 'analysis' }, { type: 'text', text: 'answer' }])
   })
 
@@ -133,7 +142,7 @@ describe('buildModelMessages', () => {
       { type: 'reasoning', text: 'second' },
       { type: 'text', text: 'answer' },
     ] })]
-    const out = buildModelMessages({ protocol: 'responses', systemPrompt: null, path: ordered, attachments: new Map(), assets: new Map() })
+    const out = buildModelMessages({ protocol: 'responses', systemPrompt: null, path: ordered, attachments: new Map() })
     expect(out.map(message => message.role)).toEqual(['assistant', 'tool', 'assistant'])
     expect(out.map(message => Array.isArray(message.content) ? message.content.map(part => part.type) : [])).toEqual([
       ['reasoning', 'tool-call'], ['tool-result'], ['reasoning', 'text'],
@@ -150,7 +159,7 @@ describe('buildModelMessages', () => {
         ] }),
         msg({ id: 3, role: 'user', parent_id: 2, parts: [{ type: 'text', text: 'continue normally' }] }),
       ]
-      const out = buildModelMessages({ protocol, systemPrompt: null, path: conversation, attachments: new Map(), assets: new Map() })
+      const out = buildModelMessages({ protocol, systemPrompt: null, path: conversation, attachments: new Map() })
       expect(out.map(message => message.role)).toEqual(['user', 'assistant', 'tool', 'user'])
       expect(out[2]).toMatchObject({
         role: 'tool',
@@ -167,7 +176,7 @@ describe('buildModelMessages', () => {
         { type: 'text', text: 'answer' },
       ] }),
     ]
-    const out = buildModelMessages({ protocol: 'responses', systemPrompt: null, path: encrypted, attachments: new Map(), assets: new Map() })
+    const out = buildModelMessages({ protocol: 'responses', systemPrompt: null, path: encrypted, attachments: new Map() })
     expect(assistantContent(out)[0]).toEqual({
       type: 'reasoning', text: '', providerOptions: { responses: { itemId: 'rs_1', reasoningEncryptedContent: 'ENC' } },
     })
@@ -182,7 +191,7 @@ describe('buildModelMessages', () => {
         { type: 'text', text: 'answer' },
       ] }),
     ]
-    const out = buildModelMessages({ protocol: 'anthropic', systemPrompt: null, path: empty, attachments: new Map(), assets: new Map() })
+    const out = buildModelMessages({ protocol: 'anthropic', systemPrompt: null, path: empty, attachments: new Map() })
     expect(assistantContent(out)).toEqual([{ type: 'text', text: 'answer' }])
   })
 
@@ -225,7 +234,7 @@ describe('requiredAttachmentIds', () => {
     const out = buildModelMessages({
       protocol: 'anthropic', systemPrompt: null, path: generated,
       attachments: new Map([...ids].map((id) => [id, tagged(id)])),
-      assets: new Map([[9, '00000009'], [10, '0000000a'], [77, '0000004d']]),
+      labeler: labelerFor(new Map([[9, '00000009'], [10, '0000000a'], [77, '0000004d']])),
     })
     const parts = out.flatMap((m) => (Array.isArray(m.content) ? (m.content as Array<{ type: string; data?: unknown }>) : []))
     const emitted = parts.filter((p) => p.type === 'file').map((p) => (p.data as { data: Uint8Array }).data[0])
@@ -383,7 +392,7 @@ describe('buildProviderOptions', () => {
 
 describe('rolling back to somewhere legal', () => {
   const build = (path: Message[]) => buildModelMessages({
-    protocol: 'chat-completions', systemPrompt: null, path, attachments: new Map(), assets: new Map(),
+    protocol: 'chat-completions', systemPrompt: null, path, attachments: new Map(),
   })
 
   it('answers a call nothing ever answered, rather than hiding it', () => {
@@ -514,7 +523,7 @@ describe('task notifications', () => {
 
   it('reach the model as a tagged user text block', () => {
     const messages = buildModelMessages({
-      protocol: 'responses', systemPrompt: null, attachments: new Map(), assets: new Map([[31, '5c2e8f10']]),
+      protocol: 'responses', systemPrompt: null, attachments: new Map(), labeler: labelerFor(new Map([[31, '5c2e8f10']])),
       path: [msg({ id: 1, role: 'user', parts: [notice] })],
     })
     expect(messages).toEqual([{ role: 'user', content: [{ type: 'text', text: renderTaskNotification(notice) }] }])
@@ -525,9 +534,9 @@ describe('task notifications', () => {
   })
 
   it('does not claim the person interrupted when only notifications arrived mid-turn', () => {
-    expect(interjectedUserMessage([notice], new Map(), new Map(), false))
+    expect(interjectedUserMessage([notice], new Map(), undefined, false))
       .toEqual({ role: 'user', content: [{ type: 'text', text: renderTaskNotification(notice) }] })
-    expect((interjectedUserMessage([{ type: 'text', text: 'hi' }], new Map(), new Map(), true).content as Array<{ text: string }>)[0]!.text)
+    expect((interjectedUserMessage([{ type: 'text', text: 'hi' }], new Map(), undefined, true).content as Array<{ text: string }>)[0]!.text)
       .toBe('[Request interrupted by user]')
   })
 
@@ -547,9 +556,9 @@ describe('files a tool delivered', () => {
   const assets = new Map([[9, '5c2e8f10'], [12, 'b41d07a9']])
 
   it('follow the tool message as a user message wrapped per result, so every protocol can carry them', () => {
-    const out = buildModelMessages({ protocol: 'responses', systemPrompt: null, attachments: new Map([[9, inlinePng]]), assets, path: [msg({ id: 1, role: 'user', parts: [{ type: 'text', text: 'look' }] }), reading] })
+    const out = buildModelMessages({ protocol: 'responses', systemPrompt: null, attachments: new Map([[9, inlinePng]]), labeler: labelerFor(assets), path: [msg({ id: 1, role: 'user', parts: [{ type: 'text', text: 'look' }] }), reading] })
     expect(out.map(m => m.role)).toEqual(['user', 'assistant', 'tool', 'user', 'assistant'])
-    expect(out[3]).toEqual(toolAttachmentsMessage([reading.parts[1] as ToolResultPart], new Map([[9, inlinePng]]), assets))
+    expect(out[3]).toEqual(toolAttachmentsMessage([reading.parts[1] as ToolResultPart], new Map([[9, inlinePng]]), labelerFor(assets)))
     expect(out[3]).toEqual({ role: 'user', content: [
       { type: 'text', text: '<tool_attachment call_id="call_r" asset="5c2e8f10">' },
       { type: 'file', mediaType: 'image/png', data: inlinePng.data },
@@ -560,18 +569,18 @@ describe('files a tool delivered', () => {
   it('come after the whole batch of parallel results, in one message', () => {
     const pdf: AttachmentInput = { mime: 'application/pdf', data: { type: 'data', data: new TextEncoder().encode('%PDF-1.7') } }
     const out = buildModelMessages({
-      protocol: 'responses', systemPrompt: null, attachments: new Map([[9, inlinePng], [12, pdf]]), assets,
+      protocol: 'responses', systemPrompt: null, attachments: new Map([[9, inlinePng], [12, pdf]]), labeler: labelerFor(assets),
       path: [msg({ id: 1, role: 'assistant', parts: [
         { type: 'tool_call', id: 'a', name: 'read_file', args: {} },
-        { type: 'tool_call', id: 'b', name: 'view_file', args: {} },
-        { type: 'tool_result', call_id: 'b', name: 'view_file', content: {}, attachments: [12] },
+        { type: 'tool_call', id: 'b', name: 'read_file', args: {} },
+        { type: 'tool_result', call_id: 'b', name: 'read_file', content: {}, attachments: [12] },
         { type: 'tool_result', call_id: 'a', name: 'read_file', content: {}, attachments: [9] },
       ] })],
     })
     expect(out.map(m => m.role)).toEqual(['assistant', 'tool', 'user'])
     expect((out[2]!.content as Array<{ type: string, text?: string, filename?: string }>)).toEqual([
       { type: 'text', text: '<tool_attachment call_id="b" asset="b41d07a9">' },
-      { type: 'file', mediaType: 'application/pdf', filename: 'asset-b41d07a9.pdf', data: pdf.data },
+      { type: 'file', mediaType: 'application/pdf', filename: 'file.pdf', data: pdf.data },
       { type: 'text', text: '</tool_attachment>' },
       { type: 'text', text: '<tool_attachment call_id="a" asset="5c2e8f10">' },
       { type: 'file', mediaType: 'image/png', data: inlinePng.data },
@@ -580,13 +589,13 @@ describe('files a tool delivered', () => {
   })
 
   it('are replaced inside the wrapper by what the current model cannot read, without bytes', () => {
-    const unreadable: AttachmentInput = { mime: 'audio/mpeg', unavailable: 'The current model cannot read audio/mpeg.' }
+    const unreadable: AttachmentInput = { mime: 'audio/mpeg', unavailable: 'unreadable' }
     const message = toolAttachmentsMessage([
       { type: 'tool_result', call_id: 'c', name: 'read_file', content: {}, attachments: [12] },
-    ], new Map([[12, unreadable]]), assets)
+    ], new Map([[12, unreadable]]), labelerFor(assets))
     expect(message.content).toEqual([
       { type: 'text', text: '<tool_attachment call_id="c" asset="b41d07a9">' },
-      { type: 'text', text: 'asset:b41d07a9 audio/mpeg: The current model cannot read audio/mpeg.' },
+      { type: 'text', text: 'The current model cannot read audio/mpeg, so the file was not sent.' },
       { type: 'text', text: '</tool_attachment>' },
     ])
   })
@@ -594,10 +603,10 @@ describe('files a tool delivered', () => {
   it('say a file is gone instead of failing when its row was purged mid-turn', () => {
     const message = toolAttachmentsMessage([
       { type: 'tool_result', call_id: 'c', name: 'read_file', content: {}, attachments: [99] },
-    ], new Map([[99, GONE]]), assets)
+    ], new Map([[99, GONE]]), labelerFor(assets))
     expect(message.content).toEqual([
       { type: 'text', text: '<tool_attachment call_id="c">' },
-      { type: 'text', text: GONE.unavailable },
+      { type: 'text', text: 'This file no longer exists.' },
       { type: 'text', text: '</tool_attachment>' },
     ])
   })
@@ -636,32 +645,44 @@ describe('asset labels', () => {
   ]
   const pdf: AttachmentInput = { mime: 'application/pdf', data: { type: 'data', data: new Uint8Array([37]) } }
   const assets = new Map([[9, '3f9a2c1e'], [12, 'b41d07a9'], [13, '5c2e8f10'], [14, '9a01d3c4']])
-  const build = (attachments: Map<number, AttachmentInput>) => buildModelMessages({ protocol: 'responses', systemPrompt: null, path, attachments, assets })
+  const build = (attachments: Map<number, AttachmentInput>) => buildModelMessages({ protocol: 'responses', systemPrompt: null, path, attachments, labeler: labelerFor(assets) })
 
-  it('name every file by asset and never by id, whatever tools the turn has', () => {
+  it('name every file by asset and never by id when the file reader labels them', () => {
     const out = build(new Map([[9, inlinePng], [12, pdf], [14, inlinePng]]))
     expect(out[0]).toEqual({ role: 'user', content: [
       { type: 'text', text: '[image asset:3f9a2c1e "cat.png"]' }, { type: 'file', mediaType: 'image/png', data: inlinePng.data },
       { type: 'text', text: '[file asset:b41d07a9 "report \\"final\\".pdf" application/pdf]' },
-      // The upstream name comes from the id and MIME, never the person's filename.
-      { type: 'file', mediaType: 'application/pdf', filename: 'asset-b41d07a9.pdf', data: pdf.data },
+      // The upstream name says nothing: not the id, not the person's filename.
+      { type: 'file', mediaType: 'application/pdf', filename: 'file.pdf', data: pdf.data },
       { type: 'text', text: '[image asset:9a01d3c4]' }, { type: 'file', mediaType: 'image/png', data: inlinePng.data },
       { type: 'text', text: 'make it blue' },
     ] })
     expect(out[1]).toEqual({ role: 'assistant', content: [{ type: 'text', text: '[generated image asset:5c2e8f10]' }, { type: 'text', text: 'done' }] })
   })
 
+  it('carry the files and nothing about them without a labeler', () => {
+    const out = buildModelMessages({ protocol: 'responses', systemPrompt: null, path, attachments: new Map([[9, inlinePng], [12, pdf], [14, inlinePng]]) })
+    expect(out[0]).toEqual({ role: 'user', content: [
+      { type: 'file', mediaType: 'image/png', data: inlinePng.data },
+      { type: 'file', mediaType: 'application/pdf', filename: 'file.pdf', data: pdf.data },
+      { type: 'file', mediaType: 'image/png', data: inlinePng.data },
+      { type: 'text', text: 'make it blue' },
+    ] })
+    // A generated image's pixels are never replayed, and with nothing to name it by nothing is said.
+    expect(out[1]).toEqual({ role: 'assistant', content: [{ type: 'text', text: 'done' }] })
+  })
+
   it('keep the label and state the limitation for a file the current model cannot read', () => {
-    const unreadable: AttachmentInput = { mime: 'application/pdf', unavailable: 'The current model cannot read application/pdf.' }
+    const unreadable: AttachmentInput = { mime: 'application/pdf', unavailable: 'unreadable' }
     const out = build(new Map<number, AttachmentInput>([[9, inlinePng], [12, unreadable], [14, inlinePng]]))
     expect((out[0]!.content as unknown[]).slice(2, 4)).toEqual([
       { type: 'text', text: '[file asset:b41d07a9 "report \\"final\\".pdf" application/pdf]' },
-      { type: 'text', text: 'The current model cannot read application/pdf.' },
+      { type: 'text', text: 'The current model cannot read application/pdf, so the file was not sent.' },
     ])
   })
 
   it('label what was said mid-turn the way the rebuilt history will', () => {
-    expect(interjectedUserMessage([{ type: 'image', attachment_id: 9, filename: 'cat.png' }], new Map([[9, inlinePng]]), assets, false))
+    expect(interjectedUserMessage([{ type: 'image', attachment_id: 9, filename: 'cat.png' }], new Map([[9, inlinePng]]), labelerFor(assets), false))
       .toEqual({ role: 'user', content: [{ type: 'text', text: '[image asset:3f9a2c1e "cat.png"]' }, { type: 'file', mediaType: 'image/png', data: inlinePng.data }] })
   })
 })

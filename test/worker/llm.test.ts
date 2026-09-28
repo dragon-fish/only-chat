@@ -302,7 +302,7 @@ describe('responses protocol', () => {
         } } })
         const message: Message = { id: 1, conversation_id: 1, parent_id: null, seq: 1, role: 'assistant', parts: [persisted], provider_id: 1, model_id: model.model_id, usage: null, status: 'done', error: null, created_at: 0 }
         const beforeReplay = JSON.stringify(message)
-        const messages = buildModelMessages({ protocol: 'responses', systemPrompt: null, path: [message], attachments: new Map(), assets: new Map() })
+        const messages = buildModelMessages({ protocol: 'responses', systemPrompt: null, path: [message], attachments: new Map() })
         for await (const part of streamText({ model: lm, messages }).stream) if (part.type === 'error') throw part.error
         expect(requests[1]!.input).toEqual([{
           type: 'reasoning', id: 'rs_fixture', summary: deepseekReasoningItem.summary,
@@ -331,7 +331,7 @@ describe('responses protocol', () => {
           itemId: 'rs_fixture', reasoningSummary: summary, ...(hasContentSentinel ? { reasoningContent: null } : {}), reasoningEncryptedContent: 'fixture-encrypted-state',
         } } }
         const message: Message = { id: 1, conversation_id: 1, parent_id: null, seq: 1, role: 'assistant', parts: [part], provider_id: 1, model_id: model.model_id, usage: null, status: 'done', error: null, created_at: 0 }
-        const messages = buildModelMessages({ protocol: 'responses', systemPrompt: null, path: [message], attachments: new Map(), assets: new Map() })
+        const messages = buildModelMessages({ protocol: 'responses', systemPrompt: null, path: [message], attachments: new Map() })
         for await (const chunk of streamText({ model: lm, messages }).stream) if (chunk.type === 'error') throw chunk.error
         expect(requestBody).toMatchObject({ input: [{ type: 'reasoning', id: 'rs_fixture', summary, encrypted_content: 'fixture-encrypted-state' }] })
         expect((requestBody as { input: object[] }).input[0]).not.toHaveProperty('content')
@@ -428,7 +428,7 @@ describe('chat-completions reasoning', () => {
         }
         const persisted = JSON.parse(JSON.stringify(acc.parts[0])) as Part
         const message: Message = { id: 1, conversation_id: 1, parent_id: null, seq: 1, role: 'assistant', parts: [persisted], provider_id: 1, model_id: model.model_id, usage: null, status: 'done', error: null, created_at: 0 }
-        const messages = buildModelMessages({ protocol: 'chat-completions', systemPrompt: null, path: [message], attachments: new Map(), assets: new Map() })
+        const messages = buildModelMessages({ protocol: 'chat-completions', systemPrompt: null, path: [message], attachments: new Map() })
         for await (const part of streamText({ model: chat, messages }).stream) if (part.type === 'error') throw part.error
         expect(chatRequest).toMatchObject({ messages: [{ role: 'assistant', reasoning_content: 'complete reasoning' }] })
       } finally { vi.unstubAllGlobals() }
@@ -458,7 +458,7 @@ describe('chat-completions reasoning', () => {
         // this case is about is the text surviving into the replay below.
         expect(persisted).toMatchObject([{ type: 'reasoning', text: 'complete reasoning' }, { type: 'text', text: 'fixture answer' }])
         const message: Message = { id: 1, conversation_id: 1, parent_id: null, seq: 1, role: 'assistant', parts: persisted, provider_id: 1, model_id: model.model_id, usage: null, status: 'done', error: null, created_at: 0 }
-        const messages = buildModelMessages({ protocol: 'chat-completions', systemPrompt: null, path: [message], attachments: new Map(), assets: new Map() })
+        const messages = buildModelMessages({ protocol: 'chat-completions', systemPrompt: null, path: [message], attachments: new Map() })
         const providerOptions = buildProviderOptions('chat-completions', { reasoning_enabled: false }, { reasoning: true, reasoning_options: [{ type: 'effort', values: ['none', 'high'] }] })
         for await (const part of streamText({ model: lm, messages, providerOptions }).stream) if (part.type === 'error') throw part.error
         expect(requests[1]).toMatchObject({ reasoning_effort: 'none', messages: [{ role: 'assistant', reasoning_content: 'complete reasoning', content: 'fixture answer' }] })

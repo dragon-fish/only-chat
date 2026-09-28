@@ -16,6 +16,8 @@ import { ImageGenerationServerPlugin } from '@/plugins/image-generation/server'
 import { WorkspaceFilesServerPlugin } from '@/plugins/workspace-files/server'
 import { WorkspaceFilesApiPlugin } from '@/plugins/workspace-files/server/api'
 import { FileUnderstandingServerPlugin } from '@/plugins/file-understanding/server'
+import { FileReaderServerPlugin } from '@/plugins/file-reader/server'
+import { FileReaderApiPlugin } from '@/plugins/file-reader/server/api'
 import { BrowserRunServerPlugin } from '@/plugins/cloudflare-browser-run/server'
 
 export type Side = 'worker' | 'hub'
@@ -58,6 +60,9 @@ export async function createApp(options: AppOptions): Promise<Context> {
       await ctx.plugin(AskUserServerPlugin)
       await ctx.plugin(TavilyServerPlugin)
       await ctx.plugin(DatetimeServerPlugin)
+      // Before everything that injects `fileReader`, so none of them waits PENDING on it.
+      await ctx.plugin(FileReaderServerPlugin)
+      if (!ctx.get('fileReader')) throw new Error('FileReaderServerPlugin loaded but ctx.fileReader is unavailable')
       await ctx.plugin(ImageGenerationServerPlugin)
       await ctx.plugin(WorkspaceFilesServerPlugin)
       await ctx.plugin(FileUnderstandingServerPlugin)
@@ -76,6 +81,7 @@ export async function createApp(options: AppOptions): Promise<Context> {
     if (!ctx.get('api')) throw new Error('ApiPlugin loaded but ctx.api is unavailable')
     // Plugin routes mount after the guard is in place, which is what puts them behind it.
     await ctx.plugin(WorkspaceFilesApiPlugin)
+    await ctx.plugin(FileReaderApiPlugin)
   }
   return ctx
 }

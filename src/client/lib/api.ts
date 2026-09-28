@@ -7,7 +7,7 @@ import type { ArtifactDto, ArtifactPage, ArtifactRunDto, CreateImageRunInput, Cr
 import type { PluginConfigStatusMap } from '@/shared/plugins'
 import type { FileRecord } from '@/shared/workspace-files'
 import type { ConversationAsset } from '@/shared/conversation-assets'
-import { WORKSPACE_FILES_PLUGIN_ID } from '@/shared/plugins'
+import { FILE_READER_PLUGIN_ID, WORKSPACE_FILES_PLUGIN_ID } from '@/shared/plugins'
 
 /** A plugin's HTTP surface lives under its own id, so two plugins can never claim the same path. */
 const WORKSPACE_FILES_API = `/api/plugins/${WORKSPACE_FILES_PLUGIN_ID}`
@@ -109,7 +109,7 @@ export const api = {
   uploadAttachment: (sha256: string, blob: Blob, { purpose, width = 0, height = 0 }: { purpose: AttachmentPurpose; width?: number; height?: number }) =>
     request<AttachmentUploadResponse>('PUT', `/api/attachments/${sha256}${queryString({ w: width, h: height, purpose })}`, blob, { headers: { 'content-type': blob.type } }),
   attachmentUrl: (id: number) => `/api/attachments/${id}`,
-  conversationAssets: (conversationId: number) => request<{ assets: ConversationAsset[] }>('GET', `/api/conversations/${conversationId}/assets`),
+  conversationAssets: (conversationId: number) => request<{ assets: ConversationAsset[] }>('GET', `/api/plugins/${FILE_READER_PLUGIN_ID}/conversations/${conversationId}/assets`),
   createImageRun: (input: CreateImageRunInput) => request<CreateImageRunResponse>('POST', '/api/artifact-runs/image', input),
   artifactRun: (id: number) => request<ArtifactRunDto>('GET', `/api/artifact-runs/${id}`),
   artifactRuns: (conversationId: number) => request<ArtifactRunDto[]>('GET', `/api/artifact-runs${queryString({ conversation_id: conversationId })}`),

@@ -20,7 +20,7 @@ const finish = (unified: 'stop' | 'tool-calls') => ({
 let readRef = ''
 const CALL = (): StreamPart[] => [
   { type: 'stream-start', warnings: [] },
-  { type: 'tool-call', toolCallId: 'call-read', toolName: 'read_file', input: JSON.stringify({ path: readRef }) },
+  { type: 'tool-call', toolCallId: 'call-read', toolName: 'read_file', input: JSON.stringify({ file: readRef }) },
   finish('tool-calls'),
 ]
 const TEXT: StreamPart[] = [
@@ -120,9 +120,9 @@ describe('read_file on an asset reference', () => {
     expect(result?.content).toMatchObject({ error: 'UNSUPPORTED_FILE' })
     expect(result?.attachments).toBeUndefined()
     // The upload keeps its label; its bytes are replaced by a sentence.
-    expect(prompts[0]![0]!.content.slice(0, 2)).toEqual([
+    expect(prompts[0]![0]!.content.slice(0, 2)).toMatchObject([
       { type: 'text', text: `[image asset:${prefix}]` },
-      { type: 'text', text: 'The current model cannot read image/png.' },
+      { type: 'text', text: 'The current model cannot read image/png, so the file was not sent.' },
     ])
     expect(prompts[0]!.flatMap(message => message.content).some(part => part.type === 'file')).toBe(false)
   })

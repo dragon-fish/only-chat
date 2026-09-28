@@ -1,0 +1,66 @@
+import type { Context } from 'cordis'
+import { tool, type Tool } from 'ai'
+import { FILE_READER_PLUGIN_ID, READ_FILE_TOOL_ID } from '@/shared/plugins'
+import { stripToolAttachments } from '@/shared/parts'
+import { ReadFileInputSchema, type FileToolError, type ReadDeliveredOutput } from '../shared'
+import { fileToolError } from './refs'
+import { FileReader, type FileTurn } from './service'
+import { addVisibleAssets, loadVisibleAssets } from './visible'
+
+/**
+ * `toModelOutput` for a tool that may hand over a file. The SDK builds the in-turn tool message from
+ * the raw output, while the rebuilt history reads the stored part, which never has the reserved key;
+ * without this the two would differ and the prompt prefix would stop matching.
+ */
+export const withoutToolAttachments: NonNullable<Tool['toModelOutput']> = ({ output }) =>
+  ({ type: 'json', value: stripToolAttachments(output) as never })
+
+export const FileReaderServerPlugin = {
+  name: 'file-reader',
+  inject: ['tools', 'db', 'assets'] as const,
+  async apply(ctx: Context) {
+    await ctx.plugin(FileReader)
+
+    ctx.inject(['fileReader'], (ctx) => {
+      // Only a turn that offers read_file names files at all: without it the model has no use for a
+      // reference, and the core keeps tool context out of the conversation.
+      ctx.on('generation/prepare', async (turn) => {
+        if (!turn.toolIds.includes(READ_FILE_TOOL_ID)) return
+        const fileTurn: FileTurn = {
+          userId: turn.userId, conversationId: turn.conversationId, projectId: turn.projectId,
+          toolIds: turn.toolIds, path: turn.path, state: turn.state, canReadFile: turn.canReadFile,
+          visible: await loadVisibleAssets(ctx.db.orm, turn.userId, turn.path),
+        }
+        ctx.fileReader.begin(fileTurn)
+        turn.labeler = ctx.fileReader.labeler(fileTurn)
+      })
+
+      ctx.on('generation/interjected', async (turn, messages) => {
+        if (!turn.toolIds.includes(READ_FILE_TOOL_ID)) return
+        await addVisibleAssets(ctx.db.orm, turn.userId, messages, ctx.fileReader.turnOf(turn.state).visible)
+      })
+
+      ctx.tools.register(FILE_READER_PLUGIN_ID, READ_FILE_TOOL_ID, runtime => tool({
+        description: [
+          'Read a file. `file` is the asset:<hex> a file in this conversation is labelled with, or a path when workspace files are on.',
+          'Text comes back numbered in cat -n format, starting at line 1, so you can cite positions — strip that prefix before quoting text elsewhere. Up to 2,000 lines and 100 KiB per call; pass offset and limit when you know which part you need, and follow nextOffset when the result is truncated. Nothing is dropped silently.',
+          'An image, PDF, audio or video file is shown to you whole instead: the result is a short receipt and the file follows in a user message inside <tool_attachment>. offset and limit do not apply. If you cannot read that kind of file, the error says so and may say where else it can go.',
+        ].join(' '),
+        inputSchema: ReadFileInputSchema,
+        // The model reads the receipt without the reserved key; the file arrives in the message after it.
+        toModelOutput: withoutToolAttachments,
+        async execute(input): Promise<object | ReadDeliveredOutput | FileToolError> {
+          const turn = ctx.fileReader.turnOf(runtime.turn)
+          const resolved = await ctx.fileReader.resolve(turn, input.file)
+          if (!resolved.ok) return fileToolError(resolved)
+          if (resolved.value.kind === 'text') {
+            const page = await resolved.value.read({ offset: input.offset, limit: input.limit })
+            return page.ok ? page.value : fileToolError(page)
+          }
+          const delivered = ctx.fileReader.deliver(turn, resolved.value, input.file)
+          return delivered.ok ? delivered.value : fileToolError(delivered)
+        },
+      }))
+    })
+  },
+}

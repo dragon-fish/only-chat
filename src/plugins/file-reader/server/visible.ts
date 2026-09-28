@@ -1,8 +1,8 @@
 import { and, eq, inArray } from 'drizzle-orm'
-import type { DB } from '../../db/client'
-import { attachments } from '../../db/schema'
+import type { DB } from '@/server/db/client'
+import { attachments } from '@/server/db/schema'
 import type { Message } from '@/shared/models'
-import { assetPrefix } from './ref'
+import { assetPrefix } from '@/shared/asset-ref'
 
 /** What the model was shown of one asset: the prefix it is named by, and the name it was sent under. */
 export interface VisibleAsset {
@@ -12,7 +12,7 @@ export interface VisibleAsset {
 }
 
 /**
- * The assets a generation's model has seen (spec §2.2), keyed by attachment id. This is the only
+ * The assets a generation's model has seen (spec §4.2), keyed by attachment id. This is the only
  * permission boundary `asset:` has: an asset outside it — another branch, conversation or user —
  * resolves as not found, so existence never leaks.
  *
@@ -21,14 +21,11 @@ export interface VisibleAsset {
  */
 export class VisibleAssets {
   private readonly byId = new Map<number, VisibleAsset>()
-  /** Attachment id → prefix: what the message builder labels every file with. Live, not a copy. */
-  readonly prefixes: ReadonlyMap<number, string> = new Map<number, string>()
 
   add(attachmentId: number, asset: VisibleAsset): void {
     const known = this.byId.get(attachmentId)
     // The first name an upload was sent under is the one the model saw first; keep it.
     this.byId.set(attachmentId, known && known.filename !== null ? known : asset)
-    ;(this.prefixes as Map<number, string>).set(attachmentId, asset.prefix)
   }
 
   has(attachmentId: number): boolean {
@@ -42,7 +39,7 @@ export class VisibleAssets {
 
 /**
  * Every attachment the path shows the model, with the filename a part names it by. The sources are
- * exactly spec §2.2's table; anything else on the path — a tool result's JSON, a text part that
+ * exactly spec §4.2's table; anything else on the path — a tool result's JSON, a text part that
  * happens to mention a hash — is not a way to become visible.
  */
 export function visibleAttachments(path: readonly Message[]): Map<number, string | null> {

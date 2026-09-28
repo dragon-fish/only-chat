@@ -1,6 +1,6 @@
 import type { ConversationAsset } from '@/shared/conversation-assets'
-import type { DB } from '../../db/client'
-import { assetPrefix } from './ref'
+import type { DB } from '@/server/db/client'
+import { assetPrefix } from '@/shared/asset-ref'
 
 export type { ConversationAsset }
 

@@ -26,13 +26,6 @@ export const ListFilesInputSchema = z.strictObject({
 })
 export type ListFilesInput = z.infer<typeof ListFilesInputSchema>
 
-export const ReadFileInputSchema = z.strictObject({
-  path: PathSchema.describe('A workspace path, or a file reference such as asset:3f9a2c1e for a file shown in this conversation.'),
-  offset: z.number().int().min(1).optional().describe('1-based first line to return.'),
-  limit: z.number().int().min(1).max(5000).optional().describe('How many lines to return.'),
-})
-export type ReadFileInput = z.infer<typeof ReadFileInputSchema>
-
 export const WriteFileInputSchema = z.strictObject({
   path: PathSchema,
   content: z.string().describe('The complete new contents. This is a whole-file replacement.'),
@@ -96,16 +89,6 @@ export interface ReadFileOutput {
   truncated: boolean
   nextOffset: number | null
   empty: boolean
-}
-
-/**
- * Reading a binary file or a file reference: the receipt `deliverFile` returns. The file itself
- * follows in a user message; the attachment id travels on the stored part, not in here.
- */
-export interface ReadDeliveredOutput {
-  file: string
-  mime: string
-  message: string
 }
 
 /**
