@@ -18,6 +18,8 @@ export interface FileRefTurn {
 /** A reference translated to the asset behind it (spec §3.2). `ref` is always the `asset:` form. */
 export interface ResolvedFile {
   attachmentId: number
+  /** Internal, like `attachmentId`: model-visible text carries `ref` or a prefix derived from it. */
+  sha256: string
   ref: string
   mime: string
   size: number
@@ -27,19 +29,21 @@ export interface ResolvedFile {
 }
 
 export function resolvedFromAttachment(row: Pick<AttachmentRow, 'id' | 'sha256' | 'mime' | 'size' | 'width' | 'height'>, filename: string | null): ResolvedFile {
-  return { attachmentId: row.id, ref: assetRef(row.sha256), mime: row.mime, size: row.size, width: row.width, height: row.height, filename }
+  return { attachmentId: row.id, sha256: row.sha256, ref: assetRef(row.sha256), mime: row.mime, size: row.size, width: row.width, height: row.height, filename }
 }
 
-/** Candidates can only be a handful of rows; more than this and the answer is "ambiguous" anyway. */
-const PREFIX_SCAN_LIMIT = 16
-
+/**
+ * Every row of this user under the prefix — a handful at most, found through the index. Unlimited
+ * on purpose: the caller filters by the visible set, and a limit applied first could cut away the
+ * visible row. Do not filter with `inArray(visible ids)` instead: D1 binds at most 100 parameters.
+ */
 async function assetsByPrefix(db: DB, userId: number, prefix: string): Promise<AttachmentRow[]> {
   const upper = prefixUpperBound(prefix)
   return db.select().from(attachments).where(and(
     eq(attachments.user_id, userId),
     gte(attachments.sha256, prefix),
     ...(upper === null ? [] : [lt(attachments.sha256, upper)]),
-  )).limit(PREFIX_SCAN_LIMIT)
+  ))
 }
 
 /** The shortest prefix length, past what was asked, that tells every match apart. */

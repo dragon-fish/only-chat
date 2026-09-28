@@ -1,4 +1,4 @@
-import { attachmentFilename } from '@/shared/file-media'
+import { assetFilename } from '@/shared/file-media'
 import type { ModelMessage, AssistantModelMessage, UserModelMessage, ToolModelMessage } from 'ai'
 import type { SharedV4ProviderReference } from '@ai-sdk/provider'
 import type { AnthropicProviderOptions } from '@ai-sdk/anthropic'
@@ -62,6 +62,9 @@ export function renderTaskNotification(part: TaskNotificationPart): string {
   ].join('\n')
 }
 
+/** A tool-delivered attachment whose row no longer exists; see `toolAttachmentsMessage`. */
+export const GONE: Extract<AttachmentInput, { unavailable: string }> = { mime: 'application/octet-stream', unavailable: 'This file no longer exists.' }
+
 function prefixOf(assets: ReadonlyMap<number, string>, attachmentId: number): string {
   const prefix = assets.get(attachmentId)
   if (prefix === undefined) throw new Error(`attachment ${attachmentId} has no asset label`)
@@ -76,12 +79,12 @@ function inputOf(attachments: ReadonlyMap<number, AttachmentInput>, attachmentId
 
 /**
  * The file itself, or the sentence standing in for a file this model cannot read. The name sent
- * upstream is derived from the id and MIME, never the person's filename: that one is theirs, it
- * reaches the model only through the label, and a provider has no business receiving it.
+ * upstream comes from `assetFilename`: the person's filename reaches the model only through the
+ * label, and a provider has no business receiving it.
  */
-function fileContent(attachmentId: number, att: AttachmentInput): UserPart {
+function fileContent(prefix: string, att: AttachmentInput): UserPart {
   if ('unavailable' in att) return { type: 'text', text: att.unavailable }
-  const filename = att.mime.startsWith('image/') ? undefined : attachmentFilename(attachmentId, att.mime)
+  const filename = att.mime.startsWith('image/') ? undefined : assetFilename(prefix, att.mime)
   return { type: 'file', mediaType: att.mime, data: att.data, ...(filename ? { filename } : {}) }
 }
 
@@ -98,8 +101,9 @@ function userParts(parts: Part[], attachments: ReadonlyMap<number, AttachmentInp
       out.push({ type: 'text', text: p.text })
     } else if (p.type === 'image' || p.type === 'file') {
       const att = inputOf(attachments, p.attachment_id)
-      out.push({ type: 'text', text: uploadLabel(p, prefixOf(assets, p.attachment_id), att.mime) })
-      out.push(fileContent(p.attachment_id, att))
+      const prefix = prefixOf(assets, p.attachment_id)
+      out.push({ type: 'text', text: uploadLabel(p, prefix, att.mime) })
+      out.push(fileContent(prefix, att))
     } else if (p.type === 'task_notification') {
       out.push({ type: 'text', text: renderTaskNotification(p) })
     }
@@ -274,13 +278,23 @@ export function toolAttachmentsMessage(
   assets: ReadonlyMap<number, string>,
 ): UserModelMessage {
   const content = results.flatMap(result => (result.attachments ?? []).flatMap((attachmentId): UserPart[] => {
-    const prefix = prefixOf(assets, attachmentId)
+    const prefix = assets.get(attachmentId)
     const att = inputOf(attachments, attachmentId)
+    // A tool can deliver a workspace file whose bytes are purged before the turn is persisted, when
+    // nothing in D1 references it yet. Say so instead of throwing: a throw here fails every later
+    // turn of the conversation, and nothing the user can do brings the bytes back.
+    if (prefix === undefined || att === GONE) {
+      return [
+        { type: 'text', text: `<tool_attachment call_id="${escapeAttribute(result.call_id)}">` },
+        { type: 'text', text: GONE.unavailable },
+        { type: 'text', text: '</tool_attachment>' },
+      ]
+    }
     return [
       { type: 'text', text: `<tool_attachment call_id="${escapeAttribute(result.call_id)}" asset="${prefix}">` },
       'unavailable' in att
         ? { type: 'text', text: `asset:${prefix} ${att.mime}: ${att.unavailable}` }
-        : fileContent(attachmentId, att),
+        : fileContent(prefix, att),
       { type: 'text', text: '</tool_attachment>' },
     ]
   }))

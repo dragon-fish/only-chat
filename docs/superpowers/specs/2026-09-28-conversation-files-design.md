@@ -137,7 +137,7 @@ Agent 只能引用它在上下文中见过的 asset。生成开始时，hub 从�
 | `chat-completions` | image、pdf、audio（mp3 / wav）、video |
 | `vertex-compatible` | image、pdf、audio、video |
 
-音视频内联传输，不走原生 Files 上传。发给供应商的文件名由 attachment id 与 MIME 生成，不使用用户文件名。
+音视频内联传输，不走原生 Files 上传。发给供应商的文件名为 `asset-<前缀>.<ext>`（供应商会把它展示给模型），不使用 attachment id 或用户文件名。
 
 ## 7. 模型消息
 

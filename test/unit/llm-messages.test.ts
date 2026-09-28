@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildModelMessages, buildProviderOptions, interjectedUserMessage, renderTaskNotification, requiredAttachmentIds, toolAttachmentsMessage, type AttachmentInput, type BuildInput } from '@/server/plugins/llm/messages'
+import { buildModelMessages, buildProviderOptions, GONE, interjectedUserMessage, renderTaskNotification, requiredAttachmentIds, toolAttachmentsMessage, type AttachmentInput, type BuildInput } from '@/server/plugins/llm/messages'
 import { isNotificationOnly, TOOL_ATTACHMENTS_KEY, toolResultPart, type TaskNotificationPart, type ToolResultPart } from '@/shared/parts'
 import type { Message } from '@/shared/models'
 import type { ModelMetadata } from '@/shared/model-metadata'
@@ -571,7 +571,7 @@ describe('files a tool delivered', () => {
     expect(out.map(m => m.role)).toEqual(['assistant', 'tool', 'user'])
     expect((out[2]!.content as Array<{ type: string, text?: string, filename?: string }>)).toEqual([
       { type: 'text', text: '<tool_attachment call_id="b" asset="b41d07a9">' },
-      { type: 'file', mediaType: 'application/pdf', filename: 'attachment-12.pdf', data: pdf.data },
+      { type: 'file', mediaType: 'application/pdf', filename: 'asset-b41d07a9.pdf', data: pdf.data },
       { type: 'text', text: '</tool_attachment>' },
       { type: 'text', text: '<tool_attachment call_id="a" asset="5c2e8f10">' },
       { type: 'file', mediaType: 'image/png', data: inlinePng.data },
@@ -587,6 +587,17 @@ describe('files a tool delivered', () => {
     expect(message.content).toEqual([
       { type: 'text', text: '<tool_attachment call_id="c" asset="b41d07a9">' },
       { type: 'text', text: 'asset:b41d07a9 audio/mpeg: The current model cannot read audio/mpeg.' },
+      { type: 'text', text: '</tool_attachment>' },
+    ])
+  })
+
+  it('say a file is gone instead of failing when its row was purged mid-turn', () => {
+    const message = toolAttachmentsMessage([
+      { type: 'tool_result', call_id: 'c', name: 'read_file', content: {}, attachments: [99] },
+    ], new Map([[99, GONE]]), assets)
+    expect(message.content).toEqual([
+      { type: 'text', text: '<tool_attachment call_id="c">' },
+      { type: 'text', text: GONE.unavailable },
       { type: 'text', text: '</tool_attachment>' },
     ])
   })
@@ -623,7 +634,7 @@ describe('asset labels', () => {
       { type: 'text', text: '[image asset:3f9a2c1e "cat.png"]' }, { type: 'file', mediaType: 'image/png', data: inlinePng.data },
       { type: 'text', text: '[file asset:b41d07a9 "report \\"final\\".pdf" application/pdf]' },
       // The upstream name comes from the id and MIME, never the person's filename.
-      { type: 'file', mediaType: 'application/pdf', filename: 'attachment-12.pdf', data: pdf.data },
+      { type: 'file', mediaType: 'application/pdf', filename: 'asset-b41d07a9.pdf', data: pdf.data },
       { type: 'text', text: '[image asset:9a01d3c4]' }, { type: 'file', mediaType: 'image/png', data: inlinePng.data },
       { type: 'text', text: 'make it blue' },
     ] })

@@ -35,7 +35,7 @@ it('saves file settings without overwriting other slots and rejects a text-only 
     const service = await resolveFileUnderstanding(deps, settings)
     expect(service?.canRead('image/png')).toBe(true)
     expect(service?.canRead('application/pdf')).toBe(false)
-    await expect(service!.analyze(999999, undefined, AbortSignal.abort())).rejects.toBeDefined()
+    await expect(service!.analyze({ attachmentId: 999999, sha256: '0'.repeat(64) }, undefined, AbortSignal.abort())).rejects.toBeDefined()
     expect(await resolveFileUnderstanding({ ...deps, userId: 99999 }, settings)).toBeUndefined()
     await db.update(models).set({ enabled: false }).where(eq(models.model_id, 'vision'))
     expect(await resolveFileUnderstanding(deps, settings)).toBeUndefined()

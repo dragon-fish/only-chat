@@ -62,7 +62,12 @@ export function matchesFileSignature(mime: string, bytes: Uint8Array): boolean {
   return false
 }
 
-/** Inline PDF parsers need an extension even when the original upload name is unavailable. */
-export function attachmentFilename(id: number, mime: string): string {
-  return `attachment-${id}.${FILE_EXTENSIONS[mime] ?? 'bin'}`
+/**
+ * The name a file travels upstream under. Providers show it to the model (Anthropic uses it as the
+ * document title), so it is built from the asset prefix the model already knows — never the
+ * attachment id, which the model must not see, and never the person's own filename. Inline PDF
+ * parsers also need the extension.
+ */
+export function assetFilename(prefix: string, mime: string): string {
+  return `asset-${prefix}.${FILE_EXTENSIONS[mime] ?? 'bin'}`
 }

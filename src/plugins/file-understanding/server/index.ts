@@ -45,7 +45,7 @@ export const FileUnderstandingServerPlugin = {
       async execute({ file, question }): Promise<AnalyzeFileOutput | FileToolError> {
         const resolved = await runtime.files.resolve(file)
         if (!resolved.ok) return fileToolError(resolved)
-        const { attachmentId, ref, mime } = resolved.value
+        const { ref, mime } = resolved.value
         const understanding = runtime.files.understanding
         if (!understanding) {
           return { error: 'SERVICE_UNAVAILABLE', message: 'No file understanding model is available. Ask the user to choose one in Settings → Service models.' }
@@ -54,7 +54,7 @@ export const FileUnderstandingServerPlugin = {
           return { error: 'UNSUPPORTED_FILE', message: `The file understanding model or its interface cannot read ${mime}.` }
         }
         try {
-          const result = await understanding.analyze(attachmentId, question, runtime.signal)
+          const result = await understanding.analyze(resolved.value, question, runtime.signal)
           return { file: ref, mime, ...result }
         } catch (error) {
           // Stopping the generation stops the analysis with it; that is not a failed analysis.

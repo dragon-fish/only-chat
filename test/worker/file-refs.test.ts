@@ -48,7 +48,7 @@ describe('resolveFileRef', () => {
     const row = await attachment(1, sha)
     const turn = await turnOver([userMessage([{ type: 'image', attachment_id: row.id, filename: 'cat.png' }])])
     expect(await resolveFileRef(new Context(), db, turn, `asset:${sha.slice(0, 8)}`)).toEqual({ ok: true, value: {
-      attachmentId: row.id, ref: `asset:${sha.slice(0, 8)}`, mime: 'image/png', size: 1, width: 1, height: 1, filename: 'cat.png',
+      attachmentId: row.id, sha256: sha, ref: `asset:${sha.slice(0, 8)}`, mime: 'image/png', size: 1, width: 1, height: 1, filename: 'cat.png',
     } })
   })
 
@@ -86,7 +86,7 @@ describe('resolveFileRef', () => {
     expect(await resolveFileRef(new Context(), db, turn, `asset:${output.sha256.slice(0, 8)}`)).toMatchObject({ ok: true })
     const ref = `asset:${delivered.sha256.slice(0, 8)}`
     expect(await resolveFileRef(new Context(), db, turn, ref)).toMatchObject({ ok: false, error: 'FILE_NOT_FOUND' })
-    deliverFile(turn, reader, { attachmentId: delivered.id, ref, mime: 'image/png', size: 1, width: 1, height: 1, filename: null }, 'vfs:/project/a.png')
+    deliverFile(turn, reader, { attachmentId: delivered.id, sha256: delivered.sha256, ref, mime: 'image/png', size: 1, width: 1, height: 1, filename: null }, 'vfs:/project/a.png')
     expect(await resolveFileRef(new Context(), db, turn, ref)).toMatchObject({ ok: true, value: { attachmentId: delivered.id } })
   })
 
@@ -97,7 +97,7 @@ describe('resolveFileRef', () => {
     expect(await resolveFileRef(ctx, db, turn, 'vfs:/project/a.png')).toMatchObject({ ok: false, error: 'UNSUPPORTED_SCHEME' })
     const row = await attachment(1, digest(''))
     ctx.on('file/resolve', async ref => ref.startsWith('vfs:')
-      ? { ok: true, value: { attachmentId: row.id, ref: `asset:${row.sha256.slice(0, 8)}`, mime: 'image/png', size: 1, width: 1, height: 1, filename: 'a.png' } }
+      ? { ok: true, value: { attachmentId: row.id, sha256: row.sha256, ref: `asset:${row.sha256.slice(0, 8)}`, mime: 'image/png', size: 1, width: 1, height: 1, filename: 'a.png' } }
       : undefined)
     expect(await resolveFileRef(ctx, db, turn, 'vfs:/project/a.png')).toMatchObject({ ok: true, value: { attachmentId: row.id } })
     expect(await resolveFileRef(ctx, db, turn, 's3:bucket/key')).toMatchObject({ ok: false, error: 'UNSUPPORTED_SCHEME' })
@@ -107,7 +107,7 @@ describe('resolveFileRef', () => {
 
 describe('deliverFile', () => {
   const understanding = { canRead: (mime: string) => mime === 'application/pdf', analyze: async () => { throw new Error('unused') } }
-  const pdf = { attachmentId: 7, ref: 'asset:b41d07a9', mime: 'application/pdf', size: 1, width: null, height: null, filename: null }
+  const pdf = { attachmentId: 7, sha256: 'b41d07a9'.padEnd(64, '0'), ref: 'asset:b41d07a9', mime: 'application/pdf', size: 1, width: null, height: null, filename: null }
 
   it('returns a receipt naming the asset and hands the id over under the reserved key', async () => {
     const turn = await turnOver([])

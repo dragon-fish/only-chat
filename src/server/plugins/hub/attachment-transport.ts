@@ -4,7 +4,9 @@ import type { DB } from '../../db/client'
 import type { AttachmentRow, ProviderInterfaceRow, ProviderRow } from '../../db/schema'
 import type { Assets } from '../assets'
 import type { Llm } from '../llm'
-import type { AttachmentInput } from '../llm/messages'
+import { GONE, type AttachmentInput } from '../llm/messages'
+import { assetFilename } from '@/shared/file-media'
+import { assetPrefix } from '../file-refs/ref'
 import { PROVIDER_FILE_TTL_SECONDS, type ScopedFilesClient } from '../llm/files/types'
 import { findReusableProviderFile, getAttachment, insertProviderFile } from './conversations'
 
@@ -40,9 +42,9 @@ function toReference(stored: Record<string, string>): SharedV4ProviderReference 
 }
 
 /** OpenAI's multipart part carries no type hint of its own without a filename. */
+/** The model can read a Files API name back; see `assetFilename`. */
 function filenameFor(attachment: AttachmentRow): string {
-  const extension = attachment.mime.split('/')[1]?.split('+')[0] ?? 'bin'
-  return `attachment-${attachment.id}.${extension}`
+  return assetFilename(assetPrefix(attachment.sha256), attachment.mime)
 }
 
 /**
@@ -70,7 +72,12 @@ export async function resolveAttachmentInputs(
     deps.signal?.throwIfAborted()
     if (out.has(id)) continue
     const attachment = await getAttachment(deps.db, id, deps.userId)
-    if (!attachment) throw new Error(`attachment ${id} missing`)
+    if (!attachment) {
+      // Only a tool-delivered file can be missing (see `toolAttachmentsMessage`); anything a message
+      // part names is still referenced and was never purged, and its label fails loudly instead.
+      out.set(id, GONE)
+      continue
+    }
 
     const reason = unavailable?.(attachment.mime)
     if (reason) {

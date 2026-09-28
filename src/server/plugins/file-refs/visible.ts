@@ -61,12 +61,17 @@ export function visibleAttachments(path: readonly Message[]): Map<number, string
   return found
 }
 
-/** Adds attachments the model has been shown to `into`, with one `id IN (…)` query for the digests. */
+/** Below D1's 100 bound parameters, with room for the user id. */
+const ID_BATCH = 90
+
+/** Adds attachments the model has been shown to `into`, fetching their digests in batches. */
 export async function addShownAttachments(db: DB, userId: number, found: ReadonlyMap<number, string | null>, into: VisibleAssets): Promise<VisibleAssets> {
-  if (found.size === 0) return into
-  const rows = await db.select({ id: attachments.id, sha256: attachments.sha256 }).from(attachments)
-    .where(and(eq(attachments.user_id, userId), inArray(attachments.id, [...found.keys()])))
-  for (const row of rows) into.add(row.id, { prefix: assetPrefix(row.sha256), filename: found.get(row.id) ?? null })
+  const ids = [...found.keys()]
+  for (let start = 0; start < ids.length; start += ID_BATCH) {
+    const rows = await db.select({ id: attachments.id, sha256: attachments.sha256 }).from(attachments)
+      .where(and(eq(attachments.user_id, userId), inArray(attachments.id, ids.slice(start, start + ID_BATCH))))
+    for (const row of rows) into.add(row.id, { prefix: assetPrefix(row.sha256), filename: found.get(row.id) ?? null })
+  }
   return into
 }
 
