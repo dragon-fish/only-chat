@@ -47,6 +47,7 @@ async function seed(vision: boolean, mime: string) {
   })
   await db.update(users).set({ settings: { plugins: { workspace_files: true } } }).where(eq(users.id, 1))
   const bytes = mime === 'image/png' ? new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, vision ? 1 : 2])
+    : mime.startsWith('text/') ? new TextEncoder().encode('<p>hi</p>')
     : new TextEncoder().encode(mime === 'application/pdf' ? '%PDF-1.7' : mime === 'audio/mpeg' ? 'ID3recording' : '\0\0\0\x18ftypisom')
   const key = `read-image/${crypto.randomUUID()}`
   await env.BUCKET.put(key, bytes)
@@ -113,6 +114,13 @@ describe('read_file on an asset reference', () => {
     expect(prompts[1]![toolAt + 1]).toMatchObject({ role: 'user', content: [
       { type: 'text', text: `<tool_attachment call_id="call-read" asset="${prefix}">` }, { type: 'file', mediaType: mime }, { type: 'text', text: '</tool_attachment>' },
     ] })
+  })
+
+  it('inlines a small text upload with its reference, and reads it back as numbered lines', async () => {
+    const { prefix, result } = await readUpload(false, 'text/html')
+    expect(prompts[0]![0]!.content[0]).toMatchObject({ type: 'text', text: `<file asset="${prefix}">\n<p>hi</p>\n</file>` })
+    expect(result).toMatchObject({ content: { file: `asset:${prefix}`, content: '1 | <p>hi</p>', totalLines: 1 } })
+    expect(result?.attachments).toBeUndefined()
   })
 
   it('says so, without attaching anything, to a model that cannot read it', async () => {

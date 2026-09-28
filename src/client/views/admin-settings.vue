@@ -13,7 +13,7 @@ import { Spinner } from '@/client/ui/spinner'
 import { Checkbox } from '@/client/ui/checkbox'
 import { Input } from '@/client/ui/input'
 import { DEFAULT_UPLOAD_POLICY, MAX_UPLOAD_POLICY_BYTES, UploadPolicySchema } from '@/shared/upload-policy'
-import { FILE_EXTENSIONS, fileModality } from '@/shared/file-media'
+import { FILE_EXTENSIONS, fileModality, isTextMime } from '@/shared/file-media'
 import { Switch } from '@/client/ui/switch'
 
 const siteConfig = useSiteConfigStore()
@@ -26,8 +26,14 @@ const uploadDraft = computed(() => ({ maxBytes: maxSizeMiB.value * 1024 * 1024, 
 const validUploads = computed(() => UploadPolicySchema.safeParse(uploadDraft.value).success)
 const fileGroups = [
   { type: 'image', label: '图片' }, { type: 'pdf', label: 'PDF' },
-  { type: 'audio', label: '音频' }, { type: 'video', label: '视频' },
-].map(group => ({ ...group, formats: Object.entries(FILE_EXTENSIONS).filter(([mime]) => fileModality(mime) === group.type).map(([mime, ext]) => ({ mime, label: ext.toUpperCase() })) }))
+  { type: 'audio', label: '音频' }, { type: 'video', label: '视频' }, { type: 'text', label: '文本' },
+].map(group => ({
+  ...group,
+  formats: Object.entries(FILE_EXTENSIONS)
+    .filter(([mime]) => (isTextMime(mime) ? 'text' : fileModality(mime)) === group.type)
+    // Source files of every language upload as plain text, so TXT stands for all of them.
+    .map(([mime, ext]) => ({ mime, label: mime === 'text/plain' ? 'TXT 与源代码' : ext.toUpperCase() })),
+}))
 function syncUploads() {
   if (!settings.value) return
   maxSizeMiB.value = settings.value.uploads.maxBytes / 1024 / 1024

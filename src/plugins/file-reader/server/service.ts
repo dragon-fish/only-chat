@@ -1,7 +1,7 @@
 import { Context, Service } from 'cordis'
 import { and, eq, gte, lt } from 'drizzle-orm'
 import { attachments, type AttachmentRow } from '@/server/db/schema'
-import type { FileLabeler } from '@/server/plugins/llm/messages'
+import { textFile, type FileLabeler } from '@/server/plugins/llm/messages'
 import type { GenerationTurn } from '@/server/plugins/hub/generation-turn'
 import { ASSET_REF_LENGTH, assetPrefix, assetRef } from '@/shared/asset-ref'
 import { isTextMime } from '@/shared/file-media'
@@ -72,6 +72,13 @@ export interface DeliveredFile {
 }
 
 const TURN_KEY = 'file_reader:turn'
+
+/**
+ * A text upload up to this size is inlined, as if pasted; a larger one is only named, and read_file
+ * pages through it. The core inlines every text file — this limit exists only because a tool to read
+ * the rest is on hand.
+ */
+export const INLINE_TEXT_BYTES = 32 * 1024
 
 export function binaryFromAttachment(
   row: Pick<AttachmentRow, 'id' | 'sha256' | 'mime' | 'size' | 'width' | 'height'>,
@@ -241,6 +248,12 @@ export function fileLabeler(visible: VisibleAssets, hint: (mime: string, cited: 
       const name = part.filename ? ` ${JSON.stringify(part.filename)}` : ''
       const prefix = prefixOf(part.attachment_id)
       return part.type === 'image' ? `[image asset:${prefix}${name}]` : `[file asset:${prefix}${name} ${mime}]`
+    },
+    userText: (part: FilePart, text: string) => {
+      const prefix = prefixOf(part.attachment_id)
+      if (new TextEncoder().encode(text).byteLength <= INLINE_TEXT_BYTES) return textFile(part, text, ` asset="${prefix}"`)
+      const name = part.filename ? ` ${JSON.stringify(part.filename)}` : ''
+      return `[file asset:${prefix}${name} ${part.mime}, ${text.split('\n').length} lines — read it with read_file]`
     },
     generatedImage: part => `[generated image asset:${prefixOf(part.attachment_id)}]`,
     toolAttachment: attachmentId => visible.get(attachmentId)?.prefix,

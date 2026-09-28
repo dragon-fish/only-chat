@@ -5,7 +5,7 @@ import type { AttachmentRow, ProviderInterfaceRow, ProviderRow } from '../../db/
 import type { Assets } from '../assets'
 import type { Llm } from '../llm'
 import { GONE, type AttachmentInput } from '../llm/messages'
-import { inlineFilename } from '@/shared/file-media'
+import { inlineFilename, isTextMime } from '@/shared/file-media'
 import { PROVIDER_FILE_TTL_SECONDS, type ScopedFilesClient } from '../llm/files/types'
 import { findReusableProviderFile, getAttachment, insertProviderFile } from './conversations'
 
@@ -83,6 +83,15 @@ export async function resolveAttachmentInputs(
 
     if (canRead && !canRead(attachment.mime)) {
       out.set(id, { mime: attachment.mime, unavailable: 'unreadable' })
+      continue
+    }
+
+    // Text is sent as text, never through a Files API: every model reads it, and a pointer to it
+    // would only make the provider decode what is already decoded here.
+    if (isTextMime(attachment.mime)) {
+      const stored = await deps.assets.getBytes(attachment.r2_key)
+      if (!stored) throw new Error(`attachment ${id} bytes missing`)
+      out.set(id, { mime: attachment.mime, text: new TextDecoder().decode(stored.bytes) })
       continue
     }
 

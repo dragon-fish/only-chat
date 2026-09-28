@@ -30,7 +30,7 @@ export async function resolveFileUnderstanding(deps: TransportDeps, settings: Us
       signal.throwIfAborted()
       const inputs = await resolveAttachmentInputs({ ...deps, signal }, provider, iface, [attachmentId], canRead)
       const file = inputs.get(attachmentId)!
-      if ('unavailable' in file) throw new Error(`The file understanding model cannot read ${file.mime}.`)
+      if (!('data' in file)) throw new Error(`The file understanding model cannot read ${file.mime}.`)
       signal.throwIfAborted()
       const result = await generateText({
         model: await deps.llm.createModel(provider, iface, model),

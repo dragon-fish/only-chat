@@ -11,6 +11,7 @@ import { toast } from 'vue-sonner'
 import { uploadFile, uploadMime } from '@/client/lib/file-upload'
 import { useSiteConfigStore } from '@/client/stores/site-config'
 import { uploadLimitLabel } from '@/shared/upload-policy'
+import { uploadAccept } from '@/shared/file-media'
 import { mergeRestoredText } from '@/client/stores/sync'
 import { api } from '@/client/lib/api'
 import type { Part } from '@/shared/parts'
@@ -54,7 +55,7 @@ const emit = defineEmits<{
 const siteConfig = useSiteConfigStore()
 onMounted(() => { void siteConfig.load().catch(() => {}) })
 const uploadPolicy = computed(() => siteConfig.config?.uploads)
-const fileAccept = computed(() => uploadPolicy.value?.allowedMimeTypes.join(',') ?? '')
+const fileAccept = computed(() => uploadAccept(uploadPolicy.value?.allowedMimeTypes ?? []))
 const uploadsOff = computed(() => uploadPolicy.value?.allowedMimeTypes.length === 0)
 const uploadHint = computed(() => {
   if (!uploadPolicy.value) return '添加文件'

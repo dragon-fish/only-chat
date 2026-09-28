@@ -20,6 +20,7 @@ describe('non-image uploads', () => {
     ['audio/mpeg', 'ID3recording'],
     ['audio/wav', 'RIFF0000WAVEdata'],
     ['video/mp4', '0000ftypisom'],
+    ['text/html', '<!doctype html><title>你好</title>'],
   ])('stores and serves %s without image dimensions', async (mime, body) => {
     const bytes = new TextEncoder().encode(body)
     const response = await upload(mime!, bytes)
@@ -34,6 +35,8 @@ describe('non-image uploads', () => {
 
   it('rejects MIME spoofing and empty files', async () => {
     expect((await upload('application/pdf', new TextEncoder().encode('not pdf'))).status).toBe(415)
+    // "你好" in GBK: text is UTF-8 or nothing.
+    expect((await upload('text/plain', new Uint8Array([0xc4, 0xe3, 0xba, 0xc3]))).status).toBe(415)
     expect((await upload('audio/mpeg', new Uint8Array())).status).toBe(400)
   })
 })

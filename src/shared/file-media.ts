@@ -8,6 +8,39 @@ export const FILE_EXTENSIONS: Record<string, string> = {
   'application/pdf': 'pdf', 'audio/mpeg': 'mp3', 'audio/wav': 'wav', 'audio/ogg': 'ogg',
   'audio/flac': 'flac', 'audio/mp4': 'm4a', 'audio/webm': 'webm',
   'video/mp4': 'mp4', 'video/webm': 'webm', 'video/quicktime': 'mov',
+  'text/plain': 'txt', 'text/markdown': 'md', 'text/html': 'html', 'text/css': 'css',
+  'text/javascript': 'js', 'application/json': 'json', 'text/csv': 'csv',
+}
+
+/** Source code and other plain text: uploaded as `text/plain`, with the extension kept in the filename. */
+const PLAIN_TEXT_EXTENSIONS = [
+  'txt', 'log', 'py', 'ts', 'tsx', 'jsx', 'mts', 'cts', 'vue', 'svelte', 'go', 'rs', 'java', 'kt', 'swift', 'c', 'h',
+  'cc', 'cpp', 'hpp', 'cs', 'rb', 'php', 'lua', 'sh', 'bash', 'zsh', 'ps1', 'yaml', 'yml', 'toml', 'ini', 'conf',
+  'xml', 'sql', 'graphql', 'gql', 'tex', 'rst', 'diff', 'patch',
+]
+
+/**
+ * Text files by extension, which wins over whatever type the browser declares: browsers report
+ * `.ts` as `video/mp2t`, `.csv` as a spreadsheet on Windows, and most source files as nothing.
+ */
+const TEXT_EXTENSIONS: Record<string, string> = {
+  ...Object.fromEntries(PLAIN_TEXT_EXTENSIONS.map(extension => [extension, 'text/plain'])),
+  md: 'text/markdown', markdown: 'text/markdown', html: 'text/html', htm: 'text/html', css: 'text/css',
+  js: 'text/javascript', mjs: 'text/javascript', cjs: 'text/javascript', json: 'application/json', csv: 'text/csv',
+}
+
+/**
+ * A file picker's `accept` for these types. Text types add their extensions, since pickers filter
+ * by the MIME the OS guesses and would otherwise hide most source files.
+ */
+export function uploadAccept(mimes: readonly string[]): string {
+  const extensions = Object.entries(TEXT_EXTENSIONS).filter(([, mime]) => mimes.includes(mime)).map(([extension]) => `.${extension}`)
+  return [...mimes, ...extensions].join(',')
+}
+
+export function textMimeFromFilename(filename: string): string | undefined {
+  const dot = filename.lastIndexOf('.')
+  return dot < 0 ? undefined : TEXT_EXTENSIONS[filename.slice(dot + 1).toLowerCase()]
 }
 
 /**
@@ -29,12 +62,16 @@ export function isTextMime(mime: string): boolean {
 }
 
 export function fileModality(mime: string): 'image' | 'pdf' | 'audio' | 'video' | null {
-  if (!FILE_EXTENSIONS[mime]) return null
+  if (!FILE_EXTENSIONS[mime] || isTextMime(mime)) return null
   return mime === 'application/pdf' ? 'pdf' : mime.split('/')[0] as 'image' | 'audio' | 'video'
 }
 
-/** Model metadata alone cannot make an adapter encode an unsupported input. */
+/**
+ * Model metadata alone cannot make an adapter encode an unsupported input. Text needs neither: it
+ * travels as text, which every model reads.
+ */
 export function canReadFile(metadata: ModelMetadata, protocol: InterfaceProtocol, mime: string): boolean {
+  if (isTextMime(mime)) return true
   const modality = fileModality(mime)
   if (!modality || !metadata.modalities?.input.includes(modality)) return false
   if (protocol === 'anthropic' || protocol === 'responses') return modality === 'image' || modality === 'pdf'
@@ -53,8 +90,26 @@ function isMp3Frame(bytes: Uint8Array): boolean {
   return b0 === 0xff && (b1 & 0xe6) === 0xe2 && (b1 & 0x18) !== 0x08 && (b2 & 0xf0) !== 0xf0 && (b2 & 0x0c) !== 0x0c
 }
 
-/** Check container signatures before accepting a caller-supplied MIME. This is not a decoder. */
+/**
+ * UTF-8 only, and no NUL byte: other encodings are refused rather than guessed at, and a NUL is the
+ * surest sign of binary bytes that happen to decode.
+ */
+export function isUtf8Text(bytes: Uint8Array): boolean {
+  if (bytes.includes(0)) return false
+  try {
+    new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Check container signatures — for text, that it is UTF-8 — before accepting a caller-supplied
+ * MIME. This is not a decoder.
+ */
 export function matchesFileSignature(mime: string, bytes: Uint8Array): boolean {
+  if (isTextMime(mime)) return isUtf8Text(bytes)
   const ascii = (offset: number, text: string) => [...text].every((c, i) => bytes[offset + i] === c.charCodeAt(0))
   if (mime === 'image/png') return [137, 80, 78, 71, 13, 10, 26, 10].every((n, i) => bytes[i] === n)
   if (mime === 'image/jpeg') return bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255

@@ -28,6 +28,8 @@ export type AttachmentInput =
       | { type: 'data'; data: Uint8Array }
   }
   | { mime: string; unavailable: 'unreadable' | 'gone' }
+  /** A text file, decoded: text travels as text, which every model reads, never as a file part. */
+  | { mime: string; text: string }
 
 /**
  * How a plugin names files to the model (spec §4.5). Without one the prompt carries the files and
@@ -38,6 +40,8 @@ export type AttachmentInput =
 export interface FileLabeler {
   /** Text placed right before a user's attachment. */
   userFile(part: ImagePart | FilePart, mime: string): string
+  /** A user's text attachment, whole or as a pointer to where it can be read. */
+  userText(part: FilePart, text: string): string
   /** What stands in for an image the chat model generated, whose pixels are never replayed. */
   generatedImage(part: ImagePart): string
   /** The `asset` attribute of the wrapper around a tool-delivered file. */
@@ -90,6 +94,7 @@ function inputOf(attachments: ReadonlyMap<number, AttachmentInput>, attachmentId
  * id nor the person's own filename belongs there.
  */
 function fileContent(att: AttachmentInput, attachmentId: number, labeler: FileLabeler | undefined): UserPart {
+  if ('text' in att) return { type: 'text', text: att.text }
   if ('unavailable' in att) {
     return {
       type: 'text',
@@ -102,6 +107,15 @@ function fileContent(att: AttachmentInput, attachmentId: number, labeler: FileLa
   return { type: 'file', mediaType: att.mime, data: att.data, ...(filename ? { filename } : {}) }
 }
 
+/**
+ * A text attachment with nothing else said about it: the whole file, as if pasted, under the name
+ * the person gave it. No limit — a file too large for the model is the provider's error to report.
+ */
+export function textFile(part: FilePart, text: string, attributes = ''): string {
+  const name = part.filename ? ` name="${escapeAttribute(part.filename)}"` : ''
+  return `<file${attributes}${name}>\n${text}\n</file>`
+}
+
 function userParts(parts: Part[], attachments: ReadonlyMap<number, AttachmentInput>, labeler: FileLabeler | undefined): UserPart[] {
   const out: UserPart[] = []
   for (const p of parts) {
@@ -109,6 +123,10 @@ function userParts(parts: Part[], attachments: ReadonlyMap<number, AttachmentInp
       out.push({ type: 'text', text: p.text })
     } else if (p.type === 'image' || p.type === 'file') {
       const att = inputOf(attachments, p.attachment_id)
+      if ('text' in att && p.type === 'file') {
+        out.push({ type: 'text', text: labeler ? labeler.userText(p, att.text) : textFile(p, att.text) })
+        continue
+      }
       if (labeler) out.push({ type: 'text', text: labeler.userFile(p, att.mime) })
       out.push(fileContent(att, p.attachment_id, labeler))
     } else if (p.type === 'task_notification') {
