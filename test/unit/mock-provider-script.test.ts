@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
+import type { LanguageModelV4Prompt } from '@ai-sdk/provider'
 import { buildMockScript } from '@/server/plugins/mock-provider/script'
+import { lastUserText, toolResultCount } from '@/server/plugins/mock-provider'
 
 function types(prompt: string): string[] {
   return buildMockScript(prompt).parts.map(part => part.type)
@@ -165,5 +167,32 @@ describe('mock provider script', () => {
       expect(deltas).toHaveLength(1)
       expect(helpOf()).toContain('\n')
     })
+  })
+})
+
+describe('mock provider prompt reading', () => {
+  const directive = '/tool_call read_file {"path":"asset:3f9a2c1e"}\n/tool_call read_file {"path":"asset:5c2e8f10"}'
+  // What the hub sends after the first call delivered a file: the result, then the file as a
+  // user message wrapped in `<tool_attachment>`.
+  const prompt: LanguageModelV4Prompt = [
+    { role: 'user', content: [{ type: 'text', text: directive }] },
+    { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'c1', toolName: 'read_file', input: {} }] },
+    { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'c1', toolName: 'read_file', output: { type: 'json', value: {} } }] },
+    { role: 'user', content: [
+      { type: 'text', text: '<tool_attachment call_id="c1" asset="3f9a2c1e">' },
+      { type: 'file', data: { type: 'data', data: new Uint8Array([1]) }, mediaType: 'image/png' },
+      { type: 'text', text: '</tool_attachment>' },
+    ] },
+  ]
+
+  it('reads past a delivered file to the directive and keeps counting this turn', () => {
+    expect(lastUserText(prompt)).toBe(directive)
+    expect(toolResultCount(prompt)).toBe(1)
+  })
+
+  it('still treats a message of only an image as a new turn', () => {
+    const next: LanguageModelV4Prompt = [...prompt, { role: 'user', content: [{ type: 'file', data: { type: 'data', data: new Uint8Array([1]) }, mediaType: 'image/png' }] }]
+    expect(lastUserText(next)).toBe('')
+    expect(toolResultCount(next)).toBe(0)
   })
 })

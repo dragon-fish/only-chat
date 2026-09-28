@@ -9,6 +9,25 @@ import { vertexCompatibleAdapter } from '../llm/protocols/vertex-compatible'
 import { isMockBaseUrl } from './constants'
 import { buildMockScript, type MockScript } from './script'
 
+type UserContent = Extract<LanguageModelV4Prompt[number], { role: 'user' }>['content']
+
+/**
+ * The parts of a user message the operator wrote. A file a tool delivered arrives as a user message
+ * of `<tool_attachment …>` … `</tool_attachment>` groups (`toolAttachmentsMessage`); those parts are
+ * the tool's, so a message made only of them is not a new user turn and its closing tag is not a
+ * directive.
+ */
+function ownParts(content: UserContent): UserContent {
+  const own: UserContent = []
+  let depth = 0
+  for (const part of content) {
+    if (part.type === 'text' && part.text.startsWith('<tool_attachment ')) { depth++; continue }
+    if (part.type === 'text' && part.text === '</tool_attachment>' && depth > 0) { depth--; continue }
+    if (depth === 0) own.push(part)
+  }
+  return own
+}
+
 /**
  * Whether this turn already ran a tool.
  *
@@ -21,7 +40,8 @@ export function toolResultCount(prompt: LanguageModelV4Prompt): number {
   // resume a macro somewhere past its end for the rest of the conversation.
   let start = 0
   for (let index = prompt.length - 1; index >= 0; index--) {
-    if (prompt[index]!.role === 'user') { start = index + 1; break }
+    const message = prompt[index]!
+    if (message.role === 'user' && ownParts(message.content).length > 0) { start = index + 1; break }
   }
   // Counted, not merely detected: a macro hands out one segment per call, and which segment comes
   // next is exactly how many have already come back.
@@ -51,7 +71,9 @@ export function lastUserText(prompt: LanguageModelV4Prompt): string {
   for (let index = prompt.length - 1; index >= 0; index--) {
     const message = prompt[index]!
     if (message.role !== 'user') continue
-    const texts = message.content.filter((part): part is { type: 'text', text: string } => part.type === 'text')
+    const own = ownParts(message.content)
+    if (own.length === 0) continue
+    const texts = own.filter((part): part is { type: 'text', text: string } => part.type === 'text')
     return texts.at(-1)?.text ?? ''
   }
   return ''
