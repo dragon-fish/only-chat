@@ -103,7 +103,7 @@
 - `source = 'tool'`，`conversation_id` 为聊天对话，`message_id` 为包含工具调用的 assistant 消息，`tool_call_id` 为调用 id。
 - 不插入图片对话的消息，不移动 head。
 - 幂等键 `client_request_id = tool:<message_id>:<call_id>`。
-- 参考图经 `resolveFileRef` 解析为 attachment id（[会话文件 spec](2026-09-28-conversation-files-design.md) §4.3、§7）；解析失败或非图片时工具直接返回错误，不创建 run。
+- 参考图经 `fileReader.resolve` 解析为 attachment id（[会话文件 spec](2026-09-28-conversation-files-design.md) §4.3、§7）；解析失败或非图片时工具直接返回错误，不创建 run。
 
 ### 3.4 结束
 
