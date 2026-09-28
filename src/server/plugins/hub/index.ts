@@ -12,7 +12,7 @@ import {
 import { suggestConversationTitle } from './service-model'
 import { canServeAsServiceModel, canServeAsFileModel } from '@/shared/service-model'
 import { mergeServicePrompts, missingRequiredPlaceholders } from '@/shared/service-prompts'
-import { parseConversationPluginSettings } from '@/shared/plugins'
+import { cascadePluginSwitches, parseConversationPluginSettings } from '@/shared/plugins'
 import { pluginManifests } from '@/shared/plugin-manifests'
 import { createProject, deleteProject, getProject, listProjectConversations, updateProject, validateProjectIcon } from './projects'
 import { SeqAllocator } from './seq'
@@ -363,7 +363,7 @@ export class Hub extends Service {
     }
     const settings: UserSettings = {
       ...user.settings,
-      plugins: { ...user.settings.plugins, ...(patch.plugins ?? {}) },
+      plugins: { ...user.settings.plugins, ...cascadePluginSwitches(pluginManifests, patch.plugins ?? {}) },
       ...(patch.service_models === undefined
         ? {}
         : { service_models: { ...user.settings.service_models, ...patch.service_models } }),

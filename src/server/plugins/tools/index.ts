@@ -1,8 +1,8 @@
 import { Context, Service } from 'cordis'
 import type { Tool } from 'ai'
 import type { ConversationPluginSettings, Message } from '@/shared/models'
-import { conversationConfigOf, pluginAvailableIn, pluginToolGroups, type ConversationScope } from '@/shared/plugins'
-import { findPluginManifest } from '@/shared/plugin-manifests'
+import { conversationConfigOf, effectivePluginSwitches, pluginAvailableIn, pluginToolGroups, withRequiredTools, type ConversationScope } from '@/shared/plugins'
+import { findPluginManifest, pluginManifests } from '@/shared/plugin-manifests'
 import type { DB } from '../../db/client'
 import type { Assets } from '../assets'
 import type { ToolFiles } from '../file-refs/deliver'
@@ -153,10 +153,13 @@ export class ToolRegistry extends Service {
    * of silently withholding it until someone toggles the group off and on again.
    */
   usable(ids: readonly string[], enabledPlugins: Record<string, boolean>, scope: ConversationScope): string[] {
-    return this.normalize(this.withGroupSiblings(ids)).filter((id) => {
+    // A selected plugin brings the plugins it requires: a stored snapshot is not trusted to already
+    // name them, and a tool whose dependency is missing would fail every call it makes.
+    const enabled = effectivePluginSwitches(pluginManifests, enabledPlugins)
+    return this.normalize(withRequiredTools(pluginManifests, this.withGroupSiblings(ids))).filter((id) => {
       const pluginId = this.entries.get(id)!.pluginId
       const manifest = findPluginManifest(pluginId)
-      return enabledPlugins[pluginId] === true && (manifest === undefined || pluginAvailableIn(manifest, scope))
+      return enabled[pluginId] === true && (manifest === undefined || pluginAvailableIn(manifest, scope))
     })
   }
 

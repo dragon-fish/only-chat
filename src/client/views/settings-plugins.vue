@@ -7,6 +7,8 @@ export interface PluginSettingsRow extends PluginManifest {
   configurable: boolean
   /** A configurable plugin whose stored values do not satisfy its schema. */
   needsConfig: boolean
+  /** Names of the plugins this one requires, for the row to say so before a switch surprises anyone. */
+  requiresNames: string[]
 }
 
 export function pluginSettingsRows(
@@ -21,6 +23,7 @@ export function pluginSettingsRows(
       enabled: settings[manifest.id] === true,
       configurable: manifest.configSchema !== undefined,
       needsConfig: manifest.configSchema !== undefined && status[manifest.id]?.configured !== true,
+      requiresNames: (manifest.requires ?? []).map(id => manifests.find(other => other.id === id)?.name ?? id),
     }))
 }
 </script>
@@ -39,16 +42,24 @@ import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemMedia, 
 import { Switch } from '@/client/ui/switch'
 import { DISCONNECTED_MESSAGE, useSyncStore } from '@/client/stores/sync'
 import { pluginManifests } from '@/client/plugins/loaders'
+import { findPluginManifest } from '@/shared/plugin-manifests'
+import { cascadePluginSwitches } from '@/shared/plugins'
 
 const sync = useSyncStore()
 const plugins = computed(() => pluginSettingsRows(pluginManifests, sync.settings.plugins, sync.pluginConfig))
 const pending = reactive(new Map<string, boolean>())
 
+/** Plugins a switch flipped along with the one it was on, by the plugin it was on. */
+const alongside = new Map<string, string[]>()
+
 watch(() => sync.settings, settings => {
   for (const key of acknowledgedPlugins(pending, settings.plugins)) {
     const desired = pending.get(key)
     pending.delete(key)
-    toast.success(`已${desired ? '启用' : '停用'} ${key}`)
+    const others = (alongside.get(key) ?? []).map(id => findPluginManifest(id)?.name ?? id)
+    alongside.delete(key)
+    const name = findPluginManifest(key)?.name ?? key
+    toast.success(`已${desired ? '启用' : '停用'} ${name}` + (others.length ? `，同时${desired ? '启用' : '停用'}了 ${others.join('、')}` : ''))
   }
 })
 watch(() => sync.lastError, error => { if (error) pending.clear() })
@@ -62,7 +73,10 @@ watch(() => sync.status, status => {
 function toggle(key: string, value: boolean) {
   if (pending.has(key)) return
   sync.lastError = null
-  if (sync.status !== 'open' || !sync.send({ type: 'settings.update', settings: { plugins: { [key]: value } } })) {
+  // The server applies the same cascade; sending it lets the page say what else changed.
+  const patch = cascadePluginSwitches(pluginManifests, { [key]: value })
+  alongside.set(key, Object.keys(patch).filter(id => id !== key && sync.settings.plugins[id] !== patch[id]))
+  if (sync.status !== 'open' || !sync.send({ type: 'settings.update', settings: { plugins: patch } })) {
     sync.lastError = DISCONNECTED_MESSAGE
     return
   }
@@ -93,6 +107,7 @@ function toggle(key: string, value: boolean) {
                 span {{ plugin.name }}
                 Badge(:variant="plugin.enabled ? 'secondary' : 'outline'") {{ pending.has(plugin.id) ? '更新中…' : plugin.enabled ? '已启用' : '已停用' }}
               ItemDescription {{ plugin.description }}
+              ItemDescription(v-if="plugin.requiresNames.length") 需要：{{ plugin.requiresNames.join('、') }}
               ItemDescription(v-if="plugin.needsConfig" class="text-destructive") 尚未配置，工具暂不可用。
             ItemActions
               //- Left of the switch on purpose: every row's toggle then lines up on one axis,

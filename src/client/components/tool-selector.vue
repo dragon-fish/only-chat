@@ -47,7 +47,7 @@ watchEffect(() => {
 })
 
 function toggle(toolIds: string[], on: boolean) {
-  emit('update:modelValue', nextToolSelection(props.modelValue, toolIds, on))
+  emit('update:modelValue', nextToolSelection(pluginManifests, props.modelValue, toolIds, on))
 }
 </script>
 

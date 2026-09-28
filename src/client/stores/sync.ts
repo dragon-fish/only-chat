@@ -7,7 +7,8 @@ import type { ModelRef } from '@/shared/api'
 import type { Message, Project, Conversation, ConversationParams, ConversationPluginSettings, UserSettings } from '@/shared/models'
 import type { ModelMetadata } from '@/shared/model-metadata'
 import type { Part, ToolResultPart } from '@/shared/parts'
-import type { PluginConfigStatusMap } from '@/shared/plugins'
+import { effectivePluginSwitches, type PluginConfigStatusMap } from '@/shared/plugins'
+import { pluginManifests } from '@/shared/plugin-manifests'
 import type { EditCommand, RegenerateCommand, SendCommand, WsCommand, WsEvent } from '@/shared/ws'
 
 /**
@@ -604,6 +605,14 @@ export function pathToRoot(byId: Map<number, Message>, headId: number | null): M
   return out.reverse()
 }
 
+/**
+ * Settings as they take effect: stored switches saved before a plugin gained a requirement would
+ * otherwise show that requirement off while the server treats it as on.
+ */
+function withEffectivePlugins(value: UserSettings): UserSettings {
+  return { ...value, plugins: effectivePluginSwitches(pluginManifests, value.plugins) }
+}
+
 export const useSyncStore = defineStore('sync', () => {
   const status = ref<WsStatus>('closed')
   // Bumped at the end of every `snapshot` application. `status` flips to `open` before the
@@ -822,7 +831,7 @@ export const useSyncStore = defineStore('sync', () => {
         break
       }
       case 'settings.updated':
-        settings.value = e.settings
+        settings.value = withEffectivePlugins(e.settings)
         break
       case 'project.created':
       case 'project.updated':
@@ -927,7 +936,7 @@ export const useSyncStore = defineStore('sync', () => {
     try {
       const result = await api.me()
       if (epoch !== loadEpoch) return
-      settings.value = result.settings
+      settings.value = withEffectivePlugins(result.settings)
       // Absent only from a payload older than this field; an empty map degrades to "nothing
       // configured", which the settings screen already renders correctly.
       pluginConfig.value = result.plugin_config ?? {}

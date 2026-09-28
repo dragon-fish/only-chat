@@ -66,9 +66,9 @@ describe('conversation tool selection', () => {
   })
 
   it('turns a whole group on or off at once', () => {
-    expect(nextToolSelection(['z_search', 'z_extract', 'ask_user'], ['z_search', 'z_extract'], false)).toEqual(['ask_user'])
+    expect(nextToolSelection([], ['z_search', 'z_extract', 'ask_user'], ['z_search', 'z_extract'], false)).toEqual(['ask_user'])
     // A half-selected snapshot from an older manifest heals the moment its group is switched on.
-    expect(nextToolSelection(['z_search'], ['z_search', 'z_extract'], true)).toEqual(['z_extract', 'z_search'])
+    expect(nextToolSelection([], ['z_search'], ['z_search', 'z_extract'], true)).toEqual(['z_extract', 'z_search'])
   })
 
   it('blocks draft sends until plugin settings have loaded and pending calls until resolved', () => {

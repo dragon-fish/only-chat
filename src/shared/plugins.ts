@@ -18,6 +18,7 @@ export const RENAME_FILE_TOOL_ID = 'rename_file' as const
 export const DELETE_FILE_TOOL_ID = 'delete_file' as const
 export const PREVIEW_FILE_TOOL_ID = 'preview_file' as const
 export const COPY_FILE_TOOL_ID = 'copy_file' as const
+export const FILE_READER_PLUGIN_ID = 'file_reader' as const
 export const FILE_UNDERSTANDING_PLUGIN_ID = 'file_understanding' as const
 export const VIEW_FILE_TOOL_ID = 'view_file' as const
 export const ANALYZE_FILE_TOOL_ID = 'analyze_file' as const
@@ -128,6 +129,12 @@ export interface PluginManifest {
   description: string
   /** Its tools only make sense inside a Project; a conversation without one is never offered them. */
   requiresProject?: boolean
+  /**
+   * Plugins this one cannot work without. The switch and selection counterpart of the server half
+   * injecting their services: whatever its server `inject`s from another plugin must be listed here,
+   * which a test checks. Enabling this enables them; disabling one of them disables this.
+   */
+  requires?: readonly string[]
   workspaceTab?: PluginWorkspaceTab
   /**
    * Settings kept per conversation rather than per user, validated the same way `configSchema` is.
@@ -196,6 +203,95 @@ export function pluginSettingsEntries(
 
 export function pluginToolIds(manifest: PluginManifest): string[] {
   return manifest.tools.map(tool => tool.id)
+}
+
+/** `start` and everything it requires, transitively. Unknown ids are carried through untouched. */
+export function requiredPlugins(manifests: readonly PluginManifest[], start: readonly string[]): Set<string> {
+  const byId = new Map(manifests.map(manifest => [manifest.id, manifest]))
+  const found = new Set<string>()
+  const visit = (id: string) => {
+    if (found.has(id)) return
+    found.add(id)
+    for (const next of byId.get(id)?.requires ?? []) visit(next)
+  }
+  for (const id of start) visit(id)
+  return found
+}
+
+/** `start` and everything that requires it, transitively. */
+export function dependentPlugins(manifests: readonly PluginManifest[], start: readonly string[]): Set<string> {
+  const found = new Set<string>()
+  const visit = (id: string) => {
+    if (found.has(id)) return
+    found.add(id)
+    for (const manifest of manifests) if (manifest.requires?.includes(id)) visit(manifest.id)
+  }
+  for (const id of start) visit(id)
+  return found
+}
+
+/**
+ * The switches a change really flips: turning a plugin on turns on what it requires, turning one off
+ * turns off what requires it. Applied on the server to every settings patch, so no client can leave
+ * a plugin enabled without the ones it needs.
+ */
+export function cascadePluginSwitches(
+  manifests: readonly PluginManifest[],
+  patch: Readonly<Record<string, boolean>>,
+): Record<string, boolean> {
+  const on = Object.keys(patch).filter(id => patch[id] === true)
+  const off = Object.keys(patch).filter(id => patch[id] === false)
+  const out: Record<string, boolean> = {}
+  for (const id of dependentPlugins(manifests, off)) out[id] = false
+  // A patch that both enables a plugin and disables what it needs keeps the enabled side working.
+  for (const id of requiredPlugins(manifests, on)) out[id] = true
+  return out
+}
+
+/**
+ * The switches as they take effect: an enabled plugin's requirements count as enabled even when the
+ * stored settings predate the requirement. Read through this everywhere a switch decides anything,
+ * so settings saved before a plugin gained a dependency never leave it without one.
+ */
+export function effectivePluginSwitches(
+  manifests: readonly PluginManifest[],
+  settings: Readonly<Record<string, boolean>>,
+): Record<string, boolean> {
+  const out: Record<string, boolean> = { ...settings }
+  for (const id of requiredPlugins(manifests, Object.keys(settings).filter(id => settings[id] === true))) out[id] = true
+  return out
+}
+
+/** The plugin each tool id belongs to. */
+export function toolOwners(manifests: readonly PluginManifest[]): Map<string, string> {
+  return new Map(manifests.flatMap(manifest => manifest.tools.map(tool => [tool.id, manifest.id] as const)))
+}
+
+/**
+ * A tool selection with every required plugin's tools added. Selecting a tool of a plugin selects
+ * the plugins it needs; the server applies this at generation start rather than trusting a stored
+ * snapshot to already satisfy it.
+ */
+export function withRequiredTools(manifests: readonly PluginManifest[], toolIds: readonly string[]): string[] {
+  const owners = toolOwners(manifests)
+  const selectedPlugins = [...new Set(toolIds.flatMap(id => owners.get(id) ?? []))]
+  const needed = requiredPlugins(manifests, selectedPlugins)
+  const out = new Set(toolIds)
+  for (const manifest of manifests) {
+    if (needed.has(manifest.id) && !selectedPlugins.includes(manifest.id)) for (const tool of manifest.tools) out.add(tool.id)
+  }
+  return [...out]
+}
+
+/** A tool selection with `toolIds` removed, along with the tools of every plugin that required their plugins. */
+export function withoutDependentTools(manifests: readonly PluginManifest[], selected: readonly string[], toolIds: readonly string[]): string[] {
+  const owners = toolOwners(manifests)
+  const removed = new Set(toolIds)
+  // Only a plugin losing every selected tool stops serving its dependents.
+  const gone = [...new Set(toolIds.flatMap(id => owners.get(id) ?? []))]
+    .filter(pluginId => !selected.some(id => !removed.has(id) && owners.get(id) === pluginId))
+  const dropped = dependentPlugins(manifests, gone)
+  return selected.filter(id => !removed.has(id) && !dropped.has(owners.get(id) ?? ''))
 }
 
 /** Where a conversation lives decides which plugins can serve it. */

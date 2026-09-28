@@ -1,5 +1,5 @@
 import type { ConversationScope, PluginConfigStatusMap, PluginManifest, PluginToolDescriptor } from '@/shared/plugins'
-import { pluginAvailableIn, pluginToolGroups } from '@/shared/plugins'
+import { pluginAvailableIn, pluginToolGroups, withoutDependentTools, withRequiredTools } from '@/shared/plugins'
 
 /** Callers that know no Project get the narrower offer: hiding a tool is recoverable, offering one that cannot run is not. */
 const NO_PROJECT: ConversationScope = { projectId: null }
@@ -99,13 +99,19 @@ export function availableToolGroups(
 }
 
 /** Switching a group on adds every tool it owns, which also repairs a half-selected old snapshot. */
-export function nextToolSelection(selected: readonly string[], toolIds: readonly string[], on: boolean): string[] {
-  const next = new Set(selected)
-  for (const toolId of toolIds) {
-    if (on) next.add(toolId)
-    else next.delete(toolId)
-  }
-  return stableToolIds([...next])
+/**
+ * The selection after one row is switched. Switching a plugin on brings the plugins it requires;
+ * switching the last of a plugin's tools off takes the plugins that require it along.
+ */
+export function nextToolSelection(
+  manifests: readonly PluginManifest[],
+  selected: readonly string[],
+  toolIds: readonly string[],
+  on: boolean,
+): string[] {
+  return stableToolIds(on
+    ? withRequiredTools(manifests, [...selected, ...toolIds])
+    : withoutDependentTools(manifests, selected, toolIds))
 }
 
 export function conversationToolBlockReason(state: {
