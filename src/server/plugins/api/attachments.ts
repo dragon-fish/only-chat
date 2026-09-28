@@ -8,7 +8,7 @@ import { parseId } from './params'
 
 import { uploadProblem } from '@/shared/upload-policy'
 import { resolveUploadPolicy } from '../upload-policy'
-import { MAX_ATTACHMENT_BYTES, matchesFileSignature } from '@/shared/file-media'
+import { isTextMime, MAX_ATTACHMENT_BYTES, matchesFileSignature } from '@/shared/file-media'
 
 /** Bounds images a model generates; uploaded files are bounded by the site upload policy instead. */
 export const MAX_GENERATED_IMAGE_BYTES = MAX_ATTACHMENT_BYTES
@@ -122,7 +122,12 @@ export async function serveAttachment(ctx: Context, c: HonoContext<ApiEnv>, row:
     etag: `"${row.sha256}"`,
     vary: 'Cookie',
     'x-content-type-options': 'nosniff',
+    // Text is shown, never run. An uploaded page served as `text/html` from this origin would run
+    // its scripts as whoever opens it — an admin viewing it through the audit route included — so
+    // every text type goes out as plain text, sandboxed besides. The row keeps its real type.
+    ...(isTextMime(row.mime) ? { 'content-security-policy': 'sandbox' } : {}),
   }
+  const type = isTextMime(row.mime) ? 'text/plain; charset=utf-8' : row.mime
   // One row read and no object read, which is the whole point of answering it here.
   if (c.req.header('if-none-match') === headers.etag) return new Response(null, { status: 304, headers })
 
@@ -137,13 +142,13 @@ export async function serveAttachment(ctx: Context, c: HonoContext<ApiEnv>, row:
     return new Response(stored.body, {
       status: 206,
       headers: {
-        ...headers, 'accept-ranges': 'bytes', 'content-type': row.mime, 'content-length': String(range.length),
+        ...headers, 'accept-ranges': 'bytes', 'content-type': type, 'content-length': String(range.length),
         'content-range': `bytes ${range.offset}-${range.offset + range.length - 1}/${row.size}`,
       },
     })
   }
   return new Response(stored.body, {
-    headers: { ...headers, 'accept-ranges': 'bytes', 'content-type': row.mime, 'content-length': String(stored.size) },
+    headers: { ...headers, 'accept-ranges': 'bytes', 'content-type': type, 'content-length': String(stored.size) },
   })
 }
 

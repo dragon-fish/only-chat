@@ -29,7 +29,9 @@ describe('non-image uploads', () => {
     const row = await createDb(env.DB).query.attachments.findFirst({ where: eq(attachments.id, attachment_id) })
     expect(row).toMatchObject({ mime, width: null, height: null })
     const get = await authenticatedFetch(new Request(`https://x/api/attachments/${attachment_id}`))
-    expect(get.headers.get('content-type')).toBe(mime)
+    // Text is served as plain text whatever it is, so an uploaded page never runs on this origin.
+    expect(get.headers.get('content-type')).toBe(mime!.startsWith('text/') ? 'text/plain; charset=utf-8' : mime)
+    if (mime!.startsWith('text/')) expect(get.headers.get('content-security-policy')).toBe('sandbox')
     expect(new Uint8Array(await get.arrayBuffer())).toEqual(bytes)
   })
 
