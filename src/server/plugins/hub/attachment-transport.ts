@@ -62,6 +62,8 @@ export async function resolveAttachmentInputs(
   providerInterface: ProviderInterfaceRow,
   attachmentIds: Iterable<number>,
   unavailable?: (mime: string) => string | undefined,
+  /** Tool-delivered ids, the only ones allowed to have lost their row; see `toolAttachmentsMessage`. */
+  mayBeGone?: ReadonlySet<number>,
 ): Promise<Map<number, AttachmentInput>> {
   const out = new Map<number, AttachmentInput>()
   const useFiles = deps.llm.hasFiles(providerInterface)
@@ -73,8 +75,8 @@ export async function resolveAttachmentInputs(
     if (out.has(id)) continue
     const attachment = await getAttachment(deps.db, id, deps.userId)
     if (!attachment) {
-      // Only a tool-delivered file can be missing (see `toolAttachmentsMessage`); anything a message
-      // part names is still referenced and was never purged, and its label fails loudly instead.
+      // Anything else missing is another user's id or a broken invariant, and must stay loud.
+      if (!mayBeGone?.has(id)) throw new Error(`attachment ${id} missing`)
       out.set(id, GONE)
       continue
     }

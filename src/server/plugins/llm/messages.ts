@@ -262,6 +262,23 @@ export function requiredAttachmentIds(path: readonly Message[]): Set<number> {
   return ids
 }
 
+/**
+ * Attachments only a tool result names. Nothing in D1 references them until the turn is persisted,
+ * so a purge in between can remove their row; message parts keep theirs referenced.
+ */
+export function toolDeliveredAttachmentIds(path: readonly Message[]): Set<number> {
+  const named = new Set<number>()
+  const delivered = new Set<number>()
+  for (const m of path) {
+    for (const p of m.parts) {
+      if (p.type === 'image' || p.type === 'file') named.add(p.attachment_id)
+      if (p.type === 'task_notification') for (const id of p.attachments ?? []) named.add(id)
+      if (p.type === 'tool_result') for (const id of p.attachments ?? []) delivered.add(id)
+    }
+  }
+  return new Set([...delivered].filter(id => !named.has(id)))
+}
+
 function escapeAttribute(value: string): string {
   return value.replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
 }

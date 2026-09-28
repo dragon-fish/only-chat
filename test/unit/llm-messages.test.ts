@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildModelMessages, buildProviderOptions, GONE, interjectedUserMessage, renderTaskNotification, requiredAttachmentIds, toolAttachmentsMessage, type AttachmentInput, type BuildInput } from '@/server/plugins/llm/messages'
+import { buildModelMessages, buildProviderOptions, GONE, interjectedUserMessage, renderTaskNotification, requiredAttachmentIds, toolAttachmentsMessage, toolDeliveredAttachmentIds, type AttachmentInput, type BuildInput } from '@/server/plugins/llm/messages'
 import { isNotificationOnly, TOOL_ATTACHMENTS_KEY, toolResultPart, type TaskNotificationPart, type ToolResultPart } from '@/shared/parts'
 import type { Message } from '@/shared/models'
 import type { ModelMetadata } from '@/shared/model-metadata'
@@ -600,6 +600,16 @@ describe('files a tool delivered', () => {
       { type: 'text', text: GONE.unavailable },
       { type: 'text', text: '</tool_attachment>' },
     ])
+  })
+
+  it('may lose their row only when nothing but a tool result names them', () => {
+    const path = [
+      msg({ id: 1, role: 'user', parts: [{ type: 'image', attachment_id: 9 }] }),
+      msg({ id: 2, role: 'assistant', parts: [
+        { type: 'tool_result', call_id: 'a', name: 'read_file', content: {}, attachments: [9, 12] },
+      ] }),
+    ]
+    expect(toolDeliveredAttachmentIds(path)).toEqual(new Set([12]))
   })
 
   it('are resolved with the rest of the request', () => {

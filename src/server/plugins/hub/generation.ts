@@ -12,7 +12,7 @@ import { createAskUserToolCallRepair } from '@/plugins/ask-user/server/repair'
 import type { ModelRow, ProviderInterfaceRow, ProviderRow, ConversationRow } from '../../db/schema'
 import { PartAccumulator } from '../llm/accumulator'
 import { logLifecycle, partsBytes } from './lifecycle-log'
-import { buildModelMessages, buildProviderOptions, carriesToolResultImages, INTERJECTED, interjectedUserMessage, requiredAttachmentIds, toolAttachmentsMessage, type AttachmentInput } from '../llm/messages'
+import { buildModelMessages, buildProviderOptions, carriesToolResultImages, INTERJECTED, interjectedUserMessage, requiredAttachmentIds, toolAttachmentsMessage, toolDeliveredAttachmentIds, type AttachmentInput } from '../llm/messages'
 import { createToolFiles, suggestsAnalyze, type FileReader } from '../file-refs/deliver'
 import { addShownAttachments, addVisibleAssets, loadVisibleAssets } from '../file-refs/visible'
 import { generationDurationMs, toStepUsage, toUsage, type GenerationStepPerformance } from '../llm/usage'
@@ -290,7 +290,7 @@ async function assembleContext(hub: Hub, target: Target, leafMessageId: number):
   const ids = requiredAttachmentIds(path)
   // Attachment transport shares this generation's resolved interface and credentials snapshot.
   const deps = { db: hub.db, userId: hub.userId, assets: hub.app.assets, llm: hub.app.llm }
-  return { path, attachments: await resolveAttachmentInputs(deps, target.provider, target.providerInterface, ids, unavailableFile(target)) }
+  return { path, attachments: await resolveAttachmentInputs(deps, target.provider, target.providerInterface, ids, unavailableFile(target), toolDeliveredAttachmentIds(path)) }
 }
 
 // ---- stage 5/6: stream + finalize
@@ -423,7 +423,7 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
           const missing = delivered.filter(id => !attachments.has(id))
           if (missing.length > 0) {
             const deps = { db: hub.db, userId: hub.userId, assets: hub.app.assets, llm: hub.app.llm }
-            for (const [id, input] of await resolveAttachmentInputs(deps, target.provider, target.providerInterface, missing, unavailableFile(target))) attachments.set(id, input)
+            for (const [id, input] of await resolveAttachmentInputs(deps, target.provider, target.providerInterface, missing, unavailableFile(target), new Set(missing))) attachments.set(id, input)
           }
           // A tool that handed over ids without `deliverFile` has still shown the model those files.
           const unlabelled = new Map(delivered.filter(id => !visible.has(id)).map(id => [id, null] as const))
