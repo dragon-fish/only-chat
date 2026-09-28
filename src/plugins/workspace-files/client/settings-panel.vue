@@ -12,7 +12,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tabs, TabsList, TabsTrigger } from '@/client/ui/tabs'
 import { Skeleton } from '@/client/ui/skeleton'
 import WorkspaceFilePreview from '@/client/components/workspace-file-preview.vue'
-import { fileIcon, formatFileSize } from '@/client/components/workspace-files'
+import { fileIcon, formatFileSize, type PreviewTarget } from '@/client/components/workspace-files'
 import { api, type WorkspaceScopeLabels } from '@/client/lib/api'
 import type { FileRecord } from '@/shared/workspace-files'
 
@@ -27,7 +27,7 @@ const trashScopes = ref<WorkspaceScopeLabels>({ projects: {}, conversations: {} 
 const loading = ref(true)
 const busyId = ref<number | null>(null)
 const bulkBusy = ref(false)
-const previewId = ref<number | null>(null)
+const preview = ref<PreviewTarget | null>(null)
 const tab = ref<Tab>('files')
 const selected = ref(new Set<number>())
 
@@ -239,7 +239,7 @@ function selectTab(value: unknown) {
                 :model-value="selected.has(file.id)" :aria-label="`选择 ${file.relativePath}`"
                 @update:model-value="value => toggleRow(file.id, value)")
             TableCell
-              button.flex.min-w-0.items-center.gap-2.text-left(type="button" :title="file.path" @click="previewId = file.id")
+              button.flex.min-w-0.items-center.gap-2.text-left(type="button" :title="file.path" @click="preview = { kind: 'file', id: file.id }")
                 span.shrink-0(class="[&>svg]:size-4" v-html="fileIcon(file.relativePath)")
                 span(class="max-w-64 truncate font-mono text-sm") {{ file.relativePath }}
             TableCell(class="text-muted-foreground hidden max-w-48 truncate text-xs md:table-cell") {{ scopeLabel(file, scopes) }}
@@ -367,5 +367,5 @@ function selectTab(value: unknown) {
                         AlertDialogCancel 取消
                         AlertDialogAction(@click="purge(file)") 彻底删除
 
-WorkspaceFilePreview(:file-id="previewId" @update:file-id="previewId = $event")
+WorkspaceFilePreview(:target="preview" @update:target="preview = $event")
 </template>

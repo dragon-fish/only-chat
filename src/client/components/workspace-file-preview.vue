@@ -10,10 +10,11 @@ import { Skeleton } from '@/client/ui/skeleton'
 import { Tabs, TabsList, TabsTrigger } from '@/client/ui/tabs'
 import { api } from '@/client/lib/api'
 import { useTheme } from '@/client/composables/use-theme'
-import { formatFileSize, languageOf, previewKind, type FileRecord } from './workspace-files'
+import { formatFileSize, languageOf, mediaKind, previewKind, type FileRecord, type MediaKind, type PreviewTarget } from './workspace-files'
 
-const props = defineProps<{ fileId: number | null }>()
-const emit = defineEmits<{ 'update:fileId': [value: number | null] }>()
+/** One preview for everything the file panel lists: workspace files, text or binary, and assets. */
+const props = defineProps<{ target: PreviewTarget | null }>()
+const emit = defineEmits<{ 'update:target': [value: PreviewTarget | null] }>()
 
 const { resolved: resolvedTheme } = useTheme()
 const record = ref<FileRecord | null>(null)
@@ -21,6 +22,17 @@ const content = ref('')
 const loading = ref(false)
 const error = ref<string | null>(null)
 const view = ref<'source' | 'rendered'>('source')
+/**
+ * A file with bytes rather than lines — any asset, or a binary workspace file — shown from its
+ * attachment: that route serves it with its own type and answers `Range`, which seeking needs.
+ */
+const media = ref<{ kind: MediaKind, url: string, mime: string } | null>(null)
+const mediaFailed = ref(false)
+const title = computed(() => props.target?.kind === 'asset' ? props.target.name : record.value?.relativePath ?? '文件')
+const downloadHref = computed(() => {
+  if (props.target?.kind === 'asset') return api.attachmentUrl(props.target.attachmentId)
+  return record.value ? api.workspaceFileDownloadUrl(record.value.id) : null
+})
 
 /**
  * Rendering model-written HTML is the plugin's own opt-in, and it starts off: the server hands back
@@ -48,20 +60,32 @@ const markdown = computed(() => {
   return fence + language + '\n' + content.value + '\n' + fence
 })
 
-watch(() => props.fileId, async (fileId) => {
+watch(() => props.target, async (target) => {
   record.value = null
   content.value = ''
   frameSrc.value = null
   canRenderPage.value = false
+  media.value = null
+  mediaFailed.value = false
   error.value = null
+  loading.value = false
   view.value = 'source'
-  if (fileId === null) return
+  if (target === null) return
+  if (target.kind === 'asset') {
+    media.value = { kind: mediaKind(target.mime), url: api.attachmentUrl(target.attachmentId), mime: target.mime }
+    return
+  }
   loading.value = true
   try {
-    const body = await api.workspaceFile(fileId)
+    const body = await api.workspaceFile(target.id)
     // A second click while the first was in flight wins; this answer is already stale.
-    if (props.fileId !== fileId) return
+    if (props.target !== target) return
     record.value = body.record
+    const kind = mediaKind(body.record.mime)
+    if (kind !== 'text') {
+      media.value = { kind, url: api.attachmentUrl(body.attachmentId), mime: body.record.mime }
+      return
+    }
     content.value = body.content ?? ''
     frameSrc.value = body.previewUrl
     canRenderPage.value = body.canRenderPage
@@ -77,7 +101,7 @@ watch(() => props.fileId, async (fileId) => {
 }, { immediate: true })
 
 function setOpen(open: boolean) {
-  if (!open) emit('update:fileId', null)
+  if (!open) emit('update:target', null)
 }
 function selectView(value: unknown) {
   if (value === 'source' || value === 'rendered') view.value = value
@@ -86,10 +110,22 @@ function selectView(value: unknown) {
 
 <template lang="pug">
 ResponsiveOverlay(
-  mode="dialog" :open="fileId !== null" :title="record?.relativePath ?? '文件'" @update:open="setOpen")
+  mode="dialog" :open="target !== null" :title="title" @update:open="setOpen")
   Alert(v-if="error" variant="destructive")
     AlertTitle 无法读取文件
     AlertDescription {{ error }}
+  .flex.flex-col.gap-3(v-else-if="media")
+    p(class="text-muted-foreground text-xs")
+      template(v-if="record") 第 {{ record.version }} 版 · {{ formatFileSize(record.fileSize) }} · 更新于 {{ new Date(record.updatedAt).toLocaleString() }}
+      template(v-else) {{ media.mime }}
+    img.mx-auto.max-w-full.rounded-md(v-if="media.kind === 'image'" :src="media.url" :alt="title" class="max-h-[70dvh]")
+    //- The browser's own PDF viewer; the attachment route serves it inline with its real type.
+    iframe.w-full.rounded-lg.border(v-else-if="media.kind === 'pdf'" :src="media.url" :title="title" class="h-[70dvh]")
+    template(v-else-if="(media.kind === 'audio' || media.kind === 'video') && !mediaFailed")
+      audio.w-full(v-if="media.kind === 'audio'" :src="media.url" controls preload="metadata" @error="mediaFailed = true")
+      video.mx-auto.max-w-full.rounded-md(v-else :src="media.url" controls preload="metadata" class="max-h-[70dvh]" @error="mediaFailed = true")
+    p.text-sm.text-muted-foreground(v-else-if="mediaFailed") 浏览器无法播放此文件，可以下载查看。
+    p.text-sm.text-muted-foreground(v-else) 这种文件无法预览，可以下载查看。
   .flex.flex-col.gap-2(v-else-if="loading || !record")
     Skeleton(class="h-4 w-48")
     Skeleton(class="h-40 w-full")
@@ -123,11 +159,14 @@ ResponsiveOverlay(
       //- The download route hands every file over as an attachment, so this is the only way to
       //- just look at one; with the page setting off it arrives as text, which shows rather than runs.
       Button(
-        v-if="frameSrc" as="a" variant="ghost" class="min-h-10"
-        :href="frameSrc" target="_blank" rel="noopener noreferrer")
+        v-if="media || frameSrc" as="a" variant="ghost" class="min-h-10"
+        :href="media?.url ?? frameSrc ?? undefined" target="_blank" rel="noopener noreferrer")
         ExternalLinkIcon(data-icon="inline-start")
         | 新标签页打开
-      Button(v-if="record" as="a" variant="outline" class="min-h-10" :href="api.workspaceFileDownloadUrl(record.id)")
+      //- An asset's route serves it inline, so the attribute is what makes this a download.
+      Button(
+        v-if="downloadHref" as="a" variant="outline" class="min-h-10" :href="downloadHref"
+        :download="target?.kind === 'asset' ? target.name : undefined")
         DownloadIcon(data-icon="inline-start")
         | 下载
 </template>

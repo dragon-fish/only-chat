@@ -1,7 +1,25 @@
 import { getLanguageIcon } from 'markstream-vue'
+import type { ConversationAsset } from '@/shared/conversation-assets'
+import { fileModality } from '@/shared/file-media'
 import type { FileRecord } from '@/shared/workspace-files'
 
-export type { FileRecord }
+export type { ConversationAsset, FileRecord }
+
+/**
+ * What a file is shown as, decided by its stored type and never by its name: a binary file copied
+ * into the workspace keeps whatever name the model gave it.
+ */
+export type MediaKind = 'image' | 'pdf' | 'audio' | 'video' | 'text' | 'binary'
+
+export function mediaKind(mime: string): MediaKind {
+  if (mime.startsWith('text/')) return 'text'
+  return fileModality(mime) ?? 'binary'
+}
+
+/** What a preview is opened on: a workspace file by id, or a conversation asset by attachment. */
+export type PreviewTarget =
+  | { kind: 'file', id: number }
+  | { kind: 'asset', attachmentId: number, mime: string, name: string }
 
 /**
  * Bytes as a reader wants them. The unit is picked so the number stays short — a file panel is
@@ -129,5 +147,21 @@ export function fileIcon(relativePath: string): string {
 
 /** What a row shows beside its name. Version and timestamp live in the preview, not in the list. */
 export function fileRowMeta(record: FileRecord): string {
-  return `${formatFileSize(record.fileSize)} · ${record.totalLines} 行`
+  return mediaKind(record.mime) === 'text'
+    ? `${formatFileSize(record.fileSize)} · ${record.totalLines} 行`
+    : formatFileSize(record.fileSize)
+}
+
+const KIND_LABELS: Record<MediaKind, string> = { image: '图片', pdf: 'PDF', audio: '音频', video: '视频', text: '文件', binary: '文件' }
+
+/** The name a person gave the file; a pasted or generated one is named by what it is and when it came. */
+export function assetName(asset: ConversationAsset): string {
+  if (asset.filename) return asset.filename
+  const time = new Date(asset.createdAt).toLocaleString([], { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+  return `${KIND_LABELS[mediaKind(asset.mime)]} · ${time}`
+}
+
+export function assetRowMeta(asset: ConversationAsset): string {
+  const size = formatFileSize(asset.size)
+  return asset.width && asset.height ? `${size} · ${asset.width}×${asset.height}` : size
 }

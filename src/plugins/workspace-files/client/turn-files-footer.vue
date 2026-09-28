@@ -5,6 +5,7 @@ import { Badge } from '@/client/ui/badge'
 import { Button } from '@/client/ui/button'
 import { api } from '@/client/lib/api'
 import WorkspaceFilePreview from '@/client/components/workspace-file-preview.vue'
+import type { PreviewTarget } from '@/client/components/workspace-files'
 import WorkspaceFilesDialog from '@/client/components/workspace-files-dialog.vue'
 import type { Message } from '@/shared/models'
 import { basename, formatBytes } from './format'
@@ -17,7 +18,7 @@ const PREVIEW_LIMIT = 3
 
 const files = computed(() => filesWrittenInTurn(props.message.parts))
 const shown = computed(() => files.value.slice(0, PREVIEW_LIMIT))
-const previewId = ref<number | null>(null)
+const preview = ref<PreviewTarget | null>(null)
 const resolving = ref<string | null>(null)
 const error = ref<string | null>(null)
 
@@ -39,7 +40,7 @@ async function open(file: TurnFile) {
       error.value = `${basename(file.path)} 已不在工作区`
       return
     }
-    previewId.value = match.id
+    preview.value = { kind: 'file', id: match.id }
   }
   catch (cause) {
     error.value = cause instanceof Error ? cause.message : '无法打开文件'
@@ -67,5 +68,5 @@ async function open(file: TurnFile) {
           | {{ files.length > shown.length ? `查看全部 ${files.length} 个` : '查看全部' }}
   p(v-if="error" class="text-destructive text-xs") {{ error }}
 
-WorkspaceFilePreview(:file-id="previewId" @update:file-id="previewId = $event")
+WorkspaceFilePreview(:target="preview" @update:target="preview = $event")
 </template>
