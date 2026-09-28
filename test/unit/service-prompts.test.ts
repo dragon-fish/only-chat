@@ -76,3 +76,14 @@ describe('what comes back from the model is not trusted to be a title', () => {
     expect([...out!]).toHaveLength(40)
   })
 })
+
+describe('stored service prompts keep only what differs from the default', () => {
+  it('stores a custom prompt, and clears a key sent as null or as the default text', async () => {
+    const { mergeServicePrompts, SERVICE_PROMPT_DEFAULTS } = await import('@/shared/service-prompts')
+    const stored = mergeServicePrompts(undefined, { conversation_title: 'Name: {user_message:1}', file_understanding: SERVICE_PROMPT_DEFAULTS.file_understanding })
+    expect(stored).toEqual({ conversation_title: 'Name: {user_message:1}' })
+    expect(mergeServicePrompts(stored, { file_understanding: 'Describe.' })).toEqual({ conversation_title: 'Name: {user_message:1}', file_understanding: 'Describe.' })
+    expect(mergeServicePrompts(stored, { conversation_title: null })).toEqual({})
+    expect(mergeServicePrompts(stored, { conversation_title: SERVICE_PROMPT_DEFAULTS.conversation_title })).toEqual({})
+  })
+})

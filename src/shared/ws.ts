@@ -104,7 +104,11 @@ export const SettingsUpdateCommandSchema = z.object({
       image: ModelRefSchema.nullable().optional(),
       file_understanding: ModelRefSchema.nullable().optional(),
     }).optional(),
-    service_prompts: z.object({ conversation_title: z.string().optional(), file_understanding: z.string().refine(value => value.trim().length > 0, 'File understanding prompt cannot be blank').optional() }).optional(),
+    /** `null` clears a prompt back to its default; see `mergeServicePrompts`. */
+    service_prompts: z.object({
+      conversation_title: z.string().nullable().optional(),
+      file_understanding: z.string().refine(value => value.trim().length > 0, 'File understanding prompt cannot be blank').nullable().optional(),
+    }).optional(),
   }),
 })
 export const ProjectCreateCommandSchema = z.object({

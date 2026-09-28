@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { ImagesIcon, SparklesIcon } from '@lucide/vue'
 import { toast } from 'vue-sonner'
 import PageBackButton from '@/client/components/layout/page-back-button.vue'
+import ModelCapabilityIcons from '@/client/components/model-capability-icons.vue'
 import SearchableSelect from '@/client/components/searchable-select.vue'
 import { isStudioImageModel } from '@/client/lib/image-studio'
 import { useConfigStore } from '@/client/stores/config'
@@ -15,7 +16,7 @@ import { Textarea } from '@/client/ui/textarea'
 import type { ModelRef } from '@/shared/model-ref'
 import { canServeAsServiceModel, canServeAsFileModel } from '@/shared/service-model'
 import {
-  MAX_PLACEHOLDER_CHARS, missingRequiredPlaceholders, SERVICE_PROMPT_DEFAULTS,
+  MAX_PLACEHOLDER_CHARS, missingRequiredPlaceholders, SERVICE_PROMPT_DEFAULTS, servicePromptPatch,
 } from '@/shared/service-prompts'
 
 const config = useConfigStore()
@@ -54,11 +55,16 @@ const imageOptions = computed(() => [
   })),
 ])
 
+const fileEntries = computed(() => new Map(config.enabledModels()
+  .filter(entry => canServeAsFileModel(entry.model.metadata))
+  .map(entry => [`${entry.provider.id}:${entry.model.model_id}`, entry])))
+/** Only called for keys `fileEntries` has; the template checks first. */
+const fileModel = (value: string) => fileEntries.value.get(value)!.model
 const fileOptions = computed(() => [
   { value: '', label: '不使用' },
-  ...config.enabledModels().filter(entry => canServeAsFileModel(entry.model.metadata)).map(entry => ({
-    value: `${entry.provider.id}:${entry.model.model_id}`, label: entry.model.metadata.name || entry.model.model_id,
-    description: `${entry.provider.name} · ${entry.model.metadata.modalities?.input.join(', ')}`,
+  ...[...fileEntries.value].map(([value, entry]) => ({
+    value, label: entry.model.metadata.name || entry.model.model_id,
+    description: `${entry.provider.name} · ${entry.model.model_id}`,
   })),
 ])
 const savedFile = computed(() => keyOf(sync.settings.service_models?.file_understanding))
@@ -101,7 +107,11 @@ function save() {
     type: 'settings.update', request_id: crypto.randomUUID(),
     settings: {
       service_models: { text: refOf(textKey.value), image: refOf(imageKey.value), file_understanding: refOf(fileKey.value) },
-      service_prompts: { conversation_title: titlePrompt.value, file_understanding: filePrompt.value },
+      // A prompt equal to its default is sent as `null` and stored as unset (spec §9).
+      service_prompts: {
+        conversation_title: servicePromptPatch('conversation_title', titlePrompt.value),
+        file_understanding: servicePromptPatch('file_understanding', filePrompt.value),
+      },
     },
   })
   if (!sent) {
@@ -181,6 +191,8 @@ onMounted(load)
               Field
                 FieldLabel(for="service-file-model") 模型
                 SearchableSelect#service-file-model(v-model="fileKey" :options="fileOptions" :disabled="saving" placeholder="选择文件理解模型" search-placeholder="搜索供应商、模型名称或 ID…")
+                  template(#option-extra="{ option }")
+                    ModelCapabilityIcons(v-if="fileEntries.has(option.value)" :model="fileModel(option.value)")
               Field
                 FieldLabel(for="service-file-prompt") 系统提示词
                 Textarea#service-file-prompt(v-model="filePrompt" rows="12" class="max-h-96 overflow-y-auto font-mono text-sm" :disabled="saving")

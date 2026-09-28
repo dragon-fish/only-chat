@@ -3,7 +3,7 @@ import type { UserSettings } from '@/shared/models'
 import { canServeAsFileModel } from '@/shared/service-model'
 import { canReadFile, attachmentFilename } from '@/shared/file-media'
 import { SERVICE_PROMPT_DEFAULTS } from '@/shared/service-prompts'
-import { getModel, getProvider, getProviderInterface } from './conversations'
+import { resolveServiceModel } from './service-model'
 import { resolveAttachmentInputs, type TransportDeps } from './attachment-transport'
 import { buildProviderOptions } from '../llm/messages'
 
@@ -18,15 +18,10 @@ export interface FileUnderstanding {
 
 /** Resolve once per generation, including the prompt; a mid-turn settings edit applies next turn. */
 export async function resolveFileUnderstanding(deps: TransportDeps, settings: UserSettings): Promise<FileUnderstanding | undefined> {
-  const ref = settings.service_models?.file_understanding
-  if (!ref) return
-  const provider = await getProvider(deps.db, ref.provider_id, deps.userId)
-  const model = await getModel(deps.db, ref.provider_id, ref.model_id, deps.userId)
-  if (!provider?.enabled || !model?.enabled || !canServeAsFileModel(model.metadata_resolved)) return
-  const interfaceId = model.interface_id ?? provider.default_interface_id
-  if (interfaceId === null) return
-  const iface = await getProviderInterface(deps.db, interfaceId, deps.userId)
-  if (!iface || iface.provider_id !== provider.id) return
+  const resolved = await resolveServiceModel(deps.db, deps.userId, settings, { slot: 'file_understanding', accepts: canServeAsFileModel })
+  if (!resolved) return
+  const { provider, providerInterface: iface, model } = resolved
+  const ref = { provider_id: provider.id, model_id: model.model_id }
   const system = settings.service_prompts?.file_understanding ?? SERVICE_PROMPT_DEFAULTS.file_understanding
   const canRead = (mime: string) => canReadFile(model.metadata_resolved, iface.protocol, mime)
   return {

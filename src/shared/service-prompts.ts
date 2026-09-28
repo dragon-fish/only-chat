@@ -112,6 +112,36 @@ Generate a concise title summarizing the chat history.
 </chat_history>`,
 } as const
 
+export type ServicePromptKey = keyof typeof SERVICE_PROMPT_DEFAULTS
+export type ServicePrompts = Partial<Record<ServicePromptKey, string>>
+
+/**
+ * What the settings form sends for one prompt: `null` (unset) when it equals the default. Storing
+ * the default text would freeze it, and a later revision of the default would never reach the user.
+ */
+export function servicePromptPatch(key: ServicePromptKey, value: string): string | null {
+  return value === SERVICE_PROMPT_DEFAULTS[key] ? null : value
+}
+
+/**
+ * Applies a settings patch to the stored prompts, which keep only what differs from the default: an
+ * absent key follows the default (spec §9). `null`, or the default text itself, clears a key;
+ * `undefined` leaves it as it was.
+ */
+export function mergeServicePrompts(
+  current: ServicePrompts | undefined,
+  patch: Partial<Record<ServicePromptKey, string | null>>,
+): ServicePrompts {
+  const next: ServicePrompts = { ...current }
+  for (const key of Object.keys(SERVICE_PROMPT_DEFAULTS) as ServicePromptKey[]) {
+    const value = patch[key]
+    if (value === undefined) continue
+    if (value === null || value === SERVICE_PROMPT_DEFAULTS[key]) delete next[key]
+    else next[key] = value
+  }
+  return next
+}
+
 export interface ServicePromptContext {
   /** Oldest first. `{user_message:1}` is the first element. */
   userMessages: readonly string[]

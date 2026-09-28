@@ -154,7 +154,10 @@ async function resolveTarget(hub: Hub, args: ResolveArgs): Promise<Target> {
     void hub.nameConversation(conversation.id, conversation.title, titleTextFromParts(args.firstParts))
       .catch(() => {})
   }
-  const fileUnderstanding = await resolveFileUnderstanding({ db: hub.db, userId: hub.userId, assets: hub.app.assets, llm: hub.app.llm }, user.settings)
+  // Only a turn that offers analyze_file needs the file understanding model (spec §5).
+  const fileUnderstanding = toolIds.includes(ANALYZE_FILE_TOOL_ID)
+    ? await resolveFileUnderstanding({ db: hub.db, userId: hub.userId, assets: hub.app.assets, llm: hub.app.llm }, user.settings)
+    : undefined
   return { conversation, provider, providerInterface, model, config, toolIds, enabledPlugins: user.settings.plugins, fileUnderstanding }
 }
 

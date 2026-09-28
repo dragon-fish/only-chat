@@ -11,7 +11,7 @@ import {
 } from './conversations'
 import { suggestConversationTitle } from './service-model'
 import { canServeAsServiceModel, canServeAsFileModel } from '@/shared/service-model'
-import { missingRequiredPlaceholders } from '@/shared/service-prompts'
+import { mergeServicePrompts, missingRequiredPlaceholders } from '@/shared/service-prompts'
 import { parseConversationPluginSettings } from '@/shared/plugins'
 import { pluginManifests } from '@/shared/plugin-manifests'
 import { createProject, deleteProject, getProject, listProjectConversations, updateProject, validateProjectIcon } from './projects'
@@ -357,7 +357,7 @@ export class Hub extends Service {
       if (!provider?.enabled || !model?.enabled || !canServeAsFileModel(model.metadata_resolved)) throw new Error('file understanding model not found')
     }
     const titlePrompt = patch.service_prompts?.conversation_title
-    if (titlePrompt !== undefined) {
+    if (typeof titlePrompt === 'string') {
       const missing = missingRequiredPlaceholders(titlePrompt)
       if (missing.length > 0) throw new Error(`title prompt must contain ${missing.join(', ')}`)
     }
@@ -369,7 +369,7 @@ export class Hub extends Service {
         : { service_models: { ...user.settings.service_models, ...patch.service_models } }),
       ...(patch.service_prompts === undefined
         ? {}
-        : { service_prompts: { ...user.settings.service_prompts, ...patch.service_prompts } }),
+        : { service_prompts: mergeServicePrompts(user.settings.service_prompts, patch.service_prompts) }),
     }
     const updated = await updateUserSettings(this.db, this.userId, settings)
     await this.broadcast({ type: 'settings.updated', settings: updated.settings })

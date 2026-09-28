@@ -3,6 +3,7 @@ import type { DB } from '../../db/client'
 import type { ModelRow, ProviderInterfaceRow, ProviderRow } from '../../db/schema'
 import { getModel, getProvider, getProviderInterface } from './conversations'
 import { canServeAsServiceModel } from '@/shared/service-model'
+import type { ModelMetadata } from '@/shared/model-metadata'
 import type { UserSettings } from '@/shared/models'
 import type { Llm } from '../llm'
 import { buildProviderOptions } from '../llm/messages'
@@ -19,8 +20,17 @@ export interface ResolvedServiceModel {
   model: ModelRow
 }
 
+export interface ServiceModelSlot {
+  /** Which `settings.service_models` entry to read. */
+  slot: 'text' | 'file_understanding'
+  /** Whether the model can do this slot's job at all, judged on its current metadata. */
+  accepts: (metadata: ModelMetadata) => boolean
+}
+
+const TEXT_SLOT: ServiceModelSlot = { slot: 'text', accepts: canServeAsServiceModel }
+
 /**
- * The service model as it stands at this moment, or `null`.
+ * The service model in `slot` as it stands at this moment, or `null`.
  *
  * Resolved on every use rather than trusted from settings, because a setting outlives what it points
  * at: the model can be switched off, the provider disabled, the row deleted, or the catalog can
@@ -31,14 +41,15 @@ export async function resolveServiceModel(
   db: DB,
   userId: number,
   settings: UserSettings,
+  { slot, accepts }: ServiceModelSlot = TEXT_SLOT,
 ): Promise<ResolvedServiceModel | null> {
-  const ref = settings.service_models?.text
+  const ref = settings.service_models?.[slot]
   if (!ref) return null
 
   const provider = await getProvider(db, ref.provider_id, userId)
   if (!provider?.enabled) return null
   const model = await getModel(db, ref.provider_id, ref.model_id, userId)
-  if (!model?.enabled || !canServeAsServiceModel(model.metadata_resolved)) return null
+  if (!model?.enabled || !accepts(model.metadata_resolved)) return null
 
   const interfaceId = model.interface_id ?? provider.default_interface_id
   if (interfaceId === null) return null

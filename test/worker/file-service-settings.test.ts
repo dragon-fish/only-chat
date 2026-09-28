@@ -7,6 +7,7 @@ import { createDb } from '@/server/db/client'
 import { models, providerInterfaces, providers, users } from '@/server/db/schema'
 import { getUser } from '@/server/plugins/hub/conversations'
 import { resolveFileUnderstanding } from '@/server/plugins/hub/file-understanding'
+import { SERVICE_PROMPT_DEFAULTS } from '@/shared/service-prompts'
 import { ensureTestUser } from './auth-helper'
 import { connect } from './ws-helper'
 
@@ -28,6 +29,8 @@ it('saves file settings without overwriting other slots and rejects a text-only 
     const settings = (await getUser(db, 1))!.settings
     expect(settings.service_models).toEqual({ text, file_understanding: vision })
     expect(settings.service_prompts).toEqual({ conversation_title: 'Name: {user_message:1}', file_understanding: 'Describe in detail.' })
+    await instance.app.hub.settingsUpdate({ service_prompts: { conversation_title: null, file_understanding: SERVICE_PROMPT_DEFAULTS.file_understanding } })
+    expect((await getUser(db, 1))!.settings.service_prompts).toEqual({})
     const deps = { db, userId: 1, llm: instance.app.llm, assets: instance.app.assets }
     const service = await resolveFileUnderstanding(deps, settings)
     expect(service?.canRead('image/png')).toBe(true)

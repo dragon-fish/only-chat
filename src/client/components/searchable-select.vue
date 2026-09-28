@@ -55,6 +55,8 @@ const textValue = (option: SearchableSelectOption) => [option.label, option.desc
             <span class="flex min-w-0 flex-1 items-center gap-2">
               <span class="min-w-0 truncate">{{ option.label }}</span>
               <span v-if="option.description" class="min-w-0 flex-1 truncate text-xs text-muted-foreground">{{ option.description }}</span>
+              <!-- Extra per-option content after the description, e.g. capability icons. -->
+              <slot name="option-extra" :option="option" />
             </span>
             <ComboboxItemIndicator><CheckIcon /></ComboboxItemIndicator>
           </ComboboxItem>
