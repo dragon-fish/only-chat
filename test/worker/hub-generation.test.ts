@@ -1668,6 +1668,9 @@ describe('provider metadata round trip', () => {
 })
 
 describe('provider file transport', () => {
+  // Files only reach a model that declares the modality; an undeclared one is treated as unable to read it.
+  const SEES_IMAGES: ModelMetadata = { reasoning: true, modalities: { input: ['text', 'image'], output: ['text'] } }
+
   const streamingMock = () => new MockLanguageModelV4({
     doStream: async () => ({ stream: simulateReadableStream({ chunks: [...STREAM], chunkDelayInMs: null, initialDelayInMs: null }) }),
   })
@@ -1694,10 +1697,10 @@ describe('provider file transport', () => {
   }
 
   it('shares normalized OpenAI scopes across Responses and a model-specific Chat interface', async () => {
-    const providerId = await seedProvider('shared-files', 'responses-model', true)
+    const providerId = await seedProvider('shared-files', 'responses-model', true, SEES_IMAGES)
     const db = createDb(env.DB)
     const [chat] = await db.insert(providerInterfaces).values({ provider_id: providerId, protocol: 'chat-completions', base_url: 'https://mock.example/responses-api/', native_files: true, created_at: 0 }).returning()
-    await db.insert(models).values({ provider_id: providerId, model_id: 'chat-model', interface_id: chat!.id, enabled: true })
+    await db.insert(models).values({ provider_id: providerId, model_id: 'chat-model', interface_id: chat!.id, metadata_resolved: SEES_IMAGES, enabled: true })
     const attachmentId = await seedAttachment()
     const uploads: Upload[] = []
     const files = recordingFiles(uploads)
@@ -1717,7 +1720,7 @@ describe('provider file transport', () => {
   })
 
   it.each(['credential', 'family', 'baseURL'] as const)('uploads a new pointer when the %s scope changes', async (change) => {
-    const providerId = await seedProvider('scoped-files', 'model-a', true)
+    const providerId = await seedProvider('scoped-files', 'model-a', true, SEES_IMAGES)
     const attachmentId = await seedAttachment()
     const uploads: Upload[] = []
     const created = await installMock(streamingMock, recordingFiles(uploads), ['responses', 'anthropic'])
@@ -1742,7 +1745,7 @@ describe('provider file transport', () => {
   })
 
   it('inlines bytes when the selected adapter has no Files API', async () => {
-    const providerId = await seedProvider('no-files-api', 'model-a', true)
+    const providerId = await seedProvider('no-files-api', 'model-a', true, SEES_IMAGES)
     const attachmentId = await seedAttachment()
     const created = await installMock(streamingMock)
     const c = await connect(await seedTestUser())
@@ -1753,8 +1756,8 @@ describe('provider file transport', () => {
   })
 
   it('uploads once per provider and reuses the first pointer when the conversation switches back', async () => {
-    const a = await seedProvider('files-a', 'model-a', true)
-    const b = await seedProvider('files-b', 'model-b', true)
+    const a = await seedProvider('files-a', 'model-a', true, SEES_IMAGES)
+    const b = await seedProvider('files-b', 'model-b', true, SEES_IMAGES)
     const attachmentId = await seedAttachment()
     const uploads: Upload[] = []
     const created = await installMock(streamingMock, recordingFiles(uploads))
@@ -1791,7 +1794,7 @@ describe('provider file transport', () => {
   })
 
   it('re-uploads expired pointers, retains history and reuses the newest upload', async () => {
-    const a = await seedProvider('files-a', 'model-a', true)
+    const a = await seedProvider('files-a', 'model-a', true, SEES_IMAGES)
     const attachmentId = await seedAttachment()
     const uploads: Upload[] = []
     const created = await installMock(streamingMock, recordingFiles(uploads))
@@ -1826,8 +1829,8 @@ describe('provider file transport', () => {
 
   it('persists the provider-reported expiry, and otherwise the requested seven days', async () => {
     const reported = new Date(Date.now() + 3_600_000)
-    const a = await seedProvider('files-a', 'model-a', true)
-    const b = await seedProvider('files-b', 'model-b', true)
+    const a = await seedProvider('files-a', 'model-a', true, SEES_IMAGES)
+    const b = await seedProvider('files-b', 'model-b', true, SEES_IMAGES)
     const attachmentId = await seedAttachment()
     await installMock(streamingMock, (provider) => recordingFiles([], provider.id === a ? reported : undefined)(provider))
 
@@ -1849,7 +1852,7 @@ describe('provider file transport', () => {
   })
 
   it('never touches the Files API when the provider has native files disabled', async () => {
-    const a = await seedProvider('inline', 'model-a', false)
+    const a = await seedProvider('inline', 'model-a', false, SEES_IMAGES)
     const attachmentId = await seedAttachment()
     const createFiles = vi.fn(recordingFiles([]))
     const created = await installMock(streamingMock, createFiles)
@@ -1864,7 +1867,7 @@ describe('provider file transport', () => {
   })
 
   it.each([400, 404, 405, 501])('falls back to inline bytes when Files upload returns HTTP %s', async statusCode => {
-    const a = await seedProvider(`unsupported-files-${statusCode}`, 'model-a', true)
+    const a = await seedProvider(`unsupported-files-${statusCode}`, 'model-a', true, SEES_IMAGES)
     const attachmentId = await seedAttachment()
     const created = await installMock(streamingMock, () => ({
       specificationVersion: 'v4',
@@ -1884,7 +1887,7 @@ describe('provider file transport', () => {
 
   it('surfaces auth, rate-limit and server upload failures instead of falling back to inline bytes', async () => {
     for (const statusCode of [401, 429, 500]) {
-      const a = await seedProvider(`files-${statusCode}`, 'model-a', true)
+      const a = await seedProvider(`files-${statusCode}`, 'model-a', true, SEES_IMAGES)
       const attachmentId = await seedAttachment()
       const created = await installMock(streamingMock, () => ({
         specificationVersion: 'v4',
@@ -2306,8 +2309,8 @@ describe('cross-feature integration', () => {
 
   it('carries one Project chat through Auto reasoning, an uploaded image, an A → B → A switch, a generated image, a reconnect and Project deletion', async () => {
     const db = createDb(env.DB)
-    const providerA = await seedProvider('int-a', 'int-a-1', true, { reasoning: true, modalities: { input: [], output: ['image'] } })
-    const providerB = await seedProvider('int-b', 'int-b-1', true, { reasoning: true })
+    const providerA = await seedProvider('int-a', 'int-a-1', true, { reasoning: true, modalities: { input: ['text', 'image'], output: ['text', 'image'] } })
+    const providerB = await seedProvider('int-b', 'int-b-1', true, { reasoning: true, modalities: { input: ['text', 'image'], output: ['text'] } })
     const commandProvider = await seedProvider('int-cmd', 'int-cmd-1', true, { reasoning: true })
     const projectId = await seedProject({
       system_prompt: 'PROJECT', provider_id: providerA, model_id: 'int-a-1',

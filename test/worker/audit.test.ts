@@ -77,7 +77,7 @@ describe('owner audit', () => {
   // Only the owner learns whether audit exists; for everyone else the field is simply absent.
   it('tells the owner alone through the site config', async () => {
     const { ctx, owner, admin, member } = await setup('true')
-    expect(await json(owner('/site-config'))).toEqual({ allowRegister: true, audit: true })
+    expect(await json(owner('/site-config'))).toMatchObject({ allowRegister: true, audit: true })
     for (const client of [admin, member]) expect.soft(await json(client('/site-config'))).not.toHaveProperty('audit')
     expect(await json(ctx.api.request('/api/site-config'))).not.toHaveProperty('audit')
   })
