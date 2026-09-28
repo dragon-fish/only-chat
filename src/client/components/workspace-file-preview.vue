@@ -28,6 +28,8 @@ const view = ref<'source' | 'rendered'>('source')
  */
 const media = ref<{ kind: MediaKind, url: string, mime: string } | null>(null)
 const mediaFailed = ref(false)
+/** A text asset's content, shown as source: an asset has no record, version or page preview. */
+const assetText = ref<string | null>(null)
 const title = computed(() => props.target?.kind === 'asset' ? props.target.name : record.value?.relativePath ?? '文件')
 const downloadHref = computed(() => {
   if (props.target?.kind === 'asset') return api.attachmentUrl(props.target.attachmentId)
@@ -53,7 +55,8 @@ const codeBlockProps: NonNullable<NodeRendererProps['codeBlockProps']> = {
  * gives it the same highlighting: a hand-assembled code block renders unstyled.
  */
 const markdown = computed(() => {
-  const language = record.value === null ? 'text' : languageOf(record.value.relativePath)
+  const name = props.target?.kind === 'asset' ? props.target.name : record.value?.relativePath
+  const language = name === undefined ? 'text' : languageOf(name)
   // A file carrying a fence of its own must not be able to end the block early.
   const longest = Math.max(0, ...[...content.value.matchAll(/`+/g)].map(match => match[0].length))
   const fence = '`'.repeat(Math.max(3, longest + 1))
@@ -67,12 +70,31 @@ watch(() => props.target, async (target) => {
   canRenderPage.value = false
   media.value = null
   mediaFailed.value = false
+  assetText.value = null
   error.value = null
   loading.value = false
   view.value = 'source'
   if (target === null) return
-  if (target.kind === 'asset') {
+  if (target.kind === 'asset' && mediaKind(target.mime) !== 'text') {
     media.value = { kind: mediaKind(target.mime), url: api.attachmentUrl(target.attachmentId), mime: target.mime }
+    return
+  }
+  if (target.kind === 'asset') {
+    loading.value = true
+    try {
+      const response = await fetch(api.attachmentUrl(target.attachmentId))
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      const text = await response.text()
+      if (props.target !== target) return
+      content.value = text
+      assetText.value = text
+    }
+    catch (cause) {
+      error.value = cause instanceof Error ? cause.message : '无法读取文件'
+    }
+    finally {
+      loading.value = false
+    }
     return
   }
   loading.value = true
@@ -126,6 +148,12 @@ ResponsiveOverlay(
       video.mx-auto.max-w-full.rounded-md(v-else :src="media.url" controls preload="metadata" class="max-h-[70dvh]" @error="mediaFailed = true")
     p.text-sm.text-muted-foreground(v-else-if="mediaFailed") 浏览器无法播放此文件，可以下载查看。
     p.text-sm.text-muted-foreground(v-else) 这种文件无法预览，可以下载查看。
+  template(v-else-if="assetText !== null")
+    p.mb-3(class="text-muted-foreground text-xs") {{ target?.kind === 'asset' ? target.mime : '' }}
+    //- Source, never executed by the app itself.
+    MarkdownRender(
+      mode="chat" :content="markdown" :final="true" :smooth-streaming="false"
+      :is-dark="resolvedTheme === 'dark'" :code-block-props="codeBlockProps")
   .flex.flex-col.gap-2(v-else-if="loading || !record")
     Skeleton(class="h-4 w-48")
     Skeleton(class="h-40 w-full")

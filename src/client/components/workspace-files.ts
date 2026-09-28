@@ -1,6 +1,6 @@
 import { getLanguageIcon } from 'markstream-vue'
 import type { ConversationAsset } from '@/shared/conversation-assets'
-import { fileModality } from '@/shared/file-media'
+import { fileModality, isTextMime } from '@/shared/file-media'
 import type { FileRecord } from '@/shared/workspace-files'
 
 export type { ConversationAsset, FileRecord }
@@ -12,7 +12,7 @@ export type { ConversationAsset, FileRecord }
 export type MediaKind = 'image' | 'pdf' | 'audio' | 'video' | 'text' | 'binary'
 
 export function mediaKind(mime: string): MediaKind {
-  if (mime.startsWith('text/')) return 'text'
+  if (isTextMime(mime)) return 'text'
   return fileModality(mime) ?? 'binary'
 }
 

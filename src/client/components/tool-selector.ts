@@ -21,6 +21,8 @@ export interface ToolGroupRow {
   enabled: boolean
   configured: boolean
   selected: boolean
+  /** Names of the plugins this row's plugin requires, which switching it on brings along. */
+  requires: string[]
 }
 
 interface PluginLoader { ensurePlugin(pluginId: string): Promise<void> }
@@ -94,6 +96,7 @@ export function availableToolGroups(
       enabled: settings[manifest.id] === true,
       configured: pluginConfigured(manifest, status),
       selected: group.tools.some(tool => selectedIds.has(tool.id)),
+      requires: (manifest.requires ?? []).map(id => manifests.find(other => other.id === id)?.name ?? id),
     })))
     .filter(row => row.enabled || row.selected)
 }

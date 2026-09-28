@@ -1,15 +1,16 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { DownloadIcon, ExternalLinkIcon, FileAudioIcon, FileIcon, FileTextIcon, FileVideoIcon } from '@lucide/vue'
-import { formatFileSize } from '@/client/components/workspace-files'
+import { fileIcon, formatFileSize } from '@/client/components/workspace-files'
 import { useAttachmentUrl } from '@/client/lib/audit-context'
-import { fileModality } from '@/shared/file-media'
+import { fileModality, isTextMime } from '@/shared/file-media'
 
 const props = defineProps<{ attachmentId: number; mime: string; filename?: string }>()
 const attachmentUrl = useAttachmentUrl()
 const url = computed(() => attachmentUrl(props.attachmentId))
 const kind = computed(() => fileModality(props.mime))
 const icon = computed(() => ({ pdf: FileTextIcon, audio: FileAudioIcon, video: FileVideoIcon, image: FileIcon })[kind.value ?? 'image'])
+const text = computed(() => isTextMime(props.mime))
 const label = computed(() => props.filename || props.mime)
 const failed = ref(false)
 const size = ref<number | null>(null)
@@ -34,7 +35,9 @@ watch(url, target => { failed.value = false; void loadSize(target) }, { immediat
 <template lang="pug">
 .flex.max-w-full.min-w-0.flex-col.gap-2.rounded-md.border.p-3
   .flex.min-w-0.items-center.gap-3
-    component.shrink-0.text-muted-foreground(:is="icon" class="size-8")
+    //- Text takes markstream's language icon, matching the chat's code blocks.
+    span.shrink-0(v-if="text" class="[&>svg]:size-8" v-html="fileIcon(filename ?? '')")
+    component.shrink-0.text-muted-foreground(v-else :is="icon" class="size-8")
     .min-w-0.flex-1
       p.truncate.text-sm.font-medium(:title="label") {{ label }}
       p.text-xs.text-muted-foreground {{ size === null ? mime : formatFileSize(size) }}

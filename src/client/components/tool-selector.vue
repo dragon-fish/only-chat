@@ -89,6 +89,7 @@ component(:is="desktop ? Popover : Drawer")
                   p {{ row.description }}
                   p(class="text-muted-foreground") 提供工具：{{ row.tools.map(tool => tool.name).join('、') }}
                   p(class="text-muted-foreground") 来自插件：{{ row.pluginName }}
+                  p(v-if="row.requires.length" class="text-muted-foreground") 需要：{{ row.requires.join('、') }}，开启时会一并开启
             ItemDescription(v-if="!row.enabled") 插件已停用；会话快照仍会保留。
             ItemDescription(v-else-if="!row.configured") 尚未配置，请先在插件设置中填写。
           Switch(
