@@ -1,8 +1,9 @@
 import type { ClientPluginSetup } from '@/client/plugins/host'
 import {
-  DELETE_FILE_TOOL_ID, EDIT_FILE_TOOL_ID, LIST_FILES_TOOL_ID, PREVIEW_FILE_TOOL_ID, READ_FILE_TOOL_ID,
+  COPY_FILE_TOOL_ID, DELETE_FILE_TOOL_ID, EDIT_FILE_TOOL_ID, LIST_FILES_TOOL_ID, PREVIEW_FILE_TOOL_ID, READ_FILE_TOOL_ID,
   RENAME_FILE_TOOL_ID, RESTORE_FILE_TOOL_ID, WRITE_FILE_TOOL_ID,
 } from '../shared'
+import CopyFileCard from './copy-file-card.vue'
 import DeleteFileCard from './delete-file-card.vue'
 import EditFileCard from './edit-file-card.vue'
 import FilesTab from './files-tab.vue'
@@ -22,6 +23,7 @@ export const setup: ClientPluginSetup = (ctx) => {
   ctx.tools.register(EDIT_FILE_TOOL_ID, EditFileCard)
   ctx.tools.register(RESTORE_FILE_TOOL_ID, RestoreFileCard)
   ctx.tools.register(RENAME_FILE_TOOL_ID, RenameFileCard)
+  ctx.tools.register(COPY_FILE_TOOL_ID, CopyFileCard)
   ctx.tools.register(DELETE_FILE_TOOL_ID, DeleteFileCard)
   ctx.tools.register(PREVIEW_FILE_TOOL_ID, PreviewFileCard)
   // What the turn produced, said once at the end: the cards above are a log, not a result.

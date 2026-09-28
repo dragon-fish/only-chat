@@ -165,3 +165,14 @@ export function assetRowMeta(asset: ConversationAsset): string {
   const size = formatFileSize(asset.size)
   return asset.width && asset.height ? `${size} · ${asset.width}×${asset.height}` : size
 }
+
+/**
+ * A path or file reference as a tool card names it: a workspace file by its last segment, an asset
+ * by its ref, which is the only name the model has for it.
+ */
+export function fileRefLabel(ref: string): string {
+  const path = ref.startsWith('vfs:') ? ref.slice(4) : ref
+  if (!path.startsWith('/')) return ref
+  const trimmed = path.endsWith('/') ? path.slice(0, -1) : path
+  return trimmed.slice(trimmed.lastIndexOf('/') + 1) || trimmed
+}
