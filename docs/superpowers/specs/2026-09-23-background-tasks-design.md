@@ -4,7 +4,7 @@
 
 - **后台任务（核心）**：工具发起、在当前回复之外完成的工作。工具立即返回，工作完成后以一条通知消息回到对话，并让 Agent 接着处理。
 - **generate_image（插件）**：第一个后台任务。Agent 调用它生成图片，走与 Studio 相同的 Artifact run、Workflow、Gallery。
-- **投影挂载与读图（workspace-files）**：生成的图片和用户上传的图片以只读路径出现在 VFS 中；`read_file` 按当前模型的输入模态把图片交给模型。
+- 生成的图片以 asset 的形式回到对话，文件引用、读图与改图的引用方式见 [会话文件 spec](2026-09-28-conversation-files-design.md)。
 
 替代 [图片生成 spec](2026-09-09-image-generation-design.md) §Phase 2 Boundary 中「停止当前生成、完成后续写」的方案。
 
@@ -90,7 +90,7 @@
   prompt: string
   count?: number                 // 1..应用上限，默认 1
   size?: { width: number; height: number }
-  reference_images?: string[]    // /artifacts/… 或 /uploads/… 路径，见 §4
+  reference_images?: string[]    // 文件引用 asset:<id> / vfs:<路径>
 }
 ```
 
@@ -103,7 +103,7 @@
 - `source = 'tool'`，`conversation_id` 为聊天对话，`message_id` 为包含工具调用的 assistant 消息，`tool_call_id` 为调用 id。
 - 不插入图片对话的消息，不移动 head。
 - 幂等键 `client_request_id = tool:<message_id>:<call_id>`。
-- 参考图路径经 §4 解析为 attachment id；解析失败时工具直接返回错误，不创建 run。
+- 参考图经 `resolveFileRef` 解析为 attachment id（[会话文件 spec](2026-09-28-conversation-files-design.md) §3、§8）；解析失败或非图片时工具直接返回错误，不创建 run。
 
 ### 3.4 结束
 
@@ -111,7 +111,7 @@ Workflow 结束一个 `source = 'tool'` 的 run 后调用 `settleTask`：
 
 | 状态 | 摘要 |
 |---|---|
-| completed | `Generated N image(s): /artifacts/31.png, /artifacts/32.png` |
+| completed | `Generated N image(s): asset:31, asset:32`（attachment id） |
 | failed | `Image generation failed: <run.error>` |
 | cancelled | `Cancelled by the user.` |
 
@@ -121,37 +121,6 @@ Workflow 结束一个 `source = 'tool'` 的 run 后调用 `settleTask`：
 - 通知详情：该 run 的缩略图。
 - 查看器的来源链接按对话类型跳转：图片对话 `/images/s/:id`，聊天对话进入对应聊天。
 
-## 4. 投影挂载与读图
+## 4. 读图
 
-实现 [workspace-files spec](2026-09-10-workspace-files-design.md) §Projected Mounts，限定为本对话范围的两个只读挂载：
-
-| 挂载 | 内容 | 文件名 |
-|---|---|---|
-| `/artifacts` | `conversation_id` 为本对话的 run 产出的图片（未删除） | `<artifact_id>.<ext>` |
-| `/artifacts` | 聊天模型在本对话 assistant 消息中直接生成的图片（没有 artifact 记录） | `msg-<attachment_id>.<ext>` |
-| `/uploads` | 本对话 user 消息中附带的图片 | `<attachment_id>.<ext>` |
-
-- 条目在读取时由 `artifacts`、`artifact_runs`、`messages` 派生，不写 `workspace_files`。
-- `list_files("/")` 列出这两个挂载；对其写入、重命名、删除一律拒绝。
-- 路径解析（路径 → attachment id）由核心的 workspace files service 提供，`generate_image` 解析 `reference_images` 时复用；它不依赖 workspace_files 插件是否启用。
-- 扩展名由 MIME 决定：`image/png`→`png`，`image/jpeg`→`jpg`，`image/webp`→`webp`，`image/gif`→`gif`。
-
-### 4.0 让模型知道路径
-
-对话启用了任一消费这些路径的工具（`read_file`、`generate_image`）时，`buildModelMessages` 为图片补上路径标注，否则不加：
-
-- user 消息中的每张图片前加文本 `[image: /uploads/<attachment_id>.<ext>]`。
-- assistant 消息中聊天模型生成的图片（本身不回放给模型）替换为文本 `[generated image: /artifacts/msg-<attachment_id>.<ext>]`；带 `artifact_id` 的替换为 `[generated image: /artifacts/<artifact_id>.<ext>]`。
-
-### 4.1 读图
-
-`read_file` 读图片时：
-
-- 当前模型输入模态含 `image`：工具结果为元数据 `{ path, mime, width, height }`，图片本身不进工具结果。
-- 否则：返回「当前模型无法查看图片」的陈述，不是错误。
-
-图片作为 user 消息中的 image part 交给模型，紧跟在这一步的工具结果之后，与用户上传走同一套附件传输（Files API 指针或内联）：
-
-- **持久化**：`tool_result` Part 增加可选 `attachments: number[]`。工具在输出里用保留键 `__attachments` 交出 attachment id，累加器把它移到 Part 上并从 `content` 中删去。`buildModelMessages` 在含这些结果的 tool 消息后紧跟一条 user 消息：每张图前一行文本 `Image returned by <tool name>:`，随后是图片；`requiredAttachmentIds` 同步包含它们。
-- **本轮内**：SDK 自带消息列表，`prepareStep` 以与插话相同的方式追加这条 user 消息。
-- **协议**：实现时逐一验证 `anthropic`、`chat-completions`、`responses`、`vertex-compatible` 接受「tool 结果后紧跟 user 图片」；不接受的协议，该模型按「无法查看图片」处理。
+模型查看生成的图片与用户上传的文件（`view_file`、`read_file`）及其交付方式见 [会话文件 spec](2026-09-28-conversation-files-design.md) §3.3、§7。
