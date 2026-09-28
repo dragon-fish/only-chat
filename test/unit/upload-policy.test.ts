@@ -1,5 +1,5 @@
-import { afterEach, expect, it, vi } from 'vitest'
-import { uploadFile } from '@/client/lib/file-upload'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { uploadFile, uploadMime } from '@/client/lib/file-upload'
 import { api } from '@/client/lib/api'
 import { UploadPolicySchema } from '@/shared/upload-policy'
 
@@ -26,4 +26,36 @@ it('allows a configured non-image upload and preserves its MIME', async () => {
 it('permits closing uploads entirely but refuses unsupported formats', () => {
   expect(UploadPolicySchema.safeParse({ maxBytes: 1024, allowedMimeTypes: [] }).success).toBe(true)
   expect(UploadPolicySchema.safeParse({ maxBytes: 1024, allowedMimeTypes: ['application/zip'] }).success).toBe(false)
+})
+
+describe('chat image uploads', () => {
+  function stubCanvas(encoded: number) {
+    vi.stubGlobal('createImageBitmap', async () => ({ width: 4096, height: 4096, close() {} }))
+    vi.stubGlobal('document', { createElement: () => ({ width: 0, height: 0, getContext: () => ({ drawImage() {} }), toBlob: (callback: (blob: Blob) => void, type: string) => callback(new Blob([new Uint8Array(encoded)], { type })) }) })
+  }
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('checks the size limit after downscaling, not on the original photo', async () => {
+    stubCanvas(100)
+    vi.spyOn(api, 'checkAttachment').mockResolvedValue({ exists: false })
+    const put = vi.spyOn(api, 'uploadAttachment').mockResolvedValue({ attachment_id: 5 })
+    const result = await uploadFile(new File([new Uint8Array(5000)], 'photo.jpg', { type: 'image/jpeg' }), { maxBytes: 1000, allowedMimeTypes: ['image/webp'] })
+    expect(result).toMatchObject({ attachment_id: 5, mime: 'image/webp' })
+    expect(put.mock.calls[0]![1].size).toBe(100)
+    URL.revokeObjectURL(result.preview)
+  })
+
+  it('re-encodes a decodable image that is not a stored format', async () => {
+    stubCanvas(10)
+    vi.spyOn(api, 'checkAttachment').mockResolvedValue({ exists: false })
+    const put = vi.spyOn(api, 'uploadAttachment').mockResolvedValue({ attachment_id: 6 })
+    const result = await uploadFile(new File(['BM'], 'scan.bmp', { type: 'image/bmp' }), { maxBytes: 1000, allowedMimeTypes: ['image/png', 'image/webp'] })
+    expect(put.mock.calls[0]![1].type).toBe('image/webp')
+    URL.revokeObjectURL(result.preview)
+  })
+})
+
+it('resolves an untyped .webm by extension to video', () => {
+  expect(uploadMime(new File(['x'], 'clip.webm'))).toBe('video/webm')
+  expect(uploadMime(new File(['x'], 'voice.webm', { type: 'audio/webm' }))).toBe('audio/webm')
 })

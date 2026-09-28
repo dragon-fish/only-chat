@@ -3,7 +3,7 @@ import { and, eq } from 'drizzle-orm'
 import type { ImagePart } from '@/shared/parts'
 import type { DB } from '../../db/client'
 import { attachments } from '../../db/schema'
-import { MAX_UPLOAD_BYTES, r2Key } from '../api/attachments'
+import { MAX_GENERATED_IMAGE_BYTES, r2Key } from '../api/attachments'
 import type { Hub } from './index'
 
 /** The same set the upload route accepts; a generated file gets no wider licence than a user one. */
@@ -41,7 +41,7 @@ async function readOutput(file: GeneratedFile): Promise<{ bytes: Uint8Array<Arra
     const inline = file.uint8Array
     // Decided from the length alone, before anything is duplicated: this runs inside the `UserHub`
     // DO, where a needless second copy of an oversized buffer costs every socket on the isolate.
-    if (inline.byteLength > MAX_UPLOAD_BYTES) throw tooLarge(inline.byteLength)
+    if (inline.byteLength > MAX_GENERATED_IMAGE_BYTES) throw tooLarge(inline.byteLength)
     // Copied out of the SDK's buffer: `crypto.subtle` needs bytes backed by a plain ArrayBuffer.
     return { bytes: new Uint8Array(inline), mime: baseMime(file.mediaType) }
   }
@@ -51,7 +51,7 @@ async function readOutput(file: GeneratedFile): Promise<{ bytes: Uint8Array<Arra
   // one generation, it would OOM the DO and drop every socket this user has. A missing or
   // non-numeric header is not an error, it only means there is nothing to reject early on.
   const declared = Number(response.headers.get('content-length'))
-  if (Number.isFinite(declared) && declared > MAX_UPLOAD_BYTES) throw tooLarge(declared)
+  if (Number.isFinite(declared) && declared > MAX_GENERATED_IMAGE_BYTES) throw tooLarge(declared)
   // What the download served decides the type: the URL itself is never persisted or trusted.
   const mime = response.headers.get('content-type') ?? file.mediaType
   return { bytes: new Uint8Array(await response.arrayBuffer()), mime: baseMime(mime) }
@@ -66,7 +66,7 @@ async function validate(file: GeneratedFile): Promise<ValidatedImage> {
   const { bytes, mime } = await readOutput(file)
   if (!ACCEPTED_MIME.has(mime)) throw new Error(`unsupported generated image type: ${mime || 'unknown'}`)
   if (bytes.byteLength === 0) throw new Error('generated image is empty')
-  if (bytes.byteLength > MAX_UPLOAD_BYTES) throw tooLarge(bytes.byteLength)
+  if (bytes.byteLength > MAX_GENERATED_IMAGE_BYTES) throw tooLarge(bytes.byteLength)
   return { bytes, mime, sha256: hex(await crypto.subtle.digest('SHA-256', bytes)) }
 }
 

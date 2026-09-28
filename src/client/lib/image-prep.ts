@@ -14,19 +14,27 @@ export interface PreparedImage {
   sha256: string
 }
 
-/** Downscales to MAX_IMAGE_EDGE on the longest side, re-encodes, and hashes. Browser only. */
+const ENCODABLE = ['image/png', 'image/jpeg', 'image/webp']
+
+/**
+ * Downscales to MAX_IMAGE_EDGE on the longest side, re-encodes, and hashes. Browser only.
+ *
+ * Anything the browser can decode is accepted as input (BMP, AVIF, HEIC where supported): it is
+ * re-encoded, so only the resulting type has to be in `allowedTypes`. A PNG, JPEG or WebP that
+ * needs no downscaling and is itself allowed is stored as-is.
+ */
 export async function prepareImage(file: Blob, allowedTypes?: readonly string[]): Promise<PreparedImage> {
   const bitmap = await createImageBitmap(file)
   const scale = Math.min(1, MAX_IMAGE_EDGE / Math.max(bitmap.width, bitmap.height))
   const width = Math.round(bitmap.width * scale)
   const height = Math.round(bitmap.height * scale)
+  const allowed = (mime: string) => !allowedTypes || allowedTypes.includes(mime)
   let blob: Blob = file
-  const encodable = ['image/png', 'image/jpeg', 'image/webp']
   const preferred = file.type === 'image/png' ? 'image/png' : 'image/webp'
-  const type = allowedTypes
-    ? [preferred, file.type, ...encodable].find(mime => encodable.includes(mime) && allowedTypes.includes(mime))
-    : preferred
-  if (type && (scale < 1 || !/^image\/(png|jpeg|webp)$/.test(file.type))) {
+  const type = [preferred, file.type, ...ENCODABLE].find(mime => ENCODABLE.includes(mime) && allowed(mime))
+  const keep = scale === 1 && ENCODABLE.includes(file.type) && allowed(file.type)
+  // No allowed encodable target leaves the original in place; the caller's policy check refuses it.
+  if (type && !keep) {
     const canvas = document.createElement('canvas')
     canvas.width = width
     canvas.height = height
@@ -38,14 +46,19 @@ export async function prepareImage(file: Blob, allowedTypes?: readonly string[])
   return result
 }
 
-export async function uploadImage(file: Blob, suppliedPolicy?: UploadPolicy): Promise<{ attachment_id: number; preview: string }> {
+/**
+ * The size limit is checked on the prepared blob, never on the original: a large photo that
+ * downscales under the limit must go through.
+ */
+export async function uploadImage(file: Blob, suppliedPolicy?: UploadPolicy): Promise<{ attachment_id: number; preview: string; mime: string }> {
   const policy = suppliedPolicy ?? await currentUploadPolicy()
-  validateUpload(policy, file.type, file.size)
-  const prepared = await prepareImage(file, policy.allowedMimeTypes)
+  let prepared: PreparedImage
+  try { prepared = await prepareImage(file, policy.allowedMimeTypes) }
+  catch { throw new Error('浏览器无法读取此图片') }
   validateUpload(policy, prepared.blob.type, prepared.blob.size)
   const check = await api.checkAttachment(prepared.sha256)
   const attachment_id = check.exists && check.attachment_id !== undefined
     ? check.attachment_id
     : (await api.uploadAttachment(prepared.sha256, prepared.blob, prepared.width, prepared.height)).attachment_id
-  return { attachment_id, preview: URL.createObjectURL(prepared.blob) }
+  return { attachment_id, preview: URL.createObjectURL(prepared.blob), mime: prepared.blob.type }
 }

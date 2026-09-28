@@ -1,16 +1,52 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref, watch } from 'vue'
+import { DownloadIcon, ExternalLinkIcon, FileAudioIcon, FileIcon, FileTextIcon, FileVideoIcon } from '@lucide/vue'
+import { formatFileSize } from '@/client/components/workspace-files'
 import { useAttachmentUrl } from '@/client/lib/audit-context'
+import { fileModality } from '@/shared/file-media'
+
 const props = defineProps<{ attachmentId: number; mime: string; filename?: string }>()
 const attachmentUrl = useAttachmentUrl()
+const url = computed(() => attachmentUrl(props.attachmentId))
+const kind = computed(() => fileModality(props.mime))
+const icon = computed(() => ({ pdf: FileTextIcon, audio: FileAudioIcon, video: FileVideoIcon, image: FileIcon })[kind.value ?? 'image'])
+const label = computed(() => props.filename || props.mime)
 const failed = ref(false)
+const size = ref<number | null>(null)
+
+/**
+ * A file part carries no size, so it is read from the download route: a one-byte range answers
+ * with `Content-Range: bytes 0-0/<total>` without transferring the file. A failure only hides the
+ * size; the card stays usable.
+ */
+async function loadSize(target: string) {
+  size.value = null
+  try {
+    const response = await fetch(target, { headers: { range: 'bytes=0-0' } })
+    const total = /\/(\d+)$/.exec(response.headers.get('content-range') ?? '')?.[1] ?? (response.status === 200 ? response.headers.get('content-length') : null)
+    void response.body?.cancel()
+    if (target === url.value && total) size.value = Number(total)
+  } catch { /* size stays unknown */ }
+}
+watch(url, target => { failed.value = false; void loadSize(target) }, { immediate: true })
 </script>
 
-<template>
-  <div class="flex max-w-full flex-col gap-2 rounded-md border p-3">
-    <audio v-if="mime.startsWith('audio/') && !failed" :src="attachmentUrl(props.attachmentId)" controls preload="metadata" class="max-w-full" @error="failed = true" />
-    <video v-else-if="mime.startsWith('video/') && !failed" :src="attachmentUrl(props.attachmentId)" controls preload="metadata" class="max-h-80 max-w-full rounded" @error="failed = true" />
-    <p v-if="failed" class="text-sm text-muted-foreground">浏览器无法播放此文件，可以下载查看。</p>
-    <a :href="attachmentUrl(props.attachmentId)" :download="filename || 'attachment'" class="text-sm underline">{{ filename || mime }} · 下载</a>
-  </div>
+<template lang="pug">
+.flex.max-w-full.min-w-0.flex-col.gap-2.rounded-md.border.p-3
+  .flex.min-w-0.items-center.gap-3
+    component.shrink-0.text-muted-foreground(:is="icon" class="size-8")
+    .min-w-0.flex-1
+      p.truncate.text-sm.font-medium(:title="label") {{ label }}
+      p.text-xs.text-muted-foreground {{ size === null ? mime : formatFileSize(size) }}
+    a.inline-flex.shrink-0.items-center.justify-center.rounded-md(
+      :href="url" target="_blank" rel="noopener" title="打开" aria-label="打开文件"
+      class="size-10 hover:bg-accent md:size-8")
+      ExternalLinkIcon(class="size-4")
+    a.inline-flex.shrink-0.items-center.justify-center.rounded-md(
+      :href="url" :download="filename || 'attachment'" title="下载" aria-label="下载文件"
+      class="size-10 hover:bg-accent md:size-8")
+      DownloadIcon(class="size-4")
+  audio.max-w-full(v-if="kind === 'audio' && !failed" :src="url" controls preload="metadata" @error="failed = true")
+  video.max-w-full.rounded(v-else-if="kind === 'video' && !failed" :src="url" controls preload="metadata" class="max-h-80" @error="failed = true")
+  p.text-sm.text-muted-foreground(v-if="failed") 浏览器无法播放此文件，可以下载查看。
 </template>

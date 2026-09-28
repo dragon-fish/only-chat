@@ -15,7 +15,18 @@ import { mergeRestoredText } from '@/client/stores/sync'
 import { api } from '@/client/lib/api'
 import type { Part } from '@/shared/parts'
 
-interface Attached { mime: string; filename?: string; attachment_id: number; preview: string; state: 'uploading' | 'error' | 'done' }
+/**
+ * One chip in the box. Only a file knows its MIME: an `image` part carries none, so a restored image
+ * gets none rather than an invented one.
+ */
+type Attached = { filename?: string; attachment_id: number; preview: string; state: 'uploading' | 'error' | 'done' }
+  & ({ kind: 'image' } | { kind: 'file'; mime: string })
+
+function toPart(item: Attached): Part {
+  return item.kind === 'image'
+    ? { type: 'image', attachment_id: item.attachment_id }
+    : { type: 'file', attachment_id: item.attachment_id, mime: item.mime, filename: item.filename }
+}
 
 const props = defineProps<{
   streaming: boolean
@@ -44,15 +55,18 @@ const siteConfig = useSiteConfigStore()
 onMounted(() => { void siteConfig.load().catch(() => {}) })
 const uploadPolicy = computed(() => siteConfig.config?.uploads)
 const fileAccept = computed(() => uploadPolicy.value?.allowedMimeTypes.join(',') ?? '')
-const uploadHint = computed(() => uploadPolicy.value
-  ? uploadPolicy.value.allowedMimeTypes.length ? `添加文件（最大 ${uploadLimitLabel(uploadPolicy.value.maxBytes)}）` : '本站已关闭文件上传'
-  : '添加文件')
+const uploadsOff = computed(() => uploadPolicy.value?.allowedMimeTypes.length === 0)
+const uploadHint = computed(() => {
+  if (!uploadPolicy.value) return '添加文件'
+  return uploadsOff.value ? '本站已关闭文件上传' : `添加文件（最大 ${uploadLimitLabel(uploadPolicy.value.maxBytes)}）`
+})
+const dropLabel = computed(() => (uploadsOff.value ? uploadHint.value : `松开以${uploadHint.value}`))
 const text = ref('')
-const images = ref<Attached[]>([])
+const attachments = ref<Attached[]>([])
 // A counter, not a flag: concurrent uploads must not let the first one to finish clear `busy`.
 const pending = ref(0)
 const busy = computed(() => pending.value > 0)
-const hasContent = computed(() => text.value.trim() !== '' || images.value.some((image) => image.state === 'done'))
+const hasContent = computed(() => text.value.trim() !== '' || attachments.value.some((item) => item.state === 'done'))
 /**
  * Set the moment stopping or interrupting is asked for, cleared when the turn actually ends.
  *
@@ -123,7 +137,7 @@ const box = ref<{ $el?: HTMLTextAreaElement } | HTMLTextAreaElement | null>(null
  * rejected command must not swallow the message (spec §9), so it is kept here until the parent
  * either sees the message land or sees an error.
  */
-const sent = ref<{ text: string; images: Attached[] } | null>(null)
+const sent = ref<{ text: string; attachments: Attached[] } | null>(null)
 
 /** `InputGroupTextarea` is a component, so the ref holds an instance; unwrap it to the element. */
 function element(): HTMLTextAreaElement | null {
@@ -150,11 +164,15 @@ async function addFiles(files: File[]) {
     for (const f of files) {
       const mime = uploadMime(f)
       if (!mime) { toast.error(`不支持的文件：${f.name}`); continue }
-      const item = reactive<Attached>({ mime, filename: f.name, attachment_id: -1, preview: URL.createObjectURL(f), state: 'uploading' })
-      images.value.push(item)
+      // Pushed before the await so the chip appears immediately and can show its own spinner.
+      const item = reactive<Attached>(mime.startsWith('image/')
+        ? { kind: 'image', filename: f.name, attachment_id: -1, preview: URL.createObjectURL(f), state: 'uploading' }
+        : { kind: 'file', mime, filename: f.name, attachment_id: -1, preview: URL.createObjectURL(f), state: 'uploading' })
+      attachments.value.push(item)
       try {
         const done = await uploadFile(f, policy)
         item.attachment_id = done.attachment_id
+        // `uploadFile` returns its own object URL; drop ours rather than leaking it.
         URL.revokeObjectURL(item.preview)
         item.preview = done.preview
         item.state = 'done'
@@ -167,8 +185,8 @@ async function addFiles(files: File[]) {
 function releasePreviews(items: Attached[]) {
   for (const i of items) if (i.preview) URL.revokeObjectURL(i.preview)
 }
-function removeImage(index: number) {
-  releasePreviews(images.value.splice(index, 1))
+function removeAttachment(index: number) {
+  releasePreviews(attachments.value.splice(index, 1))
 }
 function onPaste(e: ClipboardEvent) {
   const files = [...(e.clipboardData?.files ?? [])]
@@ -179,31 +197,31 @@ const { isOverDropZone } = useDropZone(document, {
   onDrop: files => { void addFiles(files ?? []) },
 })
 function dropSent() {
-  if (sent.value) releasePreviews(sent.value.images)
+  if (sent.value) releasePreviews(sent.value.attachments)
   sent.value = null
 }
 async function submit() {
   if (busy.value) return
-  const parts: Part[] = images.value.filter((i) => i.state === 'done').map((i) => (i.mime.startsWith('image/') ? { type: 'image', attachment_id: i.attachment_id } : { type: 'file', attachment_id: i.attachment_id, mime: i.mime, filename: i.filename }))
+  const parts: Part[] = attachments.value.filter((i) => i.state === 'done').map(toPart)
   if (text.value.trim()) parts.push({ type: 'text', text: text.value })
   if (!parts.length || !props.canSend || !props.connected) return
   emit('send', parts)
   dropSent()
-  sent.value = { text: text.value, images: images.value }
+  sent.value = { text: text.value, attachments: attachments.value }
   text.value = ''
-  images.value = []
+  attachments.value = []
   await nextTick()
   autoGrow()
 }
 /** Everything in the box, as parts, leaving it empty. Shared by queueing and interrupting. */
 function takeBox(): Part[] {
-  const parts: Part[] = images.value.filter(i => i.state === 'done').map(i => (i.mime.startsWith('image/') ? { type: 'image', attachment_id: i.attachment_id } : { type: 'file', attachment_id: i.attachment_id, mime: i.mime, filename: i.filename }))
+  const parts: Part[] = attachments.value.filter(i => i.state === 'done').map(toPart)
   if (text.value.trim()) parts.push({ type: 'text', text: text.value })
   if (parts.length === 0) return []
   dropSent()
-  sent.value = { text: text.value, images: images.value }
+  sent.value = { text: text.value, attachments: attachments.value }
   text.value = ''
-  images.value = []
+  attachments.value = []
   return parts
 }
 
@@ -237,7 +255,10 @@ function restore(parts: Part[]) {
   if (said) text.value = text.value.trim() ? `${said}\n${text.value}` : said
   for (const part of parts) {
     if (part.type !== 'image' && part.type !== 'file') continue
-    images.value.push({ mime: part.type === 'file' ? part.mime : 'image/png', filename: part.type === 'file' ? part.filename : undefined, attachment_id: part.attachment_id, preview: api.attachmentUrl(part.attachment_id), state: 'done' })
+    const preview = api.attachmentUrl(part.attachment_id)
+    attachments.value.push(part.type === 'image'
+      ? { kind: 'image', attachment_id: part.attachment_id, preview, state: 'done' }
+      : { kind: 'file', mime: part.mime, filename: part.filename, attachment_id: part.attachment_id, preview, state: 'done' })
   }
   void nextTick().then(autoGrow)
 }
@@ -260,14 +281,16 @@ function onKeydown(e: KeyboardEvent) {
   if (!hasContent.value) return
   act()
 }
-async function pickFiles() {
+/**
+ * Opens the picker synchronously from the click: Safari drops the user gesture across an `await`
+ * and then silently refuses to open it, so never load anything first. The cached site config
+ * decides; when it has not loaded yet the picker opens anyway, and the server re-validates every
+ * upload.
+ */
+function pickFiles() {
   if (busy.value) return
-  try {
-    if (!uploadPolicy.value) await siteConfig.load(true)
-    if (!uploadPolicy.value?.allowedMimeTypes.length) { toast.error('本站已关闭文件上传'); return }
-    await nextTick()
-    fileInput.value?.click()
-  } catch { toast.error('无法加载上传设置，请重试') }
+  if (uploadsOff.value) { toast.error('本站已关闭文件上传'); return }
+  fileInput.value?.click()
 }
 function onFileChange(e: Event) {
   const input = e.target as HTMLInputElement
@@ -282,7 +305,7 @@ function confirmSend() {
 /**
  * The command was rejected: put the message back without losing anything. The rejected message is
  * the earlier one, so it is merged in above whatever the user started typing during the wait
- * (spec §9); an untouched Composer therefore gets it back verbatim. Its images are already stored
+ * (spec §9); an untouched Composer therefore gets it back verbatim. Its attachments are already stored
  * server-side, so re-attaching their ids costs nothing.
  */
 async function restoreSend() {
@@ -290,18 +313,18 @@ async function restoreSend() {
   sent.value = null
   if (!previous) return
   text.value = mergeRestoredText(previous.text, text.value)
-  images.value = [...previous.images, ...images.value]
+  attachments.value = [...previous.attachments, ...attachments.value]
   await nextTick()
   autoGrow()
 }
 defineExpose({ confirmSend, restoreSend, restore })
 
-onBeforeUnmount(() => { releasePreviews(images.value); dropSent() })
+onBeforeUnmount(() => { releasePreviews(attachments.value); dropSent() })
 </script>
 
 <template lang="pug">
 .p-3
-  FileDropOverlay(:show="isOverDropZone" :label="`松开以${uploadHint}`")
+  FileDropOverlay(:show="isOverDropZone" :label="dropLabel")
   //- Sits on the box the way the fold tab sits on its card: same surface, bottom corners square,
   //- so the two read as one control rather than a notice floating above one.
   .mx-auto.flex.justify-center(v-if="stashed.length" class="max-w-3xl px-2")
@@ -315,24 +338,24 @@ onBeforeUnmount(() => { releasePreviews(images.value); dropSent() })
     slot(name="replacement")
   InputGroup.mx-auto(v-else class="max-w-3xl rounded-xl")
     //- `w-full`: InputGroup is `items-center`, so without it the row of previews sits centred.
-    AttachmentGroup.w-full.px-2(v-if="images.length")
+    AttachmentGroup.w-full.px-2(v-if="attachments.length")
       //- No `size`: the vendored CSS emits `group-data-[size=xs]:w-7` after
       //- `group-data-[orientation=vertical]:w-full`, so `xs` shrinks the thumbnail to 28px and
       //- leaves the rest of the chip empty. The default size is the one the docs pair with
       //- `orientation="vertical"`.
       Attachment(
-        v-for="(img, i) in images" :key="i"
-        orientation="vertical" :state="img.state")
+        v-for="(item, i) in attachments" :key="i"
+        orientation="vertical" :state="item.state")
         AttachmentMedia(variant="image")
-          Spinner(v-if="img.state === 'uploading'")
-          img(v-else-if="img.state === 'done' && img.mime.startsWith('image/')" :src="img.preview" alt="")
-          FileIcon(v-else-if="img.state === 'done'" :title="img.filename")
+          Spinner(v-if="item.state === 'uploading'")
+          img(v-else-if="item.state === 'done' && item.kind === 'image'" :src="item.preview" alt="")
+          FileIcon(v-else-if="item.state === 'done'" :title="item.filename")
           X(v-else)
-        span.w-full.min-w-0.truncate.text-xs(v-if="!img.mime.startsWith('image/')" :title="img.filename") {{ img.filename || img.mime }}
+        span.w-full.min-w-0.truncate.text-xs(v-if="item.kind === 'file'" :title="item.filename") {{ item.filename || item.mime }}
         //- `AttachmentActions` is what lifts the button onto the thumbnail; without it the X
         //- lands in flow under the image and stretches the chip.
         AttachmentActions
-          AttachmentAction(class="size-10 md:size-6" title="移除" aria-label="移除文件" @click="removeImage(i)")
+          AttachmentAction(class="size-10 md:size-6" title="移除" aria-label="移除文件" @click="removeAttachment(i)")
             X(data-icon="inline-start")
     InputGroupTextarea(
       ref="box" v-model="text" rows="2" placeholder="输入消息…"

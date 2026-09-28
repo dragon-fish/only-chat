@@ -1,8 +1,9 @@
 import { env } from 'cloudflare:workers'
 import { describe, expect, it } from 'vitest'
-import { authenticatedFetch, ensureTestUser } from './auth-helper'
+import { authenticatedFetch, ensureTestUser, registerAndLogin } from './auth-helper'
+import { connect } from './ws-helper'
 import { createDb } from '@/server/db/client'
-import { attachments } from '@/server/db/schema'
+import { attachments, conversations, users } from '@/server/db/schema'
 import { eq } from 'drizzle-orm'
 
 async function upload(mime: string, bytes: Uint8Array<ArrayBuffer>) {
@@ -71,4 +72,66 @@ it('does not reuse a disabled video attachment under an allowed audio MIME', asy
     await owner.json('PUT', '/api/admin/settings', { uploads: { maxBytes: 1024, allowedMimeTypes: ['audio/mp4'] } })
     expect((await upload('audio/mp4', bytes)).status).toBe(415)
   } finally { await owner.json('PUT', '/api/admin/settings', { uploads: null }) }
+})
+
+describe('attachment downloads', () => {
+  it('answers single byte ranges with 206 and refuses unsatisfiable ones', async () => {
+    const bytes = new TextEncoder().encode('%PDF-1.7\nrange fixture')
+    const { attachment_id } = await (await upload('application/pdf', bytes)).json() as { attachment_id: number }
+    const get = (range?: string) => authenticatedFetch(new Request(`https://x/api/attachments/${attachment_id}`, { headers: range ? { range } : {} }))
+
+    const whole = await get()
+    expect(whole.status).toBe(200)
+    expect(whole.headers.get('accept-ranges')).toBe('bytes')
+    await whole.arrayBuffer()
+
+    const middle = await get('bytes=2-5')
+    expect(middle.status).toBe(206)
+    expect(middle.headers.get('content-range')).toBe(`bytes 2-5/${bytes.byteLength}`)
+    expect(new Uint8Array(await middle.arrayBuffer())).toEqual(bytes.slice(2, 6))
+
+    const open = await get('bytes=4-')
+    expect(open.headers.get('content-range')).toBe(`bytes 4-${bytes.byteLength - 1}/${bytes.byteLength}`)
+    expect(new Uint8Array(await open.arrayBuffer())).toEqual(bytes.slice(4))
+
+    const suffix = await get('bytes=-3')
+    expect(suffix.status).toBe(206)
+    expect(new Uint8Array(await suffix.arrayBuffer())).toEqual(bytes.slice(-3))
+
+    const beyond = await get(`bytes=${bytes.byteLength}-`)
+    expect(beyond.status).toBe(416)
+    expect(beyond.headers.get('content-range')).toBe(`bytes */${bytes.byteLength}`)
+  })
+})
+
+describe('sending attachment parts', () => {
+  it('rejects a file part whose MIME differs from the stored row, and another account\'s attachment', async () => {
+    const db = createDb(env.DB)
+    const owner = await ensureTestUser()
+    const pdf = await (await upload('application/pdf', new TextEncoder().encode('%PDF-1.7\nsend check'))).json() as { attachment_id: number }
+
+    const strangerEmail = 'stranger@example.com'
+    if (!(await db.query.users.findFirst({ where: eq(users.email, strangerEmail) }))) {
+      await registerAndLogin({ name: 'stranger', email: strangerEmail, password: 'a-long-test-password' })
+    }
+    const stranger = (await db.query.users.findFirst({ where: eq(users.email, strangerEmail) }))!
+    const [foreign] = await db.insert(attachments).values({
+      user_id: stranger.id, sha256: 'f'.repeat(64), mime: 'image/png', size: 1, r2_key: 'foreign', origin: 'upload', created_at: 0,
+    }).returning()
+
+    const ownerRow = (await db.query.users.findFirst({ where: eq(users.email, 'owner@example.com') }))!
+    const before = (await db.select().from(conversations).where(eq(conversations.user_id, ownerRow.id))).length
+    const c = await connect({ cookie: owner.cookie })
+    const send = (request_id: string, parts: unknown[]) => c.ws.send(JSON.stringify({
+      type: 'send', request_id, conversation_id: null, parent_id: null, parts, provider_id: 1, model_id: 'any',
+    }))
+
+    send('mismatch', [{ type: 'file', attachment_id: pdf.attachment_id, mime: 'audio/mpeg' }])
+    expect(await c.nextAfter('error', 1)).toMatchObject({ request_id: 'mismatch', message: expect.stringContaining('does not match') })
+    send('foreign', [{ type: 'image', attachment_id: foreign!.id }])
+    expect(await c.nextAfter('error', 2)).toMatchObject({ request_id: 'foreign', message: expect.stringContaining('not found') })
+    c.ws.close()
+
+    expect((await db.select().from(conversations).where(eq(conversations.user_id, ownerRow.id))).length).toBe(before)
+  })
 })

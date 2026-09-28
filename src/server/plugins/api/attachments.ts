@@ -10,8 +10,8 @@ import { uploadProblem } from '@/shared/upload-policy'
 import { resolveUploadPolicy } from '../upload-policy'
 import { MAX_ATTACHMENT_BYTES, matchesFileSignature } from '@/shared/file-media'
 
-/** Generated images retain their own fixed validation limit; uploads use the site policy. */
-export const MAX_UPLOAD_BYTES = MAX_ATTACHMENT_BYTES
+/** Bounds images a model generates; uploaded files are bounded by the site upload policy instead. */
+export const MAX_GENERATED_IMAGE_BYTES = MAX_ATTACHMENT_BYTES
 
 function hex(buf: ArrayBuffer): string {
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('')
@@ -104,9 +104,44 @@ export async function serveAttachment(ctx: Context, c: HonoContext<ApiEnv>, row:
   // One row read and no object read, which is the whole point of answering it here.
   if (c.req.header('if-none-match') === headers.etag) return new Response(null, { status: 304, headers })
 
-  const stored = await ctx.assets.getStream(row.r2_key)
+  // Media elements seek with `Range`, and Safari will not play audio or video without a 206.
+  const range = parseByteRange(c.req.header('range'), row.size)
+  if (range === null) {
+    return new Response(null, { status: 416, headers: { 'cache-control': 'no-store', 'content-range': `bytes */${row.size}` } })
+  }
+  const stored = await ctx.assets.getStream(row.r2_key, range)
   if (!stored) return c.json({ error: 'object missing' }, 404, { 'cache-control': 'no-store' })
+  if (range) {
+    return new Response(stored.body, {
+      status: 206,
+      headers: {
+        ...headers, 'accept-ranges': 'bytes', 'content-type': row.mime, 'content-length': String(range.length),
+        'content-range': `bytes ${range.offset}-${range.offset + range.length - 1}/${row.size}`,
+      },
+    })
+  }
   return new Response(stored.body, {
-    headers: { ...headers, 'content-type': row.mime, 'content-length': String(stored.size) },
+    headers: { ...headers, 'accept-ranges': 'bytes', 'content-type': row.mime, 'content-length': String(stored.size) },
   })
+}
+
+/**
+ * A single `bytes=` range resolved against `size`. `undefined` means serve the whole file — no
+ * header, several ranges, or a malformed one, all of which RFC 9110 lets a server ignore; `null`
+ * means unsatisfiable (416).
+ */
+export function parseByteRange(header: string | undefined, size: number): { offset: number; length: number } | null | undefined {
+  const match = header ? /^bytes=(\d*)-(\d*)$/.exec(header.trim()) : null
+  if (!match || (!match[1] && !match[2])) return undefined
+  if (!match[1]) {
+    const suffix = Number(match[2])
+    if (suffix === 0) return null
+    const length = Math.min(suffix, size)
+    return { offset: size - length, length }
+  }
+  const start = Number(match[1])
+  if (start >= size) return null
+  const end = match[2] ? Math.min(Number(match[2]), size - 1) : size - 1
+  if (end < start) return undefined
+  return { offset: start, length: end - start + 1 }
 }

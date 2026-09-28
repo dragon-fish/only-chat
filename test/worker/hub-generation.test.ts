@@ -13,7 +13,7 @@ import { ensureTestUser as seedTestUser } from './auth-helper'
 import type { Assets } from '@/server/plugins/assets'
 import { encryptSecret } from '@/server/plugins/llm/crypto'
 import { buildModelMessages } from '@/server/plugins/llm/messages'
-import { MAX_UPLOAD_BYTES, r2Key } from '@/server/plugins/api/attachments'
+import { MAX_GENERATED_IMAGE_BYTES, r2Key } from '@/server/plugins/api/attachments'
 import type { Hub } from '@/server/plugins/hub'
 import { persistGeneratedImage } from '@/server/plugins/hub/generated-images'
 import { resolveEffectiveConfig } from '@/server/plugins/hub/effective-config'
@@ -2155,7 +2155,7 @@ describe('persistGeneratedImage', () => {
   })
 
   it('rejects an output larger than the upload limit', async () => {
-    const bytes = new Uint8Array(MAX_UPLOAD_BYTES + 1)
+    const bytes = new Uint8Array(MAX_GENERATED_IMAGE_BYTES + 1)
     await expect(persistGeneratedImage(await hubLike(), png(bytes))).rejects.toThrow(/too large/)
     expect(await attachmentBySha(await sha256(bytes))).toBeUndefined()
     expect(await storedObject(bytes)).toBeNull()
@@ -2165,10 +2165,10 @@ describe('persistGeneratedImage', () => {
     // A source that reports its length but holds no bytes: the guard has to run on the SDK buffer
     // itself, because a copy taken first would peak at twice the size inside the DO — and would
     // also read as empty here, failing with the wrong error.
-    const source = { byteLength: MAX_UPLOAD_BYTES + 1 } as unknown as Uint8Array<ArrayBuffer>
+    const source = { byteLength: MAX_GENERATED_IMAGE_BYTES + 1 } as unknown as Uint8Array<ArrayBuffer>
     const file = { mediaType: 'image/png', base64: '', get uint8Array() { return source } } as unknown as GeneratedFile
     await expect(persistGeneratedImage(await hubLike(), file))
-      .rejects.toThrow(`generated image too large: ${MAX_UPLOAD_BYTES + 1} bytes`)
+      .rejects.toThrow(`generated image too large: ${MAX_GENERATED_IMAGE_BYTES + 1} bytes`)
   })
 
   it('rejects an oversized HTTPS output on content-length, without reading the body', async () => {
@@ -2177,13 +2177,13 @@ describe('persistGeneratedImage', () => {
     const arrayBuffer = vi.fn(async () => new ArrayBuffer(0))
     const response = {
       ok: true,
-      headers: new Headers({ 'content-type': 'image/png', 'content-length': String(MAX_UPLOAD_BYTES + 1) }),
+      headers: new Headers({ 'content-type': 'image/png', 'content-length': String(MAX_GENERATED_IMAGE_BYTES + 1) }),
       arrayBuffer,
     } as unknown as Response
     vi.stubGlobal('fetch', async () => response)
     try {
       await expect(persistGeneratedImage(await hubLike(), new DefaultGeneratedFile({ data: 'https://provider.example/huge.png', mediaType: 'image/png' })))
-        .rejects.toThrow(`generated image too large: ${MAX_UPLOAD_BYTES + 1} bytes`)
+        .rejects.toThrow(`generated image too large: ${MAX_GENERATED_IMAGE_BYTES + 1} bytes`)
       expect(arrayBuffer).not.toHaveBeenCalled()
     } finally {
       vi.unstubAllGlobals()

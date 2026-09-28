@@ -6,7 +6,7 @@ import type { Message, Project, Conversation, UserSettings } from '@/shared/mode
 import type { Part } from '@/shared/parts'
 import { encodeEvent, parseCommand, type WsCommand, type WsEvent } from '@/shared/ws'
 import {
-  deleteConversation, finalizeMessage, firstUserMessageText, forkConversation, getMessage, getConversation,
+  assertUserAttachments, deleteConversation, finalizeMessage, firstUserMessageText, forkConversation, getMessage, getConversation,
   getModel, getProvider, getUser, renameIfTitleUnchanged, toMessage, updateConversation, updateUserSettings,
 } from './conversations'
 import { suggestConversationTitle } from './service-model'
@@ -454,6 +454,8 @@ export class Hub extends Service {
    * arriving as three would be three interruptions of the same thought.
    */
   async interject(conversationId: number, parts: Part[]): Promise<void> {
+    // Validated before looking the job up: an await between the two could outlive the job.
+    await assertUserAttachments(this.db, this.userId, parts)
     const job = this.jobFor(conversationId)
     if (!job) throw new Error('nothing is generating in this conversation')
     job.stash = joinStash(job.stash, parts)

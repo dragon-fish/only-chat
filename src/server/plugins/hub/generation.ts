@@ -23,7 +23,7 @@ import {
 import { persistGeneratedImage } from './generated-images'
 import { getProject } from './projects'
 import {
-  appendToolResult, compareAndSwapConversationHead, createConversation, deleteMessage, deleteMessageIfUnreferenced, finalizeMessage,
+  appendToolResult, assertUserAttachments, compareAndSwapConversationHead, createConversation, deleteMessage, deleteMessageIfUnreferenced, finalizeMessage,
   getMessage, getModel, getProvider, getProviderInterface, getConversation, getUser, insertAssistantChildIfAbsent, insertMessage,
   lastGenerationModel, listAssistantChildren, listMessages, maxSeq, replaceMessagePartsIfCurrentHead, toMessage, updateConversation,
 } from './conversations'
@@ -792,6 +792,7 @@ export async function runSend(hub: Hub, cmd: SendCommand): Promise<void> {
   if (cmd.conversation_id !== null && INIT_FIELDS.some((k) => cmd[k] !== undefined)) {
     throw new Error('conversation init fields are only allowed when conversation_id is null')
   }
+  await assertUserAttachments(hub.db, hub.userId, cmd.parts)
   const target = await resolveTarget(hub, {
     conversationId: cmd.conversation_id,
     fallbackModel: { provider_id: cmd.provider_id, model_id: cmd.model_id },
@@ -845,6 +846,7 @@ export async function runRegenerate(hub: Hub, cmd: Extract<WsCommand, { type: 'r
 export async function runEdit(hub: Hub, cmd: Extract<WsCommand, { type: 'edit' }>): Promise<void> {
   const old = await getMessage(hub.db, cmd.message_id, hub.userId)
   if (!old || old.role !== 'user') throw new Error('not a user message')
+  await assertUserAttachments(hub.db, hub.userId, cmd.parts)
   const explicitModel = commandModel(cmd)
   // Without one, the conversation's last generation stands in as the command layer.
   const fallbackModel = await lastGenerationModel(hub.db, old.conversation_id, hub.userId)

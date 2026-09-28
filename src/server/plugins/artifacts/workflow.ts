@@ -1,7 +1,7 @@
 import type { Context } from 'cordis'
 import { and, asc, eq } from 'drizzle-orm'
 import { artifactLinks, artifactRunInputs, artifactRuns, artifacts, attachments, messages } from '@/server/db/schema'
-import { MAX_UPLOAD_BYTES, r2Key } from '../api/attachments'
+import { MAX_GENERATED_IMAGE_BYTES, r2Key } from '../api/attachments'
 import { getAttachment, getModel, getProvider, getProviderInterface } from '../hub/conversations'
 import { disposeRpcStub } from '@/server/rpc'
 
@@ -54,7 +54,7 @@ export async function executeImageRun(ctx: Context, userId: number, runId: numbe
     const imageParts: Array<{ type: 'image'; attachment_id: number; artifact_id: number }> = []
     for (const [outputIndex, output] of result.images.entries()) {
       if (!ACCEPTED_MIME.has(output.mime)) throw new Error(`Unsupported generated image type: ${output.mime}`)
-      if (output.bytes.byteLength === 0 || output.bytes.byteLength > MAX_UPLOAD_BYTES) throw new Error('Generated image has an invalid size')
+      if (output.bytes.byteLength === 0 || output.bytes.byteLength > MAX_GENERATED_IMAGE_BYTES) throw new Error('Generated image has an invalid size')
       const digest = await sha256(output.bytes)
       let dimensions = run.params.size
       try {

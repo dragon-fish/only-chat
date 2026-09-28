@@ -56,6 +56,8 @@ const draft = ref('')
 const textParts = computed(() => props.message.parts.filter((p) => p.type === 'text'))
 const images = computed(() => props.message.parts.filter((p) => p.type === 'image'))
 const files = computed(() => props.message.parts.filter(p => p.type === 'file'))
+/** Images and files interleaved as the user added them; an edit resends them in this order. */
+const attachmentParts = computed(() => props.message.parts.filter(p => p.type === 'image' || p.type === 'file'))
 const notices = computed(() => props.message.parts.filter((p): p is TaskNotificationPart => p.type === 'task_notification'))
 /** Written by the server when a background task finished: a status row, not something the person said. */
 const notificationOnly = computed(() => props.message.role === 'user' && isNotificationOnly(props.message.parts))
@@ -118,7 +120,7 @@ function startEdit() {
 }
 const NO_MODEL: EffectiveModel = { model: null, source: null }
 function submitEdit() {
-  const parts = [...images.value, ...files.value, { type: 'text' as const, text: draft.value }]
+  const parts = [...attachmentParts.value, { type: 'text' as const, text: draft.value }]
   sync.send(editCommandFor(props.message.id, parts, props.effectiveModel ?? NO_MODEL))
   editing.value = false
 }
@@ -149,7 +151,8 @@ MessageRoot(
         template(v-if="message.role === 'user'")
           .flex.flex-col.gap-2.pb-2(v-if="notices.length")
             TaskNotificationRow(v-for="notice in notices" :key="notice.task_id" :notification="notice")
-          FileAttachment(v-for="file in files" :key="file.attachment_id" :attachment-id="file.attachment_id" :mime="file.mime" :filename="file.filename")
+          .flex.flex-col.gap-2.pb-2(v-if="files.length")
+            FileAttachment(v-for="file in files" :key="file.attachment_id" :attachment-id="file.attachment_id" :mime="file.mime" :filename="file.filename")
           .flex.flex-wrap.gap-2.pb-1(v-if="images.length")
             img.max-h-40.rounded(v-for="img in images" :key="img.attachment_id" :src="attachmentUrl(img.attachment_id)")
           template(v-if="!editing")

@@ -41,8 +41,9 @@ export class Assets extends Service {
     return { bytes: new Uint8Array(await obj.arrayBuffer()), mime: obj.httpMetadata?.contentType ?? 'application/octet-stream' }
   }
 
-  async getStream(key: string): Promise<StoredStream | null> {
-    const obj = await this._bucket.get(key)
+  /** `range` is an already validated byte window; R2 returns only those bytes. */
+  async getStream(key: string, range?: { offset: number; length: number }): Promise<StoredStream | null> {
+    const obj = await this._bucket.get(key, range ? { range } : undefined)
     if (!obj) return null
     return { body: obj.body, mime: obj.httpMetadata?.contentType ?? 'application/octet-stream', size: obj.size }
   }

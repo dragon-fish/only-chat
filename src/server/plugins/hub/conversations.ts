@@ -10,7 +10,7 @@ import type {
 import type {
   Message, MessageStatus, PersistedStatus, ConversationParams, ConversationPluginSettings, Usage, UserSettings,
 } from '@/shared/models'
-import type { Part, ToolResultPart } from '@/shared/parts'
+import type { FilePart, ImagePart, Part, ToolResultPart } from '@/shared/parts'
 
 /** Row → wire DTO. Persisted rows only carry the persisted statuses; live ones pass `status` in. */
 export function toMessage(row: MessageRow, status: MessageStatus = row.status): Message {
@@ -399,6 +399,28 @@ export async function getProviderInterface(db: DB, id: number, userId: number): 
 
 export async function getAttachment(db: DB, id: number, userId: number): Promise<AttachmentRow | undefined> {
   return db.query.attachments.findFirst({ where: and(eq(attachments.id, id), eq(attachments.user_id, userId)) })
+}
+
+/**
+ * A user-authored `image` / `file` part names an attachment by id, and a `file` part also carries a
+ * client-supplied `mime`. Both are checked against the stored row before the parts are accepted, so
+ * a message can neither borrow another account's bytes nor mislabel its own (spec §6.1). Another
+ * account's attachment reads as missing, never as "not yours".
+ */
+export async function assertUserAttachments(db: DB, userId: number, parts: Part[]): Promise<void> {
+  const refs = parts.filter((part): part is ImagePart | FilePart => part.type === 'image' || part.type === 'file')
+  if (refs.length === 0) return
+  const ids = [...new Set(refs.map(part => part.attachment_id))]
+  const rows = await db.select({ id: attachments.id, mime: attachments.mime }).from(attachments)
+    .where(and(eq(attachments.user_id, userId), inArray(attachments.id, ids)))
+  const mimes = new Map(rows.map(row => [row.id, row.mime]))
+  for (const part of refs) {
+    const mime = mimes.get(part.attachment_id)
+    if (mime === undefined) throw new Error(`attachment ${part.attachment_id} not found`)
+    if (part.type === 'image' ? !mime.startsWith('image/') : part.mime !== mime) {
+      throw new Error(`attachment ${part.attachment_id} does not match its part type`)
+    }
+  }
 }
 
 export type ProviderFileScope = Pick<ScopedFilesClient, 'family' | 'baseURL' | 'credentialVersion'> & { providerId: number }

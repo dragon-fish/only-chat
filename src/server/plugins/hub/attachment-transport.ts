@@ -18,6 +18,11 @@ const PROVIDER_FILE_TTL_MS = PROVIDER_FILE_TTL_SECONDS * 1000
 const UPLOAD_OPTIONS = { openai: { purpose: 'user_data', expiresAfter: PROVIDER_FILE_TTL_SECONDS } } as const
 const UNSUPPORTED_FILES_STATUSES = new Set([400, 404, 405, 501])
 
+/** Audio and video are always sent inline (spec §6.3): never reuse or create a Files pointer for them. */
+function inlineOnly(mime: string): boolean {
+  return mime.startsWith('audio/') || mime.startsWith('video/')
+}
+
 export interface TransportDeps {
   db: DB
   userId: number
@@ -73,7 +78,7 @@ export async function resolveAttachmentInputs(
       continue
     }
 
-    if (useFiles && !attachment.mime.startsWith('audio/') && !attachment.mime.startsWith('video/')) {
+    if (useFiles && !inlineOnly(attachment.mime)) {
       client ??= await deps.llm.createFiles(provider, providerInterface)
       const pointer = await findReusableProviderFile(deps.db, { ...client, providerId: provider.id }, id, Date.now(), deps.userId)
       if (pointer) {
@@ -85,7 +90,7 @@ export async function resolveAttachmentInputs(
     const stored = await deps.assets.getBytes(attachment.r2_key)
     if (!stored) throw new Error(`attachment ${id} bytes missing`)
 
-    if (!client || attachment.mime.startsWith('audio/') || attachment.mime.startsWith('video/')) {
+    if (!client || inlineOnly(attachment.mime)) {
       out.set(id, { mime: attachment.mime, data: { type: 'data', data: stored.bytes } })
       continue
     }
