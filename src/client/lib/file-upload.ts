@@ -18,6 +18,7 @@ export function uploadMime(file: File): string {
   return mimeFromExtension(extension) ?? ''
 }
 
+/** A chat message attachment: the site upload policy applies. */
 export async function uploadFile(file: File, suppliedPolicy?: UploadPolicy) {
   const policy = suppliedPolicy ?? await currentUploadPolicy()
   const mime = uploadMime(file)
@@ -26,7 +27,7 @@ export async function uploadFile(file: File, suppliedPolicy?: UploadPolicy) {
   validateUpload(policy, mime, file.size)
   const blob = file.slice(0, file.size, mime)
   const sha256 = await sha256Hex(await blob.arrayBuffer())
-  const check = await api.checkAttachment(sha256)
-  const attachment_id = check.exists && check.attachment_id !== undefined ? check.attachment_id : (await api.uploadAttachment(sha256, blob)).attachment_id
+  const check = await api.checkAttachment(sha256, 'chat')
+  const attachment_id = check.exists && check.attachment_id !== undefined ? check.attachment_id : (await api.uploadAttachment(sha256, blob, { purpose: 'chat' })).attachment_id
   return { attachment_id, preview: URL.createObjectURL(blob), mime, filename: file.name }
 }

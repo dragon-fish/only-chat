@@ -1,5 +1,5 @@
 import type { UploadPolicy } from '@/shared/upload-policy'
-import { currentUploadPolicy, validateUpload } from './upload-policy'
+import { validateUpload } from './upload-policy'
 import { api } from '@/client/lib/api'
 import { MAX_IMAGE_EDGE } from '@/shared/constants'
 
@@ -47,18 +47,19 @@ export async function prepareImage(file: Blob, allowedTypes?: readonly string[])
 }
 
 /**
- * The size limit is checked on the prepared blob, never on the original: a large photo that
- * downscales under the limit must go through.
+ * With `chatPolicy` the image is a chat attachment and the site upload policy applies, checked on
+ * the prepared blob and never on the original: a large photo that downscales under the limit must go
+ * through. Without it the upload is not a chat attachment and the policy does not apply.
  */
-export async function uploadImage(file: Blob, suppliedPolicy?: UploadPolicy): Promise<{ attachment_id: number; preview: string; mime: string }> {
-  const policy = suppliedPolicy ?? await currentUploadPolicy()
+export async function uploadImage(file: Blob, chatPolicy?: UploadPolicy): Promise<{ attachment_id: number; preview: string; mime: string }> {
   let prepared: PreparedImage
-  try { prepared = await prepareImage(file, policy.allowedMimeTypes) }
+  try { prepared = await prepareImage(file, chatPolicy?.allowedMimeTypes) }
   catch { throw new Error('浏览器无法读取此图片') }
-  validateUpload(policy, prepared.blob.type, prepared.blob.size)
-  const check = await api.checkAttachment(prepared.sha256)
+  if (chatPolicy) validateUpload(chatPolicy, prepared.blob.type, prepared.blob.size)
+  const purpose = chatPolicy ? 'chat' : 'image'
+  const check = await api.checkAttachment(prepared.sha256, purpose)
   const attachment_id = check.exists && check.attachment_id !== undefined
     ? check.attachment_id
-    : (await api.uploadAttachment(prepared.sha256, prepared.blob, prepared.width, prepared.height)).attachment_id
+    : (await api.uploadAttachment(prepared.sha256, prepared.blob, { purpose, width: prepared.width, height: prepared.height })).attachment_id
   return { attachment_id, preview: URL.createObjectURL(prepared.blob), mime: prepared.blob.type }
 }

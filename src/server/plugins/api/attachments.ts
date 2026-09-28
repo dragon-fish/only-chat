@@ -2,7 +2,7 @@ import type { Context } from 'cordis'
 import { Hono, type Context as HonoContext } from 'hono'
 import { and, eq } from 'drizzle-orm'
 import { authUserId, type ApiEnv } from './auth'
-import { AttachmentCheckRequestSchema } from '@/shared/api'
+import { AttachmentCheckRequestSchema, AttachmentPurposeSchema, type AttachmentPurpose } from '@/shared/api'
 import { attachments, type AttachmentRow } from '../../db/schema'
 import { parseId } from './params'
 
@@ -12,6 +12,26 @@ import { MAX_ATTACHMENT_BYTES, matchesFileSignature } from '@/shared/file-media'
 
 /** Bounds images a model generates; uploaded files are bounded by the site upload policy instead. */
 export const MAX_GENERATED_IMAGE_BYTES = MAX_ATTACHMENT_BYTES
+
+type UploadCheck = (mime: string, size: number) => { status: 400 | 413 | 415; message: string } | null
+
+/** Everything that is not a chat attachment: the fixed image rules, independent of the site policy. */
+const imageUploadProblem: UploadCheck = (mime, size) => {
+  if (!/^image\/(png|jpeg|webp|gif)$/.test(mime)) return { status: 415, message: 'unsupported mime' }
+  if (size <= 0 || size > MAX_ATTACHMENT_BYTES) return { status: 400, message: 'bad size' }
+  return null
+}
+
+/**
+ * The administrator's upload policy governs chat attachments only (spec §6.2). Project icons and
+ * image-studio references upload with `purpose=image` and keep the fixed image rules, so closing
+ * chat uploads never breaks them.
+ */
+async function uploadCheck(ctx: Context, purpose: AttachmentPurpose): Promise<UploadCheck> {
+  if (purpose === 'image') return imageUploadProblem
+  const policy = await resolveUploadPolicy(ctx.db.orm)
+  return (mime, size) => uploadProblem(policy, mime, size)
+}
 
 function hex(buf: ArrayBuffer): string {
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('')
@@ -31,7 +51,7 @@ export function attachmentRoutes(ctx: Context) {
     if (!parsed.success) return c.json({ error: 'invalid input' }, 400)
     const row = await db.query.attachments.findFirst({ where: and(eq(attachments.user_id, userId), eq(attachments.sha256, parsed.data.sha256)) })
     if (row) {
-      const problem = uploadProblem(await resolveUploadPolicy(db), row.mime, row.size)
+      const problem = (await uploadCheck(ctx, parsed.data.purpose))(row.mime, row.size)
       if (problem) return c.json({ error: problem.message }, problem.status)
     }
     return c.json(row ? { exists: true, attachment_id: row.id } : { exists: false })
@@ -41,12 +61,14 @@ export function attachmentRoutes(ctx: Context) {
     const userId = authUserId(c)
     const claimed = c.req.param('sha256')
     const mime = c.req.header('content-type') ?? ''
-    const policy = await resolveUploadPolicy(db)
+    const purpose = AttachmentPurposeSchema.safeParse(c.req.query('purpose'))
+    if (!purpose.success) return c.json({ error: 'invalid purpose' }, 400)
+    const check = await uploadCheck(ctx, purpose.data)
     const declaredSize = Number(c.req.header('content-length'))
-    const earlyProblem = uploadProblem(policy, mime, declaredSize > 0 ? declaredSize : 1)
+    const earlyProblem = check(mime, declaredSize > 0 ? declaredSize : 1)
     if (earlyProblem) return c.json({ error: earlyProblem.message }, earlyProblem.status)
     const bytes = await c.req.arrayBuffer()
-    const problem = uploadProblem(policy, mime, bytes.byteLength)
+    const problem = check(mime, bytes.byteLength)
     if (problem) return c.json({ error: problem.message }, problem.status)
     if (!matchesFileSignature(mime, new Uint8Array(bytes))) return c.json({ error: 'file content does not match mime' }, 415)
     const actual = hex(await crypto.subtle.digest('SHA-256', bytes))
@@ -54,7 +76,7 @@ export function attachmentRoutes(ctx: Context) {
 
     const existing = await db.query.attachments.findFirst({ where: and(eq(attachments.user_id, userId), eq(attachments.sha256, actual)) })
     if (existing) {
-      const existingProblem = uploadProblem(policy, existing.mime, existing.size)
+      const existingProblem = check(existing.mime, existing.size)
       if (existingProblem) return c.json({ error: existingProblem.message }, existingProblem.status)
       return c.json({ attachment_id: existing.id }, 201)
     }

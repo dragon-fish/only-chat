@@ -160,7 +160,7 @@ function autoGrow() {
 async function addFiles(files: File[]) {
   pending.value++
   try {
-    const policy = (await siteConfig.load(true)).uploads
+    const policy = (await siteConfig.load()).uploads
     for (const f of files) {
       const mime = uploadMime(f)
       if (!mime) { toast.error(`不支持的文件：${f.name}`); continue }

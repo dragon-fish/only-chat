@@ -12,7 +12,7 @@ import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel } from '@
 import { Spinner } from '@/client/ui/spinner'
 import { Checkbox } from '@/client/ui/checkbox'
 import { Input } from '@/client/ui/input'
-import { DEFAULT_UPLOAD_POLICY, UploadPolicySchema } from '@/shared/upload-policy'
+import { DEFAULT_UPLOAD_POLICY, MAX_UPLOAD_POLICY_BYTES, UploadPolicySchema } from '@/shared/upload-policy'
 import { FILE_EXTENSIONS, fileModality } from '@/shared/file-media'
 import { Switch } from '@/client/ui/switch'
 
@@ -20,6 +20,7 @@ const siteConfig = useSiteConfigStore()
 const settings = ref<AdminSiteSettings | null>(null)
 const allowRegister = ref(false)
 const maxSizeMiB = ref(20)
+const MIB = 1024 * 1024
 const allowedMimeTypes = ref<string[]>([])
 const uploadDraft = computed(() => ({ maxBytes: maxSizeMiB.value * 1024 * 1024, allowedMimeTypes: allowedMimeTypes.value }))
 const validUploads = computed(() => UploadPolicySchema.safeParse(uploadDraft.value).success)
@@ -109,13 +110,13 @@ onMounted(load)
       Card(v-if="settings")
         CardHeader
           CardTitle 文件上传
-          CardDescription 对新上传的文件生效，已有附件仍可访问。文件类型只控制上传，模型是否能读取取决于其能力。
+          CardDescription 只约束聊天消息的附件，对新上传的文件生效，已有附件仍可访问。文件类型只控制上传，模型是否能读取取决于其能力。
         CardContent
           FieldGroup
             Field(:data-invalid="!validUploads || undefined")
               FieldLabel(for="upload-max-size") 单文件大小上限（MiB）
-              Input#upload-max-size(v-model="maxSizeMiB" type="number" min="1" step="1" :disabled="pending" :aria-invalid="!validUploads || undefined")
-              FieldDescription 默认 {{ DEFAULT_UPLOAD_POLICY.maxBytes / 1024 / 1024 }} MiB，实际上传仍受部署平台的请求大小限制。
+              Input#upload-max-size(v-model="maxSizeMiB" type="number" min="1" :max="MAX_UPLOAD_POLICY_BYTES / MIB" step="1" :disabled="pending" :aria-invalid="!validUploads || undefined")
+              FieldDescription 默认 {{ DEFAULT_UPLOAD_POLICY.maxBytes / MIB }} MiB，最大 {{ MAX_UPLOAD_POLICY_BYTES / MIB }} MiB，实际上传仍受部署平台的请求大小限制。
             Field(v-for="group in fileGroups" :key="group.type")
               FieldLabel {{ group.label }}
               .flex.flex-wrap.gap-4

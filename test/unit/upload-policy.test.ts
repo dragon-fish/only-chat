@@ -59,3 +59,15 @@ it('resolves an untyped .webm by extension to video', () => {
   expect(uploadMime(new File(['x'], 'clip.webm'))).toBe('video/webm')
   expect(uploadMime(new File(['x'], 'voice.webm', { type: 'audio/webm' }))).toBe('audio/webm')
 })
+
+describe('stored upload policy', () => {
+  it('drops unknown formats and clamps or replaces invalid limits instead of throwing', async () => {
+    const { parseStoredUploadPolicy } = await import('@/server/plugins/upload-policy')
+    const { DEFAULT_UPLOAD_POLICY, MAX_UPLOAD_POLICY_BYTES } = await import('@/shared/upload-policy')
+    expect(parseStoredUploadPolicy(JSON.stringify({ maxBytes: 1024, allowedMimeTypes: ['application/pdf', 'application/x-retired', 'application/pdf'] })))
+      .toEqual({ maxBytes: 1024, allowedMimeTypes: ['application/pdf'] })
+    expect(parseStoredUploadPolicy(JSON.stringify({ maxBytes: 10 ** 12, allowedMimeTypes: [] }))).toEqual({ maxBytes: MAX_UPLOAD_POLICY_BYTES, allowedMimeTypes: [] })
+    expect(parseStoredUploadPolicy(JSON.stringify({ maxBytes: -1 })).maxBytes).toBe(DEFAULT_UPLOAD_POLICY.maxBytes)
+    expect(parseStoredUploadPolicy('{not json')).toEqual(DEFAULT_UPLOAD_POLICY)
+  })
+})

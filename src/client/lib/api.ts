@@ -1,4 +1,4 @@
-import type { AttachmentCheckResponse, AuditConversationRow, AuditPage, AuditProviderRow, AuditTranscript, AttachmentUploadResponse, BulkModelStateInput, BulkModelStateResponse, CatalogProviderSummary, CatalogRefreshJobStatus, CatalogRefreshStartResponse, CatalogStatus, FetchModelsResponse, ModelRef, ModelWriteInput, ProviderWriteInput } from '@/shared/api'
+import type { AttachmentCheckResponse, AttachmentPurpose, AuditConversationRow, AuditPage, AuditProviderRow, AuditTranscript, AttachmentUploadResponse, BulkModelStateInput, BulkModelStateResponse, CatalogProviderSummary, CatalogRefreshJobStatus, CatalogRefreshStartResponse, CatalogStatus, FetchModelsResponse, ModelRef, ModelWriteInput, ProviderWriteInput } from '@/shared/api'
 import type { Message, ModelListSnapshot, ModelWithMetadata, Project, ProviderWithInterfaces, Conversation, User } from '@/shared/models'
 import type { PresetProvider } from '@/server/plugins/llm/presets'
 import type { AdminSiteSettings, AdminSiteSettingsUpdate, SiteConfig } from '@/shared/auth'
@@ -104,9 +104,9 @@ export const api = {
   catalogProviders: (query = '', signal?: AbortSignal) => request<CatalogProviderSummary[]>('GET', `/api/model-catalog/providers${queryString({ q: query })}`, undefined, { signal }),
   refreshCatalog: () => request<CatalogRefreshStartResponse>('POST', '/api/model-catalog/refresh'),
   catalogRefreshStatus: (instanceId: string) => request<CatalogRefreshJobStatus>('GET', `/api/model-catalog/refresh/${encodeURIComponent(instanceId)}`),
-  checkAttachment: (sha256: string) => request<AttachmentCheckResponse>('POST', '/api/attachments/check', { sha256 }),
-  uploadAttachment: (sha256: string, blob: Blob, w = 0, h = 0) =>
-    request<AttachmentUploadResponse>('PUT', `/api/attachments/${sha256}?w=${w}&h=${h}`, blob, { headers: { 'content-type': blob.type } }),
+  checkAttachment: (sha256: string, purpose: AttachmentPurpose) => request<AttachmentCheckResponse>('POST', '/api/attachments/check', { sha256, purpose }),
+  uploadAttachment: (sha256: string, blob: Blob, { purpose, width = 0, height = 0 }: { purpose: AttachmentPurpose; width?: number; height?: number }) =>
+    request<AttachmentUploadResponse>('PUT', `/api/attachments/${sha256}${queryString({ w: width, h: height, purpose })}`, blob, { headers: { 'content-type': blob.type } }),
   attachmentUrl: (id: number) => `/api/attachments/${id}`,
   createImageRun: (input: CreateImageRunInput) => request<CreateImageRunResponse>('POST', '/api/artifact-runs/image', input),
   artifactRun: (id: number) => request<ArtifactRunDto>('GET', `/api/artifact-runs/${id}`),

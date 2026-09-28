@@ -69,7 +69,13 @@ export const ModelWriteInputSchema = z.strictObject({
 })
 export type ModelWriteInput = z.infer<typeof ModelWriteInputSchema>
 
-export const AttachmentCheckRequestSchema = z.object({ sha256: z.string().regex(/^[0-9a-f]{64}$/) })
+/**
+ * `chat` uploads are chat message attachments, governed by the site upload policy; `image` is every
+ * other upload (project icons, image-studio references), which keeps the fixed image rules.
+ */
+export const AttachmentPurposeSchema = z.enum(['chat', 'image']).default('chat')
+export type AttachmentPurpose = z.infer<typeof AttachmentPurposeSchema>
+export const AttachmentCheckRequestSchema = z.object({ sha256: z.string().regex(/^[0-9a-f]{64}$/), purpose: AttachmentPurposeSchema })
 export type AttachmentCheckRequest = z.infer<typeof AttachmentCheckRequestSchema>
 export interface AttachmentCheckResponse {
   exists: boolean

@@ -1,8 +1,11 @@
 import { z } from 'zod'
 import { FILE_EXTENSIONS, MAX_ATTACHMENT_BYTES } from './file-media'
 
+/** The administrator may lower or raise the chat upload limit, but never past this (spec §6.2). */
+export const MAX_UPLOAD_POLICY_BYTES = 50 * 1024 * 1024
+
 export const UploadPolicySchema = z.strictObject({
-  maxBytes: z.number().int().positive(),
+  maxBytes: z.number().int().positive().max(MAX_UPLOAD_POLICY_BYTES),
   allowedMimeTypes: z.array(z.string().refine(mime => Object.hasOwn(FILE_EXTENSIONS, mime), 'Unsupported upload format'))
     .max(Object.keys(FILE_EXTENSIONS).length)
     .refine(types => new Set(types).size === types.length, 'Duplicate upload format'),

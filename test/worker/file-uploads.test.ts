@@ -3,13 +3,15 @@ import { describe, expect, it } from 'vitest'
 import { authenticatedFetch, ensureTestUser, registerAndLogin } from './auth-helper'
 import { connect } from './ws-helper'
 import { createDb } from '@/server/db/client'
-import { attachments, conversations, users } from '@/server/db/schema'
+import { attachments, conversations, siteSettings, users } from '@/server/db/schema'
+import { UPLOAD_POLICY_KEY } from '@/server/plugins/upload-policy'
 import { eq } from 'drizzle-orm'
 
-async function upload(mime: string, bytes: Uint8Array<ArrayBuffer>) {
+async function upload(mime: string, bytes: Uint8Array<ArrayBuffer>, purpose?: 'image') {
   await ensureTestUser()
   const sha = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(b => b.toString(16).padStart(2, '0')).join('')
-  return authenticatedFetch(new Request(`https://x/api/attachments/${sha}?w=99&h=99`, { method: 'PUT', headers: { 'content-type': mime }, body: bytes }))
+  const query = purpose ? `&purpose=${purpose}` : ''
+  return authenticatedFetch(new Request(`https://x/api/attachments/${sha}?w=99&h=99${query}`, { method: 'PUT', headers: { 'content-type': mime }, body: bytes }))
 }
 
 describe('non-image uploads', () => {
@@ -58,9 +60,10 @@ it('applies administrator upload limits without changing registration or old dow
   }
 })
 
-it('rejects unknown formats and nonpositive limits', async () => {
+it('rejects unknown formats and limits outside 1 B – 50 MiB', async () => {
   const owner = await ensureTestUser()
   expect((await owner.json('PUT', '/api/admin/settings', { uploads: { maxBytes: 0, allowedMimeTypes: ['application/pdf'] } })).status).toBe(400)
+  expect((await owner.json('PUT', '/api/admin/settings', { uploads: { maxBytes: 50 * 1024 * 1024 + 1, allowedMimeTypes: ['application/pdf'] } })).status).toBe(400)
   expect((await owner.json('PUT', '/api/admin/settings', { uploads: { maxBytes: 1024, allowedMimeTypes: ['application/x-executable'] } })).status).toBe(400)
 })
 
@@ -133,5 +136,32 @@ describe('sending attachment parts', () => {
     c.ws.close()
 
     expect((await db.select().from(conversations).where(eq(conversations.user_id, ownerRow.id))).length).toBe(before)
+  })
+})
+
+describe('upload policy scope', () => {
+  it('leaves non-chat image uploads alone when chat uploads are closed', async () => {
+    const owner = await ensureTestUser()
+    const png = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 7, 7])
+    try {
+      await owner.json('PUT', '/api/admin/settings', { uploads: { maxBytes: 1024, allowedMimeTypes: [] } })
+      expect((await upload('image/png', png)).status).toBe(415)
+      expect((await upload('image/png', png, 'image')).status).toBe(201)
+      expect((await upload('application/pdf', new TextEncoder().encode('%PDF-1.7\nicon?'), 'image')).status).toBe(415)
+    } finally { await owner.json('PUT', '/api/admin/settings', { uploads: null }) }
+  })
+
+  it('keeps /site-config and uploads working over a stored policy with a retired format', async () => {
+    const owner = await ensureTestUser()
+    const db = createDb(env.DB)
+    const value = JSON.stringify({ maxBytes: 1024, allowedMimeTypes: ['application/pdf', 'application/x-retired'] })
+    await db.insert(siteSettings).values({ key: UPLOAD_POLICY_KEY, value, updatedAt: new Date() })
+      .onConflictDoUpdate({ target: siteSettings.key, set: { value, updatedAt: new Date() } })
+    try {
+      const config = await owner.request('/api/site-config')
+      expect(config.status).toBe(200)
+      expect(await config.json()).toMatchObject({ uploads: { maxBytes: 1024, allowedMimeTypes: ['application/pdf'] } })
+      expect((await upload('application/pdf', new TextEncoder().encode('%PDF-1.7\nretired'))).status).toBe(201)
+    } finally { await owner.json('PUT', '/api/admin/settings', { uploads: null }) }
   })
 })
