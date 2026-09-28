@@ -26,9 +26,12 @@ export function createModelEditorSession(authoritative: ModelWithMetadata, initi
     form,
     get model() { return acknowledged.value },
     get dirty() { return dirty.value },
-    patch(interfaces: readonly ProviderInterface[]) {
-      const patch = modelWriteFromDraft(acknowledged.value, form, interfaces)
-      return creating ? ModelWriteInputSchema.parse({ ...form, model_id: form.model_id.trim() }) : patch
+    patch(interfaces: readonly ProviderInterface[]): Partial<ModelWriteInput> {
+      if (!creating) return modelWriteFromDraft(acknowledged.value, form, interfaces)
+      // A new model has no baseline to diff against: the whole draft is the write.
+      const parsed = ModelWriteInputSchema.parse({ ...form, model_id: form.model_id.trim() })
+      assertProviderInterface(parsed.interface_id, target.provider_id, interfaces)
+      return parsed
     },
     acknowledge(model: ModelWithMetadata) {
       if (model.id !== target.id || model.provider_id !== target.provider_id) throw new Error('Cannot acknowledge a different model')
@@ -80,11 +83,15 @@ export function resetMetadataOverride(override: ModelMetadataOverride, path: str
   return ModelMetadataOverrideSchema.parse(result)
 }
 
-export function modelWriteFromDraft(model: ModelWithMetadata, draft: ModelDraft, interfaces: readonly ProviderInterface[]): Partial<ModelWriteInput> {
-  const parsed = ModelWriteInputSchema.parse({ ...draft, model_id: draft.model_id.trim() })
-  if (parsed.interface_id !== null && !interfaces.some(endpoint => endpoint.id === parsed.interface_id && endpoint.provider_id === model.provider_id)) {
+function assertProviderInterface(interfaceId: number | null | undefined, providerId: number, interfaces: readonly ProviderInterface[]): void {
+  if (interfaceId != null && !interfaces.some(endpoint => endpoint.id === interfaceId && endpoint.provider_id === providerId)) {
     throw new Error('Model interface must belong to its provider')
   }
+}
+
+export function modelWriteFromDraft(model: ModelWithMetadata, draft: ModelDraft, interfaces: readonly ProviderInterface[]): Partial<ModelWriteInput> {
+  const parsed = ModelWriteInputSchema.parse({ ...draft, model_id: draft.model_id.trim() })
+  assertProviderInterface(parsed.interface_id, model.provider_id, interfaces)
   const write: Partial<ModelWriteInput> = {}
   if (parsed.model_id !== model.model_id) write.model_id = parsed.model_id
   if (parsed.interface_id !== model.interface_id) write.interface_id = parsed.interface_id

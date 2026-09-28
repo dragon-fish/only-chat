@@ -536,6 +536,8 @@ async function removeModel() {
                   .flex.min-h-10.min-w-0.items-center.gap-2.rounded-md.px-2(class="hover:bg-muted/50")
                     LabAvatar(:model-id="entry.model.model_id" :lab-id="entry.model.lab_id" :family="entry.model.metadata.family" :provider-name="entry.provider.name" size="sm")
                     span.min-w-0.flex-1.truncate.text-sm {{ modelName(entry.model) }}
+                    Badge(v-if="entry.model.manual_pinned" variant="outline" class="shrink-0") 手动
+                    Badge(v-else-if="entry.model.upstream_available === false" variant="outline" class="shrink-0 border-warning text-warning") 运营商已移除
                     ModelCapabilityIcons(:model="entry.model")
                     Switch(:model-value="entry.model.enabled" :aria-label="`启用 ${modelName(entry.model)}`" class="shrink-0 after:-inset-y-3" :disabled="modelAction || deletingProvider" @update:model-value="setModelEnabled(entry.model, $event)")
                     Button(variant="ghost" size="icon" class="size-8 shrink-0" :aria-label="`编辑 ${modelName(entry.model)}`" :disabled="modelAction || deletingProvider" @click="openModel(entry.model)")
