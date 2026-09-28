@@ -119,7 +119,6 @@ describe('workspace files and file references', () => {
 
     for (const tool of ['write_file', 'edit_file'] as const) {
       const input = tool === 'write_file' ? { path: '/project/refs/cat.png', content: 'x' } : { path: '/project/refs/cat.png', oldText: 'a', newText: 'b' }
-      if (tool === 'edit_file') f.runtime.turn.set('workspace_files:read:/project/refs/cat.png', { version: 1, partial: false, source: 'read' })
       expect(await run(f, tool, input), tool).toMatchObject({ error: 'BINARY_FILE' })
     }
   })

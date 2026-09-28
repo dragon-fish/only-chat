@@ -1,6 +1,6 @@
 import type { Context } from 'cordis'
 import { tool } from 'ai'
-import { WorkspaceFiles, type Result, type WorkspaceError } from '@/server/plugins/workspace-files/service'
+import { isTextMime, WorkspaceFiles, type Result, type WorkspaceError } from '@/server/plugins/workspace-files/service'
 import type { ToolContext } from '@/server/plugins/tools'
 import { formatWorkspacePath, parseWorkspacePath, pathFromArgument } from '@/server/plugins/workspace-files/path'
 import { parseFileRef, refFailure, vfsRef, VFS_SCHEME } from '@/server/plugins/file-refs/ref'
@@ -379,11 +379,16 @@ export const WorkspaceFilesServerPlugin = {
         if (!parsed.ok) return failure('INVALID_PATH')
         // The ledger is keyed by the canonical path, which is what read_file and write_file record.
         const seen = seenInContext(runtime, formatWorkspacePath(parsed.value))
-        // A view that stopped short is not knowing what the file says, even when the text being
-        // named happens to be unique: what makes it unique is the part nobody looked at.
-        if (seen === null || seen.partial) return NOT_READ
-
         const { files, scope } = servicesFor(runtime)
+        // A view that stopped short is not knowing what the file says, even when the text being
+        // named happens to be unique: what makes it unique is the part nobody looked at. Reading a
+        // binary file never records a view, so it is named as binary rather than as unread — the
+        // latter would send the caller to read_file and back here forever.
+        if (seen === null || seen.partial) {
+          const found = await files.current({ path: target, ...scope })
+          return found.ok && !isTextMime(found.value.version.mime) ? failure('BINARY_FILE') : NOT_READ
+        }
+
         const result = await files.edit({
           path: target,
           oldText: input.oldText,
