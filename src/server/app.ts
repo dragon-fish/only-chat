@@ -15,6 +15,7 @@ import { DatetimeServerPlugin } from '@/plugins/datetime/server'
 import { ImageGenerationServerPlugin } from '@/plugins/image-generation/server'
 import { WorkspaceFilesServerPlugin } from '@/plugins/workspace-files/server'
 import { WorkspaceFilesApiPlugin } from '@/plugins/workspace-files/server/api'
+import { FileUnderstandingServerPlugin } from '@/plugins/file-understanding/server'
 import { BrowserRunServerPlugin } from '@/plugins/cloudflare-browser-run/server'
 
 export type Side = 'worker' | 'hub'
@@ -59,6 +60,7 @@ export async function createApp(options: AppOptions): Promise<Context> {
       await ctx.plugin(DatetimeServerPlugin)
       await ctx.plugin(ImageGenerationServerPlugin)
       await ctx.plugin(WorkspaceFilesServerPlugin)
+      await ctx.plugin(FileUnderstandingServerPlugin)
       await ctx.plugin(HubPlugin, { userId: options.userId })
       if (!ctx.get('hub')) throw new Error('HubPlugin loaded but ctx.hub is unavailable')
       // Needs the hub for its realtime channel and session store, so it comes after it.
