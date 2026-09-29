@@ -26,9 +26,3 @@ export const GenerateImageErrorSchema = z.object({ error: z.string(), code: z.st
 export type GenerateImageError = z.infer<typeof GenerateImageErrorSchema>
 
 export type GenerateImageOutput = GenerateImageStarted | GenerateImageError
-
-/** The artifact run behind an `image_run:<id>` task id. */
-export function runIdOf(taskId: string): number | null {
-  const match = /^image_run:(\d+)$/.exec(taskId)
-  return match ? Number(match[1]) : null
-}

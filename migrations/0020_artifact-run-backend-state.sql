@@ -1,0 +1,1 @@
+ALTER TABLE `artifact_runs` ADD `backend_state` text;

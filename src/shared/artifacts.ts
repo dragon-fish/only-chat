@@ -103,3 +103,9 @@ export interface ArtifactDto {
 }
 
 export interface ArtifactPage { artifacts: ArtifactDto[]; next_cursor: string | null }
+
+/** The artifact run behind an `image_run:<id>` task id. */
+export function runIdOf(taskId: string): number | null {
+  const match = /^image_run:(\d+)$/.exec(taskId)
+  return match ? Number(match[1]) : null
+}

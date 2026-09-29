@@ -16,6 +16,7 @@ import { messageSegments, turnBlocks } from '@/client/components/message-segment
 import { canContinueToolMessage } from '@/client/components/tool-part-renderer'
 import ProjectAvatar from '@/client/components/project-avatar.vue'
 import TaskNotificationRow from '@/client/components/task-notification-row.vue'
+import { provideAssetScope } from '@/client/lib/asset-refs'
 import { useAttachmentUrl, useAuditContext } from '@/client/lib/audit-context'
 import { cn } from '@/client/lib/utils'
 import { assistantWaitState, editCommandFor, regenerateCommandFor, useSyncStore, type EffectiveModel } from '@/client/stores/sync'
@@ -46,6 +47,7 @@ const props = defineProps<{
   effectiveModel?: EffectiveModel
 }>()
 const sync = useSyncStore()
+provideAssetScope(props.message.conversation_id)
 /** An audited transcript belongs to someone else: nothing here may offer to change it. */
 const readonly = useAuditContext() !== null
 const attachmentUrl = useAttachmentUrl()

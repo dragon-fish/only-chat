@@ -92,7 +92,7 @@ export function artifactRoutes(ctx: Context) {
       // The Workflow is gone, so its notify step never runs; a cancelled tool run reports itself. After
       // the response, because delivery may run the Agent's whole next turn.
       if (run.source === 'tool') {
-        c.executionCtx.waitUntil(notifyToolRun(ctx.env, userId, run.id).catch(error => console.error('cancel notify failed', error)))
+        c.executionCtx.waitUntil(notifyToolRun(ctx, userId, run.id).catch(error => console.error('cancel notify failed', error)))
       }
     }
     return c.json((await withReferenceInputs(ctx, [current]))[0]!)

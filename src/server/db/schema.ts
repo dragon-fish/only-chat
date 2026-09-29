@@ -282,13 +282,16 @@ export const artifactRuns = sqliteTable('artifact_runs', {
   provider_id: integer().references(() => providers.id, { onDelete: 'set null' }),
   provider_name: text().notNull(),
   interface_id: integer().references(() => providerInterfaces.id, { onDelete: 'set null' }),
-  interface_protocol: text().$type<InterfaceProtocol>().notNull(),
+  /** A provider protocol, or the protocol an `imageBackends` entry was registered under. */
+  interface_protocol: text().notNull(),
   credential_version: integer().notNull(),
   model_id: text().notNull(),
   model_name: text().notNull(),
   prompt: text().notNull(),
   params: text({ mode: 'json' }).$type<ImageGenerationParams>().notNull(),
   workflow_instance_id: text().notNull(),
+  /** Private to the image backend that owns the run; null for provider runs. */
+  backend_state: text({ mode: 'json' }).$type<Record<string, unknown>>(),
   error: text(),
   usage: text({ mode: 'json' }).$type<ArtifactUsage>(),
   created_at: integer().notNull(),

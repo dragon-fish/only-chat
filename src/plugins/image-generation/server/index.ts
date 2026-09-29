@@ -12,6 +12,7 @@ const DESCRIPTION = [
   'Returns immediately with a task_id. The result arrives later as a <task-notification> message listing the new images as asset: references;',
   'do not wait, poll, or call again for the same request. Tell the user it is on its way, or continue with other work.',
   'If the notification says generation failed, read the provider\'s reason, adjust the prompt if that helps, and try again at most once.',
+  'The user already sees the new images with the notification; do not embed them again. To point at particular ones in your reply, for example to compare two, write ![short description](asset:<hex>).',
 ].join('\n')
 
 export const NO_IMAGE_MODEL = 'No image model is configured. Ask the user to choose one in Settings → Service models or in Image Studio.'

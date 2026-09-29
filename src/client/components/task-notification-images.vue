@@ -4,9 +4,8 @@ import { RouterLink, useRoute } from 'vue-router'
 import { withViewer } from '@/client/lib/image-viewer'
 import { api } from '@/client/lib/api'
 import { useAuditContext } from '@/client/lib/audit-context'
-import type { ArtifactDto } from '@/shared/artifacts'
+import { runIdOf, type ArtifactDto } from '@/shared/artifacts'
 import type { TaskNotificationPart } from '@/shared/parts'
-import { runIdOf } from '../shared'
 
 const props = defineProps<{ notification: TaskNotificationPart }>()
 const auditing = useAuditContext() !== null

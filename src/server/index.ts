@@ -65,7 +65,7 @@ export class ArtifactGenerationWorkflow extends WorkflowEntrypoint<Env, { userId
     await step.do('notify agent', {
       retries: { limit: 5, delay: '5 seconds', backoff: 'exponential' },
       timeout: '15 minutes',
-    }, async () => notifyToolRun(this.env, event.payload.userId, event.payload.runId))
+    }, async () => notifyToolRun(await createApp({ env: this.env, side: 'workflow' }), event.payload.userId, event.payload.runId))
   }
 }
 

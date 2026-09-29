@@ -123,14 +123,11 @@ export interface ToolImageRunInput {
  */
 export async function createToolImageRun(ctx: Context, userId: number, input: ToolImageRunInput): Promise<{ run_id: number }> {
   const db = ctx.db.orm
-  const clientRequestId = `tool:${input.messageId}:${input.toolCallId}`
-  const existing = await db.query.artifactRuns.findFirst({
-    where: and(eq(artifactRuns.user_id, userId), eq(artifactRuns.client_request_id, clientRequestId)),
-  })
+  const clientRequestId = toolClientRequestId(input.messageId, input.toolCallId)
+  const existing = await findToolRun(db, userId, input.messageId, input.toolCallId)
   if (existing) return { run_id: existing.id }
   const { provider, model, selected } = await resolveImageTarget(db, userId, input.model, input.references)
-  // Workflow instance ids allow only letters, digits, `-` and `_`.
-  const workflowId = `artifact-${userId}-tool-${input.messageId}-${input.toolCallId.replace(/[^A-Za-z0-9_-]/g, '_')}`.slice(0, 100)
+  const workflowId = toolWorkflowId(userId, input.messageId, input.toolCallId)
   const [run] = await db.insert(artifactRuns).values({
     user_id: userId, client_request_id: clientRequestId, kind: 'image_generation', source: 'tool', operation: input.references.length ? 'edit' : 'generate',
     status: 'queued', conversation_id: input.conversationId, message_id: input.messageId, tool_call_id: input.toolCallId,
@@ -141,12 +138,65 @@ export async function createToolImageRun(ctx: Context, userId: number, input: To
   if (input.references.length) await db.insert(artifactRunInputs).values(
     input.references.map((attachment_id, position) => ({ run_id: run!.id, attachment_id, position })),
   )
+  await startRunWorkflow(ctx, userId, run!.id, workflowId)
+  return { run_id: run!.id }
+}
+
+export interface BackendToolRunInput {
+  conversationId: number
+  /** The assistant message holding the tool call. */
+  messageId: number
+  toolCallId: string
+  /** The protocol the backend is registered under in `imageBackends`. */
+  protocol: string
+  /** Shown where a provider's name would be. */
+  sourceName: string
+  modelId: string
+  modelName: string
+  prompt: string
+  params: ImageGenerationParams
+  state: Record<string, unknown>
+}
+
+/**
+ * A tool run executed by an `imageBackends` entry instead of a provider model. The caller has
+ * already done whatever the backend needs up front, and checks `findToolRun` first so a replayed
+ * call does not repeat it.
+ */
+export async function createBackendToolRun(ctx: Context, userId: number, input: BackendToolRunInput): Promise<{ run_id: number }> {
+  const workflowId = toolWorkflowId(userId, input.messageId, input.toolCallId)
+  const [run] = await ctx.db.orm.insert(artifactRuns).values({
+    user_id: userId, client_request_id: toolClientRequestId(input.messageId, input.toolCallId), kind: 'image_generation',
+    source: 'tool', operation: 'generate', status: 'queued', conversation_id: input.conversationId, message_id: input.messageId,
+    tool_call_id: input.toolCallId, provider_id: null, provider_name: input.sourceName, interface_id: null,
+    interface_protocol: input.protocol, credential_version: 0, model_id: input.modelId, model_name: input.modelName,
+    prompt: input.prompt, params: input.params, backend_state: input.state, workflow_instance_id: workflowId, created_at: Date.now(),
+  }).returning()
+  await startRunWorkflow(ctx, userId, run!.id, workflowId)
+  return { run_id: run!.id }
+}
+
+export function findToolRun(db: DB, userId: number, messageId: number, toolCallId: string) {
+  return db.query.artifactRuns.findFirst({
+    where: and(eq(artifactRuns.user_id, userId), eq(artifactRuns.client_request_id, toolClientRequestId(messageId, toolCallId))),
+  })
+}
+
+function toolClientRequestId(messageId: number, toolCallId: string): string {
+  return `tool:${messageId}:${toolCallId}`
+}
+
+/** Workflow instance ids allow only letters, digits, `-` and `_`. */
+function toolWorkflowId(userId: number, messageId: number, toolCallId: string): string {
+  return `artifact-${userId}-tool-${messageId}-${toolCallId.replace(/[^A-Za-z0-9_-]/g, '_')}`.slice(0, 100)
+}
+
+async function startRunWorkflow(ctx: Context, userId: number, runId: number, workflowId: string): Promise<void> {
   try {
-    disposeRpcStub(await ctx.env.ARTIFACT_WORKFLOW.create({ id: workflowId, params: { userId, runId: run!.id } }))
+    disposeRpcStub(await ctx.env.ARTIFACT_WORKFLOW.create({ id: workflowId, params: { userId, runId } }))
   } catch {
-    await db.update(artifactRuns).set({ status: 'failed', error: 'Could not start image generation', completed_at: Date.now() })
-      .where(and(eq(artifactRuns.id, run!.id), eq(artifactRuns.user_id, userId)))
+    await ctx.db.orm.update(artifactRuns).set({ status: 'failed', error: 'Could not start image generation', completed_at: Date.now() })
+      .where(and(eq(artifactRuns.id, runId), eq(artifactRuns.user_id, userId)))
     throw new Error('Could not start image generation')
   }
-  return { run_id: run!.id }
 }

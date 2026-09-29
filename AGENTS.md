@@ -71,9 +71,9 @@ entrypoints. All of them build a cordis `Context` through `createApp({ side })` 
 
 | side | where it runs | has |
 | --- | --- | --- |
-| `worker` | the Worker isolate | `auth`, `modelCatalog`, `api` (Hono), plugin HTTP routes |
+| `worker` | the Worker isolate | `auth`, `modelCatalog`, `api` (Hono), plugin HTTP routes, `imageBackends` |
 | `hub` | one per `UserHub` DO instance | `llm`, `tools`, `pluginChannel`, feature plugins, `hub` |
-| `workflow` | inside a Workflow step | `llm` only |
+| `workflow` | inside a Workflow step | `llm`, `imageBackends` |
 
 Services are declared on the `Context` interface in `src/server/cordis.d.ts`. Two consequences worth
 internalizing: a service you reach for may simply not exist on your side (`ctx.auth` is absent in the

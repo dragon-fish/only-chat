@@ -1,6 +1,7 @@
 import type { Context } from 'cordis'
 import { and, asc, eq } from 'drizzle-orm'
-import { artifactLinks, artifactRunInputs, artifactRuns, artifacts, attachments, messages } from '@/server/db/schema'
+import { artifactLinks, artifactRunInputs, artifactRuns, artifacts, attachments, messages, type ArtifactRunRow } from '@/server/db/schema'
+import type { ImageBackendResult } from './backends'
 import { MAX_GENERATED_IMAGE_BYTES, r2Key } from '../api/attachments'
 import { getAttachment, getModel, getProvider, getProviderInterface } from '../hub/conversations'
 import { disposeRpcStub } from '@/server/rpc'
@@ -17,6 +18,34 @@ function safeError(error: unknown): string {
   return message.replace(/Bearer\s+\S+/gi, 'Bearer [redacted]').slice(0, 2_000)
 }
 
+/** A run against one of the user's providers, through the protocol's Images client. */
+async function generateWithProvider(ctx: Context, userId: number, run: ArtifactRunRow): Promise<ImageBackendResult> {
+  const db = ctx.db.orm
+  if (run.provider_id === null || run.interface_id === null) throw new Error('Image provider configuration no longer exists')
+  const [provider, model, selected] = await Promise.all([
+    getProvider(db, run.provider_id, userId),
+    getModel(db, run.provider_id, run.model_id, userId),
+    getProviderInterface(db, run.interface_id, userId),
+  ])
+  if (!provider || !model || !selected || selected.provider_id !== provider.id) throw new Error('Image provider configuration no longer exists')
+  if (provider.credential_version !== run.credential_version) throw new Error('Image provider credentials changed before generation started')
+  const inputRows = await db.select().from(artifactRunInputs).where(eq(artifactRunInputs.run_id, run.id)).orderBy(asc(artifactRunInputs.position))
+  const references = await Promise.all(inputRows.map(async (input) => {
+    const attachment = await getAttachment(db, input.attachment_id, userId)
+    if (!attachment) throw new Error('Reference attachment no longer exists')
+    const stored = await ctx.assets.getBytes(attachment.r2_key)
+    if (!stored) throw new Error('Reference attachment content is missing')
+    return { bytes: stored.bytes as Uint8Array<ArrayBuffer>, mime: attachment.mime, filename: `reference-${input.position}` }
+  }))
+  const client = await ctx.llm.createImages(provider, selected)
+  return client.generate({
+    modelId: run.model_id, prompt: run.prompt, references,
+    // The model's defaults are read now, not copied at creation: editing them fixes a queued run too.
+    params: { ...run.params, extra: { ...model.image_extra_body, ...run.params.extra } },
+    idempotencyKey: run.workflow_instance_id,
+  })
+}
+
 export async function executeImageRun(ctx: Context, userId: number, runId: number): Promise<void> {
   const db = ctx.db.orm
   const run = await db.query.artifactRuns.findFirst({ where: and(eq(artifactRuns.id, runId), eq(artifactRuns.user_id, userId)) })
@@ -26,29 +55,8 @@ export async function executeImageRun(ctx: Context, userId: number, runId: numbe
   if (!claimed && run.status !== 'running') return
 
   try {
-    if (run.provider_id === null || run.interface_id === null) throw new Error('Image provider configuration no longer exists')
-    const [provider, model, selected] = await Promise.all([
-      getProvider(db, run.provider_id, userId),
-      getModel(db, run.provider_id, run.model_id, userId),
-      getProviderInterface(db, run.interface_id, userId),
-    ])
-    if (!provider || !model || !selected || selected.provider_id !== provider.id) throw new Error('Image provider configuration no longer exists')
-    if (provider.credential_version !== run.credential_version) throw new Error('Image provider credentials changed before generation started')
-    const inputRows = await db.select().from(artifactRunInputs).where(eq(artifactRunInputs.run_id, run.id)).orderBy(asc(artifactRunInputs.position))
-    const references = await Promise.all(inputRows.map(async (input) => {
-      const attachment = await getAttachment(db, input.attachment_id, userId)
-      if (!attachment) throw new Error('Reference attachment no longer exists')
-      const stored = await ctx.assets.getBytes(attachment.r2_key)
-      if (!stored) throw new Error('Reference attachment content is missing')
-      return { bytes: stored.bytes as Uint8Array<ArrayBuffer>, mime: attachment.mime, filename: `reference-${input.position}` }
-    }))
-    const client = await ctx.llm.createImages(provider, selected)
-    const result = await client.generate({
-      modelId: run.model_id, prompt: run.prompt, references,
-      // The model's defaults are read now, not copied at creation: editing them fixes a queued run too.
-      params: { ...run.params, extra: { ...model.image_extra_body, ...run.params.extra } },
-      idempotencyKey: run.workflow_instance_id,
-    })
+    const backend = ctx.imageBackends.get(run.interface_protocol)
+    const result = backend ? await backend.execute(userId, run) : await generateWithProvider(ctx, userId, run)
     const current = await db.query.artifactRuns.findFirst({ where: and(eq(artifactRuns.id, run.id), eq(artifactRuns.user_id, userId)) })
     if (current?.status !== 'running') return
     const imageParts: Array<{ type: 'image'; attachment_id: number; artifact_id: number }> = []
@@ -96,7 +104,10 @@ export async function executeImageRun(ctx: Context, userId: number, runId: numbe
         eq(messages.id, run.message_id), eq(messages.conversation_id, run.conversation_id),
       ))
     }
-    await db.update(artifactRuns).set({ status: 'completed', error: null, usage: result.usage, completed_at: Date.now() })
+    await db.update(artifactRuns).set({
+      status: 'completed', error: null, usage: result.usage ?? null, completed_at: Date.now(),
+      ...(result.state ? { backend_state: result.state } : {}),
+    })
       .where(and(eq(artifactRuns.id, run.id), eq(artifactRuns.user_id, userId), eq(artifactRuns.status, 'running')))
   } catch (error) {
     const failure = safeError(error)

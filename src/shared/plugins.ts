@@ -31,16 +31,24 @@ export const MCP_PLUGIN_ID = 'mcp' as const
 export const MCP_LIST_SERVICES_TOOL_ID = 'mcp_list_services' as const
 export const MCP_LIST_TOOLS_TOOL_ID = 'mcp_list_tools' as const
 export const MCP_CALL_TOOL_TOOL_ID = 'mcp_call_tool' as const
+export const COMFYUI_PLUGIN_ID = 'comfyui' as const
+export const COMFYUI_LIST_WORKFLOWS_TOOL_ID = 'comfyui_list_workflows' as const
+export const COMFYUI_READ_TOOL_ID = 'comfyui_read' as const
+export const COMFYUI_LIST_MODELS_TOOL_ID = 'comfyui_list_models' as const
+export const COMFYUI_NODE_INFO_TOOL_ID = 'comfyui_node_info' as const
+export const COMFYUI_GENERATE_TOOL_ID = 'comfyui_generate' as const
 
 export type BuiltInPluginId = typeof ASK_USER_PLUGIN_ID | typeof TAVILY_PLUGIN_ID | typeof DATETIME_PLUGIN_ID
   | typeof WORKSPACE_FILES_PLUGIN_ID | typeof BROWSER_RUN_PLUGIN_ID | typeof IMAGE_GENERATION_PLUGIN_ID
-  | typeof FILE_UNDERSTANDING_PLUGIN_ID | typeof FILE_READER_PLUGIN_ID | typeof MCP_PLUGIN_ID
+  | typeof FILE_UNDERSTANDING_PLUGIN_ID | typeof FILE_READER_PLUGIN_ID | typeof MCP_PLUGIN_ID | typeof COMFYUI_PLUGIN_ID
 export type BuiltInToolId = typeof ASK_USER_TOOL_ID | typeof WEB_SEARCH_TOOL_ID | typeof WEB_EXTRACT_TOOL_ID | typeof CURRENT_TIME_TOOL_ID
   | typeof LIST_FILES_TOOL_ID | typeof READ_FILE_TOOL_ID | typeof WRITE_FILE_TOOL_ID | typeof EDIT_FILE_TOOL_ID | typeof RESTORE_FILE_TOOL_ID
   | typeof RENAME_FILE_TOOL_ID | typeof DELETE_FILE_TOOL_ID | typeof PREVIEW_FILE_TOOL_ID | typeof COPY_FILE_TOOL_ID
   | typeof ANALYZE_FILE_TOOL_ID
   | typeof BROWSER_USE_TOOL_ID | typeof BROWSER_HANDOFF_TOOL_ID | typeof GENERATE_IMAGE_TOOL_ID
   | typeof MCP_LIST_SERVICES_TOOL_ID | typeof MCP_LIST_TOOLS_TOOL_ID | typeof MCP_CALL_TOOL_TOOL_ID
+  | typeof COMFYUI_LIST_WORKFLOWS_TOOL_ID | typeof COMFYUI_READ_TOOL_ID | typeof COMFYUI_LIST_MODELS_TOOL_ID
+  | typeof COMFYUI_NODE_INFO_TOOL_ID | typeof COMFYUI_GENERATE_TOOL_ID
 
 /**
  * One tool's own identity. A plugin may own several, and each needs its own label: listing two
@@ -87,7 +95,8 @@ export interface PluginToolGroup {
   tools: readonly string[]
 }
 
-export type PluginConfigFieldType = 'text' | 'secret' | 'number' | 'boolean' | 'select'
+/** `key_value` rows are shown by name; a row marked secret has its value encrypted and never returned. */
+export type PluginConfigFieldType = 'text' | 'secret' | 'number' | 'boolean' | 'select' | 'key_value'
 
 /**
  * Presentation only. Options, bounds and defaults are read from `configSchema` via
@@ -381,6 +390,10 @@ export function pluginToolGroups(manifest: PluginManifest): ResolvedToolGroup[] 
  * A key that no field claims is treated as a secret. Being wrong in that direction hides a value
  * that did not need hiding; being wrong the other way broadcasts a credential.
  */
+export function isKeyValueConfigKey(manifest: PluginManifest, key: string): boolean {
+  return manifest.config?.find(candidate => candidate.key === key)?.type === 'key_value'
+}
+
 export function isSecretConfigKey(manifest: PluginManifest, key: string): boolean {
   const field = manifest.config?.find(candidate => candidate.key === key)
   return field === undefined || field.type === 'secret'

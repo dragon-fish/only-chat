@@ -39,7 +39,7 @@ export interface PluginApi {
 
 export const ApiPlugin = {
   name: 'api',
-  inject: ['env', 'db', 'auth', 'assets', 'modelCatalog', 'pluginConfig'],
+  inject: ['env', 'db', 'auth', 'assets', 'modelCatalog', 'pluginConfig', 'imageBackends'],
   apply(ctx: Context) {
     const app: ApiApp = new Hono()
     app.use('/api/auth/admin/*', async (c, next) => {
