@@ -22,6 +22,9 @@ picked. The server accepts nothing but valid UTF-8.
 PDFs and text appear as file cards with open and download links; audio and video use browser
 players. The attachment route answers `Range` requests (`206`), which media seeking needs, and serves
 every text type as sandboxed `text/plain`, so an uploaded page is shown and never run on this origin.
+An attachment row has no filename, so download links pass `?download=<name>` and the route answers
+with `Content-Disposition: attachment` — download managers re-request the link and ignore
+`<a download>`.
 
 Administrators configure the allowed formats and the per-file size limit in `/admin/settings`:
 every supported format and 20 MiB by default, 50 MiB at most, and an empty format list turns chat
