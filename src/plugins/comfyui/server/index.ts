@@ -44,6 +44,7 @@ const GENERATE_DESCRIPTION = [
   '- Raw mode: workflow, a complete API-format graph { "<node id>": { "class_type", "inputs" } } with at least one output node such as SaveImage. Links are [source node id, output index]. You set the seed yourself; ComfyUI returns a cached result without generating when the graph is identical to an earlier one.',
   'The workflow is validated on submission. A rejected one returns error_type "validation" with node_errors naming each node and input at fault; fix those and submit again.',
   'An accepted one returns a task_id at once. The images arrive later as a <task-notification> message listing them as asset: references; do not wait, poll, or submit again for the same request. Tell the user it is on its way, or continue with other work.',
+  'The user already sees the new images with the notification; do not embed them again. To point at particular ones in your reply, for example to compare two, write ![short description](asset:<hex>).',
 ].join('\n')
 
 export const ComfyuiServerPlugin = {
