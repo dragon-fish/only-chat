@@ -466,7 +466,18 @@ export class WorkspaceFiles {
         .set({ current_version: version, updated_at: now })
         .where(and(eq(workspaceFiles.id, fileId), eq(workspaceFiles.current_version, expected))),
     ] as const
-    const [, update] = await this.db.batch([statements[0], statements[1]])
+    let update: unknown
+    try {
+      [, update] = await this.db.batch([statements[0], statements[1]])
+    } catch (error) {
+      // A concurrent write to the same file inserts this version number first, and the insert
+      // fails on the unique index before the compare-and-swap below can say so. That is a conflict,
+      // not a fault: confirmed by the file having moved on, so any other failure still throws.
+      const [row] = await this.db.select({ current: workspaceFiles.current_version }).from(workspaceFiles)
+        .where(eq(workspaceFiles.id, fileId)).limit(1)
+      if (row && row.current !== expected) return false
+      throw error
+    }
     const changed = (update as { meta?: { changes?: number } }).meta?.changes
     return changed === undefined || changed > 0
   }

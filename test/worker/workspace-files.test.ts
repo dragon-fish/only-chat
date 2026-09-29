@@ -68,6 +68,18 @@ describe('workspace files service', () => {
     if (blind.ok) expect(blind.value).toMatchObject({ operation: 'replaced', version: 2, replacedVersion: 1 })
   })
 
+  it('answers two edits racing on one file with one success and one conflict, never a throw', async () => {
+    await f.files.write({ path: '/project/a.md', content: 'alpha\nbeta', ...scope(f) })
+    // Both read version 1 and both try to become version 2; the loser must not surface as a failure
+    // of the tool itself, which would leave its call without a result.
+    const results = await Promise.all([
+      f.files.edit({ path: '/project/a.md', oldText: 'alpha', newText: 'ALPHA', ...scope(f) }),
+      f.files.edit({ path: '/project/a.md', oldText: 'beta', newText: 'BETA', ...scope(f) }),
+    ])
+    expect(results.filter(result => result.ok)).toHaveLength(1)
+    expect(results.find(result => !result.ok)).toMatchObject({ ok: false, error: 'VERSION_CONFLICT' })
+  })
+
   it('still refuses a write that names the wrong version', async () => {
     await f.files.write({ path: '/project/a.md', content: 'one', ...scope(f) })
 
