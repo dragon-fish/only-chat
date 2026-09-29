@@ -90,8 +90,11 @@ and `edit_file` refuse a binary file with `BINARY_FILE`. Assets are immutable: t
 change an `asset:` reference answer `READ_ONLY` and point to `copy_file`.
 
 The file panel lists 当前会话, 本会话的附件 (the conversation's uploads and generated files across all
-branches, read-only) and 当前项目. Hovering a row shows the `asset:` or `vfs:` reference to cite
-in chat.
+branches, read-only) and 当前项目.
+
+Nothing a person sees names a file by `asset:` or `vfs:`: those are how the model refers to files.
+Tool results carry the file's name, and tool cards show it, a path's last segment, or what kind of
+file it is.
 
 ## File understanding
 
