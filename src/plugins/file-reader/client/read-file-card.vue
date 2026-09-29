@@ -8,7 +8,7 @@ import { Spinner } from '@/client/ui/spinner'
 import type { ToolCallPart, ToolResultPart } from '@/shared/parts'
 import { useAttachmentUrl } from '@/client/lib/audit-context'
 import FileThumb from '@/client/components/file-thumb.vue'
-import { fileLabel, formatFileSize } from '@/client/components/workspace-files'
+import { fileAction, fileLabel, formatFileSize } from '@/client/components/workspace-files'
 import type { LinesRead } from '@/shared/text-lines'
 import type { FileToolError, ReadDeliveredOutput, ReadFileInput } from '../shared'
 
@@ -36,6 +36,7 @@ const isImage = computed(() => receipt.value?.mime.startsWith('image/') ?? false
 const asked = computed(() => input.value.file ?? '')
 /** A workspace page names its path; an asset page names the file. The reference is never shown. */
 const name = computed(() => fileLabel(output.value?.path ?? asked.value, output.value?.name))
+const readTitle = computed(() => fileAction('读取', output.value?.path ?? asked.value, output.value?.name))
 
 /** What was actually returned, which is not always what was asked for. */
 const range = computed(() => {
@@ -52,19 +53,19 @@ const range = computed(() => {
 .flex.w-full.flex-col.gap-2
   .oc-turn-row.text-sm.text-muted-foreground(v-if="!result")
     Spinner(class="size-4 shrink-0")
-    span.min-w-0.truncate 正在读取 {{ fileLabel(asked) }}
+    span.min-w-0.truncate {{ fileAction('正在读取', asked) }}
   Alert(v-else-if="failure" variant="destructive")
     TriangleAlertIcon
     AlertTitle 读取未完成
     AlertDescription {{ failure.message }}
   .oc-turn-row.text-sm.text-muted-foreground(v-else-if="unchanged" :title="unchanged.path")
     FileCheckIcon(class="size-4 shrink-0")
-    span.min-w-0.truncate 未变 {{ fileLabel(unchanged.path) }}
+    span.min-w-0.truncate {{ fileAction('未变', unchanged.path) }}
     Badge(variant="secondary" class="ml-auto shrink-0") v{{ unchanged.version }}
   .flex.flex-col.gap-2(v-else-if="receipt")
     .oc-turn-row.text-sm
       FileThumb(:mime="receipt.mime")
-      span.min-w-0.truncate 已读取 {{ fileLabel(asked, receipt.name, receipt.mime) }}
+      span.min-w-0.truncate {{ fileAction('已读取', asked, receipt.name, receipt.mime) }}
       span.shrink-0.text-xs.text-muted-foreground {{ receipt.mime }}
       a.shrink-0.text-xs.underline(v-if="shownAttachment !== null" :href="attachmentUrl(shownAttachment)" target="_blank" rel="noopener") 查看文件
     img.max-h-40.w-fit.rounded-md.border(v-if="isImage && shownAttachment !== null" :src="attachmentUrl(shownAttachment)" :alt="fileLabel(asked, receipt.name, receipt.mime)" loading="lazy")
@@ -72,7 +73,7 @@ const range = computed(() => {
   Collapsible(v-else-if="output")
     CollapsibleTrigger(class="oc-turn-row text-sm hover:bg-accent" :title="output.path")
       FileTextIcon(class="size-4 shrink-0 text-muted-foreground")
-      span.min-w-0.truncate.text-left 读取 {{ name }}
+      span.min-w-0.truncate.text-left {{ readTitle }}
       Badge(variant="secondary" class="ml-auto shrink-0") {{ range }}
     CollapsibleContent
       .flex.flex-col.gap-2.px-2.py-3

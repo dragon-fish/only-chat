@@ -168,16 +168,25 @@ export function assetRowMeta(asset: ConversationAsset): string {
 }
 
 /**
- * What a tool card calls a file. Never the reference itself: `asset:3f9a2c1e` is how the model names
- * a file, not how a person does. The name a result carries wins; a path gives its last segment; a
- * file nobody named is called by what it is.
+ * What a tool card calls a file, or null when nothing names it. Never the reference itself:
+ * `asset:3f9a2c1e` is how the model names a file, not how a person does. The name a result carries
+ * wins; a path gives its last segment.
  */
-export function fileLabel(ref: string | undefined, name?: string | null, mime?: string): string {
+function namedFile(ref: string | undefined, name?: string | null): string | null {
   if (name) return name
   const path = ref?.startsWith('vfs:') ? ref.slice(4) : ref
-  if (path?.startsWith('/')) {
-    const trimmed = path.endsWith('/') ? path.slice(0, -1) : path
-    return trimmed.slice(trimmed.lastIndexOf('/') + 1) || trimmed
-  }
-  return mime?.startsWith('image/') ? '图片' : '文件'
+  if (!path?.startsWith('/')) return null
+  const trimmed = path.endsWith('/') ? path.slice(0, -1) : path
+  return trimmed.slice(trimmed.lastIndexOf('/') + 1) || trimmed
+}
+
+/** A file nobody named is called by what it is. */
+export function fileLabel(ref: string | undefined, name?: string | null, mime?: string): string {
+  return namedFile(ref, name) ?? (mime?.startsWith('image/') ? '图片' : '文件')
+}
+
+/** `读取 cars.csv` for a named file, `读取文件` for one that is only a kind: no space before a generic noun. */
+export function fileAction(verb: string, ref: string | undefined, name?: string | null, mime?: string): string {
+  const named = namedFile(ref, name)
+  return named === null ? `${verb}${fileLabel(ref, name, mime)}` : `${verb} ${named}`
 }

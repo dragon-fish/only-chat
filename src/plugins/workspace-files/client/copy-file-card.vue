@@ -5,7 +5,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/client/ui/alert'
 import { Badge } from '@/client/ui/badge'
 import { Spinner } from '@/client/ui/spinner'
 import FileThumb from '@/client/components/file-thumb.vue'
-import { fileLabel } from '@/client/components/workspace-files'
+import { fileAction, fileLabel } from '@/client/components/workspace-files'
 import type { ToolCallPart, ToolResultPart } from '@/shared/parts'
 import type { CopyFileInput, CopyFileOutput, WorkspaceToolError } from '../shared'
 import { basename, formatBytes } from './format'
@@ -22,7 +22,7 @@ const failure = computed(() => (content.value && 'error' in content.value ? cont
 .flex.w-full.flex-col.gap-2
   .oc-turn-row.text-sm.text-muted-foreground(v-if="!result")
     Spinner(class="size-4 shrink-0")
-    span.min-w-0.truncate 正在复制 {{ fileLabel(input.from) }}
+    span.min-w-0.truncate {{ fileAction('正在复制', input.from) }}
   Alert(v-else-if="failure" variant="destructive")
     TriangleAlertIcon
     AlertTitle 复制未完成

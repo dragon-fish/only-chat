@@ -6,7 +6,7 @@ import { Badge } from '@/client/ui/badge'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/client/ui/collapsible'
 import { Spinner } from '@/client/ui/spinner'
 import FileThumb from '@/client/components/file-thumb.vue'
-import { fileLabel } from '@/client/components/workspace-files'
+import { fileAction } from '@/client/components/workspace-files'
 import type { ToolCallPart, ToolResultPart } from '@/shared/parts'
 import type { AnalyzeFileInput, AnalyzeFileOutput, FileToolError } from '../shared'
 
@@ -22,7 +22,7 @@ const output = computed(() => (content.value && 'text' in content.value ? conten
 .flex.w-full.flex-col.gap-2
   .oc-turn-row.text-sm.text-muted-foreground(v-if="!result")
     Spinner(class="size-4 shrink-0")
-    span.min-w-0.truncate 正在分析 {{ fileLabel(input.file) }}
+    span.min-w-0.truncate {{ fileAction('正在分析', input.file) }}
   Alert(v-else-if="failure" variant="destructive")
     TriangleAlertIcon
     AlertTitle 文件分析未完成
@@ -31,7 +31,7 @@ const output = computed(() => (content.value && 'text' in content.value ? conten
   Collapsible(v-else-if="output")
     CollapsibleTrigger(class="oc-turn-row text-sm hover:bg-accent")
       FileThumb(:mime="output.mime" :name="output.name ?? undefined")
-      span.min-w-0.truncate.text-left 分析 {{ fileLabel(input.file, output.name, output.mime) }}
+      span.min-w-0.truncate.text-left {{ fileAction('分析', input.file, output.name, output.mime) }}
       Badge(v-if="output.truncated" variant="secondary" class="ml-auto shrink-0") 结果不完整
     CollapsibleContent
       .flex.flex-col.gap-2.px-2.py-3
