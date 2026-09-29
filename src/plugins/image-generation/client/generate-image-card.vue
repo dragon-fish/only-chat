@@ -1,20 +1,21 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed } from 'vue'
 import { ImagesIcon, TriangleAlertIcon, XIcon } from '@lucide/vue'
 import { RouterLink, useRoute } from 'vue-router'
 import { withViewer } from '@/client/lib/image-viewer'
 import { api } from '@/client/lib/api'
+import { useArtifactRun } from '@/client/lib/artifact-run'
 import { useAuditContext } from '@/client/lib/audit-context'
+import { thumbnailGridClass } from '@/client/lib/thumbnail-grid'
 import { cn } from '@/client/lib/utils'
 import { Alert, AlertDescription, AlertTitle } from '@/client/ui/alert'
 import { Badge } from '@/client/ui/badge'
 import { Button } from '@/client/ui/button'
 import { Skeleton } from '@/client/ui/skeleton'
 import { Spinner } from '@/client/ui/spinner'
-import type { ArtifactDto, ArtifactRunDto } from '@/shared/artifacts'
 import type { ToolCallPart, ToolResultPart } from '@/shared/parts'
-import { GenerateImageErrorSchema, GenerateImageInputSchema, GenerateImageStartedSchema, runIdOf } from '../shared'
-import { thumbnailGridClass } from './thumbnail-grid'
+import { runIdOf } from '@/shared/artifacts'
+import { GenerateImageErrorSchema, GenerateImageInputSchema, GenerateImageStartedSchema } from '../shared'
 
 const props = defineProps<{ call: ToolCallPart; result: ToolResultPart | null }>()
 // Runs belong to the transcript's owner; an auditor's session cannot read them, so it shows the summary only.
@@ -24,42 +25,9 @@ const input = computed(() => GenerateImageInputSchema.safeParse(props.call.args)
 const started = computed(() => GenerateImageStartedSchema.safeParse(props.result?.content).data ?? null)
 const failure = computed(() => GenerateImageErrorSchema.safeParse(props.result?.content).data?.error ?? null)
 const runId = computed(() => (started.value ? runIdOf(started.value.task_id) : null))
-const run = ref<ArtifactRunDto | null>(null)
-const outputs = ref<ArtifactDto[]>([])
-const cancelling = ref(false)
+const { run, outputs, cancelling, cancel } = useArtifactRun(runId, !auditing)
 const pending = computed(() => !run.value || run.value.status === 'queued' || run.value.status === 'running')
 const tiles = computed(() => started.value?.count ?? input.value?.count ?? 1)
-let timer: ReturnType<typeof setTimeout> | undefined
-
-async function refresh(): Promise<void> {
-  const id = runId.value
-  if (id === null) return
-  try {
-    run.value = await api.artifactRun(id)
-    if (run.value.status === 'queued' || run.value.status === 'running') {
-      timer = setTimeout(() => void refresh(), 1500)
-      return
-    }
-    if (run.value.status === 'completed') {
-      outputs.value = (await api.artifacts({ run_id: id })).artifacts.sort((a, b) => a.output_index - b.output_index)
-    }
-  } catch {
-    timer = setTimeout(() => void refresh(), 3000)
-  }
-}
-
-async function cancel(): Promise<void> {
-  if (runId.value === null) return
-  cancelling.value = true
-  try { run.value = await api.cancelArtifactRun(runId.value) }
-  finally { cancelling.value = false }
-}
-
-watch(runId, (id) => {
-  clearTimeout(timer)
-  if (id !== null && !auditing) void refresh()
-}, { immediate: true })
-onBeforeUnmount(() => clearTimeout(timer))
 </script>
 
 <template lang="pug">
