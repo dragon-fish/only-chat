@@ -1,3 +1,12 @@
+<script lang="ts">
+import { setCustomComponents } from 'markstream-vue'
+import MarkdownImage from '@/client/components/markdown-image.vue'
+
+/** Chat markdown resolves `asset:` image references; other renderers keep markstream's own. */
+const CHAT_MARKDOWN_ID = 'oc-chat'
+setCustomComponents(CHAT_MARKDOWN_ID, { image: MarkdownImage })
+</script>
+
 <script setup lang="ts">
 import MarkdownRender from 'markstream-vue'
 import type { NodeRendererProps } from 'markstream-vue'
@@ -40,7 +49,7 @@ function openImage(key: string) {
       :active="segment.key === activeSegmentKey")
     MarkdownRender(
       v-else-if="segment.kind === 'text'"
-      mode="chat" :content="segment.markdown"
+      mode="chat" :custom-id="CHAT_MARKDOWN_ID" :content="segment.markdown"
       :final="!streaming || segment.key !== activeSegmentKey" :smooth-streaming="false" :fade="true"
       :is-dark="isDark" :code-block-props="codeBlockProps")
     ToolPartRenderer(
