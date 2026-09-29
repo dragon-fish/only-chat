@@ -12,11 +12,15 @@ export type ReadFileInput = z.infer<typeof ReadFileInputSchema>
 /** A page of a text asset. Workspace text answers with its own shape, which adds the version. */
 export interface ReadAssetTextOutput extends LinesRead {
   file: string
+  /** What the person called the file, for a card to show; null for one that was never named (a pasted or generated image). */
+  name: string | null
 }
 
 /** Reading a file shown whole: the receipt, with the file following in a user message. */
 export interface ReadDeliveredOutput {
   file: string
+  /** What the person called the file, for a card to show; null for one that was never named (a pasted or generated image). */
+  name: string | null
   mime: string
   message: string
 }

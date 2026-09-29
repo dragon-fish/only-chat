@@ -13,6 +13,8 @@ export type AnalyzeFileInput = z.infer<typeof AnalyzeFileInputSchema>
 /** Tool results are persisted, so this is part of the wire format. */
 export interface AnalyzeFileOutput {
   file: string
+  /** What the person called the file, for a card to show; null for one that was never named (a pasted or generated image). */
+  name: string | null
   mime: string
   model: { provider_id: number, model_id: string }
   text: string

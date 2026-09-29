@@ -8,7 +8,7 @@ import { Spinner } from '@/client/ui/spinner'
 import type { ToolCallPart, ToolResultPart } from '@/shared/parts'
 import { useAttachmentUrl } from '@/client/lib/audit-context'
 import FileThumb from '@/client/components/file-thumb.vue'
-import { fileRefLabel, formatFileSize } from '@/client/components/workspace-files'
+import { fileLabel, formatFileSize } from '@/client/components/workspace-files'
 import type { LinesRead } from '@/shared/text-lines'
 import type { FileToolError, ReadDeliveredOutput, ReadFileInput } from '../shared'
 
@@ -16,7 +16,7 @@ import type { FileToolError, ReadDeliveredOutput, ReadFileInput } from '../share
  * A page of text. Workspace files say which path and version they read; a text asset names itself
  * by reference. The card reads both without depending on the plugin that produced the page.
  */
-type TextPage = LinesRead & { path?: string, file?: string, version?: number, fileSize?: number }
+type TextPage = LinesRead & { path?: string, file?: string, name?: string | null, version?: number, fileSize?: number }
 /** A workspace file this turn had already read whole, answered without the content. */
 interface Unchanged { path: string, version: number, unchanged: true }
 
@@ -34,7 +34,8 @@ const receipt = computed(() => (content.value && 'mime' in content.value && !('c
 const shownAttachment = computed(() => props.result?.attachments?.[0] ?? null)
 const isImage = computed(() => receipt.value?.mime.startsWith('image/') ?? false)
 const asked = computed(() => input.value.file ?? '')
-const name = computed(() => output.value?.path ?? output.value?.file ?? asked.value)
+/** A workspace page names its path; an asset page names the file. The reference is never shown. */
+const name = computed(() => fileLabel(output.value?.path ?? asked.value, output.value?.name))
 
 /** What was actually returned, which is not always what was asked for. */
 const range = computed(() => {
@@ -51,32 +52,32 @@ const range = computed(() => {
 .flex.w-full.flex-col.gap-2
   .oc-turn-row.text-sm.text-muted-foreground(v-if="!result")
     Spinner(class="size-4 shrink-0")
-    span.min-w-0.truncate 正在读取 {{ fileRefLabel(asked) }}
+    span.min-w-0.truncate 正在读取 {{ fileLabel(asked) }}
   Alert(v-else-if="failure" variant="destructive")
     TriangleAlertIcon
     AlertTitle 读取未完成
     AlertDescription {{ failure.message }}
   .oc-turn-row.text-sm.text-muted-foreground(v-else-if="unchanged" :title="unchanged.path")
     FileCheckIcon(class="size-4 shrink-0")
-    span.min-w-0.truncate 未变 {{ fileRefLabel(unchanged.path) }}
+    span.min-w-0.truncate 未变 {{ fileLabel(unchanged.path) }}
     Badge(variant="secondary" class="ml-auto shrink-0") v{{ unchanged.version }}
   .flex.flex-col.gap-2(v-else-if="receipt")
-    .oc-turn-row.text-sm(:title="receipt.file")
+    .oc-turn-row.text-sm
       FileThumb(:mime="receipt.mime")
-      span.min-w-0.truncate 已读取 {{ fileRefLabel(asked || receipt.file) }}
+      span.min-w-0.truncate 已读取 {{ fileLabel(asked, receipt.name, receipt.mime) }}
       span.shrink-0.text-xs.text-muted-foreground {{ receipt.mime }}
       a.shrink-0.text-xs.underline(v-if="shownAttachment !== null" :href="attachmentUrl(shownAttachment)" target="_blank" rel="noopener") 查看文件
-    img.max-h-40.w-fit.rounded-md.border(v-if="isImage && shownAttachment !== null" :src="attachmentUrl(shownAttachment)" :alt="receipt.file" loading="lazy")
+    img.max-h-40.w-fit.rounded-md.border(v-if="isImage && shownAttachment !== null" :src="attachmentUrl(shownAttachment)" :alt="fileLabel(asked, receipt.name, receipt.mime)" loading="lazy")
   //- Content is collapsed by default: the model already has it, and a long file would bury the reply.
   Collapsible(v-else-if="output")
-    CollapsibleTrigger(class="oc-turn-row text-sm hover:bg-accent" :title="name")
+    CollapsibleTrigger(class="oc-turn-row text-sm hover:bg-accent" :title="output.path")
       FileTextIcon(class="size-4 shrink-0 text-muted-foreground")
-      span.min-w-0.truncate.text-left 读取 {{ fileRefLabel(name) }}
+      span.min-w-0.truncate.text-left 读取 {{ name }}
       Badge(variant="secondary" class="ml-auto shrink-0") {{ range }}
     CollapsibleContent
       .flex.flex-col.gap-2.px-2.py-3
         p.text-xs.text-muted-foreground
-          | {{ name }}
+          | {{ output.path ?? name }}
           template(v-if="output.fileSize !== undefined")  · {{ formatFileSize(output.fileSize) }}
           template(v-if="output.version !== undefined")  · v{{ output.version }}
         p.text-sm.text-muted-foreground(v-if="output.empty") 这个文件是空的。

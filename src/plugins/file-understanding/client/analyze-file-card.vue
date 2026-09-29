@@ -6,7 +6,7 @@ import { Badge } from '@/client/ui/badge'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/client/ui/collapsible'
 import { Spinner } from '@/client/ui/spinner'
 import FileThumb from '@/client/components/file-thumb.vue'
-import { fileRefLabel } from '@/client/components/workspace-files'
+import { fileLabel } from '@/client/components/workspace-files'
 import type { ToolCallPart, ToolResultPart } from '@/shared/parts'
 import type { AnalyzeFileInput, AnalyzeFileOutput, FileToolError } from '../shared'
 
@@ -22,20 +22,20 @@ const output = computed(() => (content.value && 'text' in content.value ? conten
 .flex.w-full.flex-col.gap-2
   .oc-turn-row.text-sm.text-muted-foreground(v-if="!result")
     Spinner(class="size-4 shrink-0")
-    span.min-w-0.truncate 正在分析 {{ fileRefLabel(input.file ?? '') }}
+    span.min-w-0.truncate 正在分析 {{ fileLabel(input.file) }}
   Alert(v-else-if="failure" variant="destructive")
     TriangleAlertIcon
     AlertTitle 文件分析未完成
     AlertDescription {{ failure.message }}
   //- Collapsed by default: the model already has the text, and a long analysis would bury the reply.
   Collapsible(v-else-if="output")
-    CollapsibleTrigger(class="oc-turn-row text-sm hover:bg-accent" :title="output.file")
-      FileThumb(:mime="output.mime")
-      span.min-w-0.truncate.text-left 分析 {{ fileRefLabel(input.file ?? output.file) }}
+    CollapsibleTrigger(class="oc-turn-row text-sm hover:bg-accent")
+      FileThumb(:mime="output.mime" :name="output.name ?? undefined")
+      span.min-w-0.truncate.text-left 分析 {{ fileLabel(input.file, output.name, output.mime) }}
       Badge(v-if="output.truncated" variant="secondary" class="ml-auto shrink-0") 结果不完整
     CollapsibleContent
       .flex.flex-col.gap-2.px-2.py-3
-        p.text-xs.text-muted-foreground {{ output.file }} · {{ output.mime }}
+        p.text-xs.text-muted-foreground {{ output.mime }}
         p.text-sm(v-if="input.question")
           span.text-muted-foreground 问题：
           | {{ input.question }}

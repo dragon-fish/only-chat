@@ -49,7 +49,7 @@ export const FileUnderstandingServerPlugin = {
         if (resolved.value.kind === 'text') {
           return { error: 'UNSUPPORTED_FILE', message: `${file} is a text file. Read it with read_file.` }
         }
-        const { attachmentId, ref, mime } = resolved.value
+        const { attachmentId, ref, mime, filename } = resolved.value
         const service = serviceOf(runtime.turn)
         if (!service) {
           return { error: 'SERVICE_UNAVAILABLE', message: 'No file understanding model is available. Ask the user to choose one in Settings → Service models.' }
@@ -59,7 +59,7 @@ export const FileUnderstandingServerPlugin = {
         }
         try {
           const result = await service.analyze(attachmentId, question, runtime.signal)
-          return { file: ref, mime, ...result }
+          return { file: ref, name: filename, mime, ...result }
         } catch (error) {
           // Stopping the generation stops the analysis with it; that is not a failed analysis.
           if (runtime.signal.aborted) throw error

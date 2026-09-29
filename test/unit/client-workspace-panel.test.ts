@@ -54,10 +54,10 @@ it('lists the conversation, its assets and its Project in that order, assets rea
   const { host } = await mountPanel()
 
   await vi.waitFor(() => expect(headings(host)).toEqual(['当前会话', '本会话的附件', '当前项目']))
-  // Mount paths are never shown; the tooltips are the refs a person can cite in chat.
+  // Neither mount paths nor the model's references are shown to a person.
   expect(host.textContent).not.toContain('/conversation')
-  expect(host.querySelector('[title="vfs:/conversation/a.md"]')).not.toBeNull()
-  const row = host.querySelector<HTMLButtonElement>('[title="asset:3f9a2c1e"]')!
+  expect(host.innerHTML).not.toMatch(/asset:|vfs:/)
+  const row = host.querySelector<HTMLButtonElement>('[title="song.mp3"]')!
   expect(row).not.toBeNull()
   expect(host.querySelector('[aria-label="删除 song.mp3"]')).toBeNull()
 
@@ -87,7 +87,7 @@ it('reloads when this conversation starts and stops streaming', async () => {
   assets.mockResolvedValue({ assets: [asset(41, { source: 'generated', mime: 'image/png', filename: null, ref: '5c2e8f10' })] })
   streaming.value = false
   await vi.waitFor(() => expect(files).toHaveBeenCalledTimes(3))
-  await vi.waitFor(() => expect(document.querySelector('[title="asset:5c2e8f10"]')).not.toBeNull())
+  await vi.waitFor(() => expect(document.querySelector('[title^="图片"]')).not.toBeNull())
   expect(assets).toHaveBeenCalledTimes(3)
 })
 

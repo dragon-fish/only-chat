@@ -206,7 +206,7 @@ async function remove(record: FileRecord) {
         li.flex.min-h-8.items-center.gap-1.rounded-md.pr-1(v-for="asset in group.assets" :key="asset.attachmentId" class="hover:bg-muted/60")
           //- The tooltip is how a person cites the file in chat: it is the model's own name for it.
           button.flex.min-w-0.flex-1.items-center.gap-2.py-1.text-left(
-            type="button" :title="`asset:${asset.ref}`"
+            type="button" :title="assetName(asset)"
             @click="preview = { kind: 'asset', attachmentId: asset.attachmentId, mime: asset.mime, name: assetName(asset) }")
             FileThumb(:mime="asset.mime" :src="api.attachmentUrl(asset.attachmentId)")
             span(class="min-w-0 truncate text-sm") {{ assetName(asset) }}
@@ -243,7 +243,7 @@ async function remove(record: FileRecord) {
 
           template(v-else)
             button.flex.min-w-0.flex-1.items-center.gap-2.py-1.text-left(
-              type="button" :title="`vfs:${row.record.path}`" @click="preview = { kind: 'file', id: row.record.id }")
+              type="button" :title="row.record.relativePath" @click="preview = { kind: 'file', id: row.record.id }")
               //- Only a binary file has a picture to show; the download route serves it as its own type.
               FileThumb(
                 :mime="row.record.mime" :name="row.record.relativePath"

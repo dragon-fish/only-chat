@@ -168,12 +168,16 @@ export function assetRowMeta(asset: ConversationAsset): string {
 }
 
 /**
- * A path or file reference as a tool card names it: a workspace file by its last segment, an asset
- * by its ref, which is the only name the model has for it.
+ * What a tool card calls a file. Never the reference itself: `asset:3f9a2c1e` is how the model names
+ * a file, not how a person does. The name a result carries wins; a path gives its last segment; a
+ * file nobody named is called by what it is.
  */
-export function fileRefLabel(ref: string): string {
-  const path = ref.startsWith('vfs:') ? ref.slice(4) : ref
-  if (!path.startsWith('/')) return ref
-  const trimmed = path.endsWith('/') ? path.slice(0, -1) : path
-  return trimmed.slice(trimmed.lastIndexOf('/') + 1) || trimmed
+export function fileLabel(ref: string | undefined, name?: string | null, mime?: string): string {
+  if (name) return name
+  const path = ref?.startsWith('vfs:') ? ref.slice(4) : ref
+  if (path?.startsWith('/')) {
+    const trimmed = path.endsWith('/') ? path.slice(0, -1) : path
+    return trimmed.slice(trimmed.lastIndexOf('/') + 1) || trimmed
+  }
+  return mime?.startsWith('image/') ? '图片' : '文件'
 }

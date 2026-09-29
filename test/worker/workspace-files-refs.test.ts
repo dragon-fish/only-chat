@@ -111,13 +111,13 @@ describe('workspace files and file references', () => {
   it('reads an asset: by delivering it, and never as text', async () => {
     const f = await fixture()
     expect(await run(f, 'read_file', { file: f.upload.ref })).toEqual({
-      file: f.upload.ref, mime: 'image/png', message: expect.any(String), __attachments: [f.upload.id],
+      file: f.upload.ref, name: 'cat.png', mime: 'image/png', message: expect.any(String), __attachments: [f.upload.id],
     })
   })
 
   it('copies an asset into /project as a binary file sharing its bytes, readable by path or vfs:', async () => {
     const f = await fixture()
-    expect(await run(f, 'copy_file', { from: f.upload.ref, to: '/project/refs/cat.png' })).toMatchObject({ path: '/project/refs/cat.png', mime: 'image/png', version: 1 })
+    expect(await run(f, 'copy_file', { from: f.upload.ref, to: '/project/refs/cat.png' })).toMatchObject({ path: '/project/refs/cat.png', fromName: 'cat.png', mime: 'image/png', version: 1 })
     expect(await currentAttachment(f, 'refs/cat.png')).toBe(f.upload.id)
 
     const byPath = await run(f, 'read_file', { file: '/project/refs/cat.png' })

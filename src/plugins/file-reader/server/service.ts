@@ -66,6 +66,8 @@ export type UnreadableHint = (turn: FileTurn, mime: string, cited: string) => st
 /** The receipt `read_file` returns for a file it hands over; the reserved key never persists. */
 export interface DeliveredFile {
   file: string
+  /** What the person called the file, for a card to show; null for one that was never named (a pasted or generated image). */
+  name: string | null
   mime: string
   message: string
   [TOOL_ATTACHMENTS_KEY]: number[]
@@ -196,7 +198,7 @@ export class FileReader extends Service {
           if (!stored) return refFailure('FILE_NOT_FOUND', `${asset} is no longer stored.`)
           const lines = readLines(new TextDecoder().decode(stored.bytes), range)
           if (!lines) return refFailure('READ_RANGE_TOO_LARGE', 'That range is past the end of the file, or too large to return. Use a smaller offset and limit.')
-          return { ok: true, value: { file: asset, ...lines } satisfies ReadAssetTextOutput }
+          return { ok: true, value: { file: asset, name: filename, ...lines } satisfies ReadAssetTextOutput }
         },
       },
     }
@@ -221,6 +223,7 @@ export class FileReader extends Service {
       ok: true,
       value: {
         file: file.ref,
+        name: file.filename,
         mime: file.mime,
         message: `The file follows in a user message, inside <tool_attachment asset="${prefix}">.`,
         [TOOL_ATTACHMENTS_KEY]: [file.attachmentId],

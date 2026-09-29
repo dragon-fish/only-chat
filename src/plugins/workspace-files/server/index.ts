@@ -534,13 +534,18 @@ export const WorkspaceFilesServerPlugin = {
         const argument = argumentOf(input.from)
         if (argument.kind === 'invalid') return failure('INVALID_PATH')
         let from: { path: string } | { attachment: { attachmentId: number, mime: string, size: number } }
+        let fromName: string | null
         if (argument.kind === 'ref') {
           const resolved = await ctx.fileReader.resolve(ctx.fileReader.turnOf(runtime.turn), argument.ref)
           if (!resolved.ok) return fileToolError(resolved)
-          const { attachmentId, mime, size } = resolved.value
+          const { attachmentId, mime, size, filename } = resolved.value
           if (attachmentId === undefined) return { error: 'INVALID_PATH', message: `${argument.ref} is not a stored file and cannot be copied.` }
           from = { attachment: { attachmentId, mime, size } }
-        } else from = { path: argument.path }
+          fromName = filename
+        } else {
+          from = { path: argument.path }
+          fromName = argument.path.slice(argument.path.lastIndexOf('/') + 1)
+        }
 
         const { files, scope } = servicesFor(runtime)
         const result = await files.copy({
@@ -548,7 +553,7 @@ export const WorkspaceFilesServerPlugin = {
         })
         if (!result.ok) return unwrap(result) as WorkspaceToolError
         const { path, mime, fileSize, version } = result.value
-        return { path, from: input.from, mime, fileSize, version, message: `Copied ${input.from} to ${path}.` }
+        return { path, from: input.from, fromName, mime, fileSize, version, message: `Copied ${input.from} to ${path}.` }
       },
     }))
   },

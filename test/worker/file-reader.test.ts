@@ -111,7 +111,7 @@ describe('file reader: asset references', () => {
     const resolved = await ctx.fileReader.resolve(turn, `asset:${row.sha256.slice(0, 8)}`)
     if (!resolved.ok || resolved.value.kind !== 'text') throw new Error('expected text')
     expect(await resolved.value.read({ offset: 2, limit: 1 })).toEqual({ ok: true, value: {
-      file: `asset:${row.sha256.slice(0, 8)}`, content: '2 | <p>two</p>', startLine: 2, returnedLines: 1, totalLines: 3,
+      file: `asset:${row.sha256.slice(0, 8)}`, name: 'page.html', content: '2 | <p>two</p>', startLine: 2, returnedLines: 1, totalLines: 3,
       truncated: true, nextOffset: 3, empty: false,
     } })
     expect(await resolved.value.read({ offset: 9 })).toMatchObject({ ok: false, error: 'READ_RANGE_TOO_LARGE' })

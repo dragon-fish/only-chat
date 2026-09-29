@@ -187,6 +187,8 @@ export interface CopyFileOutput {
   path: string
   /** The `from` argument as given. */
   from: string
+  /** What the source is called: its filename, or a workspace path's last segment; null when never named. */
+  fromName: string | null
   mime: string
   fileSize: number
   version: number
