@@ -155,6 +155,25 @@ function seenInContext(state: Map<string, unknown>, messages: readonly Message[]
   return fallback
 }
 
+/**
+ * Runs writes to one file in the order they were called within a generation. A model may send two
+ * edits of one file in the same step; run at once, both would check the version read before either
+ * landed, and the second would conflict with the first. In order, the second sees the first's
+ * version as its own write and applies to the file as it now is — or finds its text gone, which is
+ * the true answer. Keyed in `ToolContext.turn`, so it dies with the generation; writes from other
+ * conversations still meet as version conflicts.
+ */
+function inFileOrder<T>(turn: Map<string, unknown>, argument: string, run: () => Promise<T>): Promise<T> {
+  const target = pathFromArgument(argument)
+  const parsed = target === null ? null : parseWorkspacePath(target)
+  if (parsed === null || !parsed.ok) return run()
+  const key = `workspace_files:queue:${formatWorkspacePath(parsed.value)}`
+  const previous = (turn.get(key) as Promise<unknown> | undefined) ?? Promise.resolve()
+  const current = previous.then(run, run)
+  turn.set(key, current.then(() => undefined, () => undefined))
+  return current
+}
+
 const VFS_SCHEME = 'vfs'
 
 /**
@@ -283,43 +302,46 @@ export const WorkspaceFilesServerPlugin = {
       ].join(' '),
       inputSchema: WriteFileInputSchema,
       async execute(input, options): Promise<WriteFileOutput | WorkspaceToolError> {
-        const target = writablePath(input.path)
-        if (typeof target !== 'string') return target
-        const { files, scope } = servicesFor(runtime)
-        const result = await files.write({
-          path: target,
-          content: input.content,
-          expectedVersion: input.expectedVersion,
-          sourceMessageId: runtime.assistantMessageId,
-          toolCallId: options?.toolCallId ?? null,
-          ...scope,
-        })
-        if (!result.ok) return unwrap(result) as WorkspaceToolError
-        const { path, operation, fileSize, totalLines, version, replacedVersion } = result.value
-        const read = latestSeen(runtime.turn, runtime.path, path)
-        // Older than what was replaced means somebody wrote in between and this write went over
-        // content the caller never read.
-        const staleReadVersion = read !== null && replacedVersion !== null && read.version < replacedVersion
-          ? read.version
-          : null
-        runtime.turn.set(seenKey(path), { version, partial: false, source: 'write' } satisfies SeenFile)
+        // One at a time per file within this turn; see `inFileOrder`.
+        return inFileOrder(runtime.turn, input.path, async () => {
+          const target = writablePath(input.path)
+          if (typeof target !== 'string') return target
+          const { files, scope } = servicesFor(runtime)
+          const result = await files.write({
+            path: target,
+            content: input.content,
+            expectedVersion: input.expectedVersion,
+            sourceMessageId: runtime.assistantMessageId,
+            toolCallId: options?.toolCallId ?? null,
+            ...scope,
+          })
+          if (!result.ok) return unwrap(result) as WorkspaceToolError
+          const { path, operation, fileSize, totalLines, version, replacedVersion } = result.value
+          const read = latestSeen(runtime.turn, runtime.path, path)
+          // Older than what was replaced means somebody wrote in between and this write went over
+          // content the caller never read.
+          const staleReadVersion = read !== null && replacedVersion !== null && read.version < replacedVersion
+            ? read.version
+            : null
+          runtime.turn.set(seenKey(path), { version, partial: false, source: 'write' } satisfies SeenFile)
 
-        const previewable = previewTypeFor(path) !== undefined
-        const size = `${fileSize.toLocaleString('en-US')} bytes, ${totalLines.toLocaleString('en-US')} lines`
-        const message = operation === 'created'
-          ? `Created ${size}`
-          : replacedVersion === null
-            ? `Saved ${size}`
-            : staleReadVersion === null
-              ? `Saved ${size}. Replaced v${replacedVersion}, still restorable with restore_file.`
-              : `Saved ${size}. Replaced v${replacedVersion}, which was written after you read v${staleReadVersion} — you never saw it. Restore it with restore_file if that content mattered.`
-        // Said here rather than minted here: a ticket per write would spend one on every draft,
-        // and only the last of them is ever looked at.
-        const hint = previewable ? ' This one can be opened in a browser — preview_file gives you the link.' : ''
-        return {
-          path, operation, previewable, fileSize, totalLines, version, replacedVersion, staleReadVersion,
-          message: message + hint,
-        }
+          const previewable = previewTypeFor(path) !== undefined
+          const size = `${fileSize.toLocaleString('en-US')} bytes, ${totalLines.toLocaleString('en-US')} lines`
+          const message = operation === 'created'
+            ? `Created ${size}`
+            : replacedVersion === null
+              ? `Saved ${size}`
+              : staleReadVersion === null
+                ? `Saved ${size}. Replaced v${replacedVersion}, still restorable with restore_file.`
+                : `Saved ${size}. Replaced v${replacedVersion}, which was written after you read v${staleReadVersion} — you never saw it. Restore it with restore_file if that content mattered.`
+          // Said here rather than minted here: a ticket per write would spend one on every draft,
+          // and only the last of them is ever looked at.
+          const hint = previewable ? ' This one can be opened in a browser — preview_file gives you the link.' : ''
+          return {
+            path, operation, previewable, fileSize, totalLines, version, replacedVersion, staleReadVersion,
+            message: message + hint,
+          }
+        })
       },
     }))
 
@@ -383,55 +405,58 @@ export const WorkspaceFilesServerPlugin = {
       ].join(' '),
       inputSchema: EditFileInputSchema,
       async execute(input, options): Promise<EditFileOutput | WorkspaceToolError> {
-        const target = writablePath(input.path)
-        if (typeof target !== 'string') return target
-        const parsed = parseWorkspacePath(target)
-        if (!parsed.ok) return failure('INVALID_PATH')
-        // The ledger is keyed by the canonical path, which is what read_file and write_file record.
-        const seen = latestSeen(runtime.turn, runtime.path, formatWorkspacePath(parsed.value))
-        const { files, scope } = servicesFor(runtime)
-        // Having read any part is enough. Do not require a whole read: one call returns at most 5,000
-        // lines and 100 KiB, so a larger file could never be edited and only write_file — the
-        // riskier tool — would reach it. Uniqueness is judged on the whole file on the server, and
-        // oldText has to be quoted exactly, so an unread region cannot make a match look unique.
-        // Reading a binary file records no view, so it is named as binary rather than as unread —
-        // the latter would send the caller to read_file and back here forever.
-        if (seen === null) {
-          const found = await files.current({ path: target, ...scope })
-          return found.ok && !isTextMime(found.value.version.mime) ? failure('BINARY_FILE') : NOT_READ
-        }
+        // One at a time per file within this turn; see `inFileOrder`.
+        return inFileOrder(runtime.turn, input.path, async () => {
+          const target = writablePath(input.path)
+          if (typeof target !== 'string') return target
+          const parsed = parseWorkspacePath(target)
+          if (!parsed.ok) return failure('INVALID_PATH')
+          // The ledger is keyed by the canonical path, which is what read_file and write_file record.
+          const seen = latestSeen(runtime.turn, runtime.path, formatWorkspacePath(parsed.value))
+          const { files, scope } = servicesFor(runtime)
+          // Having read any part is enough. Do not require a whole read: one call returns at most 5,000
+          // lines and 100 KiB, so a larger file could never be edited and only write_file — the
+          // riskier tool — would reach it. Uniqueness is judged on the whole file on the server, and
+          // oldText has to be quoted exactly, so an unread region cannot make a match look unique.
+          // Reading a binary file records no view, so it is named as binary rather than as unread —
+          // the latter would send the caller to read_file and back here forever.
+          if (seen === null) {
+            const found = await files.current({ path: target, ...scope })
+            return found.ok && !isTextMime(found.value.version.mime) ? failure('BINARY_FILE') : NOT_READ
+          }
 
-        const result = await files.edit({
-          path: target,
-          oldText: input.oldText,
-          newText: input.newText,
-          replaceAll: input.replaceAll,
-          // What the caller actually looked at this turn. A file that moved since then is a
-          // conflict: the patch quotes content that may no longer be the content.
-          expectedVersion: seen.version,
-          sourceMessageId: runtime.assistantMessageId,
-          toolCallId: options?.toolCallId ?? null,
-          ...scope,
+          const result = await files.edit({
+            path: target,
+            oldText: input.oldText,
+            newText: input.newText,
+            replaceAll: input.replaceAll,
+            // What the caller actually looked at this turn. A file that moved since then is a
+            // conflict: the patch quotes content that may no longer be the content.
+            expectedVersion: seen.version,
+            sourceMessageId: runtime.assistantMessageId,
+            toolCallId: options?.toolCallId ?? null,
+            ...scope,
+          })
+          if (!result.ok) return unwrap(result) as WorkspaceToolError
+          const { path, fileSize, totalLines, version, replacements } = result.value
+          runtime.turn.set(seenKey(path), { version, partial: false, source: 'write' } satisfies SeenFile)
+
+          const previewable = previewTypeFor(path) !== undefined
+          const places = replacements === 1 ? 'one place' : `${replacements} places`
+          const hint = previewable ? ' This one can be opened in a browser — preview_file gives you the link.' : ''
+          return {
+            path,
+            previewable,
+            operation: 'updated',
+            fileSize,
+            totalLines,
+            version,
+            replacedVersion: null,
+            staleReadVersion: null,
+            replacements,
+            message: `Changed ${places}, saved as v${version} (${fileSize.toLocaleString('en-US')} bytes, ${totalLines.toLocaleString('en-US')} lines).${hint}`,
+          }
         })
-        if (!result.ok) return unwrap(result) as WorkspaceToolError
-        const { path, fileSize, totalLines, version, replacements } = result.value
-        runtime.turn.set(seenKey(path), { version, partial: false, source: 'write' } satisfies SeenFile)
-
-        const previewable = previewTypeFor(path) !== undefined
-        const places = replacements === 1 ? 'one place' : `${replacements} places`
-        const hint = previewable ? ' This one can be opened in a browser — preview_file gives you the link.' : ''
-        return {
-          path,
-          previewable,
-          operation: 'updated',
-          fileSize,
-          totalLines,
-          version,
-          replacedVersion: null,
-          staleReadVersion: null,
-          replacements,
-          message: `Changed ${places}, saved as v${version} (${fileSize.toLocaleString('en-US')} bytes, ${totalLines.toLocaleString('en-US')} lines).${hint}`,
-        }
       },
     }))
 

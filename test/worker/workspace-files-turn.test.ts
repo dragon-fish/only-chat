@@ -67,7 +67,7 @@ async function fixture(): Promise<Fixture> {
   await ctx.plugin(WorkspaceFilesServerPlugin)
   // What the hub does at generation start: plugins prepare the turn their tools then run in.
   const generation: GenerationTurn = {
-    userId: 1, conversationId: conversation!.id, projectId: project!.id, toolIds: ['read_file', 'write_file'],
+    userId: 1, conversationId: conversation!.id, projectId: project!.id, toolIds: ['read_file', 'write_file', 'edit_file'],
     path: [], state: new Map(), canReadFile: () => false,
   }
   await ctx.parallel('generation/prepare', generation)
@@ -84,13 +84,13 @@ async function fixture(): Promise<Fixture> {
     assets: assets as never,
     signal: new AbortController().signal,
     acceptsImages: false,
-    toolIds: ['read_file', 'write_file'],
+    toolIds: ['read_file', 'write_file', 'edit_file'],
     canReadFile: generation.canReadFile,
     acceptsToolResultImages: false,
     publicOrigin: 'https://chat.test',
     path: [],
   }
-  const built = await registry.resolve(['read_file', 'write_file'], { workspace_files: true }, { ...runtime, pluginSettings: null })
+  const built = await registry.resolve(['read_file', 'write_file', 'edit_file'], { workspace_files: true }, { ...runtime, pluginSettings: null })
   return {
     db,
     tools: Object.fromEntries(built),
@@ -140,6 +140,19 @@ describe('workspace files per-turn read tracking', () => {
     expect(first).toMatchObject({ version: 2, replacedVersion: 1, staleReadVersion: null })
     expect(second).toMatchObject({ version: 3, replacedVersion: 2, staleReadVersion: null })
     expect(second.message).not.toContain('never saw')
+  })
+
+  it('applies two edits of one file sent together, one after the other', async () => {
+    await run(f.tools.write_file!, { path: '/conversation/d.md', content: 'alpha\nbeta' })
+    // A model sends both in one step. Both quote the version it wrote; in order, the second applies
+    // to the file the first left behind instead of conflicting with it.
+    const [first, second] = await Promise.all([
+      run(f.tools.edit_file!, { path: '/conversation/d.md', oldText: 'alpha', newText: 'ALPHA' }),
+      run(f.tools.edit_file!, { path: '/conversation/d.md', oldText: 'beta', newText: 'BETA' }),
+    ])
+    expect(first).toMatchObject({ version: 2 })
+    expect(second).toMatchObject({ version: 3 })
+    expect(await run(f.tools.read_file!, { file: '/conversation/d.md' })).toMatchObject({ content: '1 | ALPHA\n2 | BETA' })
   })
 
   it('says nothing about staleness when the file was never read this turn', async () => {
