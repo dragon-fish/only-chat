@@ -523,7 +523,7 @@ async function removeModel() {
               placeholder="选择默认生图模型"
               search-placeholder="搜索模型名称或 ID…"
               empty-text="没有可用的生图模型")
-          p.min-h-5.text-sm.text-muted-foreground(role="status") {{ associationWarning ?? '' }}
+          p.text-sm.text-muted-foreground(v-if="associationWarning" role="status") {{ associationWarning }}
         Separator
         section.flex.flex-col.gap-4(aria-labelledby="provider-models-title")
           .flex.flex-wrap.items-center.gap-2

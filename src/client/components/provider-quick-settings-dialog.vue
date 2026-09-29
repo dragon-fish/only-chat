@@ -95,7 +95,7 @@ ResponsiveOverlay(:open="open" title="编辑供应商" mode="dialog" @update:ope
       :has-key="provider.has_key"
       :disabled="saving"
       :persist="applySettings")
-    p.min-h-5.text-sm.text-muted-foreground(role="status") {{ associationWarning ?? '' }}
+    p.text-sm.text-muted-foreground(v-if="associationWarning" role="status") {{ associationWarning }}
   p.text-sm.text-muted-foreground(v-else) 找不到这个供应商。
   template(#footer)
     Button(type="button" variant="outline" class="min-h-10" @click="openFullSettings") 打开完整设置
