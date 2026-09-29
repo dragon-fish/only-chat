@@ -41,25 +41,25 @@ const view = computed(() => {
     case COMFYUI_READ_TOOL_ID: {
       const path = typeof args.value.path === 'string' ? args.value.path : ''
       return {
-        icon: guideText.value !== null ? BookOpenIcon : FileJsonIcon, title: `读取 ${path}`,
+        icon: guideText.value !== null ? BookOpenIcon : FileJsonIcon, title: `读取 ComfyUI 文件 ${path}`,
         badge: workflow.value ? `${workflow.value.length} 个节点` : guideText.value !== null ? '指南' : '',
       }
     }
     case COMFYUI_LIST_MODELS_TOOL_ID: {
       const folder = typeof args.value.folder === 'string' ? args.value.folder : null
       return {
-        icon: BoxesIcon, title: folder ? `查看模型 ${folder}` : '查看模型目录',
+        icon: BoxesIcon, title: folder ? `查看 ComfyUI 模型 ${folder}` : '查看 ComfyUI 模型目录',
         badge: files.value ? `${files.value.length} 个文件` : folders.value ? `${folders.value.length} 个目录` : '',
       }
     }
     // comfyui_node_info
     default: {
       const parts = [
-        classTypes.value.length ? `查询节点 ${classTypes.value.join('、')}` : null,
-        search.value ? `搜索节点“${search.value}”` : null,
+        classTypes.value.length ? `查询 ComfyUI 节点 ${classTypes.value.join('、')}` : null,
+        search.value ? `搜索 ComfyUI 节点“${search.value}”` : null,
       ].filter(Boolean)
       const count = (nodes.value?.length ?? 0) + (matches.value?.length ?? 0)
-      return { icon: PuzzleIcon, title: parts.join('，') || '查询节点', badge: content.value && !failure.value ? `${count} 个` : '' }
+      return { icon: PuzzleIcon, title: parts.join('，') || '查询 ComfyUI 节点', badge: content.value && !failure.value ? `${count} 个` : '' }
     }
   }
 })

@@ -48,6 +48,7 @@ const pending = computed(() => !run.value || run.value.status === 'queued' || ru
   template(v-else-if="started")
     .oc-turn-row.text-sm
       ImagesIcon(class="size-4 shrink-0 text-muted-foreground")
+      span.shrink-0 ComfyUI 出图
       Badge(variant="secondary" class="shrink-0") {{ label }}
       span.min-w-0.truncate(v-if="prompt") {{ prompt }}
       span.shrink-0.text-muted-foreground(v-if="started.seed !== undefined") seed {{ started.seed }}
