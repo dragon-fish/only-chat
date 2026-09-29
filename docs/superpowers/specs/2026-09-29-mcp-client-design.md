@@ -85,12 +85,13 @@
 - 没有已启用的服务时返回空的 `services`，并说明用户可以在设置的「MCP」里添加。
 - 工具列表取自 KV；未命中的服务并行连接拉取，每个服务单独 15 秒超时，失败只影响该服务的条目。
 
-### 5.2 `mcp_list_tools(service_id, query?)`
+### 5.2 `mcp_list_tools(service_id, tool_names?)`
 
-- 不传 `query`：返回该服务全部未屏蔽工具的名称、描述与 `input_schema`。
-- 传 `query`：按英文逗号拆成多个关键词，去除空白；工具名、描述或 `input_schema` 顶层参数名中含任一关键词（不区分大小写的子串）即返回。
-- 结果附带服务的 `instructions`（握手时服务给出的使用说明，有则附）。
-- 工具描述提示模型：大服务先用 `query` 缩小范围，关键词用英文。
+两步读取，只为真正要调用的工具付出 schema 的体积。
+
+- 不传 `tool_names`：返回目录——服务的 `instructions`（握手时给出的使用说明，有则附）、未屏蔽工具总数、每个工具的名称与描述前 160 个字符（折成一行），不含 `input_schema`。
+- 传 `tool_names`：按英文逗号拆分、去除空白与重复，逐个精确匹配工具名（区分大小写，不支持通配符），只返回命中工具的完整描述与 `input_schema`，顺序同传入顺序。未命中或已屏蔽的名称列在 `missing` 里。不再附带 `instructions`。
+- 工具描述提示模型：先看目录，只为即将调用的工具取定义。
 
 ### 5.3 `mcp_call_tool(service_id, tool_name, params)`
 
@@ -163,7 +164,7 @@
 
 ## 11. 测试
 
-- 单元：`query` 拆分与匹配（名称、描述、参数名）；`tools_preview` 截取与计数；请求头敏感默认判定与校验；`key-value-editor` 抽取后 `extra-body-editor` 行为不变。
+- 单元：工具名拆分、描述摘要截取；`tools_preview` 截取与计数；请求头敏感默认判定与校验；`key-value-editor` 抽取后 `extra-body-editor` 行为不变。
 - Worker：以测试内的最小 Streamable HTTP MCP 服务（或出站请求拦截）为对端，覆盖：
   - 增删改查、敏感请求头加密且不回传、20 个上限；
   - 三个工具的成功路径，屏蔽工具与未启用服务的错误，服务返回 `isError`；

@@ -10,7 +10,7 @@ import { callToolTool, listServicesTool, listToolsTool } from '@/plugins/mcp/ser
 import { oauthStateKey } from '@/plugins/mcp/server/oauth'
 import type { McpServerView, McpToolsResponse } from '@/shared/mcp'
 import { authenticatedFetch, ensureTestUser } from './auth-helper'
-import { FAKE_MCP_URL, fakeMcpServer, type FakeMcpServer } from './mcp-fake-server'
+import { FAKE_MCP_URL, FAKE_TOOLS, fakeMcpServer, type FakeMcpServer } from './mcp-fake-server'
 
 const API = '/api/plugins/mcp'
 const db = createDb(env.DB)
@@ -136,7 +136,7 @@ describe('MCP tools', () => {
   const run = (tool: { execute?: unknown }, input: unknown) =>
     (tool.execute as (input: unknown, options: unknown) => Promise<any>)(input, { toolCallId: 'call-1', messages: [] })
 
-  it('lists services with a preview, reads tools by keyword, and calls one', async () => {
+  it('lists services with a preview, a catalog and chosen definitions, and calls one', async () => {
     const created = await createServer()
     await request('PATCH', `/servers/${created.key}`, { disabled_tools: ['delete_page'] })
     const turn = runtime()
@@ -144,9 +144,16 @@ describe('MCP tools', () => {
     const services = await run(listServicesTool(ctx, turn), {})
     expect(services.services).toEqual([{ service_id: created.key, name: 'Fake', tool_count: 2, tools_preview: ['search', 'retrieve_page'] }])
 
-    const tools = await run(listToolsTool(ctx, turn), { service_id: created.key, query: 'page_id' })
-    expect(tools.tools.map((tool: { name: string }) => tool.name)).toEqual(['retrieve_page'])
-    expect(tools.instructions).toBe('Search first, then retrieve.')
+    // The catalog names and summarises every visible tool, and carries no schema at all.
+    const catalog = await run(listToolsTool(ctx, turn), { service_id: created.key })
+    expect(catalog).toMatchObject({ instructions: 'Search first, then retrieve.', total: 2 })
+    expect(catalog.tools).toEqual([{ name: 'search', summary: 'Search pages' }, { name: 'retrieve_page', summary: 'Fetch one page' }])
+
+    // Names select exactly those tools in full; a disabled or unknown one is reported, not returned.
+    const definitions = await run(listToolsTool(ctx, turn), { service_id: created.key, tool_names: 'retrieve_page, nope, delete_page' })
+    expect(definitions.tools).toEqual([{ name: 'retrieve_page', description: 'Fetch one page', input_schema: FAKE_TOOLS[1]!.inputSchema }])
+    expect(definitions.missing).toEqual(['nope', 'delete_page'])
+    expect(definitions).not.toHaveProperty('instructions')
 
     const result = await run(callToolTool(ctx, turn), { service_id: created.key, tool_name: 'search', params: { query: 'x' } })
     expect(result).toMatchObject({ is_error: false, text: 'found: page-1' })

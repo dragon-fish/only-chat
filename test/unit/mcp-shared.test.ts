@@ -1,24 +1,19 @@
 import { describe, expect, it } from 'vitest'
-import { matchMcpTools } from '@/plugins/mcp/shared'
+import { mcpToolSummary, splitToolNames } from '@/plugins/mcp/shared'
 import { isSensitiveHeaderName, mcpHeadersProblem } from '@/shared/mcp'
 
-const tools = [
-  { name: 'search', description: 'Search the workspace', inputSchema: { properties: { query: {} } } },
-  { name: 'retrieve_page', description: 'Fetch one page', inputSchema: { properties: { page_id: {} } } },
-  { name: 'append_block_children', description: null, inputSchema: { properties: { block_id: {}, children: {} } } },
-]
-
-describe('matchMcpTools', () => {
-  it('matches any comma-separated keyword in the name, description or a parameter name', () => {
-    const names = (query?: string) => matchMcpTools(tools, query).map(tool => tool.name)
-    expect(names('PAGE')).toEqual(['retrieve_page'])
-    expect(names('workspace, block_id')).toEqual(['search', 'append_block_children'])
-    expect(names('nothing')).toEqual([])
+describe('MCP tool catalog helpers', () => {
+  it('summarises a description as its first 160 characters on one line', () => {
+    expect(mcpToolSummary('Search pages.\n\nUse   the fetch tool first.')).toBe('Search pages. Use the fetch tool first.')
+    const long = mcpToolSummary('x'.repeat(400))
+    expect(long).toHaveLength(161)
+    expect(long?.endsWith('…')).toBe(true)
+    expect(mcpToolSummary(null)).toBeNull()
   })
 
-  it('selects every tool when the query is absent or only separators', () => {
-    expect(matchMcpTools(tools, undefined)).toHaveLength(3)
-    expect(matchMcpTools(tools, ' , ')).toHaveLength(3)
+  it('splits tool names on commas, trimmed, keeping case and dropping blanks and repeats', () => {
+    expect(splitToolNames(' search , Fetch,,search ')).toEqual(['search', 'Fetch'])
+    expect(splitToolNames(' , ')).toEqual([])
   })
 })
 

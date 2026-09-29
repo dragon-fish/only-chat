@@ -6,7 +6,7 @@ import { storeGeneratedAttachment } from '@/server/plugins/api/attachments'
 import type { ToolContext } from '@/server/plugins/tools'
 import {
   MCP_CALL_TOOL_TOOL_ID, MCP_LIST_SERVICES_TOOL_ID, MCP_LIST_TOOLS_TOOL_ID, MCP_PLUGIN_ID, MCP_TOOLS_PREVIEW,
-  McpCallToolInputSchema, McpListServicesInputSchema, McpListToolsInputSchema, matchMcpTools,
+  McpCallToolInputSchema, McpListServicesInputSchema, McpListToolsInputSchema, mcpToolSummary, splitToolNames,
   type McpCallToolInput, type McpCallToolOutput, type McpListServicesOutput, type McpListToolsOutput,
   type McpServiceSummary, type McpToolError,
 } from '../shared'
@@ -25,9 +25,10 @@ const LIST_SERVICES_DESCRIPTION = [
 ].join(' ')
 
 const LIST_TOOLS_DESCRIPTION = [
-  'Read the tools of one MCP service: name, description and input_schema, plus any usage notes the service publishes.',
-  'For a large service, pass query with comma-separated English keywords (for example "page,search") to get only the tools whose name, description or parameter names match; omit it to list every tool.',
-  'Read a tool here before calling it — mcp_call_tool needs its exact name and arguments matching its input_schema.',
+  'Read the tools of one MCP service in two steps.',
+  'With only service_id you get the catalog: the service\'s usage notes and every tool\'s name with the start of its description, but no schemas.',
+  'Then pass tool_names — exact names from the catalog, comma-separated (for example "search,fetch") — to get just those tools in full, with their input_schema.',
+  'Fetch only the tools you are about to call: full definitions can be large. mcp_call_tool needs the exact name and arguments matching the input_schema.',
 ].join(' ')
 
 const CALL_TOOL_DESCRIPTION = [
@@ -122,13 +123,26 @@ export function listToolsTool(ctx: Context, runtime: ToolContext): Tool {
       try { list = await mcpToolList(deps, row, { client: pooledClient(deps, runtime, row), signal: runtime.signal }) }
       catch (error) { return toolError('SERVICE_UNAVAILABLE', classifyMcpError(error).message) }
       const tools = visibleTools(row, list)
-      const matched = matchMcpTools(tools, input.query)
+      const names = input.tool_names === undefined ? [] : splitToolNames(input.tool_names)
+      if (names.length === 0) {
+        return {
+          service_id: row.key,
+          name: row.name,
+          ...(list.instructions ? { instructions: list.instructions } : {}),
+          total: tools.length,
+          tools: tools.map(entry => ({ name: entry.name, summary: mcpToolSummary(entry.description) })),
+        }
+      }
+      const byName = new Map(tools.map(entry => [entry.name, entry]))
+      const missing = names.filter(name => !byName.has(name))
       return {
         service_id: row.key,
         name: row.name,
-        ...(list.instructions ? { instructions: list.instructions } : {}),
-        total: tools.length,
-        tools: matched.map(entry => ({ name: entry.name, description: entry.description, input_schema: entry.inputSchema })),
+        tools: names.flatMap((name) => {
+          const entry = byName.get(name)
+          return entry ? [{ name: entry.name, description: entry.description, input_schema: entry.inputSchema }] : []
+        }),
+        ...(missing.length ? { missing } : {}),
       }
     },
   })

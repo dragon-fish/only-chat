@@ -11,8 +11,8 @@ export const McpListServicesInputSchema = z.strictObject({})
 
 export const McpListToolsInputSchema = z.strictObject({
   service_id: ServiceIdSchema,
-  query: z.string().max(500).optional()
-    .describe('Comma-separated English keywords. Returns tools whose name, description or parameter names contain any of them. Omit to list every tool of the service.'),
+  tool_names: z.string().max(2000).optional()
+    .describe('Comma-separated exact tool names from the catalog. Omit it for the catalog; pass it for those tools\' full definitions.'),
 })
 export type McpListToolsInput = z.infer<typeof McpListToolsInputSchema>
 
@@ -37,19 +37,25 @@ export interface McpListServicesOutput {
   message?: string
 }
 
-export interface McpToolDetail {
-  name: string
-  description: string | null
-  input_schema: unknown
-}
-
-export interface McpListToolsOutput {
+/** `mcp_list_tools` without names: every tool, named and summarised, with no schema. */
+export interface McpToolCatalog {
   service_id: string
   name: string
   instructions?: string
   total: number
-  tools: McpToolDetail[]
+  tools: Array<{ name: string, summary: string | null }>
 }
+
+/** `mcp_list_tools` with names: only those tools, in full. */
+export interface McpToolDefinitions {
+  service_id: string
+  name: string
+  tools: Array<{ name: string, description: string | null, input_schema: unknown }>
+  /** Names that matched no tool, so the model can go back to the catalog. */
+  missing?: string[]
+}
+
+export type McpListToolsOutput = McpToolCatalog | McpToolDefinitions
 
 /** Content the server returned that is neither text nor an image, described rather than dropped. */
 export interface McpOtherContent {
@@ -73,24 +79,16 @@ export interface McpToolError {
   message: string
 }
 
-/**
- * The tools a query selects: any comma-separated keyword found, case-insensitively, in the tool's
- * name, its description or a top-level parameter name. An empty query selects everything.
- */
-export function matchMcpTools<T extends { name: string, description?: string | null, inputSchema?: unknown }>(
-  tools: readonly T[],
-  query: string | undefined,
-): T[] {
-  const terms = (query ?? '').split(',').map(term => term.trim().toLowerCase()).filter(Boolean)
-  if (terms.length === 0) return [...tools]
-  return tools.filter((tool) => {
-    const haystack = [tool.name, tool.description ?? '', ...parameterNames(tool.inputSchema)].join('\n').toLowerCase()
-    return terms.some(term => haystack.includes(term))
-  })
+const SUMMARY_LENGTH = 160
+
+/** A description cut to its first 160 characters on one line: enough to choose by, never a schema's worth. */
+export function mcpToolSummary(description: string | null | undefined): string | null {
+  if (!description) return null
+  const flat = description.replace(/\s+/g, ' ').trim()
+  return flat.length > SUMMARY_LENGTH ? `${flat.slice(0, SUMMARY_LENGTH)}…` : flat
 }
 
-function parameterNames(schema: unknown): string[] {
-  if (!schema || typeof schema !== 'object') return []
-  const properties = (schema as { properties?: unknown }).properties
-  return properties && typeof properties === 'object' ? Object.keys(properties) : []
+/** Exact names only — a pattern would bring back the flood of full schemas the catalog exists to avoid. */
+export function splitToolNames(value: string): string[] {
+  return [...new Set(value.split(',').map(name => name.trim()).filter(Boolean))]
 }

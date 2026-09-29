@@ -19,14 +19,16 @@ const failure = computed(() => (content.value && 'error' in content.value ? cont
 const services = computed(() => (content.value && 'services' in content.value ? content.value : null))
 const tools = computed(() => (content.value && 'tools' in content.value ? content.value : null))
 
+const requested = computed(() => input.value.tool_names?.split(',').map(name => name.trim()).filter(Boolean) ?? [])
 const title = computed(() => {
   if (!input.value.service_id) return '列出 MCP 服务'
   const name = tools.value?.name ?? names.value[input.value.service_id] ?? input.value.service_id
-  return input.value.query ? `在 ${name} 中查找「${input.value.query}」` : `查看 ${name} 的工具`
+  return requested.value.length ? `读取 ${name} 的工具定义` : `查看 ${name} 的工具目录`
 })
+const missing = computed(() => (tools.value && 'missing' in tools.value ? tools.value.missing ?? [] : []))
 const badge = computed(() => {
   if (services.value) return `${services.value.services.length} 个服务`
-  if (tools.value) return tools.value.tools.length === tools.value.total ? `${tools.value.total} 个工具` : `${tools.value.tools.length} / ${tools.value.total}`
+  if (tools.value) return requested.value.length ? `${tools.value.tools.length} 个定义` : `${tools.value.tools.length} 个工具`
   return ''
 })
 </script>
@@ -53,9 +55,10 @@ const badge = computed(() => {
           span.ml-2.text-xs.text-destructive(v-if="service.error") {{ service.error }}
           span.ml-2.text-xs.text-muted-foreground(v-else) {{ service.tool_count }} 个工具
       ul.flex.flex-col.gap-1.px-2.py-2.text-sm(v-else-if="tools")
-        li.text-muted-foreground(v-if="tools.tools.length === 0") 没有匹配的工具。
-        li(v-for="tool in tools.tools" :key="tool.name" :title="tool.description ?? ''")
+        li.text-muted-foreground(v-if="tools.tools.length === 0 && !missing.length") 这个服务没有可用的工具。
+        li(v-for="tool in tools.tools" :key="tool.name")
           span.font-mono {{ tool.name }}
+        li.text-xs.text-destructive(v-if="missing.length") 没有这些工具：{{ missing.join('、') }}
   .oc-turn-row.text-sm.text-muted-foreground(v-else)
     TriangleAlertIcon(class="size-4 shrink-0")
     span.min-w-0.truncate {{ title }}
