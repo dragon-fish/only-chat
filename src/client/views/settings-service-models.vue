@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { ImagesIcon, SparklesIcon } from '@lucide/vue'
+import { ChevronRightIcon, ImagesIcon, SparklesIcon } from '@lucide/vue'
 import { toast } from 'vue-sonner'
 import PageBackButton from '@/client/components/layout/page-back-button.vue'
 import ModelCapabilityIcons from '@/client/components/model-capability-icons.vue'
@@ -9,7 +9,9 @@ import { isStudioImageModel } from '@/client/lib/image-studio'
 import { useConfigStore } from '@/client/stores/config'
 import { useSyncStore } from '@/client/stores/sync'
 import { Button } from '@/client/ui/button'
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/client/ui/card'
+import { Badge } from '@/client/ui/badge'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/client/ui/card'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/client/ui/collapsible'
 import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/client/ui/field'
 import { Spinner } from '@/client/ui/spinner'
 import { Textarea } from '@/client/ui/textarea'
@@ -75,6 +77,17 @@ const savedPrompt = computed(() =>
   sync.settings.service_prompts?.conversation_title ?? SERVICE_PROMPT_DEFAULTS.conversation_title)
 
 const missing = computed(() => missingRequiredPlaceholders(titlePrompt.value))
+/**
+ * Prompts are for the few who tune them, so they start folded. A prompt that differs from its
+ * default opens, or someone who changed it forgets they did; so does one that cannot be saved,
+ * whose error would otherwise sit out of sight.
+ */
+const titleCustom = computed(() => titlePrompt.value !== SERVICE_PROMPT_DEFAULTS.conversation_title)
+const fileCustom = computed(() => filePrompt.value !== SERVICE_PROMPT_DEFAULTS.file_understanding)
+const titleOpen = ref(false)
+const fileOpen = ref(false)
+watch([titleCustom, missing], ([custom, absent]) => { if (custom || absent.length) titleOpen.value = true })
+watch([fileCustom, () => filePrompt.value.trim()], ([custom, text]) => { if (custom || !text) fileOpen.value = true })
 const changed = computed(() =>
   fileKey.value !== savedFile.value || filePrompt.value !== savedFilePrompt.value || textKey.value !== savedText.value || imageKey.value !== savedImage.value || titlePrompt.value !== savedPrompt.value)
 
@@ -155,18 +168,23 @@ onMounted(load)
                   placeholder="选择文本模型" search-placeholder="搜索供应商、模型名称或 ID…")
                 FieldDescription 只列出能读文本也能写文本的模型。
 
-              Field
-                FieldLabel(for="service-title-prompt") 对话命名提示词
-                Textarea#service-title-prompt(v-model="titlePrompt" rows="7" class="max-h-96 overflow-y-auto font-mono text-sm" :disabled="saving")
-                FieldDescription
-                  | 用 {{ '{' }}user_message:1{{ '}' }} 引用对话的第一条消息，最多取前 {{ MAX_PLACEHOLDER_CHARS }} 个字符。
-                FieldDescription(v-if="missing.length" class="text-destructive")
-                  | 必须包含 {{ missing.join('、') }}，否则模型看不到要命名的内容。
-          CardFooter
-            Button(
-              type="button" variant="ghost" class="min-h-10"
-              :disabled="saving || titlePrompt === SERVICE_PROMPT_DEFAULTS.conversation_title"
-              @click="titlePrompt = SERVICE_PROMPT_DEFAULTS.conversation_title") 恢复对话命名默认提示词
+              Collapsible(v-model:open="titleOpen")
+                CollapsibleTrigger.group.flex.min-h-10.items-center.gap-2.text-sm.text-muted-foreground(class="hover:text-foreground")
+                  ChevronRightIcon(class="size-4 transition-transform group-data-[state=open]:rotate-90")
+                  | 自定义提示词
+                  Badge(v-if="titleCustom" variant="secondary") 已自定义
+                CollapsibleContent
+                  Field.pt-2
+                    FieldLabel(for="service-title-prompt") 对话命名提示词
+                    Textarea#service-title-prompt(v-model="titlePrompt" rows="7" class="max-h-96 overflow-y-auto font-mono text-sm" :disabled="saving")
+                    FieldDescription
+                      | 用 {{ '{' }}user_message:1{{ '}' }} 引用对话的第一条消息，最多取前 {{ MAX_PLACEHOLDER_CHARS }} 个字符。
+                    FieldDescription(v-if="missing.length" class="text-destructive")
+                      | 必须包含 {{ missing.join('、') }}，否则模型看不到要命名的内容。
+                    Button.self-start(
+                      type="button" variant="ghost" class="min-h-10"
+                      :disabled="saving || !titleCustom"
+                      @click="titlePrompt = SERVICE_PROMPT_DEFAULTS.conversation_title") 恢复默认
 
         Card
           CardHeader
@@ -193,15 +211,20 @@ onMounted(load)
                 SearchableSelect#service-file-model(v-model="fileKey" :options="fileOptions" :disabled="saving" placeholder="选择文件理解模型" search-placeholder="搜索供应商、模型名称或 ID…")
                   template(#option-extra="{ option }")
                     ModelCapabilityIcons(v-if="fileEntries.has(option.value)" :model="fileModel(option.value)")
-              Field
-                FieldLabel(for="service-file-prompt") 系统提示词
-                Textarea#service-file-prompt(v-model="filePrompt" rows="12" class="max-h-96 overflow-y-auto font-mono text-sm" :disabled="saving")
-                FieldDescription 本次问题和文件单独传入。默认提示词侧重详细视觉描述，可按用途修改。
-          CardFooter
-            Button(
-              type="button" variant="ghost" class="min-h-10"
-              :disabled="saving || filePrompt === SERVICE_PROMPT_DEFAULTS.file_understanding"
-              @click="filePrompt = SERVICE_PROMPT_DEFAULTS.file_understanding") 恢复文件理解默认提示词
+              Collapsible(v-model:open="fileOpen")
+                CollapsibleTrigger.group.flex.min-h-10.items-center.gap-2.text-sm.text-muted-foreground(class="hover:text-foreground")
+                  ChevronRightIcon(class="size-4 transition-transform group-data-[state=open]:rotate-90")
+                  | 自定义提示词
+                  Badge(v-if="fileCustom" variant="secondary") 已自定义
+                CollapsibleContent
+                  Field.pt-2
+                    FieldLabel(for="service-file-prompt") 系统提示词
+                    Textarea#service-file-prompt(v-model="filePrompt" rows="12" class="max-h-96 overflow-y-auto font-mono text-sm" :disabled="saving")
+                    FieldDescription 文件、文件类型和本次问题会单独传入。默认提示词覆盖图片、PDF、音频与视频。
+                    Button.self-start(
+                      type="button" variant="ghost" class="min-h-10"
+                      :disabled="saving || !fileCustom"
+                      @click="filePrompt = SERVICE_PROMPT_DEFAULTS.file_understanding") 恢复默认
 
         .sticky.bottom-0.-mx-4.flex.items-center.justify-end.gap-3.border-t.p-4.backdrop-blur(class="bg-background/95 pb-[calc(1rem+env(safe-area-inset-bottom))] md:-mx-6 md:px-6 lg:-mx-8 lg:px-8")
           .flex.items-center.gap-2(aria-label="服务模型操作")
