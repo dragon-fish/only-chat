@@ -85,7 +85,7 @@ Dialog(:open="open" @update:open="value => { if (!saving) emit('update:open', va
         CommandList
           CommandGroup
             CommandItem(v-for="provider in entries" :key="provider.id" :value="provider.id" @select="choose(provider)") {{ provider.name }}
-      p.h-5.text-sm.text-muted-foreground(role="status") {{ loading ? '正在搜索…' : entries.length ? '' : '没有匹配的供应商' }}
+      p.text-sm.text-muted-foreground(v-if="loading || !entries.length" role="status") {{ loading ? '正在搜索…' : '没有匹配的供应商' }}
       Button(type="button" variant="outline" @click="choose()") 自定义供应商
     form(v-else @submit.prevent="create")
       FieldGroup

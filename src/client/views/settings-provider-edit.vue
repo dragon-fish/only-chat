@@ -53,11 +53,23 @@ const models = ref<ModelListItem[]>([])
 const modelFilters = ref<Partial<ModelQuery>>({})
 const debouncedSearch = ref('')
 const hasModelFilters = computed(() => Object.values(modelFilters.value).some(value => value !== undefined && value !== ''))
+/**
+ * Models switched from this page while a status filter is on stay listed until the filters change:
+ * a row vanishing under the pointer is how the next click lands on its neighbour.
+ */
+const keptModelIds = ref(new Set<number>())
+watch(modelFilters, () => { keptModelIds.value = new Set() }, { deep: true })
+function keepVisible(ids: readonly number[]) {
+  if (modelFilters.value.enabled === undefined) return
+  keptModelIds.value = new Set([...keptModelIds.value, ...ids])
+}
 const filteredModels = computed(() => {
   if (!savedProvider.value) return []
-  return sortModelEntries(filterModelEntries(models.value.map(model => ({ provider: savedProvider.value!, model })), {
-    ...modelFilters.value, search: debouncedSearch.value || undefined,
-  }, false), [savedProvider.value], 'lab').map(entry => entry.model)
+  const { enabled, ...rest } = modelFilters.value
+  const matched = filterModelEntries(models.value.map(model => ({ provider: savedProvider.value!, model })), {
+    ...rest, search: debouncedSearch.value || undefined,
+  }, false).filter(entry => enabled === undefined || entry.model.enabled === enabled || keptModelIds.value.has(entry.model.id))
+  return sortModelEntries(matched, [savedProvider.value], 'lab').map(entry => entry.model)
 })
 const visibleModels = computed(() => filteredModels.value)
 const modelEntries = computed(() => savedProvider.value ? visibleModels.value.map(model => ({ provider: savedProvider.value!, model })) : [])
@@ -276,6 +288,7 @@ async function setModelsEnabled(enabled: boolean, lab_id?: string | null) {
   const id = requireId()
   const token = loadToken
   modelAction.value = true
+  keepVisible(visibleModels.value.filter(model => lab_id === undefined || (model.lab_id ?? null) === lab_id).map(model => model.id))
   try {
     const result = await api.updateModels(id, { enabled, ...(lab_id !== undefined ? { lab_id } : {}) })
     const loadedModels = await readModels(id)
@@ -289,6 +302,7 @@ async function setModelsEnabled(enabled: boolean, lab_id?: string | null) {
 }
 
 async function setModelEnabled(model: ModelListItem, enabled: boolean) {
+  keepVisible([model.id])
   if (enabled || model.manual_pinned || model.upstream_available !== false) {
     await applyModel(model, { enabled })
     return
@@ -509,7 +523,7 @@ async function removeModel() {
               placeholder="选择默认生图模型"
               search-placeholder="搜索模型名称或 ID…"
               empty-text="没有可用的生图模型")
-          p.min-h-5.text-sm.text-muted-foreground(role="status") {{ associationWarning ?? '' }}
+          p.text-sm.text-muted-foreground(v-if="associationWarning" role="status") {{ associationWarning }}
         Separator
         section.flex.flex-col.gap-4(aria-labelledby="provider-models-title")
           .flex.flex-wrap.items-center.gap-2
@@ -525,7 +539,7 @@ async function removeModel() {
             Button(type="button" variant="ghost" size="sm" class="min-h-10" :disabled="busyModels || deletingProvider" @click="setModelsEnabled(false)") 全部禁用
           p.text-sm.text-muted-foreground 通过供应商拉取或手动添加模型。目录只提供元数据。
           ModelFilterMenu(v-model="modelFilters" :providers="savedProvider ? [savedProvider] : []" status)
-          p.min-h-5.text-sm.text-muted-foreground(role="status") {{ modelLoadError ?? '' }}
+          p.text-sm.text-destructive(v-if="modelLoadError" role="alert") {{ modelLoadError }}
           ItemGroup(class="gap-2")
             ModelGroupList(:entries="modelEntries" :catalog-providers="catalogProviders" :show-providers="false" collapsible show-single-lab)
               template(#lab-actions="{ lab }")
