@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { HTTP_HEADER_NAME, keyValueList } from '@/shared/key-value'
 
 /** Output bounds for the read-only tools; anything longer is cut and says so. */
 export const MAX_READ_BYTES = 256 * 1024
@@ -27,17 +28,24 @@ export function comfyuiUrlProblem(url: string, dev: boolean): string | null {
   return '地址必须以 https:// 开头。'
 }
 
+/** Sent with every request, after the client's own; a Cloudflare Access token is two of these. */
+const HeadersSchema = keyValueList().superRefine((headers, ctx) => {
+  const seen = new Set<string>()
+  for (const header of headers) {
+    const lower = header.name.toLowerCase()
+    if (!HTTP_HEADER_NAME.test(header.name)) ctx.addIssue({ code: 'custom', message: `请求头名称 ${header.name} 不合法。` })
+    else if (seen.has(lower)) ctx.addIssue({ code: 'custom', message: `请求头 ${header.name} 重复了。` })
+    seen.add(lower)
+  }
+})
+
 export const COMFYUI_CONFIG_SCHEMA = z.object({
   base_url: z.string().trim().min(1, '请填写 ComfyUI 地址')
     .refine(url => comfyuiUrlProblem(url, import.meta.env.DEV) === null, '地址必须以 https:// 开头。'),
-  cf_access_client_id: z.string().trim().optional(),
-  cf_access_client_secret: z.string().trim().optional(),
+  headers: HeadersSchema,
   workflows_dir: UserdataDirSchema,
   guides_dir: UserdataDirSchema,
-}).refine(
-  config => Boolean(config.cf_access_client_id) === Boolean(config.cf_access_client_secret),
-  { message: 'Client ID 与 Client Secret 需同时填写或同时留空', path: ['cf_access_client_secret'] },
-)
+})
 export type ComfyuiConfig = z.infer<typeof COMFYUI_CONFIG_SCHEMA>
 
 // ---- tool contracts

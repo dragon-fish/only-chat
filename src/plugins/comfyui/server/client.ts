@@ -38,9 +38,7 @@ export class ComfyuiClient {
     this.headers = {
       // Without a User-Agent, Cloudflare's Browser Integrity Check answers 403 before Access runs.
       'User-Agent': 'only-chat',
-      ...(config.cf_access_client_id && config.cf_access_client_secret
-        ? { 'CF-Access-Client-Id': config.cf_access_client_id, 'CF-Access-Client-Secret': config.cf_access_client_secret }
-        : {}),
+      ...Object.fromEntries(config.headers.map(header => [header.name, header.value])),
     }
   }
 
@@ -115,7 +113,7 @@ export class ComfyuiClient {
 
   private async check(response: Response, path: string): Promise<Response> {
     if (response.status === 401 || response.status === 403) {
-      throw new ComfyuiError(`ComfyUI refused the request (${response.status}). Check the Cloudflare Access service token.`, 'auth')
+      throw new ComfyuiError(`ComfyUI refused the request (${response.status}). Check the credentials in the plugin\'s request headers.`, 'auth')
     }
     if (response.status === 404) throw new ComfyuiError(`Not found: ${path.split('?')[0]}`, 'not_found')
     if (!response.ok) {
@@ -124,7 +122,7 @@ export class ComfyuiClient {
     }
     // Cloudflare Access answers an unauthenticated request with its login page, not a status code.
     if ((response.headers.get('Content-Type') ?? '').includes('text/html')) {
-      throw new ComfyuiError('ComfyUI answered with an HTML page, usually the Cloudflare Access login. Check the service token.', 'auth')
+      throw new ComfyuiError('ComfyUI answered with an HTML page, usually a Cloudflare Access login. Check the credentials in the plugin\'s request headers.', 'auth')
     }
     return response
   }

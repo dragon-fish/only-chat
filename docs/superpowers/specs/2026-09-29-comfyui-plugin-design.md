@@ -30,8 +30,7 @@
 | key | 类型 | 说明 |
 |---|---|---|
 | `base_url` | text，必填 | ComfyUI 地址。必须 `https:`；开发环境另允许 `http://localhost`、`http://127.0.0.1`。拼接请求路径时去掉末尾 `/` |
-| `cf_access_client_id` | secret，可选 | Cloudflare Access Service Token |
-| `cf_access_client_secret` | secret，可选 | 与上一项必须同时填写或同时留空 |
+| `headers` | key_value | 随每个请求发送的请求头，每行可单独上锁（加密保存、不再回显）。Cloudflare Access 即 `CF-Access-Client-Id` 与 `CF-Access-Client-Secret` 两行；名称须合法且不重复 |
 | `workflows_dir` | text，可选 | userdata 下存放 API 格式模板的目录，留空即无模板 |
 | `guides_dir` | text，可选 | userdata 下存放 markdown 指南的目录，留空即无指南 |
 
@@ -41,9 +40,9 @@
 
 ## 4. HTTP 客户端
 
-每个请求附带：
-- 两个 CF Access 头（已配置时）：`CF-Access-Client-Id`、`CF-Access-Client-Secret`；
-- `User-Agent: only-chat`：没有 UA 的请求会被 Cloudflare Browser Integrity Check 拦截。
+每个请求附带 `User-Agent: only-chat`（没有 UA 的请求会被 Cloudflare Browser Integrity Check 拦截），再叠加配置的请求头，同名时以配置为准。
+
+`key_value` 是通用插件配置的字段类型：schema 为 `{ name, value, secret }` 数组（`keyValueList()`），声明类型决定控件与逐行加密。锁的默认值按名称启发式推断（含 auth、token、key、secret 等），用户可切换，结果随行保存。表单对已保存的机密行回传 `value: null` 表示不变，服务端仅在同名且仍为机密时沿用原值。
 
 单个请求超时 30 秒。错误分类 `error_type`：
 

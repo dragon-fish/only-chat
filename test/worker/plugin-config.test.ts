@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { createDb } from '@/server/db/client'
 import { pluginConfigs } from '@/server/db/schema'
 import { createApp } from '@/server/app'
-import { TAVILY_PLUGIN_ID } from '@/shared/plugins'
+import { COMFYUI_PLUGIN_ID, TAVILY_PLUGIN_ID } from '@/shared/plugins'
 import type { PluginConfigStatusMap } from '@/shared/plugins'
 import { ensureTestUser, authenticatedFetch } from './auth-helper'
 
@@ -89,4 +89,46 @@ describe('plugin configuration', () => {
     expect((await json('PUT', '/api/plugins/ask_user/config', {})).status).toBe(404)
     expect((await json('PUT', '/api/plugins/nope/config', {})).status).toBe(404)
   })
+
+  describe('key-value rows', () => {
+    const headers = (rows: unknown) => json('PUT', `/api/plugins/${COMFYUI_PLUGIN_ID}/config`, { base_url: 'https://comfy.example', headers: rows })
+    const storedHeaders = async () => {
+      const [row] = await createDb(env.DB).select().from(pluginConfigs).where(and(
+        eq(pluginConfigs.user_id, userId), eq(pluginConfigs.plugin_id, COMFYUI_PLUGIN_ID), eq(pluginConfigs.key, 'headers'),
+      ))
+      return row?.value
+    }
+
+    it('encrypts only the rows marked secret and never returns their values', async () => {
+      const response = await headers([
+        { name: 'CF-Access-Client-Secret', value: 'cf-secret-value', secret: true },
+        { name: 'X-Region', value: 'hk', secret: false },
+      ])
+      expect(response.status).toBe(200)
+      const status = await response.json() as PluginConfigStatusMap
+      expect(status[COMFYUI_PLUGIN_ID]!.values.headers).toEqual([
+        { name: 'CF-Access-Client-Secret', value: null, secret: true },
+        { name: 'X-Region', value: 'hk', secret: false },
+      ])
+      expect(await storedHeaders()).not.toContain('cf-secret-value')
+      const ctx = await createApp({ env, side: 'worker' })
+      expect((await ctx.pluginConfig.read(userId, COMFYUI_PLUGIN_ID)).headers).toEqual([
+        { name: 'CF-Access-Client-Secret', value: 'cf-secret-value', secret: true },
+        { name: 'X-Region', value: 'hk', secret: false },
+      ])
+    })
+
+    it('keeps a saved secret sent back as null, under its own name only', async () => {
+      await headers([{ name: 'Authorization', value: 'Basic abc', secret: true }])
+      expect((await headers([{ name: 'Authorization', value: null, secret: true }, { name: 'X-Extra', value: '1', secret: false }])).status).toBe(200)
+      const ctx = await createApp({ env, side: 'worker' })
+      expect((await ctx.pluginConfig.read(userId, COMFYUI_PLUGIN_ID)).headers)
+        .toEqual([{ name: 'Authorization', value: 'Basic abc', secret: true }, { name: 'X-Extra', value: '1', secret: false }])
+
+      const renamed = await headers([{ name: 'Proxy-Authorization', value: null, secret: true }])
+      expect(renamed.status).toBe(400)
+      expect(await renamed.json()).toEqual({ error: '请填写 Proxy-Authorization 的值' })
+    })
+  })
 })
+

@@ -4,7 +4,10 @@ import { ComfyuiClient, ComfyuiError, type HistoryEntry } from '@/plugins/comfyu
 import { MAX_OUTPUT_IMAGES, readHistory } from '@/plugins/comfyui/server/history'
 import { compactNodeInfo } from '@/plugins/comfyui/server/runners'
 
-const config = { base_url: 'https://comfy.example/', cf_access_client_id: 'id.access', cf_access_client_secret: 'secret' }
+const config = {
+  base_url: 'https://comfy.example/',
+  headers: [{ name: 'CF-Access-Client-Id', value: 'id.access', secret: true }, { name: 'CF-Access-Client-Secret', value: 'secret', secret: true }],
+}
 
 function clientAnswering(respond: (url: string, init: RequestInit) => Response | Promise<Response>) {
   const calls: Array<{ url: string, headers: Record<string, string> }> = []
@@ -113,9 +116,13 @@ describe('compactNodeInfo', () => {
 })
 
 describe('COMFYUI_CONFIG_SCHEMA', () => {
-  it('takes the Access token as a pair or not at all', () => {
-    expect(COMFYUI_CONFIG_SCHEMA.safeParse({ base_url: 'https://comfy.example' }).success).toBe(true)
-    expect(COMFYUI_CONFIG_SCHEMA.safeParse({ base_url: 'https://comfy.example', cf_access_client_id: 'id' }).success).toBe(false)
+  it('refuses a header name HTTP cannot carry, or the same header twice', () => {
+    const withHeaders = (names: string[]) => COMFYUI_CONFIG_SCHEMA.safeParse({
+      base_url: 'https://comfy.example', headers: names.map(name => ({ name, value: 'v', secret: false })),
+    }).success
+    expect(withHeaders(['Authorization'])).toBe(true)
+    expect(withHeaders(['Bad Header'])).toBe(false)
+    expect(withHeaders(['X-Token', 'x-token'])).toBe(false)
   })
 
   it('refuses plain http to a remote host', () => {
