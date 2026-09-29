@@ -12,6 +12,7 @@ import { uploadFile, uploadMime } from '@/client/lib/file-upload'
 import { useSiteConfigStore } from '@/client/stores/site-config'
 import { uploadLimitLabel } from '@/shared/upload-policy'
 import { uploadAccept } from '@/shared/file-media'
+import AttachmentLightbox from '@/client/components/attachment-lightbox.vue'
 import { mergeRestoredText } from '@/client/stores/sync'
 import { api } from '@/client/lib/api'
 import type { Part } from '@/shared/parts'
@@ -67,6 +68,13 @@ const uploadHint = computed(() => {
 const dropLabel = computed(() => (uploadsOff.value ? uploadHint.value : `松开以${uploadHint.value}`))
 const text = ref('')
 const attachments = ref<Attached[]>([])
+/** Uploaded images waiting to be sent, stepped through together in the lightbox. */
+const trayImages = computed(() => attachments.value.filter(item => item.kind === 'image' && item.state === 'done'))
+const lightboxImages = computed(() => trayImages.value.map(item => ({ url: item.preview, name: item.filename })))
+const lightboxIndex = ref<number | null>(null)
+function openTrayImage(item: Attached) {
+  lightboxIndex.value = trayImages.value.indexOf(item)
+}
 // A counter, not a flag: concurrent uploads must not let the first one to finish clear `busy`.
 const pending = ref(0)
 const busy = computed(() => pending.value > 0)
@@ -354,7 +362,11 @@ onBeforeUnmount(() => { releasePreviews(attachments.value); dropSent() })
         orientation="vertical" :state="item.state")
         AttachmentMedia(variant="image")
           Spinner(v-if="item.state === 'uploading'")
-          img(v-else-if="item.state === 'done' && item.kind === 'image'" :src="item.preview" alt="")
+          //- The media slot sizes only a direct child image, so the button carries the sizing itself.
+          button.size-full.cursor-zoom-in(
+            v-else-if="item.state === 'done' && item.kind === 'image'" type="button"
+            :aria-label="`查看图片 ${item.filename ?? ''}`" @click="openTrayImage(item)")
+            img.aspect-square.w-full.object-cover(:src="item.preview" alt="")
           FileIcon(v-else-if="item.state === 'done'" :title="item.filename")
           X(v-else)
         span.w-full.min-w-0.truncate.text-xs(v-if="item.kind === 'file'" :title="item.filename") {{ item.filename || item.mime }}
@@ -375,6 +387,7 @@ onBeforeUnmount(() => { releasePreviews(attachments.value); dropSent() })
     //- `align="block-end"` is what makes InputGroup lay out as a column with this row last.
     InputGroupAddon(align="block-end")
       input.hidden(ref="fileInput" type="file" :accept="fileAccept" multiple @change="onFileChange")
+      AttachmentLightbox(:images="lightboxImages" :index="lightboxIndex" @update:index="lightboxIndex = $event")
       .flex.items-center.gap-1
         Tooltip
           TooltipTrigger(as-child)
