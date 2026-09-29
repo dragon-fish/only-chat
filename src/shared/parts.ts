@@ -53,6 +53,11 @@ export const ToolResultPartSchema = z.object({
    * protocol cannot carry it at all.
    */
   attachments: z.array(z.number().int()).optional(),
+  /**
+   * The tool failed rather than answered: its input did not validate, or it threw. `content` is then
+   * the error's message, which the model is sent as error text — the way the SDK sent it mid-turn.
+   */
+  is_error: z.literal(true).optional(),
   providerOptions: ProviderOptionsSchema.optional(),
 })
 

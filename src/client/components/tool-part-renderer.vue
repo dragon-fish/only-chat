@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, inject, shallowRef, watch } from 'vue'
-import { BracesIcon, CircleHelpIcon } from '@lucide/vue'
+import { BracesIcon, CircleHelpIcon, CircleSlashIcon, TriangleAlertIcon } from '@lucide/vue'
 import type { Component } from 'vue'
 import type { ClientPluginHost } from '@/client/plugins/host'
 import { useAuditContext } from '@/client/lib/audit-context'
@@ -19,6 +19,8 @@ const props = defineProps<{
   placement?: 'message' | 'composer'
   deferPending?: boolean
   inputPending?: boolean
+  /** The message is no longer streaming: a tool without a result by now will never get one. */
+  settled?: boolean
 }>()
 const sync = useSyncStore()
 /** Under an audit a renderer is shown busy, which is how every renderer already disables its controls. */
@@ -34,6 +36,12 @@ const human = computed(() => humanToolDescriptor(pluginManifests, props.call.nam
 const inputPendingLabel = computed(() => human.value
   ? `正在准备${human.value.name}…`
   : `正在调用 ${props.call.name}`)
+/**
+ * Ended without a result: the turn was stopped, or the call failed before errors were recorded.
+ * Only a person-answered tool legitimately waits past the end of its message. The prompt already
+ * tells the model such a call was interrupted; the screen must not spin forever instead.
+ */
+const interrupted = computed(() => props.settled === true && effectiveResult.value === null && human.value === undefined)
 const compactPending = computed(() => (
   props.placement !== 'composer'
   && props.deferPending === true
@@ -96,9 +104,18 @@ Alert(v-else-if="compactPending")
   CircleHelpIcon
   AlertTitle 正在等待你的回答
   AlertDescription 请在下方回答问题后继续。
+.oc-turn-row.text-sm.text-muted-foreground(v-else-if="interrupted")
+  CircleSlashIcon(class="size-4 shrink-0")
+  span {{ call.name }} 未完成
 .oc-turn-row.text-sm.text-muted-foreground(v-else-if="loading")
   Spinner(class="size-4 shrink-0")
   span 正在调用 {{ call.name }}
+//- A tool that failed instead of answering — input that did not validate, or a throw — has no
+//- result for its card to read, only the message the model was sent.
+Alert(v-else-if="effectiveResult?.is_error" variant="destructive")
+  TriangleAlertIcon
+  AlertTitle {{ call.name }} 调用失败
+  AlertDescription {{ String(effectiveResult.content) }}
 .w-full(
   v-else-if="renderer" :data-optimistic="optimisticResult ? '' : undefined"
   :class="optimisticResult ? 'opacity-70' : undefined")

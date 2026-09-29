@@ -1,4 +1,5 @@
 import type { TextStreamPart, ToolSet } from 'ai'
+import { getErrorMessage } from '@ai-sdk/provider'
 import { toolResultPart, type Part, type ProviderOptions, type ReasoningPart, type TextPart, type ToolCallPart, type ToolResultPart } from '@/shared/parts'
 import {
   completedResponsesReasoningOptions, completedResponsesReasoningText, readResponsesReasoningDelta,
@@ -139,6 +140,21 @@ export class PartAccumulator {
       default:
         return []
     }
+  }
+
+  /**
+   * Records a tool that failed instead of answering, with the text the SDK sent the model for it.
+   * Not done for every `tool-error`: the SDK also emits one for a tool with no `execute` (answered
+   * by a person later) and for an absent tool (answered as interrupted by the prompt builder), so
+   * the caller decides which failures are real.
+   */
+  toolError(part: Extract<TextStreamPart<ToolSet>, { type: 'tool-error' }>): AccPartEvent {
+    const content = getErrorMessage(part.error)
+    const idx = this._ensure(part.toolCallId, { type: 'tool_result', call_id: part.toolCallId, name: part.toolName, content, is_error: true })
+    const target = this.parts[idx] as ToolResultPart
+    target.content = content
+    target.is_error = true
+    return this._partEvent(idx)
   }
 
   /**

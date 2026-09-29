@@ -172,6 +172,16 @@ describe('edit_file', () => {
   })
 })
 
+describe('a call that fails instead of answering', () => {
+  it('is stored as an error result, so the call never waits on one forever', async () => {
+    const providerId = await seedProvider()
+    await installModel()
+    // Models do drop required arguments; the SDK answers the model with the validation error.
+    const { result } = await callTool(providerId, 'edit_file', { oldText: 'PORT = 3000', newText: 'PORT = 8080' })
+    expect(result).toMatchObject({ type: 'tool_result', name: 'edit_file', is_error: true, content: expect.stringContaining('path') })
+  })
+})
+
 describe('read_file repeat and partial views', () => {
   it('tells the caller nothing changed instead of sending the file twice', async () => {
     const providerId = await seedProvider()

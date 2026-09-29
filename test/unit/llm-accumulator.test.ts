@@ -1,3 +1,4 @@
+import { getErrorMessage } from '@ai-sdk/provider'
 import { describe, expect, it, vi } from 'vitest'
 import { PartAccumulator } from '@/server/plugins/llm/accumulator'
 
@@ -168,6 +169,17 @@ describe('PartAccumulator', () => {
       { type: 'tool_result', call_id: 'c1', name: 'lookup', content: { ok: true }, providerOptions: { responses: { opaque: ['state', null, 0] } } },
       { type: 'reasoning', text: 'next' },
     ])
+  })
+
+  it('records a failed call as an error result, so the call is never left without one', () => {
+    const acc = new PartAccumulator()
+    acc.apply({ type: 'tool-call', toolCallId: 'c1', toolName: 'edit_file', input: { oldText: 'a' }, invalid: true } as never)
+    const error = new Error('path: Required')
+    const ev = [acc.toolError({ type: 'tool-error', toolCallId: 'c1', toolName: 'edit_file', input: { oldText: 'a' }, error } as never)]
+    // Exactly the text the SDK sends the model for this error mid-turn, so the rebuilt prompt matches.
+    const failed = { type: 'tool_result', call_id: 'c1', name: 'edit_file', content: getErrorMessage(error), is_error: true }
+    expect(ev).toEqual([{ kind: 'part', part_index: 1, part: failed }])
+    expect(untimed(acc.parts)[1]).toEqual(failed)
   })
 
   it('emits a full part for tool calls', () => {

@@ -37,7 +37,8 @@ const attachmentUrl = useAttachmentUrl()
       v-else-if="segment.kind === 'tool'" :message-id="messageId"
       :call="segment.call" :result="segment.result" :can-continue="canContinueTools"
       :defer-pending="isConversationHead"
-      :input-pending="streaming && typeof segment.call.args === 'string'")
+      :input-pending="streaming && typeof segment.call.args === 'string'"
+      :settled="!streaming")
     //- Generated images are served by the same authenticated attachment route as uploads.
     img(
       v-else-if="segment.kind === 'image'" class="max-h-80 rounded border"

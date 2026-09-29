@@ -134,6 +134,16 @@ describe('buildModelMessages', () => {
     expect(assistantContent(out)).toEqual([{ type: 'text', text: 'analysis' }, { type: 'text', text: 'answer' }])
   })
 
+  it('sends a failed call back as error text, the way the SDK sent it mid-turn', () => {
+    const out = buildModelMessages({ protocol: 'responses', systemPrompt: null, attachments: new Map(), path: [msg({ id: 1, role: 'assistant', parts: [
+      { type: 'tool_call', id: 'c1', name: 'edit_file', args: { oldText: 'a' } },
+      { type: 'tool_result', call_id: 'c1', name: 'edit_file', content: 'path: Required', is_error: true },
+    ] })] })
+    expect(out[1]).toEqual({ role: 'tool', content: [
+      { type: 'tool-result', toolCallId: 'c1', toolName: 'edit_file', output: { type: 'error-text', value: 'path: Required' } },
+    ] })
+  })
+
   it('preserves tool results between assistant segments instead of moving them after later reasoning', () => {
     const ordered = [msg({ id: 2, role: 'assistant', parts: [
       { type: 'reasoning', text: 'first' },

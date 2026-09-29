@@ -558,6 +558,19 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
         await hub.flushInflight(tracked)
         continue
       }
+      // A server tool that exists and failed — its input did not validate, or it threw — is
+      // answered with the SDK's error text. Recording nothing left the call without a result: a
+      // spinner forever on screen, and a rebuilt prompt that no longer matched this turn's.
+      // Not a tool with no `execute` (a person answers it), not an absent one (the prompt
+      // builder answers it as interrupted), and not a stopped turn (that is an interruption too).
+      if (part.type === 'tool-error') {
+        if (tools[part.toolName]?.execute !== undefined && !controller.signal.aborted) {
+          const ev = acc.toolError(part)
+          await hub.broadcastGeneration({ type: 'message.part', message_id: shell.id, part_index: ev.part_index, part: ev.part })
+          await hub.flushInflight(tracked)
+        }
+        continue
+      }
       for (const ev of acc.apply(part)) {
         if (ev.kind === 'delta') {
           if (firstTokenAt === null && ev.delta.length > 0) firstTokenAt = performance.now()

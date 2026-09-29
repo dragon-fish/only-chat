@@ -249,7 +249,10 @@ function assistantMessages(
         break
       case 'tool_result':
         pendingCalls.delete(p.call_id)
-        tool.push(withOptions({ type: 'tool-result', toolCallId: p.call_id, toolName: p.name, output: { type: 'json', value: p.content as never } }, options))
+        tool.push(withOptions({
+          type: 'tool-result', toolCallId: p.call_id, toolName: p.name,
+          output: p.is_error ? { type: 'error-text', value: String(p.content) } : { type: 'json', value: p.content as never },
+        }, options))
         if (p.attachments?.length) shown.push(p)
         // Streaming tools can finish before the model has emitted its remaining calls.
         if (pendingCalls.size === 0) flushTool()
