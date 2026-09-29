@@ -72,11 +72,17 @@ function controlsFrom(
       ...(property.default === undefined ? {} : { default: property.default }),
       ...(field.type === 'secret'
         ? {}
-        : { value: values[field.key] ?? property.default ?? (field.type === 'boolean' ? false : '') }),
+        : { value: values[field.key] ?? property.default ?? emptyValue(field.type) }),
       required: required.has(field.key),
       configured: secrets[field.key] === true,
     }
   })
+}
+
+function emptyValue(type: PluginConfigFieldType): unknown {
+  if (type === 'boolean') return false
+  if (type === 'key_value') return []
+  return ''
 }
 
 /** A secret always starts blank: the form shows that one is stored, never what it is. */

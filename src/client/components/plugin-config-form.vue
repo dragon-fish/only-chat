@@ -5,7 +5,9 @@ import { Checkbox } from '@/client/ui/checkbox'
 import { Field, FieldDescription, FieldLabel } from '@/client/ui/field'
 import { Input } from '@/client/ui/input'
 import { NativeSelect, NativeSelectOption } from '@/client/ui/native-select'
+import SecretRowsEditor from '@/client/components/secret-rows-editor.vue'
 import type { PluginConfigControl } from '@/client/lib/plugin-config-form'
+import type { KeyValueEntryView } from '@/shared/key-value'
 
 const props = defineProps<{
   controls: readonly PluginConfigControl[]
@@ -26,6 +28,15 @@ function inputValue(key: string): string | number {
   const value = props.modelValue[key]
   return typeof value === 'number' ? value : String(value ?? '')
 }
+
+function rowsOf(value: unknown): KeyValueEntryView[] {
+  return Array.isArray(value) ? value as KeyValueEntryView[] : []
+}
+
+/** Rows are seeded once per stored state; a save that changes it remounts them with the new locks. */
+function rowsKey(control: PluginConfigControl): string {
+  return `${control.key}:${JSON.stringify(control.value ?? [])}`
+}
 </script>
 
 <template lang="pug">
@@ -41,6 +52,9 @@ function inputValue(key: string): string | number {
       :model-value="String(modelValue[control.key] ?? '')" :disabled="disabled" class="w-full"
       @update:model-value="set(control.key, $event)")
       NativeSelectOption(v-for="option in control.options" :key="option" :value="option") {{ option }}
+    SecretRowsEditor(
+      v-else-if="control.type === 'key_value'" :key="rowsKey(control)" :initial="rowsOf(control.value)" :noun="control.label"
+      :model-value="rowsOf(modelValue[control.key])" @update:model-value="set(control.key, $event)")
     .flex.items-center.gap-2(v-else-if="control.type === 'boolean'")
       Checkbox(
         :id="`plugin-config-${control.key}`" :model-value="modelValue[control.key] === true"

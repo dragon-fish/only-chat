@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { mcpToolSummary, splitToolNames } from '@/plugins/mcp/shared'
-import { isSensitiveHeaderName, mcpHeadersProblem } from '@/shared/mcp'
+import { isSensitiveName } from '@/shared/key-value'
+import { mcpHeadersProblem } from '@/shared/mcp'
 
 describe('MCP tool catalog helpers', () => {
   it('summarises a description as its first 160 characters on one line', () => {
@@ -19,8 +20,8 @@ describe('MCP tool catalog helpers', () => {
 
 describe('MCP headers', () => {
   it('marks names that usually carry a credential as sensitive', () => {
-    expect(['Authorization', 'X-API-Key', 'X-Auth-Token', 'Cookie'].every(isSensitiveHeaderName)).toBe(true)
-    expect(['X-Region', 'Accept-Language'].some(isSensitiveHeaderName)).toBe(false)
+    expect(['Authorization', 'X-API-Key', 'X-Auth-Token', 'Cookie'].every(isSensitiveName)).toBe(true)
+    expect(['X-Region', 'Accept-Language'].some(isSensitiveName)).toBe(false)
   })
 
   it('refuses headers the transport sets, case-insensitive duplicates, and Authorization beside OAuth', () => {

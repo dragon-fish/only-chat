@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { HTTP_HEADER_NAME } from './key-value'
 
 /** Remote transports only: the Worker and the Durable Object cannot spawn a stdio process. */
 export const McpTransportSchema = z.enum(['http', 'sse'])
@@ -22,15 +23,6 @@ export interface StoredMcpHeader {
  * transport merged last, so they are refused rather than silently overridden.
  */
 const RESERVED_HEADERS = ['content-type', 'accept', 'mcp-session-id', 'mcp-protocol-version', 'last-event-id']
-const SENSITIVE_WORDS = ['auth', 'token', 'key', 'secret', 'password', 'cookie', 'session', 'credential']
-const HEADER_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/
-
-/** The default for a new header row; the person can always flip it. */
-export function isSensitiveHeaderName(name: string): boolean {
-  const lower = name.toLowerCase()
-  return SENSITIVE_WORDS.some(word => lower.includes(word))
-}
-
 /**
  * A header as the settings form sends it. `value: null` keeps a saved secret as it is — the form
  * never received the plaintext, so it has nothing to send back.
@@ -47,7 +39,7 @@ export function mcpHeadersProblem(headers: readonly { name: string }[], options:
   const seen = new Set<string>()
   for (const header of headers) {
     const name = header.name.trim()
-    if (!HEADER_NAME.test(name)) return `请求头名称 ${name} 不合法。`
+    if (!HTTP_HEADER_NAME.test(name)) return `请求头名称 ${name} 不合法。`
     const lower = name.toLowerCase()
     if (RESERVED_HEADERS.includes(lower)) return `${name} 由客户端自动设置，不能在这里填写。`
     if (options.oauth && lower === 'authorization') return '已通过 OAuth 授权的服务不能再填写 Authorization。'

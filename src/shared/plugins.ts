@@ -95,7 +95,8 @@ export interface PluginToolGroup {
   tools: readonly string[]
 }
 
-export type PluginConfigFieldType = 'text' | 'secret' | 'number' | 'boolean' | 'select'
+/** `key_value` rows are shown by name; a row marked secret has its value encrypted and never returned. */
+export type PluginConfigFieldType = 'text' | 'secret' | 'number' | 'boolean' | 'select' | 'key_value'
 
 /**
  * Presentation only. Options, bounds and defaults are read from `configSchema` via
@@ -389,6 +390,10 @@ export function pluginToolGroups(manifest: PluginManifest): ResolvedToolGroup[] 
  * A key that no field claims is treated as a secret. Being wrong in that direction hides a value
  * that did not need hiding; being wrong the other way broadcasts a credential.
  */
+export function isKeyValueConfigKey(manifest: PluginManifest, key: string): boolean {
+  return manifest.config?.find(candidate => candidate.key === key)?.type === 'key_value'
+}
+
 export function isSecretConfigKey(manifest: PluginManifest, key: string): boolean {
   const field = manifest.config?.find(candidate => candidate.key === key)
   return field === undefined || field.type === 'secret'
