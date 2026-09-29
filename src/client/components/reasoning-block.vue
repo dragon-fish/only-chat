@@ -10,6 +10,8 @@ const props = defineProps<{
   active: boolean
   /** Stamped server-side when the block closed; null while it is still open, or for older parts. */
   durationMs: number | null
+  /** Reported reasoning tokens, when they can be pinned on this block. */
+  tokens: number | null
 }>()
 
 // Follows `active` until the reader touches it; after that their choice wins for this block.
@@ -52,16 +54,27 @@ const label = computed(() => (props.active ? '正在思考' : '已思考'))
  */
 const timing = computed(() => {
   if (props.active) return `${seconds(elapsed.value)} 秒`
-  if (props.durationMs === null || !Number.isFinite(props.durationMs)) return null
-  const whole = seconds(props.durationMs)
-  return whole > 0 ? `用时 ${whole} 秒` : null
+  const parts: string[] = []
+  if (props.durationMs !== null && Number.isFinite(props.durationMs)) {
+    const whole = seconds(props.durationMs)
+    if (whole > 0) parts.push(`用时 ${whole} 秒`)
+  }
+  if (props.tokens !== null) parts.push(`${props.tokens.toLocaleString()} tokens`)
+  return parts.length > 0 ? parts.join(' · ') : null
 })
+
+/** The provider hid the thinking itself; the row only says it happened and has nothing to open. */
+const hidden = computed(() => props.text === '')
 
 const preview = computed(() => props.text.replace(/\s+/g, ' ').trim())
 </script>
 
 <template lang="pug">
-Collapsible(:open="open" @update:open="setOpen")
+.oc-turn-row.text-xs.text-muted-foreground(v-if="hidden")
+  component(:is="active ? Spinner : BrainIcon" class="size-4 shrink-0")
+  span.shrink-0 {{ label }}
+  span.shrink-0(v-if="timing" class="opacity-70") （{{ timing }}）
+Collapsible(v-else :open="open" @update:open="setOpen")
   CollapsibleTrigger(
     class="oc-turn-row group text-xs text-muted-foreground hover:bg-accent hover:text-foreground")
     //- Spinning while it runs, the brain once it has stopped — the same reading a tool card gives.

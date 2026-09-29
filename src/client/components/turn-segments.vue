@@ -36,7 +36,7 @@ function openImage(key: string) {
   template(v-for="segment in segments" :key="segment.key")
     ReasoningBlock(
       v-if="segment.kind === 'reasoning'" :text="segment.text"
-      :duration-ms="segment.durationMs"
+      :duration-ms="segment.durationMs" :tokens="segment.tokens"
       :active="segment.key === activeSegmentKey")
     MarkdownRender(
       v-else-if="segment.kind === 'text'"

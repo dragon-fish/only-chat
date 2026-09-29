@@ -1,7 +1,12 @@
+import type { Usage } from '@/shared/models'
 import type { ImagePart, Part, ToolCallPart, ToolResultPart } from '@/shared/parts'
 
 export type MessageSegment =
-  | { kind: 'reasoning'; key: string; text: string; durationMs: number | null }
+  | {
+    kind: 'reasoning'; key: string; text: string; durationMs: number | null
+    /** The step's reported reasoning tokens; null when unreported, zero, or not attributable. */
+    tokens: number | null
+  }
   | { kind: 'text'; key: string; markdown: string }
   | { kind: 'tool'; key: string; call: ToolCallPart; result: ToolResultPart | null }
   | { kind: 'image'; key: string; part: ImagePart }
@@ -18,11 +23,17 @@ export type MessageSegment =
  * Adjacent parts of the same kind merge: one answer must stay one markdown document, or headings
  * and lists split across renderers mid-structure.
  */
-export function messageSegments(parts: readonly Part[]): MessageSegment[] {
+export function messageSegments(parts: readonly Part[], usage?: Usage | null): MessageSegment[] {
   const segments: MessageSegment[] = []
   const toolIndex = new Map<string, number>()
+  // Round trip each reasoning segment belongs to: a step ends once its tool results are in.
+  const reasoningStep = new Map<MessageSegment, number>()
+  let step = 0
+  let afterResult = false
 
   for (const [index, part] of parts.entries()) {
+    if (afterResult && part.type !== 'tool_result') step++
+    afterResult = part.type === 'tool_result'
     switch (part.type) {
       case 'text': {
         if (part.text === '') break
@@ -32,22 +43,27 @@ export function messageSegments(parts: readonly Part[]): MessageSegment[] {
         break
       }
       case 'reasoning': {
-        if (part.text.trim() === '') break
+        // An empty block is kept: providers that hide the thinking (encrypted, or summary-only with
+        // an empty summary) still open and close one, and dropping it left a long silent wait.
+        const text = part.text.trim() === '' ? '' : part.text
         const last = segments.at(-1)
         // Merged blocks add up: the reader sees one span of thinking, so it reports one duration.
         // Still null when no part in the run carries one — an unfinished block, or one from before
         // durations were recorded.
         if (last?.kind === 'reasoning') {
-          last.text += `\n${part.text}`
+          if (text) last.text = last.text ? `${last.text}\n${text}` : text
           if (part.duration_ms !== undefined) last.durationMs = (last.durationMs ?? 0) + part.duration_ms
         }
         else {
-          segments.push({
+          const segment: MessageSegment = {
             kind: 'reasoning',
             key: `reasoning:${index}`,
-            text: part.text,
+            text,
             durationMs: part.duration_ms ?? null,
-          })
+            tokens: null,
+          }
+          segments.push(segment)
+          reasoningStep.set(segment, step)
         }
         break
       }
@@ -69,7 +85,27 @@ export function messageSegments(parts: readonly Part[]): MessageSegment[] {
       }
     }
   }
+  // Answered tools are always followed by another request, even one that came back empty.
+  attributeReasoningTokens(reasoningStep, step + (afterResult ? 2 : 1), usage)
   return segments
+}
+
+/**
+ * Usage is reported per round trip, not per block, so a count is attached only where it cannot land
+ * on the wrong block: the parts must split into exactly as many steps as were recorded, and the step
+ * must hold one reasoning segment. Zero is left off — a proxy that hides the thinking reports zero.
+ */
+function attributeReasoningTokens(reasoningStep: Map<MessageSegment, number>, stepCount: number, usage?: Usage | null) {
+  if (!usage) return
+  const perStep = usage.steps ? usage.steps.map(s => s.reasoning) : [usage.reasoning]
+  if (perStep.length !== stepCount) return
+  const segmentsInStep = new Map<number, number>()
+  for (const step of reasoningStep.values()) segmentsInStep.set(step, (segmentsInStep.get(step) ?? 0) + 1)
+  for (const [segment, step] of reasoningStep) {
+    const tokens = perStep[step]
+    if (segment.kind !== 'reasoning' || segmentsInStep.get(step) !== 1 || !tokens) continue
+    segment.tokens = tokens
+  }
 }
 
 export type TurnBlock =

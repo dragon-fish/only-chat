@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { hasPendingTool, messageSegments, totalReasoningMs, turnBlocks } from '@/client/components/message-segments'
+import type { Usage } from '@/shared/models'
 import type { Part } from '@/shared/parts'
 
 const text = (t: string): Part => ({ type: 'text', text: t })
@@ -39,8 +40,32 @@ describe('messageSegments', () => {
     expect(segments[0]!.kind === 'reasoning' && segments[0]!.text).toBe('one\ntwo')
   })
 
-  it('drops empty text and reasoning so a signature-only part renders nothing', () => {
-    expect(messageSegments([reasoning('  '), text(''), call('a')]).map(s => s.kind)).toEqual(['tool'])
+  it('drops empty text but keeps a reasoning block whose thinking the provider hid', () => {
+    const segments = messageSegments([reasoning('  ', 1200), text(''), call('a')])
+    expect(segments.map(s => s.kind)).toEqual(['reasoning', 'tool'])
+    expect(segments[0]!.kind === 'reasoning' && segments[0]!.text).toBe('')
+  })
+
+  it('merges a hidden block into readable ones without a stray line break', () => {
+    const segments = messageSegments([reasoning(''), reasoning('visible'), reasoning('')])
+    expect(segments[0]!.kind === 'reasoning' && segments[0]!.text).toBe('visible')
+  })
+
+  it('gives each step its own reasoning tokens, counting the request that follows answered tools', () => {
+    const tokens = (parts: Part[], usage: Usage) => messageSegments(parts, usage)
+      .flatMap(s => (s.kind === 'reasoning' ? [s.tokens] : []))
+    const parts = [reasoning(''), call('a'), result('a'), reasoning(''), call('b'), result('b')]
+    const steps = (...reasoning: number[]): Usage => ({ steps: reasoning.map(r => ({ reasoning: r })) })
+
+    expect(tokens(parts, steps(120, 0, 80))).toEqual([120, null])
+    // A step count that does not line up with the parts attributes nothing rather than guessing.
+    expect(tokens(parts, steps(120, 80))).toEqual([null, null])
+    expect(tokens([reasoning(''), text('hi')], { reasoning: 42 })).toEqual([42])
+  })
+
+  it('attributes nothing when one step holds two reasoning blocks', () => {
+    const segments = messageSegments([reasoning('a'), text('mid'), reasoning('b')], { reasoning: 90 })
+    expect(segments.flatMap(s => (s.kind === 'reasoning' ? [s.tokens] : []))).toEqual([null, null])
   })
 
   it('gives every segment a key that survives a later part arriving', () => {

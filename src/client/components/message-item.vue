@@ -69,7 +69,7 @@ const notificationOnly = computed(() => props.message.role === 'user' && isNotif
  * 正在思考… — only while it is the live tail of a streaming reply; anything arriving after it
  * collapses it, which is what makes a multi-step turn read as a sequence rather than a pile.
  */
-const segments = computed(() => messageSegments(props.message.parts))
+const segments = computed(() => messageSegments(props.message.parts, props.message.usage))
 const activeSegmentKey = computed(() => (streaming.value ? segments.value.at(-1)?.key ?? null : null))
 /** Steps fold into collapsibles; speech and output never do. */
 const blocks = computed(() => turnBlocks(segments.value))
