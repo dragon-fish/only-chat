@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { DownloadIcon, ExternalLinkIcon, FileAudioIcon, FileIcon, FileTextIcon, FileVideoIcon } from '@lucide/vue'
-import { fileIcon, formatFileSize } from '@/client/components/workspace-files'
+import { fileIcon, formatFileSize, type PreviewTarget } from '@/client/components/workspace-files'
+import WorkspaceFilePreview from '@/client/components/workspace-file-preview.vue'
 import { useAttachmentUrl } from '@/client/lib/audit-context'
 import { fileModality, isTextMime } from '@/shared/file-media'
 
@@ -13,6 +14,11 @@ const icon = computed(() => ({ pdf: FileTextIcon, audio: FileAudioIcon, video: F
 const text = computed(() => isTextMime(props.mime))
 const label = computed(() => props.filename || props.mime)
 const failed = ref(false)
+/** The same preview the file panel opens, so a file reads the same wherever it is clicked. */
+const preview = ref<PreviewTarget | null>(null)
+function openPreview() {
+  preview.value = { kind: 'asset', attachmentId: props.attachmentId, mime: props.mime, name: label.value, url: url.value }
+}
 const size = ref<number | null>(null)
 
 /**
@@ -35,14 +41,16 @@ watch(url, target => { failed.value = false; void loadSize(target) }, { immediat
 <template lang="pug">
 .flex.max-w-full.min-w-0.flex-col.gap-2.rounded-md.border.p-3
   .flex.min-w-0.items-center.gap-3
-    //- Text takes markstream's language icon, matching the chat's code blocks.
-    span.shrink-0(v-if="text" class="[&>svg]:size-8" v-html="fileIcon(filename ?? '')")
-    component.shrink-0.text-muted-foreground(v-else :is="icon" class="size-8")
-    .min-w-0.flex-1
-      p.truncate.text-sm.font-medium(:title="label") {{ label }}
-      p.text-xs.text-muted-foreground {{ size === null ? mime : formatFileSize(size) }}
-      //- Stored as UTF-8: a download is not byte for byte the file that was picked.
-      p.text-xs.text-amber-600(v-if="sourceEncoding" class="dark:text-amber-400") 已从 {{ sourceEncoding }} 转换为 UTF-8
+    button.flex.min-w-0.flex-1.items-center.gap-3.rounded-md.text-left(
+      type="button" class="hover:bg-accent/60 -m-1 p-1" :title="`预览 ${label}`" @click="openPreview")
+      //- Text takes markstream's language icon, matching the chat's code blocks.
+      span.shrink-0(v-if="text" class="[&>svg]:size-8" v-html="fileIcon(filename ?? '')")
+      component.shrink-0.text-muted-foreground(v-else :is="icon" class="size-8")
+      .min-w-0.flex-1
+        p.truncate.text-sm.font-medium {{ label }}
+        p.text-xs.text-muted-foreground {{ size === null ? mime : formatFileSize(size) }}
+        //- Stored as UTF-8: a download is not byte for byte the file that was picked.
+        p.text-xs.text-amber-600(v-if="sourceEncoding" class="dark:text-amber-400") 已从 {{ sourceEncoding }} 转换为 UTF-8
     a.inline-flex.shrink-0.items-center.justify-center.rounded-md(
       :href="url" target="_blank" rel="noopener" title="打开" aria-label="打开文件"
       class="size-10 hover:bg-accent md:size-8")
@@ -54,4 +62,5 @@ watch(url, target => { failed.value = false; void loadSize(target) }, { immediat
   audio.max-w-full(v-if="kind === 'audio' && !failed" :src="url" controls preload="metadata" @error="failed = true")
   video.max-w-full.rounded(v-else-if="kind === 'video' && !failed" :src="url" controls preload="metadata" class="max-h-80" @error="failed = true")
   p.text-sm.text-muted-foreground(v-if="failed") 浏览器无法播放此文件，可以下载查看。
+  WorkspaceFilePreview(:target="preview" @update:target="preview = $event")
 </template>

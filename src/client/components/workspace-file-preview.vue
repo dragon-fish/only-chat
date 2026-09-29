@@ -31,8 +31,9 @@ const mediaFailed = ref(false)
 /** A text asset's content, shown as source: an asset has no record, version or page preview. */
 const assetText = ref<string | null>(null)
 const title = computed(() => props.target?.kind === 'asset' ? props.target.name : record.value?.relativePath ?? '文件')
+const assetUrl = (target: Extract<PreviewTarget, { kind: 'asset' }>) => target.url ?? api.attachmentUrl(target.attachmentId)
 const downloadHref = computed(() => {
-  if (props.target?.kind === 'asset') return api.attachmentUrl(props.target.attachmentId)
+  if (props.target?.kind === 'asset') return assetUrl(props.target)
   return record.value ? api.workspaceFileDownloadUrl(record.value.id) : null
 })
 
@@ -76,13 +77,13 @@ watch(() => props.target, async (target) => {
   view.value = 'source'
   if (target === null) return
   if (target.kind === 'asset' && mediaKind(target.mime) !== 'text') {
-    media.value = { kind: mediaKind(target.mime), url: api.attachmentUrl(target.attachmentId), mime: target.mime }
+    media.value = { kind: mediaKind(target.mime), url: assetUrl(target), mime: target.mime }
     return
   }
   if (target.kind === 'asset') {
     loading.value = true
     try {
-      const response = await fetch(api.attachmentUrl(target.attachmentId))
+      const response = await fetch(assetUrl(target))
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
       const text = await response.text()
       if (props.target !== target) return

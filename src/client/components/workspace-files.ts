@@ -19,7 +19,8 @@ export function mediaKind(mime: string): MediaKind {
 /** What a preview is opened on: a workspace file by id, or a conversation asset by attachment. */
 export type PreviewTarget =
   | { kind: 'file', id: number }
-  | { kind: 'asset', attachmentId: number, mime: string, name: string }
+  /** `url` overrides the attachment route, for a viewer that reaches files another way (the audit). */
+  | { kind: 'asset', attachmentId: number, mime: string, name: string, url?: string }
 
 /**
  * Bytes as a reader wants them. The unit is picked so the number stays short — a file panel is
