@@ -7,10 +7,12 @@ import type { ArtifactDto, ArtifactPage, ArtifactRunDto, CreateImageRunInput, Cr
 import type { PluginConfigStatusMap } from '@/shared/plugins'
 import type { FileRecord } from '@/shared/workspace-files'
 import type { ConversationAsset } from '@/shared/conversation-assets'
-import { FILE_READER_PLUGIN_ID, WORKSPACE_FILES_PLUGIN_ID } from '@/shared/plugins'
+import { FILE_READER_PLUGIN_ID, MCP_PLUGIN_ID, WORKSPACE_FILES_PLUGIN_ID } from '@/shared/plugins'
+import type { McpServerCreate, McpServerPatch, McpServerView, McpToolsResponse } from '@/shared/mcp'
 
 /** A plugin's HTTP surface lives under its own id, so two plugins can never claim the same path. */
 const WORKSPACE_FILES_API = `/api/plugins/${WORKSPACE_FILES_PLUGIN_ID}`
+const MCP_API = `/api/plugins/${MCP_PLUGIN_ID}`
 
 /** A listing that spans scopes carries their names: a path alone does not say where it lives. */
 export interface WorkspaceScopeLabels {
@@ -145,4 +147,11 @@ export const api = {
   emptyWorkspaceTrash: () => request<PurgeResult>('DELETE', `${WORKSPACE_FILES_API}/trash`),
   projectFilesArchiveUrl: (projectId: number) => `${WORKSPACE_FILES_API}/projects/${projectId}/files/archive`,
   conversationFilesArchiveUrl: (conversationId: number) => `${WORKSPACE_FILES_API}/conversations/${conversationId}/files/archive`,
+  mcpServers: () => request<{ servers: McpServerView[] }>('GET', `${MCP_API}/servers`),
+  createMcpServer: (input: McpServerCreate) => request<{ server: McpServerView }>('POST', `${MCP_API}/servers`, input),
+  updateMcpServer: (key: string, input: McpServerPatch) => request<{ server: McpServerView }>('PATCH', `${MCP_API}/servers/${key}`, input),
+  deleteMcpServer: (key: string) => request<void>('DELETE', `${MCP_API}/servers/${key}`),
+  mcpServerTools: (key: string) => request<McpToolsResponse>('GET', `${MCP_API}/servers/${key}/tools`),
+  refreshMcpServerTools: (key: string) => request<McpToolsResponse>('POST', `${MCP_API}/servers/${key}/refresh`),
+  authorizeMcpServer: (key: string) => request<{ authorization_url?: string; authorized?: boolean; server?: McpServerView }>('POST', `${MCP_API}/servers/${key}/authorize`),
 }
