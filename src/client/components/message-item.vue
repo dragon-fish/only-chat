@@ -4,6 +4,7 @@ import type { NodeRendererProps } from 'markstream-vue'
 import { CopyIcon, EllipsisIcon, GitForkIcon, LoaderCircle, PencilIcon, RefreshCwIcon, TriangleAlertIcon } from '@lucide/vue'
 import { toast } from 'vue-sonner'
 import FileAttachment from '@/client/components/file-attachment.vue'
+import AttachmentLightbox from '@/client/components/attachment-lightbox.vue'
 import BranchSwitcher from '@/client/components/branch-switcher.vue'
 import MessageFooters from '@/client/components/message-footers.vue'
 import LabAvatar from '@/client/components/lab-avatar.vue'
@@ -55,6 +56,8 @@ const draft = ref('')
 
 const textParts = computed(() => props.message.parts.filter((p) => p.type === 'text'))
 const images = computed(() => props.message.parts.filter((p) => p.type === 'image'))
+const lightboxImages = computed(() => images.value.map(image => ({ url: attachmentUrl(image.attachment_id), name: image.filename })))
+const lightboxIndex = ref<number | null>(null)
 const files = computed(() => props.message.parts.filter(p => p.type === 'file'))
 /** Images and files interleaved as the user added them; an edit resends them in this order. */
 const attachmentParts = computed(() => props.message.parts.filter(p => p.type === 'image' || p.type === 'file'))
@@ -154,7 +157,11 @@ MessageRoot(
           .flex.flex-col.gap-2.pb-2(v-if="files.length")
             FileAttachment(v-for="file in files" :key="file.attachment_id" :attachment-id="file.attachment_id" :mime="file.mime" :filename="file.filename" :source-encoding="file.source_encoding")
           .flex.flex-wrap.gap-2.pb-1(v-if="images.length")
-            img.max-h-40.rounded(v-for="img in images" :key="img.attachment_id" :src="attachmentUrl(img.attachment_id)")
+            button.cursor-zoom-in.rounded(
+              v-for="(img, i) in images" :key="img.attachment_id" type="button"
+              :aria-label="`查看图片 ${img.filename ?? i + 1}`" @click="lightboxIndex = i")
+              img.max-h-40.rounded(:src="attachmentUrl(img.attachment_id)" :alt="img.filename ?? ''")
+            AttachmentLightbox(:images="lightboxImages" :index="lightboxIndex" @update:index="lightboxIndex = $event")
           template(v-if="!editing")
             p.whitespace-pre-wrap.text-sm(v-for="(p, i) in textParts" :key="i") {{ p.text }}
           .flex.flex-col.gap-2(v-else)

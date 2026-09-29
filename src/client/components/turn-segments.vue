@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import MarkdownRender from 'markstream-vue'
 import type { NodeRendererProps } from 'markstream-vue'
+import { computed, ref } from 'vue'
 import ReasoningBlock from '@/client/components/reasoning-block.vue'
+import AttachmentLightbox from '@/client/components/attachment-lightbox.vue'
 import ToolPartRenderer from '@/client/components/tool-part-renderer.vue'
 import type { MessageSegment } from '@/client/components/message-segments'
 import { useAttachmentUrl } from '@/client/lib/audit-context'
 
 /** One definition, used for the collapsed process and for the answer below it. */
-defineProps<{
+const props = defineProps<{
   segments: readonly MessageSegment[]
   messageId: number
   streaming: boolean
@@ -19,6 +21,14 @@ defineProps<{
   codeBlockProps: NonNullable<NodeRendererProps['codeBlockProps']>
 }>()
 const attachmentUrl = useAttachmentUrl()
+
+/** The images this turn drew, stepped through together in the lightbox. */
+const imageSegments = computed(() => props.segments.flatMap(segment => (segment.kind === 'image' ? [segment] : [])))
+const lightboxImages = computed(() => imageSegments.value.map(segment => ({ url: attachmentUrl(segment.part.attachment_id) })))
+const lightboxIndex = ref<number | null>(null)
+function openImage(key: string) {
+  lightboxIndex.value = imageSegments.value.findIndex(segment => segment.key === key)
+}
 </script>
 
 <template lang="pug">
@@ -40,7 +50,8 @@ const attachmentUrl = useAttachmentUrl()
       :input-pending="streaming && typeof segment.call.args === 'string'"
       :settled="!streaming")
     //- Generated images are served by the same authenticated attachment route as uploads.
-    img(
-      v-else-if="segment.kind === 'image'" class="max-h-80 rounded border"
-      :src="attachmentUrl(segment.part.attachment_id)")
+    button.w-fit.cursor-zoom-in.rounded(
+      v-else-if="segment.kind === 'image'" type="button" aria-label="查看图片" @click="openImage(segment.key)")
+      img(class="max-h-80 rounded border" :src="attachmentUrl(segment.part.attachment_id)" alt="")
+  AttachmentLightbox(:images="lightboxImages" :index="lightboxIndex" @update:index="lightboxIndex = $event")
 </template>
