@@ -84,16 +84,20 @@ export function modelName(model: ModelListItem): string {
 
 /**
  * Display names that more than one provider serves among `models`. Only those need the provider
- * written beside them; naming it everywhere else is noise.
+ * written beside them; naming it everywhere else is noise. Providers spell one model differently
+ * ("DeepSeek-V4.1-Flash" / "DeepSeek V4.1 Flash"), so case and space/-/_ are ignored; "." is kept
+ * because it carries the version.
  */
 export function sharedModelNames(models: Iterable<{ providerId: number, name: string }>): Set<string> {
-  const providers = new Map<string, Set<number>>()
+  const groups = new Map<string, { providers: Set<number>, names: Set<string> }>()
   for (const { providerId, name } of models) {
-    const seen = providers.get(name) ?? new Set<number>()
-    seen.add(providerId)
-    providers.set(name, seen)
+    const key = name.toLocaleLowerCase().replace(/[\s_-]+/g, ' ').trim()
+    const group = groups.get(key) ?? { providers: new Set(), names: new Set() }
+    group.providers.add(providerId)
+    group.names.add(name)
+    groups.set(key, group)
   }
-  return new Set([...providers].filter(([, seen]) => seen.size > 1).map(([name]) => name))
+  return new Set([...groups.values()].filter(group => group.providers.size > 1).flatMap(group => [...group.names]))
 }
 
 export function modelBadges(model: ModelListItem) {

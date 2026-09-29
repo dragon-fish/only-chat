@@ -117,4 +117,13 @@ describe('shared model names', () => {
     ])
     expect([...shared]).toEqual(['Claude Opus 5.5'])
   })
+
+  it('treats names that differ only in case or separators as the same name', () => {
+    const shared = sharedModelNames([
+      { providerId: 1, name: 'DeepSeek-V4.1-Flash' },
+      { providerId: 2, name: 'DeepSeek V4.1 Flash' },
+      { providerId: 3, name: 'deepseek v41 flash' },
+    ])
+    expect([...shared].sort()).toEqual(['DeepSeek V4.1 Flash', 'DeepSeek-V4.1-Flash'])
+  })
 })
