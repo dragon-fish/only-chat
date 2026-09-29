@@ -127,6 +127,13 @@
       "when": 1790174328220,
       "tag": "0018_image-extra-body",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1790666764529,
+      "tag": "0019_mcp-servers",
+      "breakpoints": true
     }
   ]
 }

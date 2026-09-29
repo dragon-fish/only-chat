@@ -3,6 +3,7 @@ import { check, index, integer, primaryKey, sqliteTable, text, uniqueIndex, type
 import type { CatalogMatches, ModelMetadata, ModelMetadataOverride } from '@/shared/model-metadata'
 import type { ArtifactRunStatus, ArtifactUsage, ImageExtraBody, ImageGenerationParams } from '@/shared/artifacts'
 import type { Part } from '@/shared/parts'
+import type { McpServerStatus, McpTransport, StoredMcpHeader } from '@/shared/mcp'
 import type {
   InterfaceProtocol, PersistedStatus, ConversationParams, ConversationPluginSettings, Usage, UserSettings,
 } from '@/shared/models'
@@ -386,7 +387,36 @@ export const pluginConfigs = sqliteTable('plugin_configs', {
   updated_at: integer().notNull(),
 }, t => [primaryKey({ columns: [t.user_id, t.plugin_id, t.key] })])
 
+/**
+ * A user's remote MCP servers (spec 2026-09-29-mcp-client-design §3.1). `key` is what the model
+ * addresses a server by and never changes, so renaming or re-pointing a server leaves every past
+ * tool call readable. `oauth` is one AES-GCM ciphertext of the credentials the SDK asks to keep.
+ * `config_version` names the current tool-list cache entry in KV: bumping it invalidates the cache
+ * without a KV delete, which would take time to reach every location.
+ */
+export const mcpServers = sqliteTable('mcp_servers', {
+  id: integer().primaryKey({ autoIncrement: true }),
+  user_id: integer().notNull().references(() => users.id, { onDelete: 'cascade' }),
+  key: text().notNull(),
+  name: text().notNull(),
+  url: text().notNull(),
+  transport: text().$type<McpTransport>().notNull().default('http'),
+  headers: text({ mode: 'json' }).$type<StoredMcpHeader[]>().notNull().default([]),
+  enabled: integer({ mode: 'boolean' }).notNull().default(true),
+  disabled_tools: text({ mode: 'json' }).$type<string[]>().notNull().default([]),
+  oauth: text(),
+  status: text().$type<McpServerStatus>().notNull().default('unknown'),
+  last_error: text(),
+  config_version: integer().notNull().default(1),
+  created_at: integer().notNull(),
+  updated_at: integer().notNull(),
+}, t => [
+  uniqueIndex('mcp_servers_user_key_uq').on(t.user_id, t.key),
+  check('mcp_servers_transport_check', sql`${t.transport} IN ('http', 'sse')`),
+])
+
 export type UserRow = typeof users.$inferSelect
+export type McpServerRow = typeof mcpServers.$inferSelect
 export type PluginConfigRow = typeof pluginConfigs.$inferSelect
 export type ProviderRow = typeof providers.$inferSelect
 export type ProviderInterfaceRow = typeof providerInterfaces.$inferSelect

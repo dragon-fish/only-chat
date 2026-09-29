@@ -27,15 +27,20 @@ export const BROWSER_USE_TOOL_ID = 'browser_use' as const
 export const BROWSER_HANDOFF_TOOL_ID = 'browser_handoff' as const
 export const IMAGE_GENERATION_PLUGIN_ID = 'image_generation' as const
 export const GENERATE_IMAGE_TOOL_ID = 'generate_image' as const
+export const MCP_PLUGIN_ID = 'mcp' as const
+export const MCP_LIST_SERVICES_TOOL_ID = 'mcp_list_services' as const
+export const MCP_LIST_TOOLS_TOOL_ID = 'mcp_list_tools' as const
+export const MCP_CALL_TOOL_TOOL_ID = 'mcp_call_tool' as const
 
 export type BuiltInPluginId = typeof ASK_USER_PLUGIN_ID | typeof TAVILY_PLUGIN_ID | typeof DATETIME_PLUGIN_ID
   | typeof WORKSPACE_FILES_PLUGIN_ID | typeof BROWSER_RUN_PLUGIN_ID | typeof IMAGE_GENERATION_PLUGIN_ID
-  | typeof FILE_UNDERSTANDING_PLUGIN_ID | typeof FILE_READER_PLUGIN_ID
+  | typeof FILE_UNDERSTANDING_PLUGIN_ID | typeof FILE_READER_PLUGIN_ID | typeof MCP_PLUGIN_ID
 export type BuiltInToolId = typeof ASK_USER_TOOL_ID | typeof WEB_SEARCH_TOOL_ID | typeof WEB_EXTRACT_TOOL_ID | typeof CURRENT_TIME_TOOL_ID
   | typeof LIST_FILES_TOOL_ID | typeof READ_FILE_TOOL_ID | typeof WRITE_FILE_TOOL_ID | typeof EDIT_FILE_TOOL_ID | typeof RESTORE_FILE_TOOL_ID
   | typeof RENAME_FILE_TOOL_ID | typeof DELETE_FILE_TOOL_ID | typeof PREVIEW_FILE_TOOL_ID | typeof COPY_FILE_TOOL_ID
   | typeof ANALYZE_FILE_TOOL_ID
   | typeof BROWSER_USE_TOOL_ID | typeof BROWSER_HANDOFF_TOOL_ID | typeof GENERATE_IMAGE_TOOL_ID
+  | typeof MCP_LIST_SERVICES_TOOL_ID | typeof MCP_LIST_TOOLS_TOOL_ID | typeof MCP_CALL_TOOL_TOOL_ID
 
 /**
  * One tool's own identity. A plugin may own several, and each needs its own label: listing two

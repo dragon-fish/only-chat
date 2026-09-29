@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { pluginManifests } from '@/shared/plugin-manifests'
 import {
   ASK_USER_PLUGIN_ID, BROWSER_RUN_PLUGIN_ID, DATETIME_PLUGIN_ID, FILE_READER_PLUGIN_ID, FILE_UNDERSTANDING_PLUGIN_ID,
-  IMAGE_GENERATION_PLUGIN_ID, TAVILY_PLUGIN_ID, WORKSPACE_FILES_PLUGIN_ID,
+  IMAGE_GENERATION_PLUGIN_ID, MCP_PLUGIN_ID, TAVILY_PLUGIN_ID, WORKSPACE_FILES_PLUGIN_ID,
 } from '@/shared/plugins'
 import { AskUserServerPlugin } from '@/plugins/ask-user/server'
 import { BrowserRunServerPlugin } from '@/plugins/cloudflare-browser-run/server'
@@ -11,6 +11,7 @@ import { FileReaderServerPlugin } from '@/plugins/file-reader/server'
 import { FileReader } from '@/plugins/file-reader/server/service'
 import { FileUnderstandingServerPlugin } from '@/plugins/file-understanding/server'
 import { ImageGenerationServerPlugin } from '@/plugins/image-generation/server'
+import { McpServerPlugin } from '@/plugins/mcp/server'
 import { TavilyServerPlugin } from '@/plugins/tavily/server'
 import { WorkspaceFilesServerPlugin } from '@/plugins/workspace-files/server'
 
@@ -22,6 +23,7 @@ const SERVERS: Record<string, { inject?: readonly string[] }> = {
   [FILE_READER_PLUGIN_ID]: FileReaderServerPlugin,
   [FILE_UNDERSTANDING_PLUGIN_ID]: FileUnderstandingServerPlugin,
   [IMAGE_GENERATION_PLUGIN_ID]: ImageGenerationServerPlugin,
+  [MCP_PLUGIN_ID]: McpServerPlugin,
   [TAVILY_PLUGIN_ID]: TavilyServerPlugin,
   [WORKSPACE_FILES_PLUGIN_ID]: WorkspaceFilesServerPlugin,
 }

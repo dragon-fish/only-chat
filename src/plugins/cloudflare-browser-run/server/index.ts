@@ -14,7 +14,7 @@ import {
 } from '../shared'
 import type { HostCall, RunResult } from '../runtime/protocol'
 import type { RunnerArgs } from './entrypoints'
-import { storeGeneratedAttachment } from './attachments'
+import { storeGeneratedAttachment } from '@/server/plugins/api/attachments'
 import { BrowserRateLimited } from './browser-api'
 import { BrowserSessions, probedSession, type StoredSession } from './sessions'
 

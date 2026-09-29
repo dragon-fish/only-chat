@@ -1,7 +1,7 @@
 import { env } from 'cloudflare:workers'
 import { eq } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { attachmentProviderFiles, attachments, models, providerInterfaces, providers, users } from '@/server/db/schema'
+import { attachmentProviderFiles, attachments, mcpServers, models, providerInterfaces, providers, users } from '@/server/db/schema'
 import { createConversation, getConversation, insertMessage, listMessages } from '@/server/plugins/hub/conversations'
 import { createProject } from '@/server/plugins/hub/projects'
 import type { ModelListSnapshot, ProviderWithInterfaces } from '@/shared/models'
@@ -93,6 +93,20 @@ describe('authenticated REST tenant isolation', () => {
     expect.soft((await request('GET', `/conversations/${bobConversation.id}/messages`)).status).toBe(404)
     expect.soft(await getConversation(ctx.db.orm, aliceConversation.id, bobId)).toBeUndefined()
     expect.soft(await listMessages(ctx.db.orm, aliceConversation.id, bobId)).toEqual([])
+  })
+
+  it('keeps MCP servers invisible and immutable to other accounts', async () => {
+    const { ctx, request, bobRequest, aliceId } = await tenants()
+    const [server] = await ctx.db.orm.insert(mcpServers).values({
+      user_id: aliceId, key: 'alice001', name: 'Alice MCP', url: 'https://mcp.alice.test/mcp', created_at: 0, updated_at: 0,
+    }).returning()
+    expect.soft(await (await request('GET', '/plugins/mcp/servers')).json()).toMatchObject({ servers: [{ key: 'alice001' }] })
+    expect.soft(await (await bobRequest('GET', '/plugins/mcp/servers')).json()).toEqual({ servers: [] })
+    expect.soft((await bobRequest('PATCH', '/plugins/mcp/servers/alice001', { name: 'Taken' })).status).toBe(404)
+    expect.soft((await bobRequest('GET', '/plugins/mcp/servers/alice001/tools')).status).toBe(404)
+    expect.soft((await bobRequest('POST', '/plugins/mcp/servers/alice001/authorize')).status).toBe(404)
+    expect.soft((await bobRequest('DELETE', '/plugins/mcp/servers/alice001')).status).toBe(404)
+    expect(await ctx.db.orm.query.mcpServers.findFirst({ where: eq(mcpServers.id, server!.id) })).toMatchObject({ name: 'Alice MCP' })
   })
 
   it('lists a conversation\'s assets only to its owner', async () => {
