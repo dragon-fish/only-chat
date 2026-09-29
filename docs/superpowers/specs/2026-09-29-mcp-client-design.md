@@ -45,6 +45,8 @@
 
 加密复用 `llm/crypto.ts` 的 `encryptSecret` / `decryptSecret` 与 `KEY_ENCRYPTION_SECRET`。每个用户最多 20 个服务。`test/worker/tenant-isolation.test.ts` 覆盖此表。
 
+修改地址时清空 `oauth`：新地址是另一个服务，旧服务的令牌不能交给它。
+
 ### 3.2 KV
 
 | key | 内容 | TTL |
@@ -103,7 +105,8 @@
 
 ## 6. 连接与执行
 
-- 在 `UserHub` 内执行。某服务在本轮生成中第一次被用到时，用 `createMCPClient({ transport: { type, url, headers, authProvider, redirect: 'error' } })` 建立连接，存于 `turn.state`，本轮后续调用复用。
+- 在 `UserHub` 内执行。某服务在本轮生成中第一次被用到时，用 `createMCPClient` 建立连接，存于 `turn.state`，本轮后续调用复用。
+- 不跟随重定向：跟随会把请求头里的凭据带到对方指向的任意地址。Workers 的 `fetch` 不接受 `redirect: 'error'`（也是 SDK 的默认值），因此传输层与 OAuth 发现都使用插件自带的 fetch：以 `redirect: 'manual'` 发出，收到 3xx 即报错。
 - 核心新增事件 `generation/settled`（`src/server/cordis.d.ts`），在 `generation.ts` 的收尾处无论成功、失败或中止都触发一次，参数为本轮的 `GenerationTurn`。插件在此关闭本轮建立的所有连接。
 - 单次 `tools/call` 超时 60 秒；`ToolContext.signal` 中止时一并取消。
 - `authProvider` 是插件实现的 `OAuthClientProvider`，读写 `mcp_servers.oauth`。SDK 在调用中自动刷新过期 token 并经 `saveTokens` 写回。
@@ -116,6 +119,8 @@
 | 情况 | 服务状态 | 模型收到 |
 |---|---|---|
 | 401 或刷新 token 失败 | `needs_auth` | 该服务需要用户在设置里重新授权 |
+
+401 不区分「支持 OAuth 但未授权」与「API Key 错误」，一律记为 `needs_auth`；设置页同时提示两种处理方式。后台（生成与连接测试）从不注册客户端或发起授权，只有用户点「授权」时才会。
 | 网络错误、超时、协议错误 | `error`，写 `last_error` | 失败原因 |
 | 调用成功 | `ok`，清空 `last_error` | 结果 |
 
@@ -131,7 +136,7 @@
 
 ## 9. 设置页
 
-插件的 `settingsPanel`，主从布局，选中的服务以查询参数 `?server=<key>` 表示。
+插件的 `settingsPanel`，在 `/settings/plugins/mcp/data` 的单栏里切换列表与详情，选中的服务以查询参数 `?server=<key>` 表示，`?server=new` 为添加表单。
 
 - 列表：名称、传输类型、状态、启用开关；「添加」。
 - 详情「通用」：名称、地址、传输类型、请求头编辑器、「测试连接」；需要授权时显示「授权」/「重新授权」；删除服务。
@@ -164,7 +169,8 @@
   - 三个工具的成功路径，屏蔽工具与未启用服务的错误，服务返回 `isError`；
   - 401 后状态变为 `needs_auth`；
   - OAuth 回调：错误或他人的 `state` 被拒绝，正确的 `state` 换得 token 并存储；
-  - `generation/settled` 在成功、失败、中止时各触发一次；
+  - `generation/settled` 在成功与失败时各触发一次（中止与失败走同一出口）；
+  - 在 Durable Object 里走完整生成流程，依次调用三个工具；
   - 租户隔离覆盖 `mcp_servers`。
 
 ## 12. 验收

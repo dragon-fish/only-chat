@@ -67,3 +67,4 @@ interfaces, catalog metadata, reasoning and file lifecycle behavior.
 authentication, authorization, account administration, and Conversation naming.
 `docs/superpowers/specs/2026-09-28-conversation-files-design.md` defines assets, file references,
 binary workspace files and file understanding.
+`docs/superpowers/specs/2026-09-29-mcp-client-design.md` defines the remote MCP client plugin.
