@@ -8,7 +8,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/client/ui/alert'
 import { Button } from '@/client/ui/button'
 import { Skeleton } from '@/client/ui/skeleton'
 import { Tabs, TabsList, TabsTrigger } from '@/client/ui/tabs'
-import { api } from '@/client/lib/api'
+import { api, withDownloadName } from '@/client/lib/api'
 import { useTheme } from '@/client/composables/use-theme'
 import { formatFileSize, languageOf, mediaKind, previewKind, type FileRecord, type MediaKind, type PreviewTarget } from './workspace-files'
 
@@ -33,7 +33,7 @@ const assetText = ref<string | null>(null)
 const title = computed(() => props.target?.kind === 'asset' ? props.target.name : record.value?.relativePath ?? '文件')
 const assetUrl = (target: Extract<PreviewTarget, { kind: 'asset' }>) => target.url ?? api.attachmentUrl(target.attachmentId)
 const downloadHref = computed(() => {
-  if (props.target?.kind === 'asset') return assetUrl(props.target)
+  if (props.target?.kind === 'asset') return withDownloadName(assetUrl(props.target), props.target.name)
   return record.value ? api.workspaceFileDownloadUrl(record.value.id) : null
 })
 
@@ -192,7 +192,8 @@ ResponsiveOverlay(
         :href="media?.url ?? frameSrc ?? undefined" target="_blank" rel="noopener noreferrer")
         ExternalLinkIcon(data-icon="inline-start")
         | 新标签页打开
-      //- An asset's route serves it inline, so the attribute is what makes this a download.
+      //- An asset's route serves it inline: the attribute makes this a download in a browser, and the
+      //- URL's `download` parameter does it for a download manager that re-requests the link.
       Button(
         v-if="downloadHref" as="a" variant="outline" class="min-h-10" :href="downloadHref"
         :download="target?.kind === 'asset' ? target.name : undefined")

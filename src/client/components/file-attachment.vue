@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { DownloadIcon, ExternalLinkIcon, FileAudioIcon, FileIcon, FileTextIcon, FileVideoIcon } from '@lucide/vue'
 import { fileIcon, formatFileSize, type PreviewTarget } from '@/client/components/workspace-files'
 import WorkspaceFilePreview from '@/client/components/workspace-file-preview.vue'
+import { withDownloadName } from '@/client/lib/api'
 import { useAttachmentUrl } from '@/client/lib/audit-context'
 import { fileModality, isTextMime } from '@/shared/file-media'
 
@@ -56,7 +57,8 @@ watch(url, target => { failed.value = false; void loadSize(target) }, { immediat
       class="size-10 hover:bg-accent md:size-8")
       ExternalLinkIcon(class="size-4")
     a.inline-flex.shrink-0.items-center.justify-center.rounded-md(
-      :href="url" :download="filename || 'attachment'" title="下载" aria-label="下载文件"
+      :href="withDownloadName(url, filename || 'attachment')" :download="filename || 'attachment'"
+      title="下载" aria-label="下载文件"
       class="size-10 hover:bg-accent md:size-8")
       DownloadIcon(class="size-4")
   audio.max-w-full(v-if="kind === 'audio' && !failed" :src="url" controls preload="metadata" @error="failed = true")

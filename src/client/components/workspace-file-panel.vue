@@ -9,7 +9,7 @@ import {
 import { Button } from '@/client/ui/button'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/client/ui/empty'
 import { Skeleton } from '@/client/ui/skeleton'
-import { api } from '@/client/lib/api'
+import { api, withDownloadName } from '@/client/lib/api'
 import { useSyncStore } from '@/client/stores/sync'
 import FileThumb from './file-thumb.vue'
 import WorkspaceFilePreview from './workspace-file-preview.vue'
@@ -213,7 +213,7 @@ async function remove(record: FileRecord) {
             span(class="text-muted-foreground hidden shrink-0 text-xs sm:inline") {{ assetRowMeta(asset) }}
           Button(
             as="a" variant="ghost" size="icon-xs" class="size-8 shrink-0"
-            :href="api.attachmentUrl(asset.attachmentId)" :download="assetName(asset)"
+            :href="withDownloadName(api.attachmentUrl(asset.attachmentId), assetName(asset))" :download="assetName(asset)"
             :aria-label="`下载 ${assetName(asset)}`" title="下载")
             DownloadIcon(data-icon="inline-start")
 

@@ -110,6 +110,21 @@ describe('attachment downloads', () => {
     expect(beyond.status).toBe(416)
     expect(beyond.headers.get('content-range')).toBe(`bytes */${bytes.byteLength}`)
   })
+
+  it('names the file in the response when asked to, for download managers that ignore <a download>', async () => {
+    const { attachment_id } = await (await upload('text/csv', new TextEncoder().encode('a,b\n1,2\n'))).json() as { attachment_id: number }
+    const get = (query: string) => authenticatedFetch(new Request(`https://x/api/attachments/${attachment_id}${query}`))
+
+    const inline = await get('')
+    expect(inline.headers.get('content-disposition')).toBeNull()
+    await inline.arrayBuffer()
+
+    const named = await get(`?download=${encodeURIComponent('车 it\'s (1).csv')}`)
+    expect(named.status).toBe(200)
+    expect(named.headers.get('content-disposition'))
+      .toBe('attachment; filename="_ it\'s (1).csv"; filename*=UTF-8\'\'%E8%BD%A6%20it%27s%20%281%29.csv')
+    await named.arrayBuffer()
+  })
 })
 
 describe('sending attachment parts', () => {

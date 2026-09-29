@@ -5,6 +5,7 @@ import { authUserId, type ApiEnv } from './auth'
 import { AttachmentCheckRequestSchema, AttachmentPurposeSchema, type AttachmentPurpose } from '@/shared/api'
 import { attachments, type AttachmentRow } from '../../db/schema'
 import { parseId } from './params'
+import { attachmentDisposition } from './content-disposition'
 
 import { uploadProblem } from '@/shared/upload-policy'
 import { resolveUploadPolicy } from '../upload-policy'
@@ -117,6 +118,7 @@ export async function serveAttachment(ctx: Context, c: HonoContext<ApiEnv>, row:
    * What remains is the browser's own store, which belongs to the browser and not to the cookie
    * currently in it. Sign-out sends `Clear-Site-Data: "cache"` for exactly that reason.
    */
+  const download = c.req.query('download')
   const headers = {
     'cache-control': 'private, max-age=31536000, immutable',
     etag: `"${row.sha256}"`,
@@ -126,6 +128,9 @@ export async function serveAttachment(ctx: Context, c: HonoContext<ApiEnv>, row:
     // its scripts as whoever opens it — an admin viewing it through the audit route included — so
     // every text type goes out as plain text, sandboxed besides. The row keeps its real type.
     ...(isTextMime(row.mime) ? { 'content-security-policy': 'sandbox' } : {}),
+    // A row keeps no filename — the message part does — so a download link names the file itself.
+    // `<a download>` is not enough: download managers re-request the URL and only read this header.
+    ...(download ? { 'content-disposition': attachmentDisposition(download) } : {}),
   }
   const type = isTextMime(row.mime) ? 'text/plain; charset=utf-8' : row.mime
   // One row read and no object read, which is the whole point of answering it here.

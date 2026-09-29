@@ -70,6 +70,17 @@ function queryString(input: Record<string, unknown>): string {
   return params.size ? `?${params}` : ''
 }
 
+/**
+ * Asks the attachment route to name the file in its response. `<a download>` alone is not enough:
+ * download managers (FDM and the like) re-request the URL and name the file from the response or
+ * the last path segment — the attachment id. Only our own routes get the parameter; a `blob:` URL
+ * would stop resolving with one.
+ */
+export function withDownloadName(url: string, name: string): string {
+  if (!url.startsWith('/api/')) return url
+  return `${url}${url.includes('?') ? '&' : '?'}download=${encodeURIComponent(name)}`
+}
+
 export const api = {
   siteConfig: () => request<SiteConfig>('GET', '/api/site-config'),
   adminSettings: () => request<AdminSiteSettings>('GET', '/api/admin/settings'),

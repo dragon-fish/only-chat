@@ -10,6 +10,7 @@ import { isTextMime, WorkspaceFiles, type WorkspaceError } from '@/server/plugin
 import type { FileRecord } from '@/shared/workspace-files'
 import { authUserId, type ApiEnv } from '@/server/plugins/api/auth'
 import { parseId } from '@/server/plugins/api/params'
+import { attachmentDisposition } from '@/server/plugins/api/content-disposition'
 import { PREVIEW_SEGMENT, PREVIEW_TYPES, previewUrlFor, type PreviewTicket } from './preview'
 
 export { PREVIEW_SEGMENT }
@@ -147,7 +148,7 @@ export function workspaceFileRoutes(ctx: Context) {
     return new Response(archive as unknown as BodyInit, {
       headers: {
         'content-type': 'application/zip',
-        'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(name)}`,
+        'content-disposition': attachmentDisposition(name),
         'x-content-type-options': 'nosniff',
       },
     })
@@ -303,7 +304,7 @@ export function workspaceFileRoutes(ctx: Context) {
         // Always a download and never a rendered page: text was written by a model, and binary is
         // labelled with its stored type so the saved file opens as what it is.
         'content-type': text ? 'text/plain; charset=utf-8' : result.value.mime,
-        'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(name)}`,
+        'content-disposition': attachmentDisposition(name),
         'x-content-type-options': 'nosniff',
       },
     })

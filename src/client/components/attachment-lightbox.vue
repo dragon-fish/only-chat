@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { useEventListener } from '@vueuse/core'
 import { ChevronLeftIcon, ChevronRightIcon, DownloadIcon, XIcon } from '@lucide/vue'
+import { withDownloadName } from '@/client/lib/api'
 import { Button } from '@/client/ui/button'
 import { Dialog, DialogContent, DialogTitle } from '@/client/ui/dialog'
 import { Separator } from '@/client/ui/separator'
@@ -63,6 +64,6 @@ Dialog(:open="current !== null" @update:open="!$event && close()")
             ChevronRightIcon
           Separator.mx-1.h-5(orientation="vertical" class="bg-white/15")
         Button(size="icon" variant="ghost" :class="toolClass" as-child)
-          a(:href="current.url" :download="current.name ?? 'image'" aria-label="下载原图")
+          a(:href="withDownloadName(current.url, current.name ?? 'image')" :download="current.name ?? 'image'" aria-label="下载原图")
             DownloadIcon
 </template>
