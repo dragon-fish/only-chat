@@ -82,6 +82,20 @@ export function modelName(model: ModelListItem): string {
   return model.metadata.name ?? model.model_id
 }
 
+/**
+ * Display names that more than one provider serves among `models`. Only those need the provider
+ * written beside them; naming it everywhere else is noise.
+ */
+export function sharedModelNames(models: Iterable<{ providerId: number, name: string }>): Set<string> {
+  const providers = new Map<string, Set<number>>()
+  for (const { providerId, name } of models) {
+    const seen = providers.get(name) ?? new Set<number>()
+    seen.add(providerId)
+    providers.set(name, seen)
+  }
+  return new Set([...providers].filter(([, seen]) => seen.size > 1).map(([name]) => name))
+}
+
 export function modelBadges(model: ModelListItem) {
   const metadata = model.metadata
   const values = {

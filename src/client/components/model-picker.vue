@@ -1,12 +1,15 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useMediaQuery } from '@vueuse/core'
 import { ChevronDownIcon } from '@lucide/vue'
 import ModelPickerContent from '@/client/components/model-picker-content.vue'
 import ProviderQuickSettingsDialog from '@/client/components/provider-quick-settings-dialog.vue'
 import LabAvatar from '@/client/components/lab-avatar.vue'
+import ProviderSuffix from '@/client/components/provider-suffix.vue'
 import { useConfigStore } from '@/client/stores/config'
 import { cn } from '@/client/lib/utils'
+import { isChatSelectableModel } from '@/client/lib/image-studio'
+import { modelName, sharedModelNames } from '@/client/lib/ui-models'
 import { Button } from '@/client/ui/button'
 import { Drawer, DrawerContent, DrawerDescription, DrawerHeader, DrawerTitle, DrawerTrigger } from '@/client/ui/drawer'
 import { Popover, PopoverContent, PopoverTrigger } from '@/client/ui/popover'
@@ -28,6 +31,18 @@ const isDesktop = useMediaQuery('(min-width: 768px)')
 const selected = computed(() => config.modelFor(props.modelValue))
 const selectedName = computed(() => selected.value?.model.metadata.name ?? props.modelValue?.model_id ?? '选择模型')
 const selectedProviderName = computed(() => selected.value?.provider.name ?? '模型')
+/** Compared against what the picker lists, since that is where the two could be confused. */
+const selectedProviderSuffix = computed(() => {
+  const current = selected.value
+  if (!current) return null
+  const listed = config.enabledModels().filter(entry => isChatSelectableModel(entry.model))
+  const shared = sharedModelNames(listed.map(entry => ({ providerId: entry.provider.id, name: modelName(entry.model) })))
+  return shared.has(modelName(current.model)) ? current.provider.name : null
+})
+onMounted(() => {
+  // The picker content reports a failure when opened; the trigger just goes without the suffix.
+  if (!config.pickerLoaded) config.loadEnabledModelList().catch(() => {})
+})
 const selectedError = ref<string | null>(null)
 let selectedRequest = 0
 watch(() => props.modelValue, async model => {
@@ -58,7 +73,9 @@ component(:is="isDesktop ? Popover : Drawer" v-model:open="open")
       :class="cn('min-h-10 md:min-h-7', compact ? 'min-w-10 px-1' : 'min-w-44 max-w-64 justify-start')"
       :aria-label="`选择模型，当前为 ${selectedName}`")
       LabAvatar(:model-id="selected?.model.model_id" :lab-id="selected?.model.lab_id ?? null" :family="selected?.model.metadata.family" :provider-name="selectedProviderName" size="sm")
-      span.min-w-0.flex-1.truncate.text-left(v-if="!compact") {{ selectedName }}
+      span.flex.min-w-0.flex-1.items-baseline.gap-1.overflow-hidden.text-left(v-if="!compact")
+        span(class="max-w-full shrink-0 truncate") {{ selectedName }}
+        ProviderSuffix(v-if="selectedProviderSuffix" :name="selectedProviderSuffix")
       ChevronDownIcon(data-icon="inline-end")
   component(
     :is="isDesktop ? PopoverContent : DrawerContent"

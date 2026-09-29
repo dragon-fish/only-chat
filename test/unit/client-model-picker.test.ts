@@ -19,16 +19,16 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); document.body.innerHTML = '' 
 
 const selectedRecord = { ...modelRecords[0]!, model_id: 'test-model', metadata: { name: 'Test model', tool_call: false, modalities: { input: ['text' as const, 'image' as const], output: ['text' as const] } } }
 
-async function mountPicker(compact: boolean, isDesktop: boolean, summary: typeof modelRecords | Error = [selectedRecord], retainSelected = true) {
+async function mountPicker(compact: boolean, isDesktop: boolean, summary: typeof modelRecords | Error = [selectedRecord], retainSelected = true, providers = [provider]) {
   vi.spyOn(api, 'catalogProviders').mockResolvedValue([])
   const summaries = vi.spyOn(api, 'enabledModelSummary')
-  if (summary instanceof Error) summaries.mockRejectedValueOnce(summary)
+  if (summary instanceof Error) summaries.mockRejectedValue(summary)
   else summaries.mockResolvedValue({ models: summary })
   desktop.value = isDesktop
   const pinia = createPinia()
   const config = useConfigStore(pinia)
   config.loaded = true
-  config.providerRecords = [provider]
+  config.providerRecords = providers
   config.pickerLoaded = false
   if (retainSelected) config.retainModels([selectedRecord])
   const host = document.createElement('div')
@@ -83,6 +83,17 @@ describe('model picker modality', () => {
     vi.mocked(api.enabledModelSummary).mockResolvedValue({ models: [{ ...modelRecords[0]!, id: 99, model_id: 'new-model', metadata: { name: 'Newly enabled model' } }] })
     host.querySelector<HTMLButtonElement>('button')!.click()
     await vi.waitFor(() => expect([...document.querySelectorAll('[role="option"]')].some(option => option.textContent?.includes('Newly enabled model'))).toBe(true))
+  })
+
+  it('names the selected provider on the trigger only while another provider serves the same name', async () => {
+    const trigger = (host: HTMLElement) => host.querySelector('button')?.textContent?.replace(/\s+/g, '') ?? ''
+    const alone = await mountPicker(false, true)
+    await vi.waitFor(() => expect(trigger(alone)).toMatch(/Testmodel$/))
+    cleanup(); vi.restoreAllMocks(); document.body.innerHTML = ''
+
+    const mirror = { ...provider, id: 2, name: 'Mirror', interfaces: [{ ...provider.interfaces[0]!, id: 20, provider_id: 2 }] }
+    const twin = await mountPicker(false, true, [selectedRecord, { ...selectedRecord, id: 9, provider_id: 2 }], true, [provider, mirror])
+    await vi.waitFor(() => expect(trigger(twin)).toMatch(/Testmodel\(Example\)$/))
   })
 
   it('keeps the selected model visible in the complete enabled summary', async () => {

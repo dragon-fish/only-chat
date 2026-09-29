@@ -8,6 +8,7 @@ import AttachmentLightbox from '@/client/components/attachment-lightbox.vue'
 import BranchSwitcher from '@/client/components/branch-switcher.vue'
 import MessageFooters from '@/client/components/message-footers.vue'
 import LabAvatar from '@/client/components/lab-avatar.vue'
+import ProviderSuffix from '@/client/components/provider-suffix.vue'
 import MessageUsage from '@/client/components/message-usage.vue'
 import TurnProcess from '@/client/components/turn-process.vue'
 import TurnSegments from '@/client/components/turn-segments.vue'
@@ -36,6 +37,8 @@ const props = defineProps<{
   assistantName?: string
   assistantModelName?: string
   assistantProviderName?: string
+  /** Set only when another provider's model on this path shares the name. */
+  assistantProviderSuffix?: string
   assistantLabId?: string | null
   assistantModelFamily?: string
   optimistic?: boolean
@@ -145,9 +148,10 @@ MessageRoot(
     LabAvatar(v-else :model-id="message.model_id" :lab-id="assistantLabId ?? null" :family="assistantModelFamily" :provider-name="assistantProviderName ?? assistantName ?? '助手'")
 
   MessageContent
-    MessageHeader(v-if="message.role === 'assistant'" class="gap-2")
-      span.truncate.text-foreground {{ assistantName ?? '助手' }}
+    MessageHeader(v-if="message.role === 'assistant'" class="gap-2 overflow-hidden")
+      span(:class="cn('truncate text-foreground', !assistantModelName && 'max-w-full shrink-0')") {{ assistantName ?? '助手' }}
       Badge(v-if="assistantModelName" variant="outline") {{ assistantModelName }}
+      ProviderSuffix(v-if="assistantProviderSuffix" :name="assistantProviderSuffix")
 
     Bubble(:align="message.role === 'user' ? 'end' : 'start'" :variant="message.role === 'user' ? 'tinted' : 'ghost'" :class="cn(message.role === 'assistant' && 'w-full')")
       BubbleContent(:class="cn(message.role === 'assistant' && 'w-full')")

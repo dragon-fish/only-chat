@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { Project, Conversation, ProviderWithInterfaces } from '@/shared/models'
 import {
   displayInitials,
+  sharedModelNames,
   projectPresentation,
   recentProjects,
   searchProjects,
@@ -102,5 +103,18 @@ describe('file modality filters', () => {
 
   it('intersects selected modalities and excludes unknown capabilities', () => {
     expect(filterModelEntries([...entries, { provider, model: { ...modelRecords[0]!, metadata: {} } }], { pdf: true, audio: true }).map(entry => entry.model.model_id)).toEqual(['all'])
+  })
+})
+
+describe('shared model names', () => {
+  it('flags a name only when more than one provider serves it', () => {
+    const shared = sharedModelNames([
+      { providerId: 1, name: 'Claude Opus 5.5' },
+      { providerId: 2, name: 'Claude Opus 5.5' },
+      { providerId: 1, name: 'GPT-6' },
+      { providerId: 1, name: 'Twin' },
+      { providerId: 1, name: 'Twin' },
+    ])
+    expect([...shared]).toEqual(['Claude Opus 5.5'])
   })
 })

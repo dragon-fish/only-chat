@@ -14,7 +14,7 @@ const message: Message = {
 let cleanup = () => {}
 afterEach(() => { cleanup(); document.body.innerHTML = '' })
 
-function mount(project?: Project, assistantModelFamily?: string, modelId = message.model_id!) {
+function mount(project?: Project, assistantModelFamily?: string, modelId = message.model_id!, assistantProviderSuffix?: string) {
   const host = document.createElement('div')
   document.body.append(host)
   const app = createApp(MessageItem, {
@@ -24,6 +24,7 @@ function mount(project?: Project, assistantModelFamily?: string, modelId = messa
     assistantProviderName: 'DeepSeek',
     assistantLabId: 'deepseek',
     assistantModelFamily,
+    assistantProviderSuffix,
   }).use(createPinia()).use(createRouter({
     history: createMemoryHistory(),
     routes: [{ path: '/', component: { template: '<div />' } }],
@@ -48,6 +49,13 @@ it('keeps the workspace avatar for Project assistant messages', () => {
   const host = mount(project)
   expect(host.querySelector('[aria-label="Design Workspace"]')).not.toBeNull()
   expect(host.querySelector('[aria-label="deepseek"]')).toBeNull()
+})
+
+it('shows the provider suffix only when the list asks for it', () => {
+  const header = (host: HTMLElement) => host.querySelector('[data-slot="message-header"]')?.textContent?.replace(/\s+/g, '')
+  expect(header(mount())).toBe('DeepSeekChat')
+  cleanup(); document.body.innerHTML = ''
+  expect(header(mount(undefined, undefined, message.model_id!, 'DeepSeek'))).toBe('DeepSeekChat(DeepSeek)')
 })
 
 it('marks an optimistic user bubble as pending and hides actions that require a real ID', () => {

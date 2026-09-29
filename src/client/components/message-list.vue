@@ -15,7 +15,7 @@ import {
 } from '@/client/ui/message-scroller'
 import type { Message, Project } from '@/shared/models'
 import type { EffectiveModel } from '@/client/stores/sync'
-import { projectPresentation } from '@/client/lib/ui-models'
+import { projectPresentation, sharedModelNames } from '@/client/lib/ui-models'
 import { useAuditContext, type AuditModel } from '@/client/lib/audit-context'
 import type { ModelRef } from '@/shared/api'
 
@@ -42,23 +42,33 @@ function modelInfo(model: ModelRef): AuditModel | undefined {
   return actual && { name: actual.model.metadata.name ?? null, providerName: actual.provider.name, labId: actual.model.lab_id, family: actual.model.metadata.family ?? null }
 }
 
-const rows = computed(() => props.messages.map((message) => {
-  const optimistic = props.optimisticId === message.id
-  if (message.role !== 'assistant') return { message, optimistic }
-  const actual = message.provider_id !== null && message.model_id !== null
-    ? modelInfo({ provider_id: message.provider_id, model_id: message.model_id })
-    : undefined
-  const actualModelName = actual?.name ?? message.model_id ?? '助手'
-  return {
-    message,
-    optimistic,
-    assistantName: props.project ? projectPresentation(props.project.name).title : actualModelName,
-    assistantModelName: props.project && message.model_id !== null ? actualModelName : undefined,
-    assistantProviderName: actual?.providerName ?? actualModelName,
-    assistantLabId: actual?.labId ?? null,
-    assistantModelFamily: actual?.family ?? undefined,
-  }
-}))
+const rows = computed(() => {
+  const resolved = props.messages.map((message) => {
+    if (message.role !== 'assistant') return { message }
+    const actual = message.provider_id !== null && message.model_id !== null
+      ? modelInfo({ provider_id: message.provider_id, model_id: message.model_id })
+      : undefined
+    return { message, actual, name: actual?.name ?? message.model_id ?? '助手' }
+  })
+  // Only the path on screen counts: a provider name is shown when this transcript alone mixes two
+  // providers' models under one name.
+  const shared = sharedModelNames(resolved.flatMap(({ message, actual, name }) =>
+    actual && message.provider_id !== null && name ? [{ providerId: message.provider_id, name }] : []))
+  return resolved.map(({ message, actual, name }) => {
+    const optimistic = props.optimisticId === message.id
+    if (name === undefined) return { message, optimistic }
+    return {
+      message,
+      optimistic,
+      assistantName: props.project ? projectPresentation(props.project.name).title : name,
+      assistantModelName: props.project && message.model_id !== null ? name : undefined,
+      assistantProviderName: actual?.providerName ?? name,
+      assistantProviderSuffix: actual && shared.has(name) ? actual.providerName : undefined,
+      assistantLabId: actual?.labId ?? null,
+      assistantModelFamily: actual?.family ?? undefined,
+    }
+  })
+})
 </script>
 
 <template lang="pug">
@@ -79,7 +89,7 @@ MessageScrollerProvider(
             :message="row.message" :project="project" :assistant-name="row.assistantName"
             :effective-model="effectiveModel"
             :optimistic="row.optimistic"
-            :assistant-model-name="row.assistantModelName" :assistant-provider-name="row.assistantProviderName"
+            :assistant-model-name="row.assistantModelName" :assistant-provider-name="row.assistantProviderName" :assistant-provider-suffix="row.assistantProviderSuffix"
             :assistant-lab-id="row.assistantLabId" :assistant-model-family="row.assistantModelFamily")
     MessageScrollerButton(direction="end" class="size-10 md:size-7")
     template(v-if="turns.length >= 2")
