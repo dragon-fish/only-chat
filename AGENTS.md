@@ -2,8 +2,9 @@
 
 This file provides guidance to coding agents working in this repository.
 
-`README.md` documents behaviour — providers, interfaces, native files, images, authentication,
-deployment and known gaps. Read it before changing anything user-visible.
+`README.md` is the human front page: features, deployment, configuration, known gaps. Behaviour is
+documented in `docs/` — `deployment.md`, `development.md`, `providers.md`, `files.md`,
+`architecture.md`. Read the relevant one before changing anything user-visible, and keep it current.
 
 ## Project Structure & Module Organization
 

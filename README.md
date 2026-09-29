@@ -1,405 +1,84 @@
-# only-chat
-
-Personal AI chat on Cloudflare Workers. Every device sees the same conversations and live streams.
-
-- Four interface formats: `chat-completions`, `responses`, `anthropic`, `vertex-compatible`.
-  Each provider shares one API key across its interfaces and selects one default; models can select
-  another interface belonging to the same provider.
-- **Projects**: an optional container carrying a prompt, a default model and default params. Nothing
-  is copied into a Conversation — the effective configuration is recomputed from the latest Project
-  state at the start of every generation, and each field can be overridden per Conversation.
-- Prompt, model and reasoning are configurable *before* the first message: the draft and the first
-  message create the Conversation in one command.
-- Tree-shaped messages: editing or regenerating creates a sibling, with a branch switcher on the bubble.
-- Text (markdown), pasted/dropped images, PDF, audio, video and UTF-8 text/source uploads (site-configurable formats and size, 20 MiB by default, 50 MiB at most), model-generated images, collapsible reasoning blocks.
-- Desktop turn navigation uses a slim rail beside the transcript: hover for a question/reply
-  preview, click to jump, or scroll the rail independently in long conversations. Mobile uses
-  an outline button. Both mark the turn currently being read.
-- One WebSocket per user, held by a `UserHub` Durable Object. Generation runs server-side to
-  completion, so any device can join, leave or reconnect mid-stream.
-
-## Dev
-
-    cp .dev.vars.example .dev.vars   # set both secrets
-    pnpm install
-    pnpm db:migrate:local
-    pnpm dev                          # http://localhost:7456
-
-Registration is closed by default. For a new local database, temporarily set `ALLOW_REGISTER=true`
-in `.dev.vars`, restart the dev server, and register the first account. That account receives `uid=1`
-and is the fixed administrator. Close registration afterward in `/admin/settings` or by restoring
-`ALLOW_REGISTER=false` when no D1 override is set.
-
-Then open `/settings/providers`, choose a catalog provider or a custom provider, configure its
-interfaces and shared API key, add a model, and start a chat.
-
-### Mock provider
-
-`pnpm seed:mock` creates a local Provider whose interface points at `mock.invalid`, a host reserved
-by RFC 2606 that never resolves. The mock adapter is registered only behind `import.meta.env.DEV`
-and answers those interfaces locally, so chats stream generated text without reaching any API and
-without spending anything. The interface keeps a real protocol (`responses`), so protocol-dependent
-behaviour upstream — native file support, image protocol allow-lists, reasoning handling — stays on
-its normal path; only the transport is replaced.
-
-Directives at the start of the newest user message shape the reply:
-
-| Directive | Effect |
-| --- | --- |
-| `/tool_call <name> <json>` | one tool call with that JSON as its input |
-| `/parallel [{"name":…,"args":…},…]` | several tool calls in one turn |
-| `/reasoning [text]` | reasoning followed by text |
-| `/error [message]` | a provider failure |
-| `/slow [ms]` | text streamed with a delay between chunks |
-
-Anything else — including a malformed directive — streams ordinary generated text. A file a tool
-delivers arrives as a user message of its own; the mock skips those, so a script of several
-`/tool_call` steps keeps going after a delivery.
-
-The `mock-image` model serves Image Studio: each run downloads a placeholder photo from
-`picsum.photos` at the requested size (the dev server needs direct internet access for this; it does
-not go through a proxy). Directives do not apply to it. Pass `--user <id>`
-to seed for a user other than `1`. The command is idempotent and local-only.
-
-    pnpm typecheck                    # vue-tsc + both tsc projects
-    pnpm test                         # vitest (unit + worker pool)
-
-## Deploy (first time)
-
-    wrangler d1 create only-chat-db   # paste database_id into wrangler.jsonc
-    wrangler r2 bucket create only-chat-attachments
-    wrangler secret put KEY_ENCRYPTION_SECRET
-    wrangler secret put BETTER_AUTH_SECRET
-    pnpm db:migrate:remote
-    pnpm deploy
-
-`wrangler.jsonc` already carries a `database_id`; replace it with the id of the database you
-just created, and point `routes` at your own hostname. The application's public origin is not
-configured anywhere: authentication and the links tools hand out both derive it from the request
-that arrived, so the route binding is what decides it. Generate independent random values for
-`KEY_ENCRYPTION_SECRET` and `BETTER_AUTH_SECRET`; the latter must contain at least 32 characters.
-
-`ALLOW_REGISTER` is a non-secret Worker variable and defaults to `false` in `wrangler.jsonc`. For a new deployment,
-explicitly enable it only long enough to register the first account, which naturally receives
-`uid=1` and fixed administrator privileges. Close it immediately afterward. `/admin/settings`
-stores a D1 override with precedence over `ALLOW_REGISTER`; clearing that override restores the
-environment value, or the default-closed behavior when the variable is absent.
-
-Cloudflare Access removal is a deployment-time choice and is not performed by this branch. Keep
-Access in place until the matching migrations and Worker are deployed and application login for
-`uid=1` has been verified. Then explicitly decide whether to remove Access; leaving it enabled adds
-a second authentication gate, while removing it exposes the application's public login and
-registration-status routes. All business REST routes, `/ws`, and attachment downloads still require
-a valid Better Auth login. Administrators can manage accounts but cannot inspect another user's
-Conversations, Projects, Providers, models, attachments, messages, or settings.
-
-The one exception is the owner audit: with `ENABLE_AUDIT` set to exactly `true`, `uid=1` alone gets
-two read-only site-wide listings, `/admin/audit/conversations` (with transcripts) and
-`/admin/audit/providers` (names, interface URLs, enabled models; never the key), listed under
-站点管理 in settings. Every audit request logs the viewer and the path to the Worker log.
-`ENABLE_AUDIT` defaults to `false` in `wrangler.jsonc`, so a fork starts with the audit off;
-`.dev.vars` overrides it locally. A var declared in `wrangler.jsonc` overrides the dashboard on every
-deploy (`keep_vars` only protects undeclared ones), so a deployment enables it in its Workers Builds
-deploy command: `npx wrangler deploy --var ENABLE_AUDIT:true`.
+<div align="center">
 
-## Upgrading an existing deployment
+<img src="public/logo/only-chat-indigo.svg" alt="only-chat" width="160"/>
 
-Before the schema/code cutover, update `wrangler.jsonc`: point `routes` at this deployment's own
-hostname rather than the repository's example, and set `ALLOW_REGISTER=false`. A `BETTER_AUTH_URL`
-left over from an earlier release is now ignored — the origin comes from the request, and the
-variable is no longer read. An absent or invalid `ALLOW_REGISTER` value also closes registration, but
-keeping the explicit `false` makes the upgrade intent clear. Existing MVP `uid=1` data must be
-recovered with `auth:reset-user` below; opening self-registration would create a different user.
+only-chat — 跑在 Cloudflare Workers 上的个人 AI 聊天。
 
-Set the new production authentication secret before the coordinated upgrade. Use an independent
-random value of at least 32 characters; the existing `KEY_ENCRYPTION_SECRET` remains required and
-must not be replaced as part of this upgrade.
-
-    wrangler secret put BETTER_AUTH_SECRET
-
-Then apply migrations and deploy the matching Worker as one coordinated upgrade:
-
-    pnpm db:migrate:remote            # 1. schema
-    pnpm deploy                       # 2. code
-
-Back up D1 and pause access during this upgrade. In particular, `0007_conversations.sql` renames the
-chat `sessions` table to `conversations` and `messages.session_id` to `conversation_id`, while
-`0008_user-auth.sql` adds the Better Auth and site-settings schema. The previous Worker cannot run
-against the final schema, and the new Worker cannot serve an unmigrated database; a Worker-only
-rollback across this boundary is unsupported.
-
-Earlier migrations remain part of the same ordered upgrade. `0002_provider-catalog.sql` creates
-provider interfaces and model metadata. `0003_provider-files-cleanup.sql` removes the old provider
-protocol/address fields and model display-name/capability/pricing fields, and requires each file
-pointer to have a file family and endpoint.
-
-Provider credentials, model overrides and scoped upload history are preserved. Native Vertex
-providers remain disabled with no interface; their model data is retained for explicit
-reconfiguration. Legacy pointers without an addressable scope are removed locally. R2 originals
-are unchanged.
-
-Locally the same ordering applies: run `pnpm db:migrate:local` before `pnpm dev` after a pull.
-
-Existing MVP databases already contain a credential-less `uid=1`; public registration does not
-claim that row. Restore any existing account interactively, without putting passwords in arguments
-or logs:
-
-    pnpm auth:reset-user -- --userid 1 --local
-    pnpm auth:reset-user -- --userid 1 --remote
-
-The command shows the target environment, user ID, and current email before confirmation, then
-prompts for name, email, and password. It replaces all login credentials and revokes all Better Auth
-sessions while preserving the user ID, role, settings, Conversations, Projects, Providers, models,
-and attachments. `--userid` is required, and exactly one of `--local` or `--remote` must be supplied.
-
-## Architecture and naming
-
-Authentication state is an `AuthSession`; a chat is a `Conversation`. D1 stores chats in
-`conversations` and links each message through `messages.conversation_id`. Initial reads use
-`GET /api/conversations` and `GET /api/conversations/:id/messages`, scoped to the authenticated
-user. Conversation writes remain serialized by that user's `UserHub` over `/ws`; commands and
-events use `conversation_id`, `conversation.update`, `conversation.delete`, `conversation.fork`,
-and `conversation.created` / `conversation.updated` / `conversation.deleted` /
-`conversation.forked`. The browser cannot select a user ID: the Worker derives it from the Better
-Auth login before routing to the per-user Durable Object.
-
-## Providers
-
-### Interfaces and Vertex-compatible gateways
-
-A provider owns its name, shared API key and enabled state. Each configured format owns its Base URL
-and Files setting. Models follow the provider default unless they explicitly select another owned
-interface. API addresses and keys cannot be overridden on an individual model.
-
-`vertex-compatible` takes an ordinary Base URL and
-a plain API key sent as `Authorization: Bearer <key>`; Google's own `x-goog-api-key` header is
-stripped. Requests are addressed as `{base_url}/v1/publishers/{publisher}/models/{model}`, so model
-ids are entered as **`{publisher}/{model}`** (for example `google/gemini-3-pro-preview`). Only the
-first slash separates the two halves, so a model name containing slashes survives intact.
-
-Remote model import is disabled when the default interface is Vertex-compatible. Native Google
-Vertex service-account authentication, Project and Location configuration are unsupported.
-
-### Model metadata
-
-models.dev supplies fallback names, capabilities, reasoning options, limits and prices. Per-model
-metadata overrides take precedence, including explicit false, zero and nullable values. Catalog
-refreshes never add models: remote `/models` results and manual entries determine membership.
-
-`reasoning_options` controls available effort levels and whether explicit reasoning disablement is
-supported. `modalities` describes input (`image`, `pdf`, `audio`, `video`) and image output — an
-input it does not declare is one the model is never sent; `tool_call` describes tool support.
-Reasoning settings affect the current request only. Returned reasoning and its provider metadata
-are stored and replayed regardless of the toggle or capability metadata.
-
-Reasoning strength itself is three-state everywhere: absent means *inherit* from the Project,
-`null` means *explicit Auto* (reasoning on, no effort sent), and a string is an explicit strength.
-
-### `native_files`: scoped uploads and remote cleanup
-
-Files is configured per interface and defaults off. Enable it for endpoints that implement the
-corresponding Files API. Responses and Chat Completions use OpenAI Files; Anthropic uses Anthropic
-Files. Vertex-compatible interfaces have no Files API. Without native Files, attachment transport
-uses supported URLs or inline bytes.
-
-With it on:
-
-- Upload reuse is scoped to the attachment, provider, credential version, Files family and normalized
-  Base URL. Responses and Chat Completions share pointers when they use the same file endpoint.
-  Each upload creates a new row; expired historical references remain available for remote cleanup.
-- Uploads ask for a **seven-day** expiry. If the provider reports its own `expires_at`, that value is
-  what gets stored; otherwise the local pointer dies on the deadline the upload asked for.
-- Upload HTTP 400/404/405/501 means the compatible endpoint cannot honor the Files contract, so that
-  request falls back to inline bytes without saving a pointer. Authentication, throttling, network
-  and other server failures still fail the turn instead of being disguised as missing capability.
-- The daily cron (`0 3 * * *`) independently refreshes the catalog and deletes expired remote files.
-  Cleanup reads indexed due pointers in pages, with bounded concurrency and a per-run limit.
-  Success and HTTP 404/410 remove the pointer. Network errors, SDK-retryable errors (including HTTP
-  408/409), HTTP 401/403/429 and server errors defer it by a day; unrecoverable references are logged
-  without sensitive data and removed locally.
-- Provider deletion, interface removal, key replacement and endpoint changes attempt affected
-  remote deletes before changing the configuration. The operation proceeds despite remote failure;
-  invalidated pointers are removed and old credentials are never retained for retries.
-- Expired pointers never participate in generation. Cleanup never deletes R2 originals.
-
-## Files
-
-The core is plain chat: it takes attachments and hands them to the model, and never puts tool
-context into a conversation. Naming files, reading them on demand and working on them come from
-plugins — `file_reader`, and the plugins that require it.
-
-### Uploads
-
-Chat uploads accept PNG, JPEG, WebP, GIF, PDF, MP3, WAV, Ogg audio, FLAC, M4A, WebM audio/video,
-MP4 and QuickTime video, and UTF-8 text: plain text, Markdown, HTML, CSS, JavaScript, JSON, CSV,
-and source files by extension (`.py`, `.ts`, `.vue`, …, all stored as `text/plain` with the name
-keeping the extension). Text in any other encoding is refused, in the browser and on the server —
-there is no encoding detection. Uploading is independent of model capabilities.
-
-PDFs and text appear as file cards with open and download links; audio and video use browser
-players. The attachment route answers `Range` requests (`206`), which media seeking needs, and serves
-every text type as sandboxed `text/plain`, so an uploaded page is shown and never run on this origin.
-
-Administrators configure the allowed formats and the per-file size limit in `/admin/settings`:
-every supported format and 20 MiB by default, 50 MiB at most, and an empty format list turns chat
-uploads off. The policy covers chat attachments only — Project icons and other uploads are not
-subject to it. Every upload, including deduplication, checks the current policy; existing
-downloads remain available. Binary files are checked against their container signatures and text
-against strict UTF-8, and a message part must name an attachment of the sender with the MIME type
-it was stored as. No transcoding, frame extraction or local OCR is run.
-
-### Delivery to the model
-
-A model reads a binary file only if its metadata declares that input modality (`image`, `pdf`,
-`audio`, `video`) **and** its protocol adapter can encode it: Responses and Anthropic carry images
-and PDFs, Chat Completions adds MP3/WAV audio and video, Vertex-compatible carries all four. An
-undeclared modality means the model cannot read the file — there is no optimistic attempt. Audio and
-video travel inline; native Files references are used for images and PDFs where configured.
-DashScope endpoints receive audio as a complete Data URL rather than bare Base64, as their
-compatible API requires. Upstream filenames are `file.<ext>`: providers show them to the model, and
-neither an attachment id nor the person's filename belongs there.
-
-A file the current model cannot read is replaced by a sentence saying so. History follows the same
-check when switching models, so a file the new model cannot read is not replayed. Text is readable
-by every model and, without plugins, is inlined whole as `<file name="…">…</file>`; a file too large
-for the model is the provider's error to report. A generated image's pixels are never replayed.
-
-### Reading files (`file_reader`)
-
-With `read_file` on, every file of the conversation is named by the first 8 hex digits of its
-SHA-256 — attachment ids never appear in model-visible text:
-
-    [image asset:3f9a2c1e "cat.png"]                          an uploaded image
-    [file asset:b41d07a9 "report.pdf" application/pdf]        an uploaded PDF, audio or video
-    <file asset="c07e11aa" name="page.html">…</file>          an uploaded text file up to 32 KiB
-    [file asset:c07e11aa "big.html" text/html, 18432 lines — read it with read_file]
-    [generated image asset:5c2e8f10]                          an image the chat model produced
-    Generated 2 image(s): asset:5c2e8f10, asset:9a01d3c4      a generate_image task notification
-
-Labels appear and disappear with the tool, so switching it mid-conversation re-renders the history
-once. `asset:<prefix>` resolves only against the assets on the branch the model is answering — the
-path from the root to the current message, plus files delivered earlier in the same turn. An asset
-elsewhere is `FILE_NOT_FOUND`, never a hint that it exists; a prefix matching two assets is
-`AMBIGUOUS_ASSET` and lists longer prefixes.
-
-`read_file({ file, offset?, limit? })` reads text as numbered lines, a page at a time, and shows a
-binary file whole: the tool result is a short receipt (`{ file, mime, message }`), and the file
-follows in a user message wrapped in `<tool_attachment call_id="…" asset="…">` … `</tool_attachment>`.
-Parallel calls finish all their receipts before the file messages are appended, and the history
-rebuilds the same bytes. Tool results never contain attachment ids, base64 or bytes. A file the
-model cannot read is an `UNSUPPORTED_FILE` error, which may say where else it can go.
-
-The plugin provides the `fileReader` service. Other plugins inject it to resolve references, and
-extend it: `registerScheme` adds a scheme (and optionally bare paths) whose plugin authorizes its own
-references, and `registerHint` finishes the sentence telling the model a file cannot be read.
-
-### Workspace files
-
-The workspace-files plugin keeps model-written files under `/conversation` and `/project`. It
-registers the `vfs:` scheme and bare paths with the file reader while the turn has workspace tools,
-checking the mount's scope, and reads its text with the version `write_file` needs. Path arguments
-accept a bare path or its `vfs:` form interchangeably.
-
-Workspace files can be binary; anything that is not text is. `copy_file(from, to)` copies an asset
-or another workspace file into the workspace — the new file points at the same stored bytes rather
-than duplicating them — which is how an uploaded page gets edited and downloaded again. `write_file`
-and `edit_file` refuse a binary file with `BINARY_FILE`. Assets are immutable: tools that would
-change an `asset:` reference answer `READ_ONLY` and point to `copy_file`.
-
-The file panel lists 当前会话, 本会话的附件 (the conversation's uploads and generated files across all
-branches, read-only) and 当前项目. Hovering a row shows the `asset:` or `vfs:` reference to cite
-in chat.
-
-### File understanding
-
-`analyze_file({ file, question? })` hands a binary file to the file understanding model and returns
-`{ file, mime, model, text, truncated }` — for a file the chat model cannot read, or for a careful
-second reading. When it is on and its model can read a file, `read_file`'s cannot-read error points
-at it.
-
-Settings → 全局服务模型 selects the file understanding model and edits its system instruction. The
-question travels separately from the instruction; without one, the model describes the file fully.
-The default instruction focuses on detailed visual descriptions and preserves transcribed text in
-its original language. A prompt equal to its default is stored as unset, so a changed default takes
-effect. The analysis is stored as an ordinary tool result: replaying history does not analyse again.
-
-## Images
-
-R2 is the only durable store for file bytes — uploads, generated images and binary workspace files
-alike; everything else carries an `attachment_id`. A model's image output
-is validated, hashed, written to R2 and reduced to an `attachment_id` *before* anything else sees
-it, so D1 message JSON, the Durable Object's in-flight snapshot and every WebSocket frame carry the
-id and nothing else — never base64, never raw bytes, never the provider's temporary URL. Identical
-bytes dedupe by SHA-256. If any step fails, the reply ends as an error with its text intact and no
-orphan row, no half-written R2 object and no file content anywhere.
-
-## Plugin namespaces
-
-A plugin owns three surfaces, and each has one place to live so two plugins can never collide:
-
-    /api/plugins/<plugin-id>/...         HTTP routes, behind the session guard
-    /api/plugins/<plugin-id>/<seg>/...   routes registered as public, carrying their own credential
-    /settings/plugins/<plugin-id>        the plugin's configuration
-    /settings/plugins/<plugin-id>/data   the plugin's own page, listed under 插件数据管理
-
-Plugin ids are already unique — the client host throws when two plugins claim one tool id — so
-namespacing by id makes a collision impossible rather than unlikely, and a URL says which plugin
-answers it. Core resources keep `/api` and are not up for grabs.
-
-A plugin page is declared in the manifest (`settingsEntry`) rather than derived from what the client
-plugin registered: navigation has to be answerable without loading every plugin, and a shortcut that
-appears only once its plugin happens to be loaded would come and go for reasons a reader cannot see.
-Disabling a plugin removes the shortcut, never the page — its data outlives the switch, and that
-data is exactly what someone reclaiming storage came for.
-
-Server routes are registered through `ctx.pluginApi`, not by reaching for the Hono app: `register`
-mounts a sub-app behind the session guard, `registerPublic` mounts one in front of it. Public is for
-routes a cookie cannot reach — a sandboxed frame has an opaque origin, so its own subresource
-requests are cross-site and arrive without one; such a route carries its own short-lived credential
-instead.
-
-A plugin that cannot work without another says so in its manifest (`requires`), and its server half
-injects that plugin's service. The two are checked against each other by a test. Enabling a plugin
-enables what it requires and disabling one disables what requires it; a conversation's tool
-selection follows the same rule, and each generation adds required tools rather than trusting a
-stored selection. Stored switches count a requirement as on, so settings saved before a plugin gained
-one keep working.
-
-A plugin's routes run on the Worker and its tools run inside the UserHub Durable Object, which are
-different cordis roots. One plugin object injecting both would sit PENDING forever on whichever
-service its side does not have, so the two halves are separate plugins — see
-`src/plugins/workspace-files/server/`.
-
-## Layout
-
-    src/server/       Worker entry, cordis app, plugins (database, assets, llm, hub, api)
-    src/server/plugins/llm/protocols/   one plugin per provider protocol
-    src/server/plugins/hub/             UserHub DO: WebSocket hub, Conversation commands, generation
-    src/client/       Vue 3 SPA (pages, views, components, stores)
-    src/shared/       zod schemas shared by both sides (models, parts, ws)
-    migrations/       D1 migrations
-    test/             vitest unit tests and worker-pool tests
-
-Design notes: `docs/superpowers/specs/2026-09-05-only-chat-mvp-design.md` and
-`docs/superpowers/specs/2026-09-06-projects-ui-reasoning-design.md`.
-`docs/superpowers/specs/2026-09-06-unified-ui-redesign.md` supersedes their UI layout decisions.
-`docs/superpowers/specs/2026-09-07-provider-catalog-and-interface-design.md` defines provider
-interfaces, catalog metadata, reasoning and file lifecycle behavior.
-`docs/superpowers/specs/2026-09-08-user-auth-and-conversation-naming-design.md` defines
-authentication, authorization, account administration, and Conversation naming.
-`docs/superpowers/specs/2026-09-28-conversation-files-design.md` defines assets, file references,
-binary workspace files and file understanding.
-
-## Known gaps
-
-- **Authentication methods are intentionally minimal.** Email verification, self-service password
-  recovery, OAuth, Passkeys, and Magic Links are not implemented. Operators can use
-  `pnpm auth:reset-user` when an account loses access.
-- **Upload purpose is declared by the client.** The upload route applies the chat upload policy to
-  `purpose=chat` and fixed image rules to `purpose=image` (Project icons, Studio references). A
-  client can upload an image as `image` and attach it to a chat message, getting past a closed or
-  narrower chat policy for images up to 20 MiB. Checking the policy again at send time would close
-  it, at the cost of refusing edits of old messages whose attachments a later policy disallows.
-- **Anthropic model listing only reads the first page.** `fetch-models` calls `GET /models` once
-  and ignores `has_more`/pagination, so an Anthropic account with more models than fit on one page
-  will only import the first page's worth.
+</div>
+
+## Features / 特性
+
+- **多家供应商**：OpenAI（Chat Completions / Responses）、Anthropic，以及 Vertex 兼容网关。一个供应商一把 key，可以挂多个接口。
+- **多设备同步**：生成在服务端跑完，任何设备都能中途加入、断线重连，流式输出不中断。
+- **Project**：给一组会话统一提示词、默认模型与参数，每轮实时继承，也能按会话单独覆盖。
+- **树状消息**：编辑或重新生成会产生分支，随时切回去。
+- **附件**：图片、PDF、音频、视频，以及 UTF-8 文本与源代码。
+- **插件**：读取文件、工作区文件、文件理解、生成图片、联网搜索、浏览器、向用户提问……按会话选择开启。
+- **多用户**：注册、登录与账号管理，第一个注册的账号是管理员。
+
+## Deploy / 部署
+
+需要一个 Cloudflare 账号，以及 [Node.js](https://nodejs.org/) LTS 与 [pnpm](https://pnpm.io/)。
+
+```bash
+pnpm install
+
+wrangler d1 create only-chat-db                  # 把 database_id 填进 wrangler.jsonc
+wrangler r2 bucket create only-chat-attachments
+wrangler kv namespace create KV                  # 把 id 填进 wrangler.jsonc 的 kv_namespaces
+wrangler secret put KEY_ENCRYPTION_SECRET
+wrangler secret put BETTER_AUTH_SECRET
+
+pnpm db:migrate:remote
+pnpm deploy
+```
+
+同时把 `wrangler.jsonc` 里的 `routes` 改成你自己的域名。
+
+**第一个账号**：注册默认关闭。部署时临时把 `ALLOW_REGISTER` 设为 `true`，注册的第一个账号就是管理员（`uid=1`），之后立刻关掉注册（也可以在 `/admin/settings` 里关）。
+
+**更新**：拉取代码后，如果 `migrations/` 里有新文件，先 `pnpm db:migrate:remote` 再 `pnpm deploy`。未迁移的数据库配上新代码会直接无法工作。
+
+更多细节（Cloudflare Access、所有者审计、从旧版本升级、找回账号）见 [部署文档](docs/deployment.md)。
+
+## Configuration / 配置
+
+| 名称 | 类型 | 说明 | 默认值 |
+| --- | --- | --- | --- |
+| `KEY_ENCRYPTION_SECRET` | secret | 加密存储的供应商 API key，至少 16 个字符。**部署后不要更换**，否则已存的 key 全部无法解密 | — |
+| `BETTER_AUTH_SECRET` | secret | 登录会话的签名密钥，至少 32 个字符 | — |
+| `ALLOW_REGISTER` | var | 是否开放注册；`/admin/settings` 中的设置优先 | `false` |
+| `ENABLE_AUDIT` | var | 为管理员开启只读的全站审计页 | `false` |
+
+站点的访问地址不需要配置，由请求本身决定。
+
+## Development / 开发
+
+```bash
+cp .dev.vars.example .dev.vars   # 填好两个 secret
+pnpm install
+pnpm db:migrate:local            # 每次拉取到新迁移后都要跑
+pnpm dev                         # http://localhost:7456
+```
+
+本地同样需要临时打开 `ALLOW_REGISTER` 注册第一个账号。不想花钱调用真实 API 时，`pnpm seed:mock` 会创建一个只在本地应答的模拟供应商，还能用指令模拟工具调用、推理和报错，见 [开发文档](docs/development.md)。
+
+```bash
+pnpm typecheck   # 类型检查
+pnpm test        # 单元测试与 Worker 测试
+```
+
+## Docs / 文档
+
+- [部署与升级](docs/deployment.md)
+- [开发与模拟供应商](docs/development.md)
+- [供应商、接口与模型元数据](docs/providers.md)
+- [文件：上传、读取与工作区](docs/files.md)
+- [架构、插件与目录结构](docs/architecture.md)
+- 设计文档：[docs/superpowers/specs/](docs/superpowers/specs/)
+
+## Known gaps / 已知限制
+
+- 登录方式只有邮箱加密码：没有邮箱验证、找回密码、OAuth 或 Passkey。账号丢失时用 `pnpm auth:reset-user` 恢复。
+- 上传用途由客户端声明：以项目图标的名义上传的图片可以被发进聊天，从而绕过聊天上传策略（仅限 20 MiB 以内的图片）。
+- Anthropic 的模型列表只读取第一页。
