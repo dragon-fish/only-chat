@@ -1,5 +1,6 @@
 import type { Context } from 'cordis'
 import { Hono } from 'hono'
+import { cors } from 'hono/cors'
 import { zipSync } from 'fflate'
 import { and, eq, inArray } from 'drizzle-orm'
 import { conversations, projects } from '@/server/db/schema'
@@ -62,6 +63,10 @@ function archiveName(prefix: string, fallback: string): string {
 /** The one public sub-path: its ticket is the credential, because a sandboxed frame sends no cookie. */
 export function workspacePreviewRoutes(ctx: Context) {
   const r = new Hono<ApiEnv>()
+  // The sandbox gives the page an opaque origin, so its own `fetch('./data.csv')` is cross-origin
+  // and fails without this; `<script src>` and `<link>` only worked because they skip CORS. `*` adds
+  // no exposure: no cookie is involved, and whoever holds the ticket URL can read it anyway.
+  r.use('*', cors())
 
   r.get('/:token/*', async (c) => {
     const token = c.req.param('token')

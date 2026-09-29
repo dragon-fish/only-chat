@@ -199,6 +199,25 @@ describe('workspace files REST', () => {
     expect(await sibling.text()).toBe('body{}')
   })
 
+  it('lets the page fetch its own data files, whose requests come from an opaque origin', async () => {
+    await enableHtmlPreview(f.db)
+    const files = new WorkspaceFiles(f.db, storage, 1)
+    await files.write({ path: '/project/chart/index.html', content: '<script>fetch("./cars.csv")</script>', conversationId: f.conversationId, projectId: f.projectId })
+    await files.write({ path: '/project/chart/cars.csv', content: 'a,b\n1,2\n', conversationId: f.conversationId, projectId: f.projectId })
+    const [row] = await f.db.select().from(workspaceFiles).where(eq(workspaceFiles.relative_path, 'chart/index.html'))
+    const body = await (await f.client.request(`${API}/files/${row!.id}`, { method: 'GET' })).json() as { previewUrl: string }
+    const csvUrl = body.previewUrl.replace('index.html', 'cars.csv')
+
+    const data = await workerFetch(csvUrl, { headers: { origin: 'null' } })
+    expect(data.status).toBe(200)
+    expect(data.headers.get('access-control-allow-origin')).toBe('*')
+
+    // A missing file must reach the page as a 404 it can read, not as an opaque CORS failure.
+    const missing = await workerFetch(body.previewUrl.replace('index.html', 'nope.csv'), { headers: { origin: 'null' } })
+    expect(missing.status).toBe(404)
+    expect(missing.headers.get('access-control-allow-origin')).toBe('*')
+  })
+
   it('stops serving a page as a page the moment the setting goes back off', async () => {
     await enableHtmlPreview(f.db)
     const files = new WorkspaceFiles(f.db, storage, 1)
