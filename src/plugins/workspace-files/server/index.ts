@@ -299,6 +299,7 @@ export const WorkspaceFilesServerPlugin = {
         'Pass expectedVersion only when it matters that nobody else has touched the file meanwhile — it is a guard, not a requirement, and a mismatch means someone else moved it.',
         'Limit is 1 MiB of UTF-8 text. Every successful write stores an immutable version and advances the file to it.',
         'Files under /project are shared by every conversation in the project; files under /conversation are private to this one.',
+        'This is not a disk on anyone\'s machine but a virtual filesystem kept in object storage, so there is no local path or file:// URL to hand out: the operator finds the files in the chat\'s Files panel, preview_file gives a web link, and relative references between files in the same mount (./style.css, fetch("./data.csv")) resolve in that preview.',
       ].join(' '),
       inputSchema: WriteFileInputSchema,
       async execute(input, options): Promise<WriteFileOutput | WorkspaceToolError> {
