@@ -21,12 +21,15 @@ import type { Part } from '@/shared/parts'
  * gets none rather than an invented one.
  */
 type Attached = { filename?: string; attachment_id: number; preview: string; state: 'uploading' | 'error' | 'done' }
-  & ({ kind: 'image' } | { kind: 'file'; mime: string })
+  & ({ kind: 'image' } | { kind: 'file'; mime: string; sourceEncoding?: string })
 
 function toPart(item: Attached): Part {
   return item.kind === 'image'
     ? { type: 'image', attachment_id: item.attachment_id, ...(item.filename ? { filename: item.filename } : {}) }
-    : { type: 'file', attachment_id: item.attachment_id, mime: item.mime, filename: item.filename }
+    : {
+        type: 'file', attachment_id: item.attachment_id, mime: item.mime, filename: item.filename,
+        ...(item.sourceEncoding ? { source_encoding: item.sourceEncoding } : {}),
+      }
 }
 
 const props = defineProps<{
@@ -174,6 +177,7 @@ async function addFiles(files: File[], pasted = false) {
       try {
         const done = await uploadFile(f, policy)
         item.attachment_id = done.attachment_id
+        if (item.kind === 'file' && 'sourceEncoding' in done && done.sourceEncoding) item.sourceEncoding = done.sourceEncoding
         // `uploadFile` returns its own object URL; drop ours rather than leaking it.
         URL.revokeObjectURL(item.preview)
         item.preview = done.preview
@@ -260,7 +264,7 @@ function restore(parts: Part[]) {
     const preview = api.attachmentUrl(part.attachment_id)
     attachments.value.push(part.type === 'image'
       ? { kind: 'image', filename: part.filename, attachment_id: part.attachment_id, preview, state: 'done' }
-      : { kind: 'file', mime: part.mime, filename: part.filename, attachment_id: part.attachment_id, preview, state: 'done' })
+      : { kind: 'file', mime: part.mime, filename: part.filename, sourceEncoding: part.source_encoding, attachment_id: part.attachment_id, preview, state: 'done' })
   }
   void nextTick().then(autoGrow)
 }
@@ -354,6 +358,11 @@ onBeforeUnmount(() => { releasePreviews(attachments.value); dropSent() })
           FileIcon(v-else-if="item.state === 'done'" :title="item.filename")
           X(v-else)
         span.w-full.min-w-0.truncate.text-xs(v-if="item.kind === 'file'" :title="item.filename") {{ item.filename || item.mime }}
+        //- The file is stored as UTF-8, so what the person downloads later is not byte for byte
+        //- what they picked; they are told before sending rather than finding out then.
+        span.w-full.min-w-0.truncate.text-xs.text-amber-600(
+          v-if="item.kind === 'file' && item.sourceEncoding" class="dark:text-amber-400"
+          :title="`编码将从 ${item.sourceEncoding} 转换为 UTF-8`") {{ item.sourceEncoding }} → UTF-8
         //- `AttachmentActions` is what lifts the button onto the thumbnail; without it the X
         //- lands in flow under the image and stretches the chip.
         AttachmentActions

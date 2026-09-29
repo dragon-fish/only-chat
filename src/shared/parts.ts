@@ -20,6 +20,8 @@ export const FilePartSchema = z.object({
   attachment_id: z.number().int(),
   mime: z.string().min(1),
   filename: z.string().max(255).optional(),
+  /** The encoding a text file was converted from on upload; absent when it already was UTF-8. */
+  source_encoding: z.string().min(1).max(40).optional(),
 })
 export const ReasoningPartSchema = z.object({
   type: z.literal('reasoning'),

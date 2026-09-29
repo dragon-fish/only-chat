@@ -8,10 +8,16 @@ plugins — `file_reader`, and the plugins that require it.
 ## Uploads
 
 Chat uploads accept PNG, JPEG, WebP, GIF, PDF, MP3, WAV, Ogg audio, FLAC, M4A, WebM audio/video,
-MP4 and QuickTime video, and UTF-8 text: plain text, Markdown, HTML, CSS, JavaScript, JSON, CSV,
-and source files by extension (`.py`, `.ts`, `.vue`, …, all stored as `text/plain` with the name
-keeping the extension). Text in any other encoding is refused, in the browser and on the server —
-there is no encoding detection. Uploading is independent of model capabilities.
+MP4 and QuickTime video, and text: plain text, Markdown, HTML, CSS, JavaScript, JSON, CSV, and
+source files by extension (`.py`, `.ts`, `.vue`, …, all stored as `text/plain` with the name keeping
+the extension). Uploading is independent of model capabilities.
+
+Text is stored as UTF-8 only. A file in another encoding is converted in the browser before it is
+uploaded: `chardet` (loaded only when needed) guesses the encoding from the first 64 KiB, and a
+guess with confidence of at least 50 that the browser can decode is converted; anything else is
+refused. The file part records the original encoding in `source_encoding`, and the composer and the
+message's file card say so in orange — a download is the stored UTF-8, not the bytes that were
+picked. The server accepts nothing but valid UTF-8.
 
 PDFs and text appear as file cards with open and download links; audio and video use browser
 players. The attachment route answers `Range` requests (`206`), which media seeking needs, and serves

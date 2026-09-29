@@ -5,7 +5,7 @@ import { fileIcon, formatFileSize } from '@/client/components/workspace-files'
 import { useAttachmentUrl } from '@/client/lib/audit-context'
 import { fileModality, isTextMime } from '@/shared/file-media'
 
-const props = defineProps<{ attachmentId: number; mime: string; filename?: string }>()
+const props = defineProps<{ attachmentId: number; mime: string; filename?: string; sourceEncoding?: string }>()
 const attachmentUrl = useAttachmentUrl()
 const url = computed(() => attachmentUrl(props.attachmentId))
 const kind = computed(() => fileModality(props.mime))
@@ -41,6 +41,8 @@ watch(url, target => { failed.value = false; void loadSize(target) }, { immediat
     .min-w-0.flex-1
       p.truncate.text-sm.font-medium(:title="label") {{ label }}
       p.text-xs.text-muted-foreground {{ size === null ? mime : formatFileSize(size) }}
+      //- Stored as UTF-8: a download is not byte for byte the file that was picked.
+      p.text-xs.text-amber-600(v-if="sourceEncoding" class="dark:text-amber-400") 已从 {{ sourceEncoding }} 转换为 UTF-8
     a.inline-flex.shrink-0.items-center.justify-center.rounded-md(
       :href="url" target="_blank" rel="noopener" title="打开" aria-label="打开文件"
       class="size-10 hover:bg-accent md:size-8")

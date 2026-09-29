@@ -65,6 +65,9 @@ importers:
       better-auth:
         specifier: 1.7.3
         version: 1.7.3(drizzle-kit@0.31.10)(drizzle-orm@0.45.2(kysely@0.29.5))(vitest@4.1.11(@types/node@24.13.3)(happy-dom@20.14.0)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(jiti@2.7.0)(sass-embedded@1.104.0)(sass@1.104.0)(stylus@0.57.0(supports-color@10.2.2))(tsx@4.23.13)))(vue@3.5.42(typescript@6.0.3))
+      chardet:
+        specifier: ^2.2.0
+        version: 2.2.0
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1

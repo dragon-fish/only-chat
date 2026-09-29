@@ -152,7 +152,7 @@ MessageRoot(
           .flex.flex-col.gap-2.pb-2(v-if="notices.length")
             TaskNotificationRow(v-for="notice in notices" :key="notice.task_id" :notification="notice")
           .flex.flex-col.gap-2.pb-2(v-if="files.length")
-            FileAttachment(v-for="file in files" :key="file.attachment_id" :attachment-id="file.attachment_id" :mime="file.mime" :filename="file.filename")
+            FileAttachment(v-for="file in files" :key="file.attachment_id" :attachment-id="file.attachment_id" :mime="file.mime" :filename="file.filename" :source-encoding="file.source_encoding")
           .flex.flex-wrap.gap-2.pb-1(v-if="images.length")
             img.max-h-40.rounded(v-for="img in images" :key="img.attachment_id" :src="attachmentUrl(img.attachment_id)")
           template(v-if="!editing")

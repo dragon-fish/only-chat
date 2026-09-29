@@ -37,6 +37,7 @@
     "ai": "^7.0.92",
     "animated-scroll-to": "^2.3.2",
     "better-auth": "1.7.3",
+    "chardet": "^2.2.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cordis": "4.0.0-rc.9",
