@@ -37,7 +37,7 @@ const props = defineProps<{
   assistantName?: string
   assistantModelName?: string
   assistantProviderName?: string
-  /** Set only when another provider's model on this path shares the name. */
+  /** The resolved provider's name; absent when the message's model no longer resolves. */
   assistantProviderSuffix?: string
   assistantLabId?: string | null
   assistantModelFamily?: string

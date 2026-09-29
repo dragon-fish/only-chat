@@ -51,7 +51,7 @@ it('keeps the workspace avatar for Project assistant messages', () => {
   expect(host.querySelector('[aria-label="deepseek"]')).toBeNull()
 })
 
-it('shows the provider suffix only when the list asks for it', () => {
+it('names the provider after the model, and leaves it out when the model no longer resolves', () => {
   const header = (host: HTMLElement) => host.querySelector('[data-slot="message-header"]')?.textContent?.replace(/\s+/g, '')
   expect(header(mount())).toBe('DeepSeekChat')
   cleanup(); document.body.innerHTML = ''
