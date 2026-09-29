@@ -274,6 +274,7 @@ describe('REST api', () => {
         // Every field has a default, so these plugins are configured before anyone touches them.
         workspace_files: { configured: true, values: {}, secrets: {} },
         cloudflare_browser_run: { configured: true, values: {}, secrets: {} },
+        comfyui: { configured: false, values: {}, secrets: { cf_access_client_id: false, cf_access_client_secret: false } },
       },
       created_at: stored!.created_at,
     })

@@ -48,6 +48,20 @@ different cordis roots. One plugin object injecting both would sit PENDING forev
 service its side does not have, so the two halves are separate plugins — see
 `src/plugins/workspace-files/server/`.
 
+## Image backends
+
+An image run (`artifact_runs`) normally targets one of the user's provider models. A plugin can
+supply images another way by registering an `imageBackends` entry under its own protocol name; runs
+it creates carry that name in `interface_protocol`, no provider, and whatever the backend needs in
+`backend_state`. `executeImageRun` hands such a run to the backend for bytes and keeps everything
+after that — validation, R2, the gallery, the task notification — on the shared path. The backend
+names the plugin the notification is attributed to and may word its text.
+
+`imageBackends` lives on the Worker side as well as the workflow side: cancelling a tool run from the
+API sends its notification from the Worker. The ComfyUI plugin is the one backend today; it submits
+in the tool call, so ComfyUI's validation errors reach the model at once, and only the wait for the
+images runs in the Workflow.
+
 ## Source layout
 
     src/server/       Worker entry, cordis app, plugins (database, assets, llm, hub, api)
@@ -68,3 +82,5 @@ authentication, authorization, account administration, and Conversation naming.
 `docs/superpowers/specs/2026-09-28-conversation-files-design.md` defines assets, file references,
 binary workspace files and file understanding.
 `docs/superpowers/specs/2026-09-29-mcp-client-design.md` defines the remote MCP client plugin.
+`docs/superpowers/specs/2026-09-29-comfyui-plugin-design.md` defines the ComfyUI plugin and image
+backends.

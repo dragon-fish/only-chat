@@ -10,6 +10,7 @@ import type { ModelCatalog } from './plugins/model-catalog'
 import type { ToolRegistry } from './plugins/tools'
 import type { PluginConfig } from './plugins/plugin-config'
 import type { PluginChannel } from './plugins/plugin-channel'
+import type { ImageBackends } from './plugins/artifacts/backends'
 import type { GenerationTurn } from './plugins/hub/generation-turn'
 import type { Message, Project, Conversation } from '@/shared/models'
 
@@ -27,6 +28,7 @@ declare module 'cordis' {
     tools: ToolRegistry
     pluginConfig: PluginConfig
     pluginChannel: PluginChannel
+    imageBackends: ImageBackends
   }
 }
 

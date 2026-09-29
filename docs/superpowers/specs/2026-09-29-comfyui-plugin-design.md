@@ -21,7 +21,7 @@
 - `server/client.ts`：ComfyUI HTTP 客户端，两侧共用。
 - `server/template.ts`：模板识别与覆盖的纯逻辑（§6）。
 - 两个 server 插件分属不同 cordis 根，分别登记。按 AGENTS.md 同时登记到 `src/shared/plugin-manifests.ts`、`src/client/plugins/loaders.ts`、`src/server/app.ts`。
-- manifest：5 个工具同属一个工具组，选择器里是一个开关；`requires: [file_reader]`，产物以 `asset:` 引用回到对话。
+- manifest：5 个工具同属一个工具组，选择器里是一个开关。服务端不注入其他插件的服务，因此没有 `requires`。
 
 ## 3. 配置
 
@@ -29,7 +29,7 @@
 
 | key | 类型 | 说明 |
 |---|---|---|
-| `base_url` | text，必填 | ComfyUI 地址。必须 `https:`；开发环境另允许 `http://localhost`、`http://127.0.0.1`。存储前去掉末尾 `/` |
+| `base_url` | text，必填 | ComfyUI 地址。必须 `https:`；开发环境另允许 `http://localhost`、`http://127.0.0.1`。拼接请求路径时去掉末尾 `/` |
 | `cf_access_client_id` | secret，可选 | Cloudflare Access Service Token |
 | `cf_access_client_secret` | secret，可选 | 与上一项必须同时填写或同时留空 |
 | `workflows_dir` | text，可选 | userdata 下存放 API 格式模板的目录，留空即无模板 |
@@ -149,7 +149,7 @@ get(protocol: string): ImageBackend | undefined
 
 ## 7. 工具
 
-所有工具在插件未配置时返回配置提示，不抛错。输出超长时截断并注明。
+插件未配置时，工具注册表在解析工具时即报错，与其他需要配置的插件一致。ComfyUI 侧的错误以 `{ error, error_type }` 返回给模型。输出超长时截断并注明。
 
 | 工具 | 输入 | 输出 |
 |---|---|---|

@@ -21,6 +21,9 @@ import { FileUnderstandingServerPlugin } from '@/plugins/file-understanding/serv
 import { FileReaderServerPlugin } from '@/plugins/file-reader/server'
 import { FileReaderApiPlugin } from '@/plugins/file-reader/server/api'
 import { BrowserRunServerPlugin } from '@/plugins/cloudflare-browser-run/server'
+import { ComfyuiServerPlugin } from '@/plugins/comfyui/server'
+import { ComfyuiBackendPlugin } from '@/plugins/comfyui/server/backend'
+import { ImageBackendsPlugin } from './plugins/artifacts/backends'
 
 export type Side = 'worker' | 'hub'
 
@@ -49,6 +52,11 @@ export async function createApp(options: AppOptions): Promise<Context> {
   await ctx.plugin(Assets)
   await ctx.plugin(PluginConfigPlugin)
   if (!ctx.get('pluginConfig')) throw new Error('PluginConfigPlugin loaded but ctx.pluginConfig is unavailable')
+  if (options.side === 'worker' || options.side === 'workflow') {
+    await ctx.plugin(ImageBackendsPlugin)
+    if (!ctx.get('imageBackends')) throw new Error('ImageBackendsPlugin loaded but ctx.imageBackends is unavailable')
+    await ctx.plugin(ComfyuiBackendPlugin)
+  }
   if (options.side === 'hub' || options.side === 'workflow') {
     await ctx.plugin(LlmPlugin)
     // `await ctx.plugin()` resolves even when the plugin stays PENDING on a missing injection,
@@ -69,6 +77,7 @@ export async function createApp(options: AppOptions): Promise<Context> {
       await ctx.plugin(WorkspaceFilesServerPlugin)
       await ctx.plugin(FileUnderstandingServerPlugin)
       await ctx.plugin(McpServerPlugin)
+      await ctx.plugin(ComfyuiServerPlugin)
       await ctx.plugin(HubPlugin, { userId: options.userId })
       if (!ctx.get('hub')) throw new Error('HubPlugin loaded but ctx.hub is unavailable')
       // Needs the hub for its realtime channel and session store, so it comes after it.
