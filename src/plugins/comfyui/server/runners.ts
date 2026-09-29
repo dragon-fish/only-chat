@@ -7,6 +7,18 @@ import { parseApiWorkflow, summarizeTemplate, TemplateError, type ApiWorkflow, t
 
 const MAX_TEMPLATES = 50
 
+/**
+ * The pool convention is invisible in the graph itself: a model reading the raw JSON sees an
+ * unconnected LoraLoader and concludes the template is broken, and one reading `suggested_loras`
+ * assumes they apply by default. Neither is true, so every result that shows them says so.
+ */
+const SUGGESTED_LORAS_NOTE = 'suggested_loras are LoraLoader nodes left unconnected on purpose, so they do nothing by default. '
+  + 'Name them in comfyui_generate\'s loras and the template mode wires them between the model loader and its consumers; '
+  + 'omitting loras applies none. lora_locked templates already have a LoRA wired in and reject loras.'
+const RAW_LORA_NOTE = 'The unconnected LoraLoader nodes are this template\'s suggested LoRAs, not a broken link. '
+  + 'In template mode, list them in comfyui_generate\'s loras and they are wired in for you. '
+  + 'If you submit this workflow in raw mode instead, wire them yourself or leave them out.'
+
 export function toolError(error: unknown): ComfyuiToolError {
   if (error instanceof ComfyuiError) {
     return { error: error.message, error_type: error.type, ...(error.nodeErrors ? { node_errors: error.nodeErrors } : {}) }
@@ -57,14 +69,18 @@ export async function runListWorkflows(client: ComfyuiClient, config: ComfyuiCon
         return { ...summarizeTemplate(name, await loadTemplate(client, workflowsDir, name)), path }
       } catch (error) {
         if (!(error instanceof TemplateError)) throw error
-        return { name, path, usable_as_template: false, problem: error.message, model: '', defaults: {}, size: null, loras: [], lora_locked: true }
+        return { name, path, usable_as_template: false, problem: error.message, model: '', defaults: {}, size: null, suggested_loras: [], lora_locked: true }
       }
     })))
   }
   const guides = guidesDir
     ? (await client.listUserdata(guidesDir)).filter(file => /\.md$/i.test(file)).map(file => `${guidesDir}/${file}`)
     : []
-  return { templates, guides, ...(note ? { note } : {}) }
+  const notes = [
+    ...(templates.some(template => template.suggested_loras.length) ? [SUGGESTED_LORAS_NOTE] : []),
+    ...(note ? [note] : []),
+  ]
+  return { templates, guides, ...(notes.length ? { note: notes.join('\n') } : {}) }
 }
 
 export async function runRead(client: ComfyuiClient, config: ComfyuiConfig, path: string) {
@@ -84,7 +100,9 @@ export async function runRead(client: ComfyuiClient, config: ComfyuiConfig, path
     let value: unknown
     try { value = JSON.parse(text) }
     catch { return { error: `${path} is not valid JSON.`, error_type: 'template' as const } }
-    return { path, workflow: parseApiWorkflow(value) }
+    const workflow = parseApiWorkflow(value)
+    const hasSuggestedLoras = summarizeTemplate(path, workflow).suggested_loras.length > 0
+    return { path, workflow, ...(hasSuggestedLoras ? { note: RAW_LORA_NOTE } : {}) }
   }
   return text.length > MAX_READ_BYTES
     ? { path, content: text.slice(0, MAX_READ_BYTES), note: `Truncated at ${MAX_READ_BYTES} of ${text.length} characters.` }

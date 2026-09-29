@@ -93,7 +93,7 @@ export const ComfyuiGenerateInputSchema = z.strictObject({
   cfg: z.number().min(0).max(100).optional(),
   seed: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional().describe('Template mode: omit for a random seed.'),
   loras: z.array(LoraSchema).max(MAX_LORAS).optional()
-    .describe('Template mode: LoRAs chained in this order, first closest to the model. The template\'s suggested LoRAs supply default strengths; any other file gets 1.'),
+    .describe('Template mode: LoRAs to wire in, in this order, first closest to the model. Omit for none: a template\'s suggested_loras are not applied unless listed here. A suggested LoRA keeps its suggested strengths by default; any other file gets 1.'),
   workflow: z.record(z.string(), z.unknown()).optional()
     .describe('Raw mode: a complete ComfyUI API-format workflow, { "<node id>": { "class_type": ..., "inputs": {...} } }. Every other field must be omitted.'),
 }).superRefine((input, ctx) => {

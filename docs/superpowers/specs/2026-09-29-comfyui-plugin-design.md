@@ -153,8 +153,8 @@ get(protocol: string): ImageBackend | undefined
 
 | 工具 | 输入 | 输出 |
 |---|---|---|
-| `comfyui_list_workflows` | 无 | 模板列表（名称、`usable_as_template`、模型摘要、正负向原文、默认采样参数与尺寸、LoRA 池、`lora_locked`）与指南列表。两个目录都未配置时，说明可用 `comfyui_list_models` + `comfyui_node_info` 自行拼图 |
-| `comfyui_read` | `path`：`<workflows_dir>/<file>` 或 `<guides_dir>/<file>` | 模板的原始 API JSON 或指南 markdown。只允许已配置目录；单文件上限 256 KB |
+| `comfyui_list_workflows` | 无 | 模板列表（名称、`usable_as_template`、模型摘要、正负向原文、默认采样参数与尺寸、`suggested_loras`、`lora_locked`）与指南列表。有推荐 LoRA 时附说明：它们是故意不接线的节点，只有在 `loras` 中点名才会接入，省略 `loras` 即不加任何 LoRA。两个目录都未配置时，说明可用 `comfyui_list_models` + `comfyui_node_info` 自行拼图 |
+| `comfyui_read` | `path`：`<workflows_dir>/<file>` 或 `<guides_dir>/<file>` | 模板的原始 API JSON 或指南 markdown。只允许已配置目录；单文件上限 256 KB。模板含推荐 LoRA 时附同样的说明，并提示原始模式需自行接线 |
 | `comfyui_list_models` | `folder?` | 无参数时目录名列表；否则该目录文件名，最多 500 个 |
 | `comfyui_node_info` | `class_types?`（≤20）、`search?` | 按类名返回输入规格；按关键词在类名/显示名/分类中搜索，返回至多 50 条 `{ name, display_name, category }`。候选值列表每项最多 100 个并注明总数。二者至少一个 |
 | `comfyui_generate` | 见下 | §5.3 的结果或错误 |

@@ -99,7 +99,7 @@ describe('summarizeTemplate', () => {
       name: 't', usable_as_template: true, model: 'test.safetensors',
       prompt: 'pos prompt', negative: 'neg prompt',
       defaults: { steps: 20, cfg: 7, sampler_name: 'euler', scheduler: 'normal', denoise: 1 },
-      size: { width: 512, height: 512 }, loras: [], lora_locked: false,
+      size: { width: 512, height: 512 }, suggested_loras: [], lora_locked: false,
     })
   })
 
@@ -142,7 +142,7 @@ describe('summarizeTemplate', () => {
   it('offers dangling LoraLoaders as the pool', () => {
     expect(summarizeTemplate('t', withPool())).toMatchObject({
       lora_locked: false,
-      loras: [
+      suggested_loras: [
         { name: 'loraA.safetensors', strength_model: 0.8, strength_clip: 0.8 },
         { name: 'loraB.safetensors', strength_model: 0.5, strength_clip: 0.5 },
       ],
@@ -150,14 +150,14 @@ describe('summarizeTemplate', () => {
   })
 
   it('locks a template with a LoRA already wired in, even with dangling ones beside it', () => {
-    expect(summarizeTemplate('t', locked())).toMatchObject({ lora_locked: true, loras: [] })
+    expect(summarizeTemplate('t', locked())).toMatchObject({ lora_locked: true, suggested_loras: [] })
   })
 
   it('leaves out pool nodes whose strengths are not literal numbers', () => {
     const workflow = withPool()
     workflow['100']!.inputs.strength_model = ['9', 0]
     workflow['101']!.inputs.strength_clip = true
-    expect(summarizeTemplate('t', workflow).loras).toEqual([])
+    expect(summarizeTemplate('t', workflow).suggested_loras).toEqual([])
   })
 
   it('reports no size when the latent is sized by another node', () => {

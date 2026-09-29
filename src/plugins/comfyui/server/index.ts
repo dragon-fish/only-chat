@@ -25,7 +25,7 @@ async function guarded<T>(run: () => Promise<T>) {
 
 const LIST_WORKFLOWS_DESCRIPTION = [
   'Lists the ComfyUI workflow templates and prompting guides the user keeps on their ComfyUI server.',
-  'Each template reports its model, its own positive and negative prompt, default sampler settings and size, and suggested LoRAs. A template with usable_as_template false can still be read with comfyui_read and submitted as a raw workflow.',
+  'Each template reports its model, its own positive and negative prompt, default sampler settings and size, and suggested_loras (unconnected LoRA nodes, applied only when named). A template with usable_as_template false can still be read with comfyui_read and submitted as a raw workflow.',
   'Before writing a prompt for a model family, read its guide with comfyui_read when one is listed: models differ in prompt style (tags versus prose).',
 ].join('\n')
 

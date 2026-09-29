@@ -52,8 +52,8 @@ export interface TemplateSummary {
   defaults: Record<string, unknown>
   /** Null when the latent's width or height is fed by another node rather than a literal. */
   size: { width: number, height: number } | null
-  /** The recommended pool: LoraLoader nodes the author left unconnected. */
-  loras: TemplateLora[]
+  /** LoraLoader nodes the author left unconnected: applied only when `loras` names them. */
+  suggested_loras: TemplateLora[]
   /** True when the template rejects `loras`: a LoRA is already wired in, or the model/clip path cannot be traced. */
   lora_locked: boolean
 }
@@ -297,7 +297,7 @@ export function summarizeTemplate(name: string, workflow: ApiWorkflow): Template
     if (!(error instanceof TemplateError)) throw error
     return {
       name, usable_as_template: false, problem: error.message, model,
-      defaults: {}, size: null, loras: [], lora_locked: false,
+      defaults: {}, size: null, suggested_loras: [], lora_locked: false,
     }
   }
   const sampler = workflow[bindings.sampler]!.inputs
@@ -311,7 +311,7 @@ export function summarizeTemplate(name: string, workflow: ApiWorkflow): Template
     ...(bindings.negative === null ? {} : { negative: textOf(workflow[bindings.negative]!) }),
     defaults,
     size: literalSize(workflow, bindings.latent),
-    loras: bindings.pool.map(({ name, strength_model, strength_clip }) => ({ name, strength_model, strength_clip })),
+    suggested_loras: bindings.pool.map(({ name, strength_model, strength_clip }) => ({ name, strength_model, strength_clip })),
     lora_locked: bindings.loraBlock !== null,
   }
 }
