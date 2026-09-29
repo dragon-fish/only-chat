@@ -51,6 +51,12 @@ declare module 'cordis' {
      * is built: a plugin prepares its per-turn state in `turn.state`, and one may set `turn.labeler`.
      */
     'generation/prepare'(turn: GenerationTurn): Promise<void>
+    /**
+     * The generation stopped being read — finished, failed or stopped. Awaited through
+     * `ctx.parallel`, once per turn that `generation/prepare` saw, so a plugin can release what its
+     * tools opened in `turn.state`. A listener's failure is logged and never fails the message.
+     */
+    'generation/settled'(turn: GenerationTurn): Promise<void>
     /** Messages joined a running generation (an interjection), after its prompt was first built. */
     'generation/interjected'(turn: GenerationTurn, messages: readonly Message[]): Promise<void>
     'message/before-send'(payload: BeforeSendPayload): void

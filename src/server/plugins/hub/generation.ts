@@ -292,6 +292,8 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
   let status: PersistedStatus = 'done'
   let error: string | null = null
   let usage: Usage | null = null
+  /** Set once the turn exists; `generation/settled` is owed only for a turn plugins were told about. */
+  let preparedTurn: GenerationTurn | undefined
 
   try {
     const { path, attachments } = await assembleContext(hub, target, leafMessageId)
@@ -304,6 +306,7 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
       userId: hub.userId, conversationId: target.conversation.id, projectId: target.conversation.project_id,
       toolIds: target.toolIds, path: payload.path, state: new Map<string, unknown>(), canReadFile: canRead(target),
     }
+    preparedTurn = turn
     await hub.app.parallel('generation/prepare', turn)
     const messages = buildModelMessages({ protocol: target.providerInterface.protocol, systemPrompt: payload.systemPrompt, path: payload.path, attachments, labeler: turn.labeler })
     const params: ConversationParams = target.config.params
@@ -592,6 +595,12 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
       error = err instanceof Error ? err.message : String(err)
       console.error('generation failed', err)
     }
+  }
+  // Whatever a plugin opened for this turn is released on every exit path, before the message is
+  // finalized: nothing the stream could still use is left once it has stopped being read.
+  if (preparedTurn) {
+    await hub.app.parallel('generation/settled', preparedTurn)
+      .catch(err => console.error('generation/settled listener failed', err))
   }
 
   // Spec §8.3 step 4, in this order on every exit path: UPDATE D1 → broadcast the terminal event →
