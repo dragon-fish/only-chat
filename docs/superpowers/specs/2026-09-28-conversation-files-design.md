@@ -173,7 +173,7 @@ Worker 端路由 `GET /api/plugins/file_reader/conversations/:id/assets` 列出�
 
 ### 5.2 读取
 
-- 文本文件解析为带 `read` 的 `ResolvedText`：返回 `version`，记录本轮已读；本轮已完整读过且此后未写入时返回 `unchanged`。`write_file` / `edit_file` 的先读后写校验依赖这一记录。
+- 文本文件解析为带 `read` 的 `ResolvedText`：返回 `version`，记录本轮已读；本轮已完整读过且此后未写入时返回 `unchanged`。`edit_file` 要求读过该文件的任意部分（不要求读完：单次读取上限 5,000 行、100 KiB，否则大文件永远无法编辑），并以最近一次读取的版本做冲突检查；`write_file` 不设门槛，覆盖了未读过的版本时在结果中说明。
 - 二进制文件解析为当前版本 attachment 的 `ResolvedBinary`。
 
 ### 5.3 二进制与只读

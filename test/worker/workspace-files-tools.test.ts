@@ -208,10 +208,10 @@ describe('read_file repeat and partial views', () => {
     expect(results.at(-1)?.content).toMatchObject({ content: expect.stringContaining('second') })
   })
 
-  it('refuses to edit against a view that stopped short of the file', async () => {
+  it('edits a file of which only a page was read', async () => {
     const providerId = await seedProvider()
     await installModel()
-    // Unique in the file, so nothing but the guard can stop the edit.
+    // Unique in the file, and the page read covers it: that is all an edit needs.
     const lines = ['const PORT = 3000', ...Array.from({ length: 39 }, (_, index) => `filler ${index}`)].join('\n')
     const { conversationId } = await callTool(providerId, 'write_file', { path: '/conversation/long.ts', content: lines })
 
@@ -220,9 +220,9 @@ describe('read_file repeat and partial views', () => {
       { name: 'edit_file', input: { path: '/conversation/long.ts', oldText: 'PORT = 3000', newText: 'PORT = 8080' } },
     ], conversationId)
 
-    // Five lines of a forty-line file is not knowing what the file says, even when the text being
-    // named happens to be unique: what makes it unique is the part nobody looked at.
-    expect(results.at(-1)?.content).toMatchObject({ error: 'NOT_READ' })
+    // A whole read is not required: one call returns at most 5,000 lines and 100 KiB, so a larger
+    // file could otherwise never be edited. Uniqueness is still judged on the whole file.
+    expect(results.at(-1)?.content).toMatchObject({ path: '/conversation/long.ts', version: 2, replacements: 1 })
   })
 })
 

@@ -43,7 +43,7 @@ export const FileReaderServerPlugin = {
       ctx.tools.register(FILE_READER_PLUGIN_ID, READ_FILE_TOOL_ID, runtime => tool({
         description: [
           'Read a file. `file` is the asset:<hex> a file in this conversation is labelled with, or a path when workspace files are on.',
-          'Text comes back numbered in cat -n format, starting at line 1, so you can cite positions — strip that prefix before quoting text elsewhere. Up to 2,000 lines and 100 KiB per call; pass offset and limit when you know which part you need, and follow nextOffset when the result is truncated. Nothing is dropped silently.',
+          'Text comes back numbered in cat -n format, starting at line 1, so you can cite positions — strip that prefix before quoting text elsewhere. 2,000 lines per call by default and up to 5,000 with limit, never more than 100 KiB; pass offset and limit when you know which part you need, and follow nextOffset when the result is truncated. Nothing is dropped silently.',
           'An image, PDF, audio or video file is shown to you whole instead: the result is a short receipt and the file follows in a user message inside <tool_attachment>. offset and limit do not apply. If you cannot read that kind of file, the error says so and may say where else it can go.',
         ].join(' '),
         inputSchema: ReadFileInputSchema,

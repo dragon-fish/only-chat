@@ -41,7 +41,7 @@ const MESSAGES: Record<WorkspaceError, string> = {
 /** Not a filesystem outcome: the caller skipped a step, and the fix is to take it. */
 const NOT_READ: WorkspaceToolError = {
   error: 'NOT_READ',
-  message: 'Read the whole file in this turn before editing it. An edit names text you believe is in the file, and a view that stopped short — or never happened — is not knowing what else the file says.',
+  message: 'Read the file before editing it — at least the part you are changing. An edit quotes text you have seen, and is checked against the version you read.',
 }
 
 function unwrap<T>(result: Result<T>): T | WorkspaceToolError {
@@ -119,16 +119,26 @@ function seenInResult(name: string, content: unknown, path: string): SeenFile | 
 }
 
 /**
- * What the caller knows about a file, from everything it can see.
+ * What the caller has been shown of a file, from everything it can see: this turn's ledger first,
+ * then the messages this generation was built from. The version is what says whether it still holds.
  *
- * Keeping this per generation made every turn re-read a file the conversation had already been
- * shown — and a read is not one message but a whole round trip, which resends the conversation to
- * be told what is already on screen. The messages this generation was built from are that record,
- * and the version is what says whether it still holds.
- *
- * The newest whole view wins over a later partial one: a paged read after a full one does not
- * un-see the file, and a version that has moved since is refused either way.
+ * `latestSeen` is the newest view, whole or not — what an edit or a write is checked against.
+ * `seenInContext` prefers the newest whole view, which only answers whether a repeat read can say
+ * `unchanged`: a paged read after a full one does not un-see the file.
  */
+function latestSeen(state: Map<string, unknown>, messages: readonly Message[], path: string): SeenFile | null {
+  const live = seenThisTurn(state, path)
+  if (live !== null) return live
+  for (let index = messages.length - 1; index >= 0; index--) {
+    for (const part of [...messages[index]!.parts].reverse()) {
+      if (part.type !== 'tool_result') continue
+      const seen = seenInResult(part.name, part.content, path)
+      if (seen !== null) return seen
+    }
+  }
+  return null
+}
+
 function seenInContext(state: Map<string, unknown>, messages: readonly Message[], path: string): SeenFile | null {
   const live = seenThisTurn(state, path)
   if (live !== null) return live
@@ -286,7 +296,7 @@ export const WorkspaceFilesServerPlugin = {
         })
         if (!result.ok) return unwrap(result) as WorkspaceToolError
         const { path, operation, fileSize, totalLines, version, replacedVersion } = result.value
-        const read = seenInContext(runtime.turn, runtime.path, path)
+        const read = latestSeen(runtime.turn, runtime.path, path)
         // Older than what was replaced means somebody wrote in between and this write went over
         // content the caller never read.
         const staleReadVersion = read !== null && replacedVersion !== null && read.version < replacedVersion
@@ -368,7 +378,7 @@ export const WorkspaceFilesServerPlugin = {
         'Change part of a file by naming the text to replace. Prefer this over write_file for anything but a new file or a rewrite: sending a whole file back to change one line wastes the turn and drifts in the parts you did not mean to touch.',
         'oldText is matched literally, not as a pattern or a regular expression. It must match the file exactly, including indentation — and without the line numbers read_file prints in front of each line.',
         'It must match exactly one place, so include enough surrounding lines to be unambiguous; pass replaceAll to change every occurrence instead. An empty newText deletes the matched text.',
-        'Read the file in this turn first. Editing text you have not just looked at is how a patch lands on a file that has since changed; if it did change, the edit is refused rather than applied to content you never saw.',
+        'Read the file first — the part you are changing is enough; a large file can be read a page at a time. If the file changed since you read it, the edit is refused rather than applied to content you never saw.',
         'Like every write, a successful edit stores an immutable version, so restore_file can bring back what it replaced.',
       ].join(' '),
       inputSchema: EditFileInputSchema,
@@ -378,13 +388,15 @@ export const WorkspaceFilesServerPlugin = {
         const parsed = parseWorkspacePath(target)
         if (!parsed.ok) return failure('INVALID_PATH')
         // The ledger is keyed by the canonical path, which is what read_file and write_file record.
-        const seen = seenInContext(runtime.turn, runtime.path, formatWorkspacePath(parsed.value))
+        const seen = latestSeen(runtime.turn, runtime.path, formatWorkspacePath(parsed.value))
         const { files, scope } = servicesFor(runtime)
-        // A view that stopped short is not knowing what the file says, even when the text being
-        // named happens to be unique: what makes it unique is the part nobody looked at. Reading a
-        // binary file never records a view, so it is named as binary rather than as unread — the
-        // latter would send the caller to read_file and back here forever.
-        if (seen === null || seen.partial) {
+        // Having read any part is enough. Do not require a whole read: one call returns at most 5,000
+        // lines and 100 KiB, so a larger file could never be edited and only write_file — the
+        // riskier tool — would reach it. Uniqueness is judged on the whole file on the server, and
+        // oldText has to be quoted exactly, so an unread region cannot make a match look unique.
+        // Reading a binary file records no view, so it is named as binary rather than as unread —
+        // the latter would send the caller to read_file and back here forever.
+        if (seen === null) {
           const found = await files.current({ path: target, ...scope })
           return found.ok && !isTextMime(found.value.version.mime) ? failure('BINARY_FILE') : NOT_READ
         }
