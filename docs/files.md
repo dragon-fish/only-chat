@@ -104,7 +104,9 @@ second reading. When it is on and its model can read a file, `read_file`'s canno
 at it.
 
 Settings → 全局服务模型 selects the file understanding model and edits its system instruction. The
-question travels separately from the instruction; without one, the model describes the file fully.
+question travels separately from the instruction, after the file and a `File type: <MIME>` line;
+without one, the model describes the file fully. The result records the model, its provider and the
+tokens it used, shown on the tool card and never added to the reply's own usage.
 The default instruction focuses on detailed visual descriptions and preserves transcribed text in
 its original language. A prompt equal to its default is stored as unset, so a changed default takes
 effect. The analysis is stored as an ordinary tool result: replaying history does not analyse again.

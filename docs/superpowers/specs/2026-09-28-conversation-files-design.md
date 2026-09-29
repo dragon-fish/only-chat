@@ -195,9 +195,9 @@ Worker 端路由 `GET /api/plugins/file_reader/conversations/:id/assets` 列出�
 
 `requires: ['file_reader']`，服务端 `inject` `fileReader`。
 
-- `analyze_file({ file, question? })`：`fileReader.resolve` → 文件理解服务，只接受二进制。成功结果为 `{ file, mime, model, text, truncated }`，`file` 为 `asset:` 形式。
+- `analyze_file({ file, question? })`：`fileReader.resolve` → 文件理解服务，只接受二进制。成功结果为 `{ file, name, mime, model, usage, text, truncated }`，`file` 为 `asset:` 形式；`model` 含供应商名，`usage` 为服务模型本次的 token 用量，只在卡片中显示，不计入回复的用量统计。
 - 文件理解服务模型只在本轮启用了 `analyze_file` 时解析。
-- system 消息只含配置的提示词；user 消息含文件与独立的 `question`。无 `question` 时不捏造意图、不附加压缩指令。
+- system 消息只含配置的提示词；user 消息依次为文件、一行 `File type: <MIME>`、独立的 `question`。无 `question` 时不捏造意图、不附加压缩指令。
 - 错误区分：引用错误（§4.3）、文件类型不被服务模型或其接口支持（`UNSUPPORTED_FILE`）、服务未配置或不可用（`SERVICE_UNAVAILABLE`）、供应商调用失败（`ANALYSIS_FAILED`）。失败作为工具错误返回。
 - 随当前生成任务取消；客户端断开不取消。辅助模型不注册工具。
 - 分析文本按普通 tool_result 存储，历史回放不重复分析；不做跨调用缓存。

@@ -16,6 +16,16 @@ const input = computed(() => (typeof props.call.args === 'object' && props.call.
 const content = computed(() => props.result?.content as AnalyzeFileOutput | FileToolError | undefined)
 const failure = computed(() => (content.value && 'error' in content.value ? content.value : null))
 const output = computed(() => (content.value && 'text' in content.value ? content.value : null))
+const numbers = new Intl.NumberFormat()
+/** Which model read the file and what it cost, in the reply footer's own ↑ / ↓ notation. */
+const spent = computed(() => {
+  const value = output.value
+  if (!value) return ''
+  const model = value.model.provider_name ? `${value.model.model_id} · ${value.model.provider_name}` : value.model.model_id
+  const usage = value.usage
+  if (!usage || (usage.prompt === undefined && usage.completion === undefined)) return model
+  return `${model} · ${numbers.format(usage.prompt ?? 0)} ↑ ${numbers.format(usage.completion ?? 0)} ↓`
+})
 </script>
 
 <template lang="pug">
@@ -35,7 +45,7 @@ const output = computed(() => (content.value && 'text' in content.value ? conten
       Badge(v-if="output.truncated" variant="secondary" class="ml-auto shrink-0") 结果不完整
     CollapsibleContent
       .flex.flex-col.gap-2.px-2.py-3
-        p.text-xs.text-muted-foreground {{ output.mime }}
+        p.text-xs.text-muted-foreground {{ output.mime }} · {{ spent }}
         p.text-sm(v-if="input.question")
           span.text-muted-foreground 问题：
           | {{ input.question }}

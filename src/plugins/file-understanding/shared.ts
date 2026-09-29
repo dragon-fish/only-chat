@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import type { StepUsage } from '@/shared/models'
 
 export { ANALYZE_FILE_TOOL_ID, FILE_UNDERSTANDING_PLUGIN_ID } from '@/shared/plugins'
 
@@ -16,7 +17,10 @@ export interface AnalyzeFileOutput {
   /** What the person called the file, for a card to show; null for one that was never named (a pasted or generated image). */
   name: string | null
   mime: string
-  model: { provider_id: number, model_id: string }
+  /** The service model that read the file, named as the person set it up. */
+  model: { provider_id: number, provider_name: string, model_id: string }
+  /** What the analysis cost. Its own model's tokens, never folded into the reply's usage. */
+  usage: StepUsage
   text: string
   /** The analysis stopped at the service model's output limit, so `text` is incomplete. */
   truncated: boolean

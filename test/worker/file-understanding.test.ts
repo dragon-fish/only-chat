@@ -153,19 +153,25 @@ describe('analyze_file', () => {
   it.each(['image/png', 'application/pdf', 'audio/mpeg', 'video/mp4'])('hands %s to the service model with the prompt and question kept apart', async mime => {
     analysis = {}
     const { ref, result } = await turn({ vision: false, service: true, mime, tools: ['analyze_file'], tool: 'analyze_file', input: file => ({ file, question: '转写所有文字' }) })
-    expect(result?.content).toMatchObject({ file: ref, mime, model: { model_id: 'analyst' }, text: '详细描述：图片文字为“你好”。', truncated: false })
+    expect(result?.content).toMatchObject({
+      file: ref, mime, model: { model_id: 'analyst', provider_name: 'file-understanding' },
+      usage: { prompt: 1, completion: 1 }, text: '详细描述：图片文字为“你好”。', truncated: false,
+    })
+    // The file type is stated, so a model primed for pictures is not left guessing what it was sent.
     expect(analysis.prompt).toMatchObject([
       { role: 'system', content: SYSTEM },
-      { role: 'user', content: [{ type: 'file', mediaType: mime }, { type: 'text', text: '转写所有文字' }] },
+      { role: 'user', content: [{ type: 'file', mediaType: mime }, { type: 'text', text: `File type: ${mime}` }, { type: 'text', text: '转写所有文字' }] },
     ])
     // The text-only main model never received the bytes.
     expect(prompts.flatMap(messages => messages.flatMap(message => message.content)).some(part => part.type === 'file')).toBe(false)
   })
 
-  it('adds nothing to the file when there is no question', async () => {
+  it('adds nothing but the file type when there is no question', async () => {
     analysis = {}
     await turn({ vision: false, service: true, tools: ['analyze_file'], tool: 'analyze_file', input: file => ({ file }) })
-    expect((analysis.prompt as Array<{ content: unknown[] }>)[1]!.content).toEqual([expect.objectContaining({ type: 'file' })])
+    expect((analysis.prompt as Array<{ content: unknown[] }>)[1]!.content).toEqual([
+      expect.objectContaining({ type: 'file' }), { type: 'text', text: 'File type: image/png' },
+    ])
   })
 
   it('reports an unconfigured service, and a provider failure, as tool errors', async () => {
