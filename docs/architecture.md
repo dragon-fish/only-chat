@@ -70,6 +70,11 @@ the conversation, so the plugin persists it — the memory plugin stores its cat
 `memory_snapshots`, keyed by conversation and the Project it was rendered for, copies it to forks,
 and renders a new one only when the conversation's Project changes.
 
+Text that belongs to one later message goes in `GenerationTurn.notes`: notes end a user message as
+`<system-reminder>` blocks, ordered by plugin manifest order. The same rule applies — history is
+rebuilt every turn, so a plugin stores each note it makes and adds it back on every later turn. The
+memory plugin uses this to tell a conversation about memory another conversation changed meanwhile.
+
 ## Image backends
 
 An image run (`artifact_runs`) normally targets one of the user's provider models. A plugin can

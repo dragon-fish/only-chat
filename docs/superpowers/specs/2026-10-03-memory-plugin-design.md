@@ -343,7 +343,7 @@ worker：
 
 ### 9.2 已知状态
 
-- `memory_snapshots` 新增列 `known TEXT NOT NULL DEFAULT '{}'`：本对话已知的记忆文件，`{ [fileId]: { path, version, description } }`，只含开放的层。
+- `memory_snapshots` 新增列 `known TEXT`（可空）：本对话已知的记忆文件，`{ [fileId]: { path, version, description } }`，只含开放的层。为 null 的是早于本功能的快照，第一次遇到时静默设为当前状态，而不是把所有记忆当作新增来提醒。
 - 渲染快照时同时写入当时的状态；开关组合或 Project 变化导致重新渲染时一并重置。
 - workspace-files 在本轮状态里记录本轮改动过的路径（`write_file`、`edit_file`、`delete_file`、`rename_file` 的新旧路径、`copy_file`、`restore_file`、带 `content` 的 `memory_save`），导出 `touchedPaths(state)`；不带 `content` 的 `memory_save` 由记忆插件自行记录。
 - `generation/settled` 时：对比当前状态与已知状态，旧路径或新路径在本轮改动过的条目并入已知状态（Agent 自己做的不必提醒）；其余留待下一轮。
