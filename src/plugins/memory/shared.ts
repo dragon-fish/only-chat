@@ -15,9 +15,9 @@ export const MemorySaveInputSchema = z.strictObject({
   type: z.enum(MEMORY_TYPES)
     .describe('user: who the user is. feedback: how they want you to work. project: ongoing work and its constraints. reference: where to find something.'),
   description: z.string().min(1).max(MAX_MEMORY_DESCRIPTION).regex(/^[^\r\n]*$/, 'One line, no line breaks.')
-    .describe('One line the catalog shows for this memory: enough to decide, in a later conversation, whether it is worth reading.'),
+    .describe('The catalog line: what this memory is about and when it matters, so a later conversation can decide whether to open it. Not a copy of the content.'),
   content: z.string().optional()
-    .describe('The whole file. Omit it to change only the type and description of a file that already exists.'),
+    .describe('The whole file: the fact or rule first, then for feedback and project a **Why:** line and a **How to apply:** line when they are known. Omit it to change only the type and description of a file that already exists.'),
 })
 export type MemorySaveInput = z.infer<typeof MemorySaveInputSchema>
 

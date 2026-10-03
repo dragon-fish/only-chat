@@ -12,22 +12,27 @@ const GUIDANCE = `You have a memory that outlives this conversation: files in th
 - /memory/user/ holds what is true across all of this user's conversations.
 - /memory/project/ holds what matters only inside the current Project, and does not exist outside one.
 
-The first user message opens with a catalog of these files as they stood when the conversation started, one line each with its type and description. It is a summary and it can be stale: read a file before you rely on it, and expect memories saved since then to be missing from it.
+The first user message opens with a catalog of these files as they stood when the conversation started: path, type and description. It can be stale, and memories saved since then are missing from it. When a memory looks relevant, read it before you rely on it.
+
+What is worth remembering is what a later conversation would act on differently and could not work out for itself from the conversation or the workspace: a preference the user stated, a correction they made, an approach they confirmed, a constraint on their work, where something lives. Not what the workspace or the messages already hold, not what matters only to this conversation, not guesses about the user, and never secrets.
 
 Every memory has a type:
-- user: who the user is — role, expertise, preferences about how things should be.
-- feedback: guidance the user gave on how you should work, corrections and confirmed approaches alike, with the reason when there is one.
-- project: ongoing work, goals and constraints that the files and history do not already record.
+- user: who the user is — role, expertise, how they like things.
+- feedback: how the user wants you to work — corrections and confirmed approaches alike.
+- project: ongoing work, goals and constraints. Write dates as absolute dates.
 - reference: where to find something — a URL, a document, a system.
 
-Save a memory when you learn something a later conversation would want: a stated preference, a correction, a lasting fact about the user or their work. Do not save what the workspace or the conversation already holds, what matters only to this conversation, or secrets.
+Writing a memory:
+- One subject per file, named for it in kebab-case, such as /memory/user/package-manager.md.
+- The description is how a later conversation decides whether to open the file: one line saying what the memory is about and when it matters. It is not a copy of the body.
+- The body says what the description cannot. Lead with the fact or rule itself. For feedback and project, follow it with a "**Why:**" line — the reason the user gave, or what happened — and a "**How to apply:**" line — when it applies and what to do then. Leave a line out rather than invent it. No title heading, and no restating the description.
+- Before creating a memory, look in the catalog for one on the same subject and update that one instead. Merge duplicates when you find them.
 
-One subject per file, named for it in kebab-case, such as /memory/user/reply-style.md.
-- To create a memory, call ${MEMORY_SAVE_TOOL_ID} with content: the file and its catalog line are written together.
-- To change what a memory says, read_file it, then edit_file it.
-- To change only its type or description, call ${MEMORY_SAVE_TOOL_ID} without content.
-- To drop a memory that is wrong or outdated, delete_file it. To rename it, or move it between /memory/user and /memory/project, rename_file it.
-Before creating a memory, look in the catalog for one on the same subject and update that one instead; merge duplicates when you find them. A file listed as undescribed needs ${MEMORY_SAVE_TOOL_ID} to give it a type and description.`
+Keeping memory current:
+- Create a memory: ${MEMORY_SAVE_TOOL_ID} with content.
+- Change what a memory says: read_file it, then edit_file it.
+- Change only its type or description: ${MEMORY_SAVE_TOOL_ID} without content. A file listed as undescribed needs this too.
+- A memory that turned out wrong or outdated: delete_file it. To rename one, or move it between /memory/user and /memory/project: rename_file.`
 
 const DESCRIPTION = [
   'Create a memory, or change the line the memory catalog shows for one.',
