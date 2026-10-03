@@ -41,7 +41,7 @@ How much to write:
 
 Keeping memory current:
 - Start a file: ${MEMORY_SAVE_TOOL_ID} with content.
-- Add to or correct a file: read_file it, then edit_file it; call ${MEMORY_SAVE_TOOL_ID} without content if its description no longer fits.
+- Add to or correct a file with edit_file; call ${MEMORY_SAVE_TOOL_ID} without content if its description no longer fits.
 - Remove what turned out wrong or outdated with edit_file, or delete_file a file with nothing left worth keeping. rename_file renames a file or moves it between /memory/user and /memory/project.
 - A file listed as undescribed needs ${MEMORY_SAVE_TOOL_ID} without content; one outside the layout should be renamed into it.`
 

@@ -313,7 +313,7 @@ const GUIDANCE = [
   'The workspace is a virtual filesystem kept in object storage, not a disk on anyone\'s machine: there is no local path or file:// URL to hand out, and the user finds the files in the chat\'s Files panel.',
   '- /conversation is private to this conversation. /project is shared by every conversation in its Project and does not exist outside one; rename_file a file from /conversation to /project to share it.',
   '- Every write keeps the file\'s previous version, so replacing a file never loses anything; restore_file brings an earlier version back under a new name.',
-  '- Change part of a file with edit_file rather than rewriting it with write_file, and read at least the part you change first.',
+  '- Change part of a file with edit_file rather than rewriting it with write_file.',
   '- delete_file sends files to the user\'s trash for 30 days, and nothing you can call brings them back: delete only what is finished with.',
   '- Every tool that takes a file also takes a workspace path, bare or as vfs:/project/….',
 ].join('\n')
@@ -444,7 +444,7 @@ export const WorkspaceFilesServerPlugin = {
         'Change part of a file by naming the text to replace.',
         'oldText is matched literally, not as a pattern or a regular expression. It must match the file exactly, including indentation — and without the line numbers read_file prints in front of each line.',
         'It must match exactly one place, so include enough surrounding lines to be unambiguous; pass replaceAll to change every occurrence instead. An empty newText deletes the matched text.',
-        'Read the file first — the part you are changing is enough; a large file can be read a page at a time. If the file changed since you read it, the edit is refused rather than applied to content you never saw.',
+        'Read the file first — the part you are changing is enough; a large file can be read a page at a time. A file you already read or wrote in this conversation, in this turn or an earlier one, counts as read. If the file changed since, the edit is refused rather than applied to content you never saw.',
       ].join(' '),
       inputSchema: EditFileInputSchema,
       async execute(input, options): Promise<EditFileOutput | WorkspaceToolError> {
