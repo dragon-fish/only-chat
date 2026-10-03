@@ -12,6 +12,7 @@ import {
 import { Alert, AlertDescription, AlertTitle } from '@/client/ui/alert'
 import { Button } from '@/client/ui/button'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/client/ui/empty'
+import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemTitle } from '@/client/ui/item'
 import { Skeleton } from '@/client/ui/skeleton'
 import { Textarea } from '@/client/ui/textarea'
 import { api } from '@/client/lib/api'
@@ -180,16 +181,15 @@ defineExpose({ load })
       EmptyHeader
         EmptyTitle(class="text-sm") 还没有记忆
         EmptyDescription(class="text-xs") 模型在对话中学到值得记住的事时会自动保存，你也可以在下面告诉它。
-    section.flex.flex-col.gap-1(v-for="group in groups" v-else :key="group.title")
-      h3(class="text-muted-foreground px-2 text-xs font-medium") {{ group.title }}
-      ul.flex.flex-col
-        li(v-for="item in group.items" :key="item.fileId")
-          button.grid.w-full.items-center.gap-x-4.rounded-md.px-2.py-2.text-left(
-            type="button" class="hover:bg-muted/60 grid-cols-[minmax(0,10rem)_1fr] md:grid-cols-[minmax(0,10rem)_1fr_auto]"
-            :title="item.path" @click="open(item)")
-            span.truncate.text-sm.font-medium {{ item.name }}
-            span(class="text-muted-foreground truncate text-sm") {{ item.description ?? '未描述' }}
-            span(class="text-muted-foreground hidden shrink-0 text-xs md:inline") {{ updatedLabel(item.updatedAt) }}
+    section.flex.flex-col.gap-2(v-for="group in groups" v-else :key="group.title")
+      h3(class="text-muted-foreground text-xs font-medium") {{ group.title }}
+      ItemGroup(class="gap-2")
+        Item(v-for="item in group.items" :key="item.fileId" as-child variant="outline" size="sm" class="hover:bg-muted/60")
+          button.w-full.text-left(type="button" :title="item.path" @click="open(item)")
+            ItemContent(class="min-w-0")
+              ItemTitle {{ item.name }}
+              ItemDescription.truncate {{ item.description ?? '未描述' }}
+            ItemActions(class="text-muted-foreground hidden text-xs md:flex") {{ updatedLabel(item.updatedAt) }}
 
   form.flex.items-end.gap-2(@submit.prevent="hand")
     Textarea(

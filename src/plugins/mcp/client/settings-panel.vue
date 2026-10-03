@@ -64,8 +64,8 @@ onMounted(load)
       empty-title="还没有 MCP 服务" empty-description="添加一个远程 MCP 服务地址，例如百炼上的在线 MCP 或 Notion。")
       template(#empty-action)
         Button(variant="outline" class="min-h-10" @click="open('new')") 添加服务
-      ItemGroup(class="gap-1")
-        Item(v-for="server in servers" :key="server.key" as-child size="sm")
+      ItemGroup(class="gap-2")
+        Item(v-for="server in servers" :key="server.key" as-child variant="outline" size="sm" class="hover:bg-muted/60")
           button.w-full.text-left(type="button" @click="open(server.key)")
             ItemContent
               ItemTitle {{ server.name }}
