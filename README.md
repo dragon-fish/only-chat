@@ -2,9 +2,13 @@
 
 <img src="public/logo/only-chat-indigo.svg" alt="only-chat" width="160"/>
 
+# Only Chat
+
 **Only Chat, not only chat.**
 
 开源自托管，揣兜随心聊；能简亦能强，插件随你造。
+
+[<img src="https://deploy.workers.cloudflare.com/button" alt="Deploy to Cloudflare">](https://deploy.workers.cloudflare.com/?url=https://github.com/dragon-fish/only-chat)
 
 </div>
 
