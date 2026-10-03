@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, onMounted, ref, shallowRef, watch } from 'vue'
+import { computed, inject, ref, shallowRef, watch } from 'vue'
 import { ExternalLinkIcon } from '@lucide/vue'
 import type { Component } from 'vue'
 import { toast } from 'vue-sonner'
@@ -41,16 +41,21 @@ watch(controls, next => {
   markSaved()
 }, { immediate: true })
 
-onMounted(async () => {
+// Keyed on the plugin, not on mounting: going from one plugin's configuration straight to another's
+// reuses this view, and only the prop changes.
+watch(() => props.pluginId, async (pluginId) => {
+  loading.value = true
+  custom.value = null
   try {
     if (!sync.settingsLoaded) await sync.loadSettings()
-    if (host) custom.value = (await host.ensureConfigRenderer(props.pluginId) ?? null) as Component | null
+    const loaded = host ? (await host.ensureConfigRenderer(pluginId) ?? null) as Component | null : null
+    if (pluginId === props.pluginId) custom.value = loaded
   } catch (error) {
     toast.error(error instanceof Error ? error.message : String(error))
   } finally {
-    loading.value = false
+    if (pluginId === props.pluginId) loading.value = false
   }
-})
+}, { immediate: true })
 
 async function setOverlayOpen(next: boolean) {
   if (next) { routeOverlay.setOpen(true); return }
@@ -90,7 +95,7 @@ ResponsiveOverlay(
     Skeleton(class="h-10 w-full")
     Skeleton(class="h-10 w-full")
     span.sr-only 加载中…
-  component(:is="custom" v-else-if="custom" :plugin-id="pluginId")
+  component(:is="custom" v-else-if="custom" :key="pluginId" :plugin-id="pluginId")
   .flex.flex-col.gap-5(v-else)
     p.text-sm.text-muted-foreground(v-if="manifest.configIntro")
       | {{ manifest.configIntro.why }}

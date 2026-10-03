@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, onMounted, shallowRef } from 'vue'
+import { computed, inject, shallowRef, watch } from 'vue'
 import type { Component } from 'vue'
 import { RouterLink } from 'vue-router'
 import PageBackButton from '@/client/components/layout/page-back-button.vue'
@@ -17,14 +17,20 @@ const title = computed(() => manifest.value?.settingsEntry?.label ?? manifest.va
 const panel = shallowRef<Component | null>(null)
 const loading = shallowRef(true)
 
-onMounted(async () => {
+// Keyed on the plugin, not on mounting: moving between two plugins' data pages reuses this view,
+// and only the prop changes.
+watch(() => props.pluginId, async (pluginId) => {
+  loading.value = true
+  panel.value = null
   try {
-    if (host) panel.value = (await host.ensureSettingsPanel(props.pluginId) ?? null) as Component | null
+    const loaded = host ? (await host.ensureSettingsPanel(pluginId) ?? null) as Component | null : null
+    // A slower load for the page just left must not land on the one now showing.
+    if (pluginId === props.pluginId) panel.value = loaded
   }
   finally {
-    loading.value = false
+    if (pluginId === props.pluginId) loading.value = false
   }
-})
+}, { immediate: true })
 </script>
 
 <template lang="pug">
@@ -49,7 +55,7 @@ onMounted(async () => {
       Alert(v-else-if="!panel")
         AlertTitle 暂无可管理的内容
         AlertDescription 这个插件没有提供数据管理界面。
-      component(:is="panel" v-else :plugin-id="pluginId")
+      component(:is="panel" v-else :key="pluginId" :plugin-id="pluginId")
 
       Button(v-if="manifest" as-child variant="ghost" class="min-h-10 self-start")
         RouterLink(:to="`/settings/plugins/${pluginId}`") 打开 {{ manifest.name }} 的配置
