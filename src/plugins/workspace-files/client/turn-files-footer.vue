@@ -23,6 +23,7 @@ const resolving = ref<string | null>(null)
 const error = ref<string | null>(null)
 
 function scopeLabel(path: string): string {
+  if (path.startsWith('/memory/')) return '记忆'
   return path.startsWith('/project/') ? '项目' : '会话'
 }
 
@@ -35,7 +36,8 @@ async function open(file: TurnFile) {
   error.value = null
   try {
     const body = await api.conversationFiles(props.message.conversation_id)
-    const match = [...body.files, ...body.projectFiles].find(record => record.path === file.path)
+    const memory = body.memoryFiles ? [...body.memoryFiles.user, ...body.memoryFiles.project] : []
+    const match = [...body.files, ...body.projectFiles, ...memory].find(record => record.path === file.path)
     if (!match) {
       error.value = `${basename(file.path)} 已不在工作区`
       return

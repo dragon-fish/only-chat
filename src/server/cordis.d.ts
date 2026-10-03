@@ -8,6 +8,7 @@ import type { ConversationForked } from './plugins/hub/conversations'
 import type { ApiApp, PluginApi } from './plugins/api'
 import type { ModelCatalog } from './plugins/model-catalog'
 import type { ToolRegistry } from './plugins/tools'
+import type { PromptSections } from './plugins/prompt-sections'
 import type { PluginConfig } from './plugins/plugin-config'
 import type { PluginChannel } from './plugins/plugin-channel'
 import type { ImageBackends } from './plugins/artifacts/backends'
@@ -26,6 +27,7 @@ declare module 'cordis' {
     pluginApi: PluginApi
     modelCatalog: ModelCatalog
     tools: ToolRegistry
+    promptSections: PromptSections
     pluginConfig: PluginConfig
     pluginChannel: PluginChannel
     imageBackends: ImageBackends
@@ -50,7 +52,8 @@ declare module 'cordis' {
     'conversation/before-purge'(payload: { userId: number, conversationId: number }): Promise<void>
     /**
      * A generation is about to be sent (spec §3.5, §4.5). Awaited through `ctx.parallel` before the prompt
-     * is built: a plugin prepares its per-turn state in `turn.state`, and one may set `turn.labeler`.
+     * is built: a plugin prepares its per-turn state in `turn.state`, may add `turn.notes`, and one
+     * plugin may set `turn.labeler`.
      */
     'generation/prepare'(turn: GenerationTurn): Promise<void>
     /**

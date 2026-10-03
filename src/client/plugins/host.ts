@@ -7,6 +7,7 @@ export type ConfigRenderer = unknown
 export type MessageFooterRenderer = unknown
 export type SettingsPanelRenderer = unknown
 export type WorkspacePanelRenderer = unknown
+export type ProjectPanelRenderer = unknown
 export type NotificationRenderer = unknown
 
 /** What a plugin asks of the workspace panel; the shell decides whether to grant it. */
@@ -40,6 +41,11 @@ export interface ClientPluginContext {
    * quota. Client surfaces are namespaced by plugin id the same way routes are.
    */
   settingsPanel: { register(component: SettingsPanelRenderer): () => void }
+  /**
+   * This plugin's tab in Project settings, given `pluginId` and `projectId`. The tab is declared in
+   * the manifest (`projectTab`) so the strip needs nothing loaded; this is the component behind it.
+   */
+  projectPanel: { register(component: ProjectPanelRenderer): () => void }
   /**
    * This plugin's tab in the chat view's workspace panel. The tab itself is declared in the
    * manifest so the strip needs nothing loaded; this is the component behind it, given
@@ -81,6 +87,7 @@ export class ClientPluginHost {
   private readonly messageFooters = new Map<string, MessageFooterRenderer>()
   private readonly notificationRenderers = new Map<string, NotificationRenderer>()
   private readonly settingsPanels = new Map<string, SettingsPanelRenderer>()
+  private readonly projectPanels = new Map<string, ProjectPanelRenderer>()
   private readonly eventListeners = new Map<string, Set<(payload: unknown) => void>>()
   private readonly workspacePanels = new Map<string, WorkspacePanelRenderer>()
   private readonly attentionListeners = new Set<(pluginId: string, request: WorkspaceAttention) => void>()
@@ -147,6 +154,14 @@ export class ClientPluginHost {
     }
   }
 
+  async ensureProjectPanel(pluginId: string): Promise<ProjectPanelRenderer | undefined> {
+    const existing = this.projectPanels.get(pluginId)
+    if (existing !== undefined) return existing
+    if (!this.loaders[pluginId]) return undefined
+    await this.ensurePlugin(pluginId)
+    return this.projectPanels.get(pluginId)
+  }
+
   /** Historical settings pages use this path even when the plugin is now globally disabled. */
   async ensureSettingsPanel(pluginId: string): Promise<SettingsPanelRenderer | undefined> {
     const existing = this.settingsPanel(pluginId)
@@ -195,6 +210,17 @@ export class ClientPluginHost {
             this.settingsPanels.set(pluginId, component)
             const unregister = () => {
               if (this.settingsPanels.get(pluginId) === component) this.settingsPanels.delete(pluginId)
+            }
+            registrations.push(unregister)
+            return unregister
+          },
+        },
+        projectPanel: {
+          register: (component) => {
+            if (this.projectPanels.has(pluginId)) throw new Error(`project panel already registered: ${pluginId}`)
+            this.projectPanels.set(pluginId, component)
+            const unregister = () => {
+              if (this.projectPanels.get(pluginId) === component) this.projectPanels.delete(pluginId)
             }
             registrations.push(unregister)
             return unregister

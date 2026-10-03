@@ -8,7 +8,7 @@ import type {
   AttachmentProviderFileRow, AttachmentRow, MessageRow, ModelRow, ProviderInterfaceRow, ProviderRow, ConversationRow, UserRow,
 } from '../../db/schema'
 import type {
-  Message, MessageStatus, PersistedStatus, ConversationParams, ConversationPluginSettings, Usage, UserSettings,
+  Message, MessageNote, MessageStatus, PersistedStatus, ConversationParams, ConversationPluginSettings, Usage, UserSettings,
 } from '@/shared/models'
 import type { FilePart, ImagePart, Part, ToolResultPart } from '@/shared/parts'
 
@@ -288,18 +288,29 @@ export async function replaceMessagePartsIfCurrentHead(
   return updated?.id === expected.id
 }
 
-export async function insertMessage(db: DB, userId: number, row: Omit<MessageRow, 'id'>): Promise<MessageRow> {
+/** `notes` travels with a copied message — a fork replays them like the rest of its history. */
+export async function insertMessage(db: DB, userId: number, row: Omit<MessageRow, 'id' | 'notes'> & { notes?: MessageNote[] | null }): Promise<MessageRow> {
   const inserted = await db.$client.prepare(`
-    INSERT INTO messages (conversation_id, parent_id, seq, role, parts, provider_id, model_id, usage, status, error, created_at)
-    SELECT ?, ?, ?, ?, json(?), ?, ?, ?, ?, ?, ?
+    INSERT INTO messages (conversation_id, parent_id, seq, role, parts, provider_id, model_id, usage, status, error, notes, created_at)
+    SELECT ?, ?, ?, ?, json(?), ?, ?, ?, ?, ?, ?, ?
      WHERE EXISTS (SELECT 1 FROM conversations WHERE id = ? AND user_id = ?)
        AND (? IS NULL OR EXISTS (SELECT 1 FROM messages WHERE id = ? AND conversation_id = ?))
     RETURNING id
   `).bind(row.conversation_id, row.parent_id, row.seq, row.role, JSON.stringify(row.parts), row.provider_id, row.model_id,
-    row.usage === null ? null : JSON.stringify(row.usage), row.status, row.error, row.created_at,
+    row.usage === null ? null : JSON.stringify(row.usage), row.status, row.error,
+    row.notes ? JSON.stringify(row.notes) : null, row.created_at,
     row.conversation_id, userId, row.parent_id, row.parent_id, row.conversation_id).first<{ id: number }>()
   if (!inserted) throw new Error('conversation or parent message not found')
   return (await getMessage(db, inserted.id, userId))!
+}
+
+/** Adds notes to the end of a message's own, scoped to the user like every other message write. */
+export async function appendMessageNotes(db: DB, id: number, userId: number, notes: readonly MessageNote[]): Promise<MessageNote[]> {
+  const message = await getMessage(db, id, userId)
+  if (!message) throw new Error(`message ${id} not found`)
+  const next = [...(message.notes ?? []), ...notes]
+  await db.update(messages).set({ notes: next }).where(eq(messages.id, id))
+  return next
 }
 
 export async function deleteMessage(db: DB, id: number, userId: number): Promise<void> {
@@ -322,7 +333,7 @@ export async function deleteMessageIfUnreferenced(db: DB, id: number, userId: nu
 export async function insertAssistantChildIfAbsent(
   db: DB,
   userId: number,
-  row: Omit<MessageRow, 'id'> & { role: 'assistant'; parent_id: number },
+  row: Omit<MessageRow, 'id' | 'notes'> & { role: 'assistant'; parent_id: number },
 ): Promise<MessageRow | undefined> {
   const inserted = await db.$client.prepare(`
     INSERT INTO messages (

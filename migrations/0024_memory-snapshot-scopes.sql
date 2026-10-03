@@ -1,0 +1,1 @@
+ALTER TABLE `memory_snapshots` ADD `scopes` text DEFAULT '' NOT NULL;

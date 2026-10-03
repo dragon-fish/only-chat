@@ -3,9 +3,10 @@ import { check, index, integer, primaryKey, sqliteTable, text, uniqueIndex, type
 import type { CatalogMatches, ModelMetadata, ModelMetadataOverride } from '@/shared/model-metadata'
 import type { ArtifactRunStatus, ArtifactUsage, ImageExtraBody, ImageGenerationParams } from '@/shared/artifacts'
 import type { Part } from '@/shared/parts'
+import type { WorkspaceMount } from '@/shared/workspace-files'
 import type { McpServerStatus, McpTransport, StoredMcpHeader } from '@/shared/mcp'
 import type {
-  InterfaceProtocol, PersistedStatus, ConversationParams, ConversationPluginSettings, Usage, UserSettings,
+  InterfaceProtocol, PersistedStatus, ConversationParams, ConversationPluginSettings, ProjectPluginSettings, Usage, UserSettings, MessageNote,
 } from '@/shared/models'
 
 export const users = sqliteTable('users', {
@@ -150,6 +151,8 @@ export const projects = sqliteTable('projects', {
   provider_id: integer(),
   model_id: text(),
   params: text({ mode: 'json' }).$type<ConversationParams>(),
+  /** Per-plugin Project settings, keyed by plugin id and validated through `projectConfigSchema`. */
+  plugin_settings: text({ mode: 'json' }).$type<ProjectPluginSettings>(),
   created_at: integer().notNull(),
   updated_at: integer().notNull(),
 }, (t) => [index('projects_user_updated_idx').on(t.user_id, t.updated_at)])
@@ -197,6 +200,11 @@ export const messages = sqliteTable('messages', {
   usage: text({ mode: 'json' }).$type<Usage>(),
   status: text().$type<PersistedStatus>().notNull(),
   error: text(),
+  /**
+   * What plugins added to a user message for the model alone — reminders, never shown as typed.
+   * Stored on the message because history is rebuilt every turn and a note has to come back with it.
+   */
+  notes: text({ mode: 'json' }).$type<MessageNote[]>(),
   created_at: integer().notNull(),
 }, (t) => [
   uniqueIndex('messages_conversation_seq_uq').on(t.conversation_id, t.seq),
@@ -220,16 +228,25 @@ export const attachments = sqliteTable('attachments', {
  * A named, mutable pointer in the workspace filesystem. Writes never mutate a row's content: they
  * append an immutable version and advance `current_version`.
  *
- * A live row has exactly one of `project_id` and `conversation_id` set. A trashed row may have
- * neither: deleting a conversation detaches its files instead of cascading them away, and those
- * orphans are listed and reclaimed on their own. The service enforces this, not a CHECK, so the
- * scope model can change without rebuilding the table.
+ * `mount` says which mount a row belongs to; never infer it from the id columns, which cannot tell
+ * `/project` from `/memory/project` or a user's memory from an orphan:
+ *
+ * | mount            | project_id | conversation_id                |
+ * | project          | set        | null                           |
+ * | conversation     | null       | set; null once orphaned        |
+ * | memory/user      | null       | null                           |
+ * | memory/project   | set        | null                           |
+ *
+ * Deleting a conversation detaches its files instead of cascading them away, and those orphans are
+ * listed and reclaimed on their own. The service enforces this, not a CHECK, so the scope model can
+ * change without rebuilding the table.
  */
 export const workspaceFiles = sqliteTable('workspace_files', {
   id: integer().primaryKey({ autoIncrement: true }),
   user_id: integer().notNull().references(() => users.id, { onDelete: 'cascade' }),
   project_id: integer().references(() => projects.id, { onDelete: 'cascade' }),
   conversation_id: integer().references(() => conversations.id, { onDelete: 'cascade' }),
+  mount: text().$type<WorkspaceMount>().notNull(),
   relative_path: text().notNull(),
   current_version: integer().notNull().default(0),
   created_at: integer().notNull(),
@@ -239,8 +256,9 @@ export const workspaceFiles = sqliteTable('workspace_files', {
 }, (t) => [
   // Partial, because a deleted path must be reusable. This cannot move to the service: two
   // concurrent creates would both pass an existence check and then both insert.
-  uniqueIndex('workspace_files_project_path_uq').on(t.project_id, t.relative_path).where(sql`${t.deleted_at} IS NULL AND ${t.project_id} IS NOT NULL`),
+  uniqueIndex('workspace_files_project_path_uq').on(t.project_id, t.mount, t.relative_path).where(sql`${t.deleted_at} IS NULL AND ${t.project_id} IS NOT NULL`),
   uniqueIndex('workspace_files_conversation_path_uq').on(t.conversation_id, t.relative_path).where(sql`${t.deleted_at} IS NULL AND ${t.conversation_id} IS NOT NULL`),
+  uniqueIndex('workspace_files_user_memory_path_uq').on(t.user_id, t.relative_path).where(sql`${t.deleted_at} IS NULL AND ${t.mount} = 'memory/user'`),
   index('workspace_files_project_idx').on(t.project_id, t.deleted_at),
   index('workspace_files_conversation_idx').on(t.conversation_id, t.deleted_at),
 ])
@@ -267,6 +285,46 @@ export const workspaceFileVersions = sqliteTable('workspace_file_versions', {
   uniqueIndex('workspace_file_versions_file_version_uq').on(t.file_id, t.version),
   index('workspace_file_versions_attachment_idx').on(t.attachment_id),
 ])
+
+/**
+ * What the memory plugin knows about a file under `/memory`: the line the catalog shows for it. What
+ * the memory is about is its path, so nothing here repeats it.
+ *
+ * Keyed on the file rather than its path, so a rename carries the description along, a trashed
+ * file drops out of the catalog through the join, and purging the file cascades this away. A file
+ * under `/memory` with no row here is listed as undescribed.
+ */
+export const memories = sqliteTable('memories', {
+  file_id: integer().primaryKey().references(() => workspaceFiles.id, { onDelete: 'cascade' }),
+  user_id: integer().notNull().references(() => users.id, { onDelete: 'cascade' }),
+  description: text().notNull(),
+  updated_at: integer().notNull(),
+})
+
+/**
+ * What a conversation was last told about memory: the catalog its first memory turn carried, plus
+ * every reminder since, folded into one state. A difference from what is there now is what the next
+ * user message is reminded of; the catalog and reminders themselves live on the messages they end.
+ *
+ * `project_id` is deliberately not a foreign key: moving the conversation, or deleting the Project,
+ * has to leave it mismatched so the next turn says so.
+ */
+export const memoryState = sqliteTable('memory_state', {
+  conversation_id: integer().primaryKey().references(() => conversations.id, { onDelete: 'cascade' }),
+  project_id: integer(),
+  /** Which layers were open, as `scopesKey` writes them. */
+  scopes: text().notNull(),
+  /** The memory files it knows, by file id, in the open layers. */
+  known: text({ mode: 'json' }).$type<Record<string, KnownMemoryFile>>().notNull(),
+  updated_at: integer().notNull(),
+})
+
+/** One memory file as a conversation last knew it. */
+export interface KnownMemoryFile {
+  path: string
+  version: number
+  description: string | null
+}
 
 export const artifactRuns = sqliteTable('artifact_runs', {
   id: integer().primaryKey({ autoIncrement: true }),
@@ -433,3 +491,4 @@ export type ArtifactRow = typeof artifacts.$inferSelect
 export type AttachmentProviderFileRow = typeof attachmentProviderFiles.$inferSelect
 export type WorkspaceFileRow = typeof workspaceFiles.$inferSelect
 export type WorkspaceFileVersionRow = typeof workspaceFileVersions.$inferSelect
+export type MemoryRow = typeof memories.$inferSelect

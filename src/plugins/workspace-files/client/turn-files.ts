@@ -1,4 +1,5 @@
 import type { Part } from '@/shared/parts'
+import { MEMORY_SAVE_TOOL_ID } from '@/shared/plugins'
 import { EDIT_FILE_TOOL_ID, RESTORE_FILE_TOOL_ID, WRITE_FILE_TOOL_ID } from '../shared'
 import type { RestoreFileOutput, WriteFileOutput } from '../shared'
 
@@ -27,10 +28,11 @@ export function filesWrittenInTurn(parts: readonly Part[]): TurnFile[] {
     if (part.type !== 'tool_result' || isFailure(part.content)) continue
 
     let file: TurnFile | undefined
-    // An edit leaves behind a version like any other write, and its output is a write's output.
-    if (part.name === WRITE_FILE_TOOL_ID || part.name === EDIT_FILE_TOOL_ID) {
+    // An edit leaves behind a version like any other write, and its output is a write's output. So
+    // does a memory save that carried content; one that only described a file has no version.
+    if (part.name === WRITE_FILE_TOOL_ID || part.name === EDIT_FILE_TOOL_ID || part.name === MEMORY_SAVE_TOOL_ID) {
       const output = part.content as WriteFileOutput
-      if (typeof output?.path !== 'string') continue
+      if (typeof output?.path !== 'string' || typeof output.version !== 'number') continue
       file = {
         path: output.path,
         version: output.version,

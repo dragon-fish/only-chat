@@ -76,7 +76,7 @@ async function fixture(toolIds: readonly string[] = WORKSPACE_TOOLS, extraParts:
   const path = [{ id: user!.id, conversation_id: conversation!.id, parent_id: null, seq: 0, role: 'user' as const, parts: user!.parts, provider_id: null, model_id: null, usage: null, status: 'done' as const, error: null, created_at: 0 }]
   // What the hub does at generation start: plugins prepare the turn their tools then run in.
   const turn: GenerationTurn = {
-    userId: 1, conversationId: conversation!.id, projectId: project!.id, toolIds, path, state: new Map(),
+    userId: 1, conversationId: conversation!.id, projectId: project!.id, toolIds, path, state: new Map(), notes: [],
     canReadFile: mime => mime.startsWith('image/'),
   }
   await ctx.parallel('generation/prepare', turn)
@@ -181,8 +181,8 @@ describe('workspace files and file references', () => {
       user_id: 1, sha256: (crypto.randomUUID() + crypto.randomUUID()).replaceAll('-', '').slice(0, 64), mime: 'image/png', size: 1, r2_key: 'refs/lone', origin: 'upload', created_at: 0,
     }).returning()
     for (const [id, name] of [[f.upload.id, 'a.png'], [referenced, 'b.png'], [lone!.id, 'c.png']] as const) {
-      expect(await f.files.copy({ from: { attachment: { attachmentId: id, mime: 'image/png', size: 1 } }, toPath: `/project/${name}`, conversationId: f.conversationId, projectId: f.projectId })).toMatchObject({ ok: true })
-      await f.files.deleteByPath({ path: `/project/${name}`, conversationId: f.conversationId, projectId: f.projectId })
+      expect(await f.files.copy({ from: { attachment: { attachmentId: id, mime: 'image/png', size: 1 } }, toPath: `/project/${name}`, conversationId: f.conversationId, projectId: f.projectId, memory: { user: false, project: false } })).toMatchObject({ ok: true })
+      await f.files.deleteByPath({ path: `/project/${name}`, conversationId: f.conversationId, projectId: f.projectId, memory: { user: false, project: false } })
     }
     const trashed = await f.db.select({ id: workspaceFiles.id }).from(workspaceFiles).where(eq(workspaceFiles.project_id, f.projectId))
     await f.files.purge(trashed.map(row => row.id))

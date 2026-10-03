@@ -21,4 +21,11 @@ export interface GenerationTurn {
   canReadFile(mime: string): boolean
   /** Set by at most one plugin. Absent, files reach the model with nothing said about them. */
   labeler?: FileLabeler
+  /**
+   * New notes for user messages on this path, as `<system-reminder>` text the person never typed.
+   * The core stores them on their messages (`messages.notes`) before building the prompt, and every
+   * later turn replays them from there; a plugin adds a note once, and can tell it already did from
+   * the message's own `notes`.
+   */
+  notes: Array<{ pluginId: string, messageId: number, text: string, at?: 'start' }>
 }

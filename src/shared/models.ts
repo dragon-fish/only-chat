@@ -62,6 +62,10 @@ export type ConversationParams = z.infer<typeof ConversationParamsSchema>
 export const ConversationPluginSettingsSchema = z.record(z.string(), z.record(z.string(), z.unknown()))
 export type ConversationPluginSettings = z.infer<typeof ConversationPluginSettingsSchema>
 
+/** The same per-plugin shape kept on a Project, validated through `projectConfigSchema`. */
+export const ProjectPluginSettingsSchema = z.record(z.string(), z.record(z.string(), z.unknown()))
+export type ProjectPluginSettings = z.infer<typeof ProjectPluginSettingsSchema>
+
 export const UserSettingsSchema = z.object({
   plugins: z.record(z.string(), z.boolean()).default({}),
   /**
@@ -132,10 +136,19 @@ export const ProjectSchema = z.object({
   provider_id: z.number().int().nullable(),
   model_id: z.string().nullable(),
   params: ConversationParamsSchema.nullable(),
+  /** Null until a plugin's Project settings are first saved; both mean "every plugin at its defaults". */
+  plugin_settings: ProjectPluginSettingsSchema.nullable().optional(),
   created_at: z.number(),
   updated_at: z.number(),
 })
 export type Project = z.infer<typeof ProjectSchema>
+
+/**
+ * A plugin's note on a user message, sent to the model as a reminder and never shown. It ends the
+ * message unless `at` is `'start'`, which puts it ahead of what the person said.
+ */
+export const MessageNoteSchema = z.object({ plugin: z.string(), text: z.string(), at: z.literal('start').optional() })
+export type MessageNote = z.infer<typeof MessageNoteSchema>
 
 export const MessageSchema = z.object({
   id: z.number().int(),
@@ -149,6 +162,8 @@ export const MessageSchema = z.object({
   usage: UsageSchema.nullable(),
   status: MessageStatusSchema,
   error: z.string().nullable(),
+  /** Absent or null on most messages; see `MessageNote`. */
+  notes: z.array(MessageNoteSchema).nullable().optional(),
   created_at: z.number(),
 })
 export type Message = z.infer<typeof MessageSchema>

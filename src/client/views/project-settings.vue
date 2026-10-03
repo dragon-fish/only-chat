@@ -29,6 +29,9 @@ import { Spinner } from '@/client/ui/spinner'
 import ModelPicker from '@/client/components/model-picker.vue'
 import ReasoningControls from '@/client/components/reasoning-controls.vue'
 import ProjectIconEditor from '@/client/components/project-icon-editor.vue'
+import ProjectPluginPanel from '@/client/components/project-plugin-panel.vue'
+import { projectTabs } from '@/shared/plugins'
+import { pluginManifests } from '@/shared/plugin-manifests'
 import { DISCONNECTED_MESSAGE, fieldLooksBlank, optionalNumber, projectFormFrom, projectUpdateCommand, reasoningStopsFor, REASONING_ORDER, useSyncStore, type ProjectFormState } from '@/client/stores/sync'
 import { useConfigStore } from '@/client/stores/config'
 import { projectPresentation } from '@/client/lib/ui-models'
@@ -39,11 +42,15 @@ const router = useRouter()
 const sync = useSyncStore()
 const config = useConfigStore()
 
-const sections = [
+/** `plugin:<id>` for a plugin's own tab; those save themselves rather than through 保存 below. */
+type SectionKey = 'basic' | 'model' | `plugin:${string}`
+const pluginTabs = computed(() => projectTabs(pluginManifests, sync.settings.plugins))
+const sections = computed((): Array<{ key: SectionKey, label: string }> => [
   { key: 'basic', label: '基本' },
   { key: 'model', label: '模型与参数' },
-] as const
-type SectionKey = (typeof sections)[number]['key']
+  ...pluginTabs.value.map(tab => ({ key: `plugin:${tab.pluginId}` as const, label: tab.label })),
+])
+const sectionPlugin = computed(() => (section.value.startsWith('plugin:') ? section.value.slice('plugin:'.length) : null))
 
 const section = ref<SectionKey>('basic')
 const routeOverlay = useRouteOverlay(() => (
@@ -163,7 +170,7 @@ watch(connected, value => {
 })
 
 function selectSection(value: unknown) {
-  if (sections.some(item => item.key === value)) section.value = value as SectionKey
+  if (sections.value.some(item => item.key === value)) section.value = value as SectionKey
 }
 
 async function setOverlayOpen(next: boolean) {
@@ -282,6 +289,7 @@ ResponsiveOverlay(
             id="oc-project-prompt" v-model="form.system_prompt" class="min-h-40"
             placeholder="留空表示不附加项目提示词")
           FieldDescription 会话开始生成时，项目提示词在前、会话提示词在后，中间固定两个换行。
+    ProjectPluginPanel(v-else-if="sectionPlugin" :key="sectionPlugin" :plugin-id="sectionPlugin" :project-id="project.id")
     FieldGroup(v-else)
         Field
           FieldLabel 默认模型

@@ -139,6 +139,24 @@ describe('project realtime commands', () => {
     expect((await getConversation(db, s.id, 1))!.project_id).toBeNull()
   })
 
+  it('keeps Project plugin settings per plugin, validated through the plugin\'s schema', async () => {
+    const db = createDb(env.DB)
+    await seedTestUser(db)
+    const project = await createProject(db, { user_id: 1, name: 'p' })
+    const { ws, next, nextAfter } = await connect(await seedTestUser())
+
+    ws.send(JSON.stringify({ type: 'project.update', project_id: project.id, plugin_settings: { memory: { project_memory: false } } }))
+    expect(await next('project.updated')).toMatchObject({ project: { plugin_settings: { memory: { project_memory: false, use_user_memory: true } } } })
+
+    // Saving another field leaves the plugin's settings alone.
+    ws.send(JSON.stringify({ type: 'project.update', project_id: project.id, name: 'renamed' }))
+    expect(await nextAfter('project.updated', 2)).toMatchObject({ project: { name: 'renamed', plugin_settings: { memory: { project_memory: false } } } })
+
+    ws.send(JSON.stringify({ type: 'project.update', project_id: project.id, plugin_settings: { tavily: { anything: 1 } }, request_id: 'r3' }))
+    expect(await next('error')).toMatchObject({ type: 'error', request_id: 'r3' })
+    expect((await getProject(db, project.id, 1))!.plugin_settings).toEqual({ memory: { project_memory: false, use_user_memory: true } })
+  })
+
   it('answers a project.update for a project it does not own with an error carrying request_id', async () => {
     const db = createDb(env.DB)
     await seedTestUser(db)

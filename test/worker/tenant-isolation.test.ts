@@ -1,7 +1,7 @@
 import { env } from 'cloudflare:workers'
 import { eq } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { attachmentProviderFiles, attachments, mcpServers, models, providerInterfaces, providers, users } from '@/server/db/schema'
+import { attachmentProviderFiles, attachments, mcpServers, memories, models, providerInterfaces, providers, users, workspaceFiles } from '@/server/db/schema'
 import { createConversation, getConversation, insertMessage, listMessages } from '@/server/plugins/hub/conversations'
 import { createProject } from '@/server/plugins/hub/projects'
 import type { ModelListSnapshot, ProviderWithInterfaces } from '@/shared/models'
@@ -107,6 +107,31 @@ describe('authenticated REST tenant isolation', () => {
     expect.soft((await bobRequest('POST', '/plugins/mcp/servers/alice001/authorize')).status).toBe(404)
     expect.soft((await bobRequest('DELETE', '/plugins/mcp/servers/alice001')).status).toBe(404)
     expect(await ctx.db.orm.query.mcpServers.findFirst({ where: eq(mcpServers.id, server!.id) })).toMatchObject({ name: 'Alice MCP' })
+  })
+
+  it('keeps one account\'s memory out of another\'s file panel and archives', async () => {
+    const { ctx, bobRequest, aliceId, bobId } = await tenants()
+    for (const id of [aliceId, bobId]) {
+      await ctx.db.orm.update(users).set({ settings: { plugins: { memory: true, workspace_files: true, file_reader: true } } }).where(eq(users.id, id))
+    }
+    const project = await createProject(ctx.db.orm, { user_id: aliceId, name: 'Alice project' })
+    const [file] = await ctx.db.orm.insert(workspaceFiles).values({
+      user_id: aliceId, project_id: project.id, conversation_id: null, mount: 'memory/project', relative_path: 'secret.md',
+      current_version: 0, created_at: 0, updated_at: 0, deleted_at: null,
+    }).returning()
+    await ctx.db.orm.insert(memories).values({ file_id: file!.id, user_id: aliceId, description: 'Alice only', updated_at: 0 })
+    await ctx.db.orm.insert(workspaceFiles).values({
+      user_id: aliceId, project_id: null, conversation_id: null, mount: 'memory/user', relative_path: 'prefs.md',
+      current_version: 0, created_at: 0, updated_at: 0, deleted_at: null,
+    })
+    const bobs = await createConversation(ctx.db.orm, { user_id: bobId, title: 'Bob', provider_id: null, model_id: null })
+
+    const listing = await (await bobRequest('GET', `/plugins/workspace_files/conversations/${bobs.id}/files`)).json() as { memoryFiles: { user: unknown[], project: unknown[] } }
+    expect.soft(listing.memoryFiles).toEqual({ user: [], project: [] })
+    expect.soft((await bobRequest('GET', `/plugins/workspace_files/projects/${project.id}/memory/archive`)).status).toBe(404)
+    expect.soft((await bobRequest('GET', `/plugins/workspace_files/files/${file!.id}`)).status).toBe(404)
+    expect.soft(await (await bobRequest('GET', '/plugins/memory/memories')).json()).toEqual({ memories: [] })
+    expect.soft((await bobRequest('GET', `/plugins/memory/projects/${project.id}/memories`)).status).toBe(404)
   })
 
   it('lists a conversation\'s assets only to its owner', async () => {

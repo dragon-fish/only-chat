@@ -15,7 +15,7 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); document.body.innerHTML = '' 
 function record(id: number, path: string): FileRecord {
   const relativePath = path.replace(/^\/(conversation|project)\//, '')
   return {
-    id, path, relativePath, projectId: null, conversationId: 30, fileSize: 10, totalLines: 1,
+    id, path, relativePath, mount: 'conversation', projectId: null, conversationId: 30, fileSize: 10, totalLines: 1,
     mime: 'text/plain; charset=utf-8', version: 1, updatedAt: 0, createdAt: 0,
     sourceConversationId: null, sourceMessageId: null,
   }

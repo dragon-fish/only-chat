@@ -37,16 +37,41 @@ requests are cross-site and arrive without one; such a route carries its own sho
 instead.
 
 A plugin that cannot work without another says so in its manifest (`requires`), and its server half
-injects that plugin's service. The two are checked against each other by a test. Enabling a plugin
+injects that plugin's service — or, when it works through the other plugin's tools rather than a
+service (memory through the workspace file tools), the test lists it as a tool requirement. The two
+are checked against each other by that test. Enabling a plugin
 enables what it requires and disabling one disables what requires it; a conversation's tool
 selection follows the same rule, and each generation adds required tools rather than trusting a
 stored selection. Stored switches count a requirement as on, so settings saved before a plugin gained
 one keep working.
 
+A plugin can also keep settings per Project: it declares `projectConfigSchema`, and
+`projects.plugin_settings` holds the values keyed by plugin id, validated and merged per plugin by
+`project.update` the way conversation settings are. Core renders no form for them; a plugin that
+declares `projectTab` gets a tab in Project settings, and its client half registers the component
+behind it with `ctx.projectPanel`. The memory plugin is the first user of both.
+
 A plugin's routes run on the Worker and its tools run inside the UserHub Durable Object, which are
 different cordis roots. One plugin object injecting both would sit PENDING forever on whichever
 service its side does not have, so the two halves are separate plugins — see
 `src/plugins/workspace-files/server/`.
+
+## Plugin prompt contributions
+
+Tool descriptions say how to call a tool; they cannot say when to act unprompted. A plugin with
+standing instructions registers a system prompt section with `ctx.promptSections` (hub side). A
+section is a synchronous function of the turn's tool ids and nothing else, rendered after the user's
+own prompt in `pluginManifests` order, each wrapped in `<plugin id="…">`. Tool definitions precede
+the system prompt in the cached prefix, so a section changes only when the tools already did.
+
+Text that varies per conversation goes on a user message instead, as a note: a plugin adds it to
+`GenerationTurn.notes` during `generation/prepare`, ahead of what the person said (`at: 'start'`) or
+after it. The core stores each new note on its message (`messages.notes`) before building the prompt,
+in plugin manifest order, and every later turn replays it from there as a `<system-reminder>` —
+whether or not the plugin is still on. What was sent stays sent; a fork copies the notes with the
+messages. The memory plugin puts its catalog on the first user message memory is on for, and tells
+the conversation about later changes — another conversation's writes, a switch, a new Project — in
+notes on later messages.
 
 ## Image backends
 
@@ -84,3 +109,5 @@ binary workspace files and file understanding.
 `docs/superpowers/specs/2026-09-29-mcp-client-design.md` defines the remote MCP client plugin.
 `docs/superpowers/specs/2026-09-29-comfyui-plugin-design.md` defines the ComfyUI plugin and image
 backends.
+`docs/superpowers/specs/2026-10-03-memory-plugin-design.md` defines the memory plugin, the memory
+mounts and plugin prompt contributions.

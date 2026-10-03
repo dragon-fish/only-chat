@@ -7,12 +7,22 @@ import type { ArtifactDto, ArtifactPage, ArtifactRunDto, CreateImageRunInput, Cr
 import type { PluginConfigStatusMap } from '@/shared/plugins'
 import type { FileRecord } from '@/shared/workspace-files'
 import type { ConversationAsset } from '@/shared/conversation-assets'
-import { FILE_READER_PLUGIN_ID, MCP_PLUGIN_ID, WORKSPACE_FILES_PLUGIN_ID } from '@/shared/plugins'
+import { FILE_READER_PLUGIN_ID, MCP_PLUGIN_ID, MEMORY_PLUGIN_ID, WORKSPACE_FILES_PLUGIN_ID } from '@/shared/plugins'
+import type { MemoryListItem } from '@/plugins/memory/shared'
 import type { McpServerCreate, McpServerPatch, McpServerView, McpToolsResponse } from '@/shared/mcp'
 
 /** A plugin's HTTP surface lives under its own id, so two plugins can never claim the same path. */
 const WORKSPACE_FILES_API = `/api/plugins/${WORKSPACE_FILES_PLUGIN_ID}`
 const MCP_API = `/api/plugins/${MCP_PLUGIN_ID}`
+const MEMORY_API = `/api/plugins/${MEMORY_PLUGIN_ID}`
+
+/** Everything one conversation can reach. `memoryFiles` is present only while memory is on. */
+export interface ConversationFiles {
+  files: FileRecord[]
+  projectFiles: FileRecord[]
+  projectId: number | null
+  memoryFiles?: { user: FileRecord[]; project: FileRecord[] }
+}
 
 /** A listing that spans scopes carries their names: a path alone does not say where it lives. */
 export interface WorkspaceScopeLabels {
@@ -133,7 +143,7 @@ export const api = {
   artifactContentUrl: (id: number, variant?: 'gallery' | 'preview') => `/api/artifacts/${id}/content${queryString({ variant })}`,
   projectFiles: (projectId: number) => request<{ files: FileRecord[] }>('GET', `${WORKSPACE_FILES_API}/projects/${projectId}/files`),
   conversationFiles: (conversationId: number) =>
-    request<{ files: FileRecord[]; projectFiles: FileRecord[]; projectId: number | null }>('GET', `${WORKSPACE_FILES_API}/conversations/${conversationId}/files`),
+    request<ConversationFiles>('GET', `${WORKSPACE_FILES_API}/conversations/${conversationId}/files`),
   workspaceFile: (id: number) => request<{ record: FileRecord; content: string | null; mime: string; attachmentId: number; previewUrl: string | null; canRenderPage: boolean }>('GET', `${WORKSPACE_FILES_API}/files/${id}`),
   // A link, not a fetch: the download is served as an attachment and the browser owns saving it.
   workspaceFileDownloadUrl: (id: number) => `${WORKSPACE_FILES_API}/files/${id}/download`,
@@ -147,6 +157,10 @@ export const api = {
   emptyWorkspaceTrash: () => request<PurgeResult>('DELETE', `${WORKSPACE_FILES_API}/trash`),
   projectFilesArchiveUrl: (projectId: number) => `${WORKSPACE_FILES_API}/projects/${projectId}/files/archive`,
   conversationFilesArchiveUrl: (conversationId: number) => `${WORKSPACE_FILES_API}/conversations/${conversationId}/files/archive`,
+  userMemoryArchiveUrl: () => `${WORKSPACE_FILES_API}/memory/archive`,
+  projectMemoryArchiveUrl: (projectId: number) => `${WORKSPACE_FILES_API}/projects/${projectId}/memory/archive`,
+  userMemories: () => request<{ memories: MemoryListItem[] }>('GET', `${MEMORY_API}/memories`),
+  projectMemories: (projectId: number) => request<{ memories: MemoryListItem[] }>('GET', `${MEMORY_API}/projects/${projectId}/memories`),
   mcpServers: () => request<{ servers: McpServerView[] }>('GET', `${MCP_API}/servers`),
   createMcpServer: (input: McpServerCreate) => request<{ server: McpServerView }>('POST', `${MCP_API}/servers`, input),
   updateMcpServer: (key: string, input: McpServerPatch) => request<{ server: McpServerView }>('PATCH', `${MCP_API}/servers/${key}`, input),

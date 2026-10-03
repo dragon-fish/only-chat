@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import type { ConversationPluginSettings } from './models'
+import type { ConversationPluginSettings, ProjectPluginSettings } from './models'
 
 /** Stable built-in IDs; persisted Conversation snapshots must never depend on display names. */
 export const ASK_USER_PLUGIN_ID = 'ask_user' as const
@@ -37,10 +37,13 @@ export const COMFYUI_READ_TOOL_ID = 'comfyui_read' as const
 export const COMFYUI_LIST_MODELS_TOOL_ID = 'comfyui_list_models' as const
 export const COMFYUI_NODE_INFO_TOOL_ID = 'comfyui_node_info' as const
 export const COMFYUI_GENERATE_TOOL_ID = 'comfyui_generate' as const
+export const MEMORY_PLUGIN_ID = 'memory' as const
+export const MEMORY_SAVE_TOOL_ID = 'memory_save' as const
 
 export type BuiltInPluginId = typeof ASK_USER_PLUGIN_ID | typeof TAVILY_PLUGIN_ID | typeof DATETIME_PLUGIN_ID
   | typeof WORKSPACE_FILES_PLUGIN_ID | typeof BROWSER_RUN_PLUGIN_ID | typeof IMAGE_GENERATION_PLUGIN_ID
   | typeof FILE_UNDERSTANDING_PLUGIN_ID | typeof FILE_READER_PLUGIN_ID | typeof MCP_PLUGIN_ID | typeof COMFYUI_PLUGIN_ID
+  | typeof MEMORY_PLUGIN_ID
 export type BuiltInToolId = typeof ASK_USER_TOOL_ID | typeof WEB_SEARCH_TOOL_ID | typeof WEB_EXTRACT_TOOL_ID | typeof CURRENT_TIME_TOOL_ID
   | typeof LIST_FILES_TOOL_ID | typeof READ_FILE_TOOL_ID | typeof WRITE_FILE_TOOL_ID | typeof EDIT_FILE_TOOL_ID | typeof RESTORE_FILE_TOOL_ID
   | typeof RENAME_FILE_TOOL_ID | typeof DELETE_FILE_TOOL_ID | typeof PREVIEW_FILE_TOOL_ID | typeof COPY_FILE_TOOL_ID
@@ -49,6 +52,7 @@ export type BuiltInToolId = typeof ASK_USER_TOOL_ID | typeof WEB_SEARCH_TOOL_ID 
   | typeof MCP_LIST_SERVICES_TOOL_ID | typeof MCP_LIST_TOOLS_TOOL_ID | typeof MCP_CALL_TOOL_TOOL_ID
   | typeof COMFYUI_LIST_WORKFLOWS_TOOL_ID | typeof COMFYUI_READ_TOOL_ID | typeof COMFYUI_LIST_MODELS_TOOL_ID
   | typeof COMFYUI_NODE_INFO_TOOL_ID | typeof COMFYUI_GENERATE_TOOL_ID
+  | typeof MEMORY_SAVE_TOOL_ID
 
 /**
  * One tool's own identity. A plugin may own several, and each needs its own label: listing two
@@ -135,6 +139,11 @@ export interface PluginWorkspaceTab {
   label: string
 }
 
+/** A tab in Project settings. Declared so the tab strip needs no plugin loaded. */
+export interface PluginProjectTab {
+  label: string
+}
+
 /** Metadata that can be discovered without loading a plugin's client implementation. */
 export interface PluginManifest {
   id: string
@@ -156,6 +165,12 @@ export interface PluginManifest {
   conversationConfigSchema?: z.ZodObject
   /** Declaration order is the form's field order, rendered inside conversation settings. */
   conversationConfig?: readonly PluginConfigField[]
+  /**
+   * Settings kept per Project, validated like `conversationConfigSchema`; defaults live in the
+   * schema. The plugin edits them from its own `projectTab` — core renders no form for them.
+   */
+  projectConfigSchema?: z.ZodObject
+  projectTab?: PluginProjectTab
   /** Declaration order is the order the selector renders them in. */
   tools: readonly PluginToolDescriptor[]
   /**
@@ -339,6 +354,40 @@ export function conversationConfigOf(
 ): Record<string, unknown> {
   if (!manifest.conversationConfigSchema) return {}
   return manifest.conversationConfigSchema.parse(settings?.[manifest.id] ?? {}) as Record<string, unknown>
+}
+
+/** This plugin's per-Project settings with defaults applied; `{}` when it declares none. */
+export function projectConfigOf(
+  manifest: PluginManifest,
+  settings: ProjectPluginSettings | null | undefined,
+): Record<string, unknown> {
+  if (!manifest.projectConfigSchema) return {}
+  return manifest.projectConfigSchema.parse(settings?.[manifest.id] ?? {}) as Record<string, unknown>
+}
+
+/** As `parseConversationPluginSettings`, for Project settings. */
+export function parseProjectPluginSettings(
+  manifests: readonly PluginManifest[],
+  settings: ProjectPluginSettings,
+): ProjectPluginSettings {
+  const out: ProjectPluginSettings = {}
+  for (const [pluginId, values] of Object.entries(settings)) {
+    const manifest = manifests.find(candidate => candidate.id === pluginId)
+    if (!manifest?.projectConfigSchema) throw new Error(`plugin ${pluginId} has no project settings`)
+    out[pluginId] = manifest.projectConfigSchema.parse(values) as Record<string, unknown>
+  }
+  return out
+}
+
+/** The plugin tabs Project settings shows: declared, and switched on by the user. */
+export function projectTabs(
+  manifests: readonly PluginManifest[],
+  settings: Readonly<Record<string, boolean>>,
+): Array<{ pluginId: string, label: string }> {
+  const enabled = effectivePluginSwitches(manifests, settings)
+  return manifests
+    .filter(manifest => manifest.projectTab !== undefined && enabled[manifest.id] === true)
+    .map(manifest => ({ pluginId: manifest.id, label: manifest.projectTab!.label }))
 }
 
 /**

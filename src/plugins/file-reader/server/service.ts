@@ -19,7 +19,7 @@ declare module 'cordis' {
 }
 
 /** What this plugin knows about one generation. Lives in `GenerationTurn.state`, i.e. `ToolContext.turn`. */
-export interface FileTurn extends Omit<GenerationTurn, 'labeler'> {
+export interface FileTurn extends Omit<GenerationTurn, 'labeler' | 'notes'> {
   visible: VisibleAssets
 }
 

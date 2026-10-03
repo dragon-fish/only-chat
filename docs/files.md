@@ -93,7 +93,25 @@ and `edit_file` refuse a binary file with `BINARY_FILE`. Assets are immutable: t
 change an `asset:` reference answer `READ_ONLY` and point to `copy_file`.
 
 The file panel lists 当前会话, 本会话的附件 (the conversation's uploads and generated files across all
-branches, read-only) and 当前项目.
+branches, read-only) and 当前项目, and — while the memory plugin is on — 记忆 · 你 and 记忆 · 当前项目.
+
+### Memory mounts
+
+`/memory/user` (the user's, shared by every conversation) and `/memory/project` (the conversation's
+Project, a namespace separate from `/project`) hold the memory plugin's files. Every
+`WorkspaceScope` says which of the two are reachable. In the hub only a turn the memory plugin
+opened — one that offers `memory_save` — can reach them, through tools and `vfs:` references alike,
+and only the layers that are on for its conversation: the user's switch, the Project's two switches
+and the conversation's own, combined by `memoryScopes` (`src/plugins/memory/shared.ts`). The file
+panel applies the same rule; the memory pages (the plugin's data page and the Project's 记忆 tab)
+ignore it, so a layer switched off is hidden from the model but never from its owner. A closed
+mount answers `MOUNT_UNAVAILABLE` and `/` does not list it.
+
+`workspace_files.mount` records which mount a row belongs to. Nothing infers it from
+`project_id` / `conversation_id`, which cannot tell `/project` from `/memory/project` or a user's
+memory from an orphan: an orphan is a `conversation` file whose conversation is gone, so deleted
+memory goes to the ordinary trash, can be restored, and is never swept with the orphans. Preview
+tickets carry the mount too, and each mount has its own archive.
 
 Nothing a person sees names a file by `asset:` or `vfs:`: those are how the model refers to files.
 Tool results carry the file's name, and tool cards show it, a path's last segment, or what kind of

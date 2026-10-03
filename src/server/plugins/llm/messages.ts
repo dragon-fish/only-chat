@@ -419,7 +419,11 @@ export function buildModelMessages(input: BuildInput): ModelMessage[] {
   path.forEach((m, i) => {
     if (m.role === 'user') {
       const said = userParts(m.parts, attachments, labeler)
-      const content: UserPart[] = pending === null ? said : [{ type: 'text', text: pending }, ...said]
+      // A plugin's notes, stored on the message: replayed as they were sent, whatever is on now.
+      const reminder = (text: string): UserPart => ({ type: 'text', text: `<system-reminder>\n${text}\n</system-reminder>` })
+      const lead = (m.notes ?? []).filter(note => note.at === 'start').map(note => reminder(note.text))
+      const tail = (m.notes ?? []).filter(note => note.at !== 'start').map(note => reminder(note.text))
+      const content: UserPart[] = pending === null ? [...lead, ...said, ...tail] : [...lead, { type: 'text', text: pending }, ...said, ...tail]
       pending = null
 
       const previous = joinToPrevious ? out.at(-1) : undefined

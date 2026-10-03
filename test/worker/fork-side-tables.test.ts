@@ -99,13 +99,13 @@ describe('workspace files follow a fork', () => {
     const { storage } = memoryStorage()
     const files = new WorkspaceFiles(db, storage, 1)
     const source = await seedConversation(db, 'source')
-    await files.write({ path: '/conversation/notes.md', content: 'kept', conversationId: source.conversation.id, projectId: null })
+    await files.write({ path: '/conversation/notes.md', content: 'kept', conversationId: source.conversation.id, projectId: null, memory: { user: false, project: false } })
 
     const forked = await forkConversation(db, source.conversation.id, 1, source.assistant.id, async (payload) => {
       await files.copyConversationFiles(payload.sourceConversationId, payload.conversation.id)
     })
 
-    const read = await files.read({ path: '/conversation/notes.md', conversationId: forked.id, projectId: null })
+    const read = await files.read({ path: '/conversation/notes.md', conversationId: forked.id, projectId: null, memory: { user: false, project: false } })
     expect(read.ok && read.value.content).toContain('kept')
   })
 
@@ -123,7 +123,7 @@ describe('workspace files follow a fork', () => {
       parts: [{ type: 'text', text: 'hi' }], provider_id: null, model_id: null,
       usage: null, status: 'done', error: null, created_at: 1,
     })
-    await files.write({ path: '/project/shared.md', content: 'shared', conversationId: conversation.id, projectId: project!.id })
+    await files.write({ path: '/project/shared.md', content: 'shared', conversationId: conversation.id, projectId: project!.id, memory: { user: false, project: false } })
 
     const forked = await forkConversation(db, conversation.id, 1, root.id, async (payload) => {
       await files.copyConversationFiles(payload.sourceConversationId, payload.conversation.id)
@@ -132,7 +132,7 @@ describe('workspace files follow a fork', () => {
     const projectRows = await db.select({ id: workspaceFiles.id }).from(workspaceFiles)
       .where(eq(workspaceFiles.project_id, project!.id))
     expect(projectRows).toHaveLength(1)
-    const read = await files.read({ path: '/project/shared.md', conversationId: forked.id, projectId: project!.id })
+    const read = await files.read({ path: '/project/shared.md', conversationId: forked.id, projectId: project!.id, memory: { user: false, project: false } })
     expect(read.ok && read.value.content).toContain('shared')
   })
 
@@ -141,7 +141,7 @@ describe('workspace files follow a fork', () => {
     const { storage, objects } = memoryStorage()
     const files = new WorkspaceFiles(db, storage, 1)
     const source = await seedConversation(db, 'source')
-    await files.write({ path: '/conversation/notes.md', content: 'kept', conversationId: source.conversation.id, projectId: null })
+    await files.write({ path: '/conversation/notes.md', content: 'kept', conversationId: source.conversation.id, projectId: null, memory: { user: false, project: false } })
 
     const forked = await forkConversation(db, source.conversation.id, 1, source.assistant.id, async (payload) => {
       await files.copyConversationFiles(payload.sourceConversationId, payload.conversation.id)
@@ -155,7 +155,7 @@ describe('workspace files follow a fork', () => {
     // The fork's own version row still points at the attachment, so the bytes may not be reclaimed.
     expect(purged.bytes).toBe(0)
     expect(objects.size).toBe(1)
-    const read = await files.read({ path: '/conversation/notes.md', conversationId: forked.id, projectId: null })
+    const read = await files.read({ path: '/conversation/notes.md', conversationId: forked.id, projectId: null, memory: { user: false, project: false } })
     expect(read.ok && read.value.content).toContain('kept')
   })
 })
@@ -172,7 +172,7 @@ describe('the hub carries files over a real fork', () => {
     const files = new WorkspaceFiles(db, storage, 1)
     const source = await seedConversation(db, 'source')
     await updateConversation(db, source.conversation.id, 1, { head_message_id: source.assistant.id })
-    await files.write({ path: '/conversation/notes.md', content: 'kept', conversationId: source.conversation.id, projectId: null })
+    await files.write({ path: '/conversation/notes.md', content: 'kept', conversationId: source.conversation.id, projectId: null, memory: { user: false, project: false } })
 
     const client = await connect(await ensureTestUser())
     client.ws.send(JSON.stringify({

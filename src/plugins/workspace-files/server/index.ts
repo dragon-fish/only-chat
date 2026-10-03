@@ -7,8 +7,8 @@ import { fileToolError, parseFileRef, refFailure, type FileResult } from '@/plug
 import { binaryFromAttachment, type FileTurn, type ResolvedFile } from '@/plugins/file-reader/server/service'
 import type { Message } from '@/shared/models'
 import {
-  COPY_FILE_TOOL_ID, DELETE_FILE_TOOL_ID, LIST_FILES_TOOL_ID, PREVIEW_FILE_TOOL_ID, READ_FILE_TOOL_ID, RENAME_FILE_TOOL_ID,
-  RESTORE_FILE_TOOL_ID, WORKSPACE_FILES_PLUGIN_ID, WRITE_FILE_TOOL_ID, EDIT_FILE_TOOL_ID, pluginToolIds,
+  COPY_FILE_TOOL_ID, DELETE_FILE_TOOL_ID, LIST_FILES_TOOL_ID, MEMORY_SAVE_TOOL_ID, PREVIEW_FILE_TOOL_ID, READ_FILE_TOOL_ID,
+  RENAME_FILE_TOOL_ID, RESTORE_FILE_TOOL_ID, WORKSPACE_FILES_PLUGIN_ID, WRITE_FILE_TOOL_ID, EDIT_FILE_TOOL_ID, pluginToolIds,
 } from '@/shared/plugins'
 import manifest from '../manifest'
 import {
@@ -19,11 +19,13 @@ import {
   type RenameFileOutput, type RestoreFileOutput, type WriteFileOutput, type WorkspaceToolError,
 } from '../shared'
 import { absolutePreviewUrl, PREVIEW_TICKET_TTL_SECONDS, previewTypeFor, previewUrlFor } from './preview'
+import { memoryOpen } from './memory'
+import { touchPaths } from './touched'
 
 /** Each expected failure reads as a fact the model can act on, never as a malfunction. */
 const MESSAGES: Record<WorkspaceError, string> = {
   INVALID_PATH: 'Not a valid workspace path. Paths are absolute and start with /project or /conversation (or the same as vfs:/project/…), with no . or .. segments.',
-  MOUNT_UNAVAILABLE: 'This conversation does not belong to a project, so /project has nowhere to store files. Use /conversation instead.',
+  MOUNT_UNAVAILABLE: 'That mount is not available here. /project and /memory/project need this conversation to belong to a project, and /memory exists only while memory is on. /conversation is always available.',
   FILE_NOT_FOUND: 'No such file. Use list_files to see what exists.',
   IS_DIRECTORY: 'That path holds other files rather than being one. Pass recursive: true to act on everything under it.',
   FILE_ALREADY_EXISTS: 'That name is taken. Restoring never overwrites, so choose a name nothing uses yet.',
@@ -102,9 +104,16 @@ function seenThisTurn(state: Map<string, unknown>, path: string): SeenFile | nul
   return typeof value === 'object' && value !== null ? value as SeenFile : null
 }
 
+/**
+ * Tools whose result can show the caller a file. `memory_save` writes a whole file when it carries
+ * content, and its result then has a `version` like `write_file`'s; one without content describes
+ * the file without showing it, has no `version`, and so counts as nothing below.
+ */
+const SHOWING_TOOL_IDS: readonly string[] = [READ_FILE_TOOL_ID, WRITE_FILE_TOOL_ID, EDIT_FILE_TOOL_ID, MEMORY_SAVE_TOOL_ID]
+
 /** What one finished tool call says the caller was shown, or null when it shows nothing. */
 function seenInResult(name: string, content: unknown, path: string): SeenFile | null {
-  if (name !== READ_FILE_TOOL_ID && name !== WRITE_FILE_TOOL_ID && name !== EDIT_FILE_TOOL_ID) return null
+  if (!SHOWING_TOOL_IDS.includes(name)) return null
   if (typeof content !== 'object' || content === null) return null
   const record = content as Record<string, unknown>
   // A refusal showed the caller nothing about the file.
@@ -182,7 +191,7 @@ const VFS_SCHEME = 'vfs'
  * shown whole.
  */
 async function resolveWorkspaceFile(files: WorkspaceFiles, turn: FileTurn, path: string): Promise<FileResult<ResolvedFile>> {
-  const scope = { conversationId: turn.conversationId, projectId: turn.projectId }
+  const scope = { conversationId: turn.conversationId, projectId: turn.projectId, memory: memoryOpen(turn.state) }
   const found = await files.current({ path, ...scope })
   if (!found.ok) return refFailure(found.error === 'INVALID_PATH' ? 'INVALID_FILE_REF' : 'FILE_NOT_FOUND', MESSAGES[found.error])
   const { attachment, relativePath } = found.value
@@ -204,7 +213,7 @@ async function readWorkspaceText(
   path: string,
   range: { offset?: number, limit?: number },
 ): Promise<FileResult<ReadFileOutput | ReadFileUnchangedOutput>> {
-  const result = await files.read({ path, ...range, conversationId: turn.conversationId, projectId: turn.projectId })
+  const result = await files.read({ path, ...range, conversationId: turn.conversationId, projectId: turn.projectId, memory: memoryOpen(turn.state) })
   if (!result.ok) {
     return refFailure(result.error === 'READ_RANGE_TOO_LARGE' ? 'READ_RANGE_TOO_LARGE' : 'FILE_NOT_FOUND', MESSAGES[result.error])
   }
@@ -234,12 +243,70 @@ async function readWorkspaceText(
   }
 }
 
-function servicesFor(runtime: ToolContext) {
+export function servicesFor(runtime: ToolContext) {
   const files = new WorkspaceFiles(runtime.db, runtime.assets, runtime.userId)
   // Identity comes from the runtime, never from tool input: a tool can only reach the Conversation
-  // and Project it was created inside.
-  const scope = { conversationId: runtime.conversationId, projectId: runtime.projectId }
+  // and Project it was created inside, and memory only in a turn the memory plugin opened it for.
+  const scope = { conversationId: runtime.conversationId, projectId: runtime.projectId, memory: memoryOpen(runtime.turn) }
   return { files, scope }
+}
+
+/**
+ * Everything `write_file` does, for a tool that writes a whole file as part of something larger:
+ * ordered behind this turn's other writes to the file, recorded as seen, and reporting a version the
+ * caller never read. `fileId` is the row it landed on, for a caller that attaches to the file.
+ */
+export async function writeWorkspaceFile(
+  runtime: ToolContext,
+  input: { path: string, content: string, expectedVersion?: number },
+  toolCallId: string | null,
+): Promise<{ output: WriteFileOutput, fileId: number } | WorkspaceToolError> {
+  // One at a time per file within this turn; see `inFileOrder`.
+  return inFileOrder(runtime.turn, input.path, async () => {
+    const target = writablePath(input.path)
+    if (typeof target !== 'string') return target
+    const { files, scope } = servicesFor(runtime)
+    const result = await files.write({
+      path: target,
+      content: input.content,
+      expectedVersion: input.expectedVersion,
+      sourceMessageId: runtime.assistantMessageId,
+      toolCallId,
+      ...scope,
+    })
+    if (!result.ok) return unwrap(result) as WorkspaceToolError
+    const { fileId, path, operation, fileSize, totalLines, version, replacedVersion } = result.value
+    const read = latestSeen(runtime.turn, runtime.path, path)
+    // Older than what was replaced means somebody wrote in between and this write went over
+    // content the caller never read.
+    const staleReadVersion = read !== null && replacedVersion !== null && read.version < replacedVersion
+      ? read.version
+      : null
+    runtime.turn.set(seenKey(path), { version, partial: false, source: 'write' } satisfies SeenFile)
+    touchPaths(runtime.turn, [path])
+
+    const previewable = previewTypeFor(path) !== undefined
+    const size = `${fileSize.toLocaleString('en-US')} bytes, ${totalLines.toLocaleString('en-US')} lines`
+    const message = operation === 'created'
+      ? `Created ${size}`
+      : replacedVersion === null
+        ? `Saved ${size}`
+        : staleReadVersion === null
+          ? `Saved ${size}. Replaced v${replacedVersion}, still restorable with restore_file.`
+          : `Saved ${size}. Replaced v${replacedVersion}, which was written after you read v${staleReadVersion} — you never saw it. Restore it with restore_file if that content mattered.`
+    // Said here rather than minted here: a ticket per write would spend one on every draft,
+    // and only the last of them is ever looked at.
+    const hint = previewable ? ' This one can be opened in a browser — preview_file gives you the link.' : ''
+    return {
+      fileId,
+      output: { path, operation, previewable, fileSize, totalLines, version, replacedVersion, staleReadVersion, message: message + hint },
+    }
+  })
+}
+
+/** A workspace failure as every tool here reports it. */
+export function workspaceToolError(error: WorkspaceError): WorkspaceToolError {
+  return failure(error)
 }
 
 export const WorkspaceFilesServerPlugin = {
@@ -303,46 +370,8 @@ export const WorkspaceFilesServerPlugin = {
       ].join(' '),
       inputSchema: WriteFileInputSchema,
       async execute(input, options): Promise<WriteFileOutput | WorkspaceToolError> {
-        // One at a time per file within this turn; see `inFileOrder`.
-        return inFileOrder(runtime.turn, input.path, async () => {
-          const target = writablePath(input.path)
-          if (typeof target !== 'string') return target
-          const { files, scope } = servicesFor(runtime)
-          const result = await files.write({
-            path: target,
-            content: input.content,
-            expectedVersion: input.expectedVersion,
-            sourceMessageId: runtime.assistantMessageId,
-            toolCallId: options?.toolCallId ?? null,
-            ...scope,
-          })
-          if (!result.ok) return unwrap(result) as WorkspaceToolError
-          const { path, operation, fileSize, totalLines, version, replacedVersion } = result.value
-          const read = latestSeen(runtime.turn, runtime.path, path)
-          // Older than what was replaced means somebody wrote in between and this write went over
-          // content the caller never read.
-          const staleReadVersion = read !== null && replacedVersion !== null && read.version < replacedVersion
-            ? read.version
-            : null
-          runtime.turn.set(seenKey(path), { version, partial: false, source: 'write' } satisfies SeenFile)
-
-          const previewable = previewTypeFor(path) !== undefined
-          const size = `${fileSize.toLocaleString('en-US')} bytes, ${totalLines.toLocaleString('en-US')} lines`
-          const message = operation === 'created'
-            ? `Created ${size}`
-            : replacedVersion === null
-              ? `Saved ${size}`
-              : staleReadVersion === null
-                ? `Saved ${size}. Replaced v${replacedVersion}, still restorable with restore_file.`
-                : `Saved ${size}. Replaced v${replacedVersion}, which was written after you read v${staleReadVersion} — you never saw it. Restore it with restore_file if that content mattered.`
-          // Said here rather than minted here: a ticket per write would spend one on every draft,
-          // and only the last of them is ever looked at.
-          const hint = previewable ? ' This one can be opened in a browser — preview_file gives you the link.' : ''
-          return {
-            path, operation, previewable, fileSize, totalLines, version, replacedVersion, staleReadVersion,
-            message: message + hint,
-          }
-        })
+        const written = await writeWorkspaceFile(runtime, input, options?.toolCallId ?? null)
+        return 'error' in written ? written : written.output
       },
     }))
 
@@ -442,6 +471,7 @@ export const WorkspaceFilesServerPlugin = {
           if (!result.ok) return unwrap(result) as WorkspaceToolError
           const { path, fileSize, totalLines, version, replacements } = result.value
           runtime.turn.set(seenKey(path), { version, partial: false, source: 'write' } satisfies SeenFile)
+          touchPaths(runtime.turn, [path])
 
           const previewable = previewTypeFor(path) !== undefined
           const places = replacements === 1 ? 'one place' : `${replacements} places`
@@ -486,6 +516,7 @@ export const WorkspaceFilesServerPlugin = {
         })
         if (!result.ok) return unwrap(result) as WorkspaceToolError
         const { path, sourcePath, restoredFrom, version, fileSize, totalLines } = result.value
+        touchPaths(runtime.turn, [path])
         return {
           path, sourcePath, restoredFrom, version, fileSize, totalLines,
           message: `Restored ${sourcePath} v${restoredFrom} to ${path}`,
@@ -521,6 +552,7 @@ export const WorkspaceFilesServerPlugin = {
           const from = `${fromPath}${to.slice(path.length)}`
           const read = runtime.turn.get(seenKey(from))
           if (read !== undefined) runtime.turn.set(seenKey(to), read)
+          touchPaths(runtime.turn, [from, to])
         }
         return {
           path,
@@ -549,6 +581,7 @@ export const WorkspaceFilesServerPlugin = {
         if (!result.ok) return unwrap(result) as WorkspaceToolError
         const { path, deleted } = result.value
         for (const gone of deleted) runtime.turn.delete(seenKey(gone))
+        touchPaths(runtime.turn, deleted)
         return {
           path,
           deleted,
@@ -592,6 +625,7 @@ export const WorkspaceFilesServerPlugin = {
         })
         if (!result.ok) return unwrap(result) as WorkspaceToolError
         const { path, mime, fileSize, version } = result.value
+        touchPaths(runtime.turn, [path])
         return { path, from: input.from, fromName, mime, fileSize, version, message: `Copied ${input.from} to ${path}.` }
       },
     }))
