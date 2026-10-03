@@ -7,7 +7,7 @@ import { resolveFileUnderstanding, type FileUnderstanding } from './service'
 
 const DESCRIPTION = [
   'Ask the configured file understanding model to describe an image, PDF, audio or video in detail.',
-  '`file` is the asset:<hex> a file is labelled with, or a workspace path when workspace files are on.',
+  '`file` is a file reference, such as the asset:<hex> a file is labelled with.',
   'Pass question to ask something specific; omit it for a complete description. The answer comes back as text.',
   'Use it for files you cannot read yourself, or when a careful second reading helps. Text files are read with read_file.',
 ].join(' ')

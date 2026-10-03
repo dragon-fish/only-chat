@@ -6,6 +6,7 @@ import type { Tool } from 'ai'
 import { createDb, type DB } from '@/server/db/client'
 import { attachments, conversations, messages, projects, workspaceFileVersions, workspaceFiles } from '@/server/db/schema'
 import { ToolRegistry, type ToolContext } from '@/server/plugins/tools'
+import { PromptSections } from '@/server/plugins/prompt-sections'
 import type { GenerationTurn } from '@/server/plugins/hub/generation-turn'
 import { FileReaderServerPlugin } from '@/plugins/file-reader/server'
 import { WorkspaceFiles } from '@/server/plugins/workspace-files/service'
@@ -70,6 +71,7 @@ async function fixture(toolIds: readonly string[] = WORKSPACE_TOOLS, extraParts:
   ctx.provide('db', { orm: db })
   ctx.provide('assets', storage)
   const registry = new ToolRegistry(ctx)
+  new PromptSections(ctx)
   await ctx.plugin(FileReaderServerPlugin)
   await ctx.plugin(WorkspaceFilesServerPlugin)
 

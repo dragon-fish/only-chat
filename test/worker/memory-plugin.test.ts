@@ -419,7 +419,7 @@ describe('memory in the prompt', () => {
     const c = conversation()
     const plain = await c.say('hi', { toolIds: ['read_file', 'write_file', 'edit_file'] })
     expect(c.notes(0)).toEqual([])
-    expect(h.ctx.promptSections.render(null, { toolIds: plain.generation.toolIds })).toBeNull()
+    expect(h.ctx.promptSections.render(null, { toolIds: plain.generation.toolIds })).not.toContain('<plugin id="memory">')
     expect(await run(plain, 'read_file', { file: '/memory/user/topics/a.md' })).toMatchObject({ error: 'FILE_NOT_FOUND' })
     expect(h.ctx.promptSections.render(null, { toolIds: MEMORY_TOOLS })).toContain('<plugin id="memory">')
   })

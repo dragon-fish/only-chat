@@ -5,6 +5,7 @@ import type { Tool } from 'ai'
 import { createDb, type DB } from '@/server/db/client'
 import { conversations, messages, projects, workspaceFileVersions, workspaceFiles } from '@/server/db/schema'
 import { ToolRegistry, type ToolContext } from '@/server/plugins/tools'
+import { PromptSections } from '@/server/plugins/prompt-sections'
 import { WorkspaceFiles } from '@/server/plugins/workspace-files/service'
 import { WorkspaceFilesServerPlugin } from '@/plugins/workspace-files/server'
 import { FileReaderServerPlugin } from '@/plugins/file-reader/server'
@@ -63,6 +64,7 @@ async function fixture(): Promise<Fixture> {
   ctx.provide('assets', assets)
   // Constructing the Service provides ctx.tools, which is all the plugins need to register on.
   const registry = new ToolRegistry(ctx)
+  new PromptSections(ctx)
   await ctx.plugin(FileReaderServerPlugin)
   await ctx.plugin(WorkspaceFilesServerPlugin)
   // What the hub does at generation start: plugins prepare the turn their tools then run in.

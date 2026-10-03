@@ -4,8 +4,10 @@ import { BROWSER_HANDOFF_TOOL_ID, BROWSER_RUN_PLUGIN_ID, BROWSER_USE_TOOL_ID, co
 import type { ToolContext } from '@/server/plugins/tools'
 import type { Hub } from '@/server/plugins/hub'
 import { getConversation } from '@/server/plugins/hub/conversations'
+import { whileOffered } from '@/server/plugins/prompt-sections'
 import browserRunManifest from '../manifest'
 import {
+  BROWSER_GUIDANCE,
   BROWSER_HANDOFF_DESCRIPTION, BROWSER_RUN_CONFIG_SCHEMA, BROWSER_RUN_CONVERSATION_CONFIG_SCHEMA, BROWSER_USE_DESCRIPTION,
   BrowserHandoffInputSchema, BrowserHandoffResultSchema, BrowserPluginCommandSchema, BrowserUseInputSchema,
   LIVE_VIEW_TTL_MS, MAX_CODE_BYTES, MAX_TIMEOUT_MS, profileStorageKey, truncateLogs,
@@ -208,7 +210,7 @@ export const BrowserRunServerPlugin = {
   name: 'cloudflare-browser-run',
   // `hub` is injected, so this plugin loads after the hub exists; its tools register late, which the
   // registry allows because tools are only resolved per generation.
-  inject: ['tools', 'pluginChannel', 'env', 'hub'] as const,
+  inject: ['tools', 'pluginChannel', 'env', 'hub', 'promptSections'] as const,
   apply(ctx: Context) {
     // Built once and closed over. It cannot be cached against `ctx.hub`: cordis hands out a fresh
     // traceable Proxy on every service access, so `ctx.hub === ctx.hub` is false and any map keyed
@@ -216,6 +218,7 @@ export const BrowserRunServerPlugin = {
     // screenshot between `attach` and `toModelOutput` and voiding the per-conversation browser lock.
     const state = new BrowserRunState(ctx.hub, ctx.env)
 
+    ctx.promptSections.register(BROWSER_RUN_PLUGIN_ID, whileOffered(browserRunManifest, BROWSER_GUIDANCE))
     ctx.tools.register(BROWSER_RUN_PLUGIN_ID, BROWSER_USE_TOOL_ID, (toolCtx: ToolContext) => browserUseTool(state, toolCtx))
 
     ctx.tools.register(BROWSER_RUN_PLUGIN_ID, BROWSER_HANDOFF_TOOL_ID, () => tool({

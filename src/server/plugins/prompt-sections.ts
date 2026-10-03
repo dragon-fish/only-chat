@@ -1,5 +1,6 @@
 import { Context, Service } from 'cordis'
 import { findPluginManifest, pluginManifests } from '@/shared/plugin-manifests'
+import { pluginToolIds, type PluginManifest } from '@/shared/plugins'
 
 /** Everything a section may depend on. Nothing here varies within a conversation unless the tools do. */
 export interface PromptSectionInput {
@@ -48,6 +49,16 @@ export class PromptSections extends Service {
   render(systemPrompt: string | null, input: PromptSectionInput): string | null {
     return renderSystemPrompt(systemPrompt, pluginManifests.map(manifest => manifest.id), this.sections, input)
   }
+}
+
+/**
+ * The common case: a plugin's standing instructions, shown while any of its own tools is offered.
+ * A section speaks only for its own plugin; when another plugin is involved, only the one that
+ * `requires` it says so, in a sentence — never the plugin being depended on.
+ */
+export function whileOffered(manifest: PluginManifest, text: string): PromptSection {
+  const own = pluginToolIds(manifest)
+  return ({ toolIds }) => (toolIds.some(id => own.includes(id)) ? text : undefined)
 }
 
 export function renderSystemPrompt(

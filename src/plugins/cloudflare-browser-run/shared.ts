@@ -144,14 +144,19 @@ export const BROWSER_USE_DESCRIPTION = [
   'To read a page: after await ctx.page.goto(url), use await ctx.page.locator("body").ariaSnapshot() for structured text, which costs far less than a screenshot. Call await ctx.screenshot() only when the layout is what matters.',
   'To drive a page: page.getByRole / getByText / locator with click / fill / press. page.evaluate is available.',
   'Limits: the code itself has no network access (fetch throws), a second browser cannot be started, and a call has a time limit — on timeout the logs so far come back.',
-  'For a login, a captcha, a second factor or any step you cannot do, call browser_handoff and let the user take over rather than retrying.',
   'The return value, the logs, the screenshots and the final page URL and title all come back together. Logs over the budget are truncated and marked.',
 ].join('\n')
+
+/** When the user takes over. How to drive the page is browser_use's own description. */
+export const BROWSER_GUIDANCE = [
+  'browser_use drives a real browser that belongs to this conversation.',
+  'For a login, a captcha, a second factor, sensitive input or an action a person has to confirm, call browser_handoff and let the user take over rather than retrying. Never hand over a step you can do yourself.',
+].join(' ')
 
 export const BROWSER_HANDOFF_DESCRIPTION = [
   'Asks the user to take over one step in the live browser that you cannot do: a login, a captcha, a second factor, sensitive input, or an action a person has to confirm.',
   'State what the user should do and the point at which they hand control back. They report success or failure, and you continue in the same browser.',
-  'Ask for one thing at a time. Do not ask for a handoff on anything you can do yourself.',
+  'Ask for one thing at a time.',
 ].join('\n')
 
 // ---- pure helpers shared by server and tests

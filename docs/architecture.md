@@ -64,6 +64,13 @@ section is a synchronous function of the turn's tool ids and nothing else, rende
 own prompt in `pluginManifests` order, each wrapped in `<plugin id="…">`. Tool definitions precede
 the system prompt in the cached prefix, so a section changes only when the tools already did.
 
+What goes where: a tool's description is the contract of one call — parameters, limits, what comes
+back, what each error means. The section is what holds across calls — when to use the plugin at all,
+the order its tools come in, what to do after a background result arrives. `whileOffered` shows a
+section while any of the plugin's tools is offered. A plugin speaks only for itself: where another
+plugin is involved, only the one that `requires` it mentions it, in a sentence, and the plugin being
+depended on never names its dependents.
+
 Text that varies per conversation goes on a user message instead, as a note: a plugin adds it to
 `GenerationTurn.notes` during `generation/prepare`, ahead of what the person said (`at: 'start'`) or
 after it. The core stores each new note on its message (`messages.notes`) before building the prompt,

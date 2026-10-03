@@ -9,6 +9,8 @@ import {
   COMFYUI_CONFIG_SCHEMA, ComfyuiGenerateInputSchema, ComfyuiListModelsInputSchema, ComfyuiListWorkflowsInputSchema, ComfyuiNodeInfoInputSchema,
   ComfyuiReadInputSchema, type ComfyuiConfig,
 } from '../shared'
+import { whileOffered } from '@/server/plugins/prompt-sections'
+import manifest from '../manifest'
 import { ComfyuiClient } from './client'
 import { runGenerate } from './generate'
 import { runListModels, runListWorkflows, runNodeInfo, runRead, toolError } from './runners'
@@ -23,10 +25,16 @@ async function guarded<T>(run: () => Promise<T>) {
   catch (error) { return toolError(error) }
 }
 
+/** The order the tools come in, and what to do while a generation runs. */
+const GUIDANCE = [
+  'ComfyUI runs on the user\'s own server. Start with comfyui_list_workflows; before writing a prompt for a model family, read its guide with comfyui_read when one is listed — models differ in prompt style (tags versus prose).',
+  'For a raw workflow, look node inputs up with comfyui_node_info and file names with comfyui_list_models; never guess them.',
+  'comfyui_generate works in the background: do not wait, poll, or submit again for the same request. Tell the user it is on its way, or carry on. When the images arrive the user already sees them; to point at particular ones in your reply, write ![short description](asset:<hex>).',
+].join('\n')
+
 const LIST_WORKFLOWS_DESCRIPTION = [
   'Lists the ComfyUI workflow templates and prompting guides the user keeps on their ComfyUI server.',
   'Each template reports its model, its own positive and negative prompt, default sampler settings and size, and suggested_loras (unconnected LoRA nodes, applied only when named). A template with usable_as_template false can still be read with comfyui_read and submitted as a raw workflow.',
-  'Before writing a prompt for a model family, read its guide with comfyui_read when one is listed: models differ in prompt style (tags versus prose).',
 ].join('\n')
 
 const READ_DESCRIPTION = 'Reads one file listed by comfyui_list_workflows: a template\'s full API-format workflow (to adapt and submit in raw mode) or a guide\'s markdown.'
@@ -35,7 +43,7 @@ const LIST_MODELS_DESCRIPTION = 'Lists the model folders on the ComfyUI server, 
 
 const NODE_INFO_DESCRIPTION = [
   'Looks up ComfyUI node classes: pass class_types for their inputs (with types, defaults and allowed values) and outputs, or search to find class names by keyword.',
-  'Use it to build or adapt a raw workflow. Do not guess input names; look them up.',
+  'Use it to build or adapt a raw workflow.',
 ].join('\n')
 
 const GENERATE_DESCRIPTION = [
@@ -43,14 +51,14 @@ const GENERATE_DESCRIPTION = [
   '- Template mode: template + prompt, optionally negative, aspect_ratio or width/height, steps, cfg, seed and loras. The template supplies everything else.',
   '- Raw mode: workflow, a complete API-format graph { "<node id>": { "class_type", "inputs" } } with at least one output node such as SaveImage. Links are [source node id, output index]. You set the seed yourself; ComfyUI returns a cached result without generating when the graph is identical to an earlier one.',
   'The workflow is validated on submission. A rejected one returns error_type "validation" with node_errors naming each node and input at fault; fix those and submit again.',
-  'An accepted one returns a task_id at once. The images arrive later as a <task-notification> message listing them as asset: references; do not wait, poll, or submit again for the same request. Tell the user it is on its way, or continue with other work.',
-  'The user already sees the new images with the notification; do not embed them again. To point at particular ones in your reply, for example to compare two, write ![short description](asset:<hex>).',
+  'An accepted one returns a task_id at once; the images arrive later as a <task-notification> message listing them as asset: references.',
 ].join('\n')
 
 export const ComfyuiServerPlugin = {
   name: 'comfyui',
-  inject: ['tools', 'db', 'env'] as const,
+  inject: ['tools', 'db', 'env', 'promptSections'] as const,
   apply(ctx: Context) {
+    ctx.promptSections.register(COMFYUI_PLUGIN_ID, whileOffered(manifest, GUIDANCE))
     ctx.tools.register(COMFYUI_PLUGIN_ID, COMFYUI_LIST_WORKFLOWS_TOOL_ID, toolCtx => tool({
       description: LIST_WORKFLOWS_DESCRIPTION,
       inputSchema: ComfyuiListWorkflowsInputSchema,

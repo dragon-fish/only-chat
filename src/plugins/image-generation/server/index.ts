@@ -4,23 +4,29 @@ import { resolveImageModel } from '@/server/plugins/artifacts/image-model'
 import { createToolImageRun } from '@/server/plugins/artifacts/runs'
 import { getConversation, getUser } from '@/server/plugins/hub/conversations'
 import { GENERATE_IMAGE_TOOL_ID, IMAGE_GENERATION_PLUGIN_ID } from '@/shared/plugins'
+import { whileOffered } from '@/server/plugins/prompt-sections'
+import manifest from '../manifest'
 import { GenerateImageInputSchema, type GenerateImageOutput } from '../shared'
 
 const DESCRIPTION = [
   'Generate or edit images in the background with the image model the user configured.',
   'To edit, or to draw from existing images, pass reference_images as file references: the asset: in [image asset:…] labels of images the user sent, in [generated image asset:…] labels, or in task notifications.',
-  'Returns immediately with a task_id. The result arrives later as a <task-notification> message listing the new images as asset: references;',
-  'do not wait, poll, or call again for the same request. Tell the user it is on its way, or continue with other work.',
-  'If the notification says generation failed, read the provider\'s reason, adjust the prompt if that helps, and try again at most once.',
-  'The user already sees the new images with the notification; do not embed them again. To point at particular ones in your reply, for example to compare two, write ![short description](asset:<hex>).',
+  'Returns immediately with a task_id; the images arrive later as a <task-notification> message listing them as asset: references.',
 ].join('\n')
+
+/** What to do while an image is on its way, and once it arrives. */
+const GUIDANCE = [
+  'generate_image works in the background: do not wait, poll, or call it again for the same request. Tell the user it is on its way, or carry on with other work.',
+  'When the task notification arrives the user already sees the new images; do not show them again unless pointing at particular ones. If it says generation failed, read the provider\'s reason, adjust the prompt if that helps, and try again at most once.',
+].join(' ')
 
 export const NO_IMAGE_MODEL = 'No image model is configured. Ask the user to choose one in Settings → Service models or in Image Studio.'
 
 export const ImageGenerationServerPlugin = {
   name: 'image-generation',
-  inject: ['tools', 'fileReader', 'db', 'env'] as const,
+  inject: ['tools', 'fileReader', 'db', 'env', 'promptSections'] as const,
   apply(ctx: Context) {
+    ctx.promptSections.register(IMAGE_GENERATION_PLUGIN_ID, whileOffered(manifest, GUIDANCE))
     ctx.tools.register(IMAGE_GENERATION_PLUGIN_ID, GENERATE_IMAGE_TOOL_ID, toolCtx => tool({
       description: DESCRIPTION,
       inputSchema: GenerateImageInputSchema,
