@@ -310,7 +310,30 @@ export const memorySnapshots = sqliteTable('memory_snapshots', {
   /** The layers that were open, as `scopesKey` writes them. A different set renders anew. */
   scopes: text().notNull().default(''),
   text: text().notNull(),
+  /**
+   * The memory files this conversation knows about, by file id: what the catalog showed, plus what
+   * its own turns changed and what reminders have told it since. A difference is what it is told next.
+   * Null on a snapshot rendered before this was tracked: taken as known, not as everything new.
+   */
+  known: text({ mode: 'json' }).$type<Record<string, KnownMemoryFile>>(),
   created_at: integer().notNull(),
+})
+
+/** One memory file as a conversation last knew it. */
+export interface KnownMemoryFile {
+  path: string
+  version: number
+  description: string | null
+}
+
+/**
+ * A reminder that ends one user message: memory that changed elsewhere since the conversation last
+ * knew it. Stored because history is rebuilt every turn, and the reminder has to come back with it.
+ */
+export const memoryNotes = sqliteTable('memory_notes', {
+  message_id: integer().primaryKey().references(() => messages.id, { onDelete: 'cascade' }),
+  conversation_id: integer().notNull().references(() => conversations.id, { onDelete: 'cascade' }),
+  text: text().notNull(),
 })
 
 export const artifactRuns = sqliteTable('artifact_runs', {

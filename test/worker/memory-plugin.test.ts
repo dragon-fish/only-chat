@@ -4,7 +4,7 @@ import { eq } from 'drizzle-orm'
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { Tool } from 'ai'
 import { createDb, type DB } from '@/server/db/client'
-import { attachments, conversations, memories, memorySnapshots, messages, projects, workspaceFileVersions, workspaceFiles } from '@/server/db/schema'
+import { attachments, conversations, memories, memoryNotes, memorySnapshots, messages, projects, workspaceFileVersions, workspaceFiles } from '@/server/db/schema'
 import { ToolRegistry, type ToolContext } from '@/server/plugins/tools'
 import { PromptSections } from '@/server/plugins/prompt-sections'
 import { WorkspaceFiles } from '@/server/plugins/workspace-files/service'
@@ -177,7 +177,7 @@ describe('memory_save', () => {
     await run(turn, 'delete_file', { path: '/memory/project/topics/b.md' })
     const fresh = async () => {
       await h.db.delete(memorySnapshots)
-      return memoryPreamble({ db: h.db, userId: 1, conversationId: h.conversationId, projectId: h.projectId, scopes: { user: true, project: true }, readFile: async () => null })
+      return (await memoryPreamble({ db: h.db, userId: 1, conversationId: h.conversationId, projectId: h.projectId, scopes: { user: true, project: true }, readFile: async () => null })).text
     }
     expect(await fresh()).not.toContain('b.md')
     const [trashed] = await h.files.listTrash()
@@ -329,5 +329,104 @@ describe('memory in the prompt', () => {
     expect(await run(plain, 'read_file', { file: '/memory/user/topics/a.md' })).toMatchObject({ error: 'FILE_NOT_FOUND' })
 
     expect(h.ctx.promptSections.render(null, { toolIds: MEMORY_TOOLS })).toContain('<plugin id="memory">')
+  })
+})
+
+describe('memory change reminders', () => {
+  let h: Harness
+  beforeEach(async () => { h = await harness() })
+
+  let seq = 100
+  /** A stored message, so a reminder has a real row to belong to. */
+  async function said(role: 'user' | 'assistant', text: string): Promise<Message> {
+    const [row] = await h.db.insert(messages).values({
+      conversation_id: h.conversationId, parent_id: null, seq: seq++, role, parts: [{ type: 'text', text }],
+      provider_id: null, model_id: null, usage: null, status: 'done', error: null, created_at: 0,
+    }).returning()
+    return { ...row!, parts: row!.parts } as Message
+  }
+
+  /** Another conversation of the same user, changing memory meanwhile. */
+  async function otherScope() {
+    const [other] = await h.db.insert(conversations).values({
+      user_id: 1, project_id: h.projectId, title: 'other', head_message_id: null, provider_id: null,
+      model_id: null, system_prompt: null, params: null, tools: [], created_at: 0, updated_at: 0,
+    }).returning()
+    return { conversationId: other!.id, projectId: h.projectId, memory: { user: true, project: true } }
+  }
+  const elsewhere = async (path: string, content: string) => h.files.write({ path, content, ...await otherScope() })
+
+  const notesOf = (turn: Turn) => turn.generation.notes.map(note => [note.messageId, note.text] as const)
+
+  it('reminds the next user message of what changed elsewhere, once, and replays it after', async () => {
+    const u1 = await said('user', 'hi')
+    expect((await startTurn(h, { path: [u1] })).generation.notes).toEqual([])
+
+    await elsewhere('/memory/user/topics/food.md', 'spicy')
+    await elsewhere('/memory/user/profile.md', 'Engineer.')
+    const a1 = await said('assistant', 'hello')
+    const u2 = await said('user', 'lunch?')
+    const second = await startTurn(h, { path: [u1, a1, u2] })
+    expect(notesOf(second)).toHaveLength(1)
+    const [[messageId, text]] = notesOf(second)
+    expect(messageId).toBe(u2.id)
+    expect(text).toContain('- new /memory/user/topics/food.md')
+    expect(text).toContain('<profile path="/memory/user/profile.md">\nEngineer.\n</profile>')
+
+    // Later turns carry the same reminder on the same message, and nothing new for theirs.
+    const a2 = await said('assistant', 'sure')
+    const u3 = await said('user', 'thanks')
+    expect(notesOf(await startTurn(h, { path: [u1, a1, u2, a2, u3] }))).toEqual([[u2.id, text]])
+    // Regenerating the reply to u2 replays its reminder rather than diffing again.
+    expect(notesOf(await startTurn(h, { path: [u1, a1, u2] }))).toEqual([[u2.id, text]])
+  })
+
+  it('does not remind a conversation of what its own turn changed', async () => {
+    const u1 = await said('user', 'remember I like tea')
+    const first = await startTurn(h, { path: [u1] })
+    await save(first, { path: '/memory/user/topics/drinks.md', description: 'tea', content: '- tea' })
+    await run(first, 'rename_file', { path: '/memory/user/topics/drinks.md', toPath: '/memory/user/topics/beverages.md' })
+    await h.ctx.parallel('generation/settled', first.generation)
+
+    const a1 = await said('assistant', 'noted')
+    const u2 = await said('user', 'ok')
+    expect((await startTurn(h, { path: [u1, a1, u2] })).generation.notes).toEqual([])
+  })
+
+  it('reminds of a move and a delete made elsewhere', async () => {
+    await elsewhere('/memory/user/topics/a.md', 'a')
+    await elsewhere('/memory/user/topics/b.md', 'b')
+    const u1 = await said('user', 'hi')
+    await startTurn(h, { path: [u1] })
+
+    const scope = await otherScope()
+    await h.files.rename({ path: '/memory/user/topics/a.md', toPath: '/memory/project/topics/a.md', ...scope })
+    await h.files.deleteByPath({ path: '/memory/user/topics/b.md', ...scope })
+    const a1 = await said('assistant', 'hello')
+    const u2 = await said('user', 'again')
+    const [[, text]] = notesOf(await startTurn(h, { path: [u1, a1, u2] }))
+    expect(text).toContain('- moved /memory/user/topics/a.md → /memory/project/topics/a.md')
+    expect(text).toContain('- removed /memory/user/topics/b.md')
+  })
+
+  it('moves a fork\'s reminders onto its copied messages', async () => {
+    const u1 = await said('user', 'hi')
+    await startTurn(h, { path: [u1] })
+    await elsewhere('/memory/user/topics/food.md', 'spicy')
+    const a1 = await said('assistant', 'hello')
+    const u2 = await said('user', 'lunch?')
+    const [[, text]] = notesOf(await startTurn(h, { path: [u1, a1, u2] }))
+
+    const [fork] = await h.db.insert(conversations).values({
+      user_id: 1, project_id: h.projectId, title: 'fork', head_message_id: null, provider_id: null,
+      model_id: null, system_prompt: null, params: null, tools: [], created_at: 0, updated_at: 0,
+    }).returning()
+    const [copy] = await h.db.insert(messages).values({
+      conversation_id: fork!.id, parent_id: null, seq: 1, role: 'user', parts: [], provider_id: null, model_id: null,
+      usage: null, status: 'done', error: null, created_at: 0,
+    }).returning()
+    await h.ctx.parallel('conversation/forked', { userId: 1, sourceConversationId: h.conversationId, conversation: fork!, messageIds: new Map([[u2.id, copy!.id]]) })
+    expect(await h.db.select().from(memoryNotes).where(eq(memoryNotes.conversation_id, fork!.id)))
+      .toEqual([{ message_id: copy!.id, conversation_id: fork!.id, text }])
   })
 })

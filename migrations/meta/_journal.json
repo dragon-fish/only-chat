@@ -176,6 +176,13 @@
       "when": 1791046030830,
       "tag": "0025_memory-drop-type",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1791046780607,
+      "tag": "0026_memory-notes",
+      "breakpoints": true
     }
   ]
 }

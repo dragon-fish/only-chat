@@ -4,14 +4,16 @@ import { and, eq } from 'drizzle-orm'
 import type { DB } from '@/server/db/client'
 import { conversations, projects } from '@/server/db/schema'
 import { formatWorkspacePath, parseWorkspacePath, pathFromArgument } from '@/server/plugins/workspace-files/path'
-import { openMemoryMounts } from '@/plugins/workspace-files/server/memory'
+import { memoryOpen, openMemoryMounts } from '@/plugins/workspace-files/server/memory'
+import { touchedPaths, touchPaths } from '@/plugins/workspace-files/server/touched'
 import { isTextMime, WorkspaceFiles } from '@/server/plugins/workspace-files/service'
 import { servicesFor, workspaceToolError, writeWorkspaceFile } from '@/plugins/workspace-files/server'
 import {
   MEMORY_LAYOUT, MEMORY_PLUGIN_ID, MEMORY_SAVE_TOOL_ID, MemorySaveInputSchema, memoryCategory, memoryScopes,
   type MemoryCategory, type MemoryScopes, type MemorySaveInput, type MemorySaveOutput, type MemoryToolError,
 } from '../shared'
-import { copySnapshot, memoryPreamble } from './catalog'
+import { copySnapshot, memoryPreamble, type ReadMemoryFile } from './catalog'
+import { absorbOwnChanges, copyNotes, memoryNotices } from './notices'
 
 /** Standing instructions. Static on purpose: it is part of the system prompt, ahead of the cache. */
 const GUIDANCE = `You have a memory that outlives this conversation: Markdown files in the workspace.
@@ -121,17 +123,32 @@ export const MemoryServerPlugin = {
       openMemoryMounts(turn.state, scopes)
       const files = new WorkspaceFiles(ctx.db.orm, ctx.assets, turn.userId)
       const scope = { conversationId: turn.conversationId, projectId: turn.projectId, memory: scopes }
-      turn.preamble = await memoryPreamble({
-        db: ctx.db.orm, userId: turn.userId, conversationId: turn.conversationId, projectId: turn.projectId, scopes,
-        readFile: async (mount, relativePath) => {
-          const read = await files.readBytes(mount, scope, relativePath)
-          return read.ok && isTextMime(read.value.mime) ? new TextDecoder().decode(read.value.bytes) : null
-        },
+      const readFile: ReadMemoryFile = async (mount, relativePath) => {
+        const read = await files.readBytes(mount, scope, relativePath)
+        return read.ok && isTextMime(read.value.mime) ? new TextDecoder().decode(read.value.bytes) : null
+      }
+      const where = { db: ctx.db.orm, userId: turn.userId, conversationId: turn.conversationId, projectId: turn.projectId, scopes }
+      const { text, rendered } = await memoryPreamble({ ...where, readFile })
+      turn.preamble = text
+      for (const note of await memoryNotices({ ...where, path: turn.path, rendered, readFile })) {
+        turn.notes.push({ pluginId: MEMORY_PLUGIN_ID, messageId: note.messageId, text: note.text })
+      }
+    })
+
+    // What the turn changed itself is now known; the rest waits for the next turn's reminder.
+    ctx.on('generation/settled', async (turn) => {
+      if (!turn.toolIds.includes(MEMORY_SAVE_TOOL_ID)) return
+      const scopes = memoryOpen(turn.state)
+      if (!scopes.user && !scopes.project) return
+      await absorbOwnChanges({
+        db: ctx.db.orm, userId: turn.userId, conversationId: turn.conversationId, projectId: turn.projectId,
+        scopes, touched: touchedPaths(turn.state),
       })
     })
 
     ctx.on('conversation/forked', async (payload) => {
       await copySnapshot(ctx.db.orm, payload.sourceConversationId, payload.conversation.id)
+      await copyNotes(ctx.db.orm, payload.sourceConversationId, payload.conversation.id, payload.messageIds)
     })
 
     ctx.promptSections.register(MEMORY_PLUGIN_ID, ({ toolIds }) => toolIds.includes(MEMORY_SAVE_TOOL_ID) ? GUIDANCE : undefined)
@@ -159,6 +176,7 @@ export const MemoryServerPlugin = {
         if (!found.ok) return workspaceToolError(found.error)
         const metadata = await saveMetadata(runtime.db, runtime.userId, found.value.version.file_id, input, null)
         if (metadata === null) return workspaceToolError('FILE_NOT_FOUND')
+        touchPaths(runtime.turn, [path])
         return { path: found.value.path, ...described, metadata, message: 'Catalog line saved; the file itself is unchanged.' }
       },
     }))

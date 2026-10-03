@@ -20,6 +20,7 @@ import {
 } from '../shared'
 import { absolutePreviewUrl, PREVIEW_TICKET_TTL_SECONDS, previewTypeFor, previewUrlFor } from './preview'
 import { memoryOpen } from './memory'
+import { touchPaths } from './touched'
 
 /** Each expected failure reads as a fact the model can act on, never as a malfunction. */
 const MESSAGES: Record<WorkspaceError, string> = {
@@ -282,6 +283,7 @@ export async function writeWorkspaceFile(
       ? read.version
       : null
     runtime.turn.set(seenKey(path), { version, partial: false, source: 'write' } satisfies SeenFile)
+    touchPaths(runtime.turn, [path])
 
     const previewable = previewTypeFor(path) !== undefined
     const size = `${fileSize.toLocaleString('en-US')} bytes, ${totalLines.toLocaleString('en-US')} lines`
@@ -469,6 +471,7 @@ export const WorkspaceFilesServerPlugin = {
           if (!result.ok) return unwrap(result) as WorkspaceToolError
           const { path, fileSize, totalLines, version, replacements } = result.value
           runtime.turn.set(seenKey(path), { version, partial: false, source: 'write' } satisfies SeenFile)
+          touchPaths(runtime.turn, [path])
 
           const previewable = previewTypeFor(path) !== undefined
           const places = replacements === 1 ? 'one place' : `${replacements} places`
@@ -513,6 +516,7 @@ export const WorkspaceFilesServerPlugin = {
         })
         if (!result.ok) return unwrap(result) as WorkspaceToolError
         const { path, sourcePath, restoredFrom, version, fileSize, totalLines } = result.value
+        touchPaths(runtime.turn, [path])
         return {
           path, sourcePath, restoredFrom, version, fileSize, totalLines,
           message: `Restored ${sourcePath} v${restoredFrom} to ${path}`,
@@ -548,6 +552,7 @@ export const WorkspaceFilesServerPlugin = {
           const from = `${fromPath}${to.slice(path.length)}`
           const read = runtime.turn.get(seenKey(from))
           if (read !== undefined) runtime.turn.set(seenKey(to), read)
+          touchPaths(runtime.turn, [from, to])
         }
         return {
           path,
@@ -576,6 +581,7 @@ export const WorkspaceFilesServerPlugin = {
         if (!result.ok) return unwrap(result) as WorkspaceToolError
         const { path, deleted } = result.value
         for (const gone of deleted) runtime.turn.delete(seenKey(gone))
+        touchPaths(runtime.turn, deleted)
         return {
           path,
           deleted,
@@ -619,6 +625,7 @@ export const WorkspaceFilesServerPlugin = {
         })
         if (!result.ok) return unwrap(result) as WorkspaceToolError
         const { path, mime, fileSize, version } = result.value
+        touchPaths(runtime.turn, [path])
         return { path, from: input.from, fromName, mime, fileSize, version, message: `Copied ${input.from} to ${path}.` }
       },
     }))

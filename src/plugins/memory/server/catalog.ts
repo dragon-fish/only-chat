@@ -1,6 +1,6 @@
 import { and, desc, eq, isNull, or } from 'drizzle-orm'
 import type { DB } from '@/server/db/client'
-import { memories, memorySnapshots, workspaceFiles } from '@/server/db/schema'
+import { memories, memorySnapshots, workspaceFiles, type KnownMemoryFile } from '@/server/db/schema'
 import { MEMORY_SAVE_TOOL_ID } from '@/shared/plugins'
 import { MEMORY_CATEGORIES, MEMORY_LAYOUT, memoryCategory, type MemoryCategory, type MemoryScopes } from '../shared'
 
@@ -58,7 +58,7 @@ function line(entry: CatalogEntry): string {
   return `- ${entry.path} — ${entry.description}`
 }
 
-function inlineBlock(file: InlineFile): string {
+export function inlineBlock(file: InlineFile): string {
   const text = file.text.length > INLINE_LIMIT
     ? `${file.text.slice(0, INLINE_LIMIT)}\n[Cut here: read_file the rest, and shorten the file.]`
     : file.text
@@ -139,6 +139,32 @@ export async function loadCatalog(
   }
 }
 
+/** Every live file in the open memory mounts as a conversation would know it, by file id. */
+export async function loadKnown(db: DB, userId: number, projectId: number | null, scopes: MemoryScopes): Promise<Record<string, KnownMemoryFile>> {
+  const project = scopes.project && projectId !== null
+  if (!scopes.user && !project) return {}
+  const rows = await db.select({
+    id: workspaceFiles.id,
+    mount: workspaceFiles.mount,
+    relativePath: workspaceFiles.relative_path,
+    version: workspaceFiles.current_version,
+    description: memories.description,
+  })
+    .from(workspaceFiles)
+    .leftJoin(memories, eq(memories.file_id, workspaceFiles.id))
+    .where(and(
+      eq(workspaceFiles.user_id, userId),
+      isNull(workspaceFiles.deleted_at),
+      or(
+        scopes.user ? eq(workspaceFiles.mount, 'memory/user') : undefined,
+        project ? and(eq(workspaceFiles.mount, 'memory/project'), eq(workspaceFiles.project_id, projectId)) : undefined,
+      ),
+    ))
+  return Object.fromEntries(rows.map(row => [String(row.id), {
+    path: `/${row.mount}/${row.relativePath}`, version: row.version, description: row.description,
+  }]))
+}
+
 /** How a snapshot records which layers were open when it was rendered. */
 export function scopesKey(scopes: MemoryScopes): string {
   return [scopes.user ? 'user' : null, scopes.project ? 'project' : null].filter(Boolean).join(',')
@@ -151,6 +177,9 @@ export function scopesKey(scopes: MemoryScopes): string {
  * Written conditionally and read back, never written and returned: two generations of one
  * conversation can both find nothing stored, and whichever lands first is the catalog both use —
  * a turn that used its own losing copy would rebuild a different prefix on the next turn.
+ *
+ * `rendered` says the catalog was made just now, together with a fresh `known`, so there is nothing
+ * yet to remind the model of.
  */
 export async function memoryPreamble(input: {
   db: DB
@@ -159,22 +188,23 @@ export async function memoryPreamble(input: {
   projectId: number | null
   scopes: MemoryScopes
   readFile: ReadMemoryFile
-}): Promise<string> {
+}): Promise<{ text: string, rendered: boolean }> {
   const { db, userId, conversationId, projectId, scopes, readFile } = input
   const key = scopesKey(scopes)
   const stored = await readSnapshot(db, conversationId)
-  if (stored && stored.project_id === projectId && stored.scopes === key) return stored.text
+  if (stored && stored.project_id === projectId && stored.scopes === key) return { text: stored.text, rendered: false }
 
   const catalog = await loadCatalog(db, userId, projectId, scopes, readFile)
   const text = renderCatalog(catalog.user, catalog.project)
+  const known = await loadKnown(db, userId, projectId, scopes)
   const now = Date.now()
   if (!stored) {
-    await db.insert(memorySnapshots).values({ conversation_id: conversationId, project_id: projectId, scopes: key, text, created_at: now })
+    await db.insert(memorySnapshots).values({ conversation_id: conversationId, project_id: projectId, scopes: key, text, known, created_at: now })
       .onConflictDoNothing()
   }
   else {
     // Only over the stale one this turn saw; a concurrent turn that already replaced it wins.
-    await db.update(memorySnapshots).set({ project_id: projectId, scopes: key, text, created_at: now }).where(and(
+    await db.update(memorySnapshots).set({ project_id: projectId, scopes: key, text, known, created_at: now }).where(and(
       eq(memorySnapshots.conversation_id, conversationId),
       stored.project_id === null ? isNull(memorySnapshots.project_id) : eq(memorySnapshots.project_id, stored.project_id),
       eq(memorySnapshots.scopes, stored.scopes),
@@ -182,10 +212,10 @@ export async function memoryPreamble(input: {
   }
   const settled = await readSnapshot(db, conversationId)
   if (!settled) throw new Error(`memory snapshot for conversation ${conversationId} vanished while it was written`)
-  return settled.text
+  return { text: settled.text, rendered: true }
 }
 
-async function readSnapshot(db: DB, conversationId: number) {
+export async function readSnapshot(db: DB, conversationId: number) {
   const [row] = await db.select().from(memorySnapshots).where(eq(memorySnapshots.conversation_id, conversationId)).limit(1)
   return row
 }
