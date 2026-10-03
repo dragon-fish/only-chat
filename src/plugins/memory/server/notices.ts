@@ -1,11 +1,40 @@
 import { eq } from 'drizzle-orm'
 import type { DB } from '@/server/db/client'
-import { memorySnapshots, type KnownMemoryFile } from '@/server/db/schema'
+import { memoryState, type KnownMemoryFile } from '@/server/db/schema'
 import type { Message } from '@/shared/models'
 import { MEMORY_PLUGIN_ID, type MemoryScopes } from '../shared'
-import { inlineBlock, loadKnown, readSnapshot, type InlineCategory, type ReadMemoryFile } from './catalog'
+import {
+  inlineBlock, loadCatalog, loadKnown, renderCatalog, scopeBlock, scopesKey,
+  type InlineCategory, type ReadMemoryFile, type ScopeCatalog,
+} from './catalog'
 
 type Known = Record<string, KnownMemoryFile>
+
+/** What a conversation was last told: which Project, which layers, which files. */
+export interface MemoryState {
+  projectId: number | null
+  scopes: MemoryScopes
+  known: Known
+}
+
+export async function readState(db: DB, conversationId: number): Promise<MemoryState | null> {
+  const [row] = await db.select().from(memoryState).where(eq(memoryState.conversation_id, conversationId)).limit(1)
+  if (!row) return null
+  const open = new Set(row.scopes.split(','))
+  return { projectId: row.project_id, scopes: { user: open.has('user'), project: open.has('project') }, known: row.known }
+}
+
+export async function writeState(db: DB, conversationId: number, state: MemoryState): Promise<void> {
+  const values = { project_id: state.projectId, scopes: scopesKey(state.scopes), known: state.known, updated_at: Date.now() }
+  await db.insert(memoryState).values({ conversation_id: conversationId, ...values })
+    .onConflictDoUpdate({ target: memoryState.conversation_id, set: values })
+}
+
+/** A fork replays the source's messages, catalog and reminders included, so it knows what they knew. */
+export async function copyState(db: DB, sourceConversationId: number, targetConversationId: number): Promise<void> {
+  const state = await readState(db, sourceConversationId)
+  if (state) await writeState(db, targetConversationId, state)
+}
 
 /** What changed between two views of the memory files, each list sorted by path. */
 export interface MemoryChanges {
@@ -33,10 +62,6 @@ export function diffKnown(known: Known, current: Known): MemoryChanges {
   return changes
 }
 
-export function isEmpty(changes: MemoryChanges): boolean {
-  return changes.added.length + changes.updated.length + changes.moved.length + changes.removed.length === 0
-}
-
 /** The files that travel whole in the catalog travel whole here too, when they change. */
 function inlineCategoryOf(path: string): InlineCategory | null {
   if (/^\/memory\/(user|project)\/profile\.md$/.test(path)) return 'profile'
@@ -44,15 +69,11 @@ function inlineCategoryOf(path: string): InlineCategory | null {
   return null
 }
 
-const line = (verb: string, file: KnownMemoryFile) => (
-  file.description === null ? `- ${verb} ${file.path}` : `- ${verb} ${file.path} — ${file.description}`
-)
-
-/** The reminder text. `texts` holds the current contents of changed profiles and preferences. */
-export function renderNotice(changes: MemoryChanges, texts: ReadonlyMap<string, string>): string {
-  const lines = ['Memory changed since you last looked:']
+/** One line per changed file. `texts` holds the current contents of changed profiles and preferences. */
+export function changeLines(changes: MemoryChanges, texts: ReadonlyMap<string, string>): string[] {
+  const lines: string[] = []
   const withText = (verb: string, file: KnownMemoryFile) => {
-    lines.push(line(verb, file))
+    lines.push(file.description === null ? `- ${verb} ${file.path}` : `- ${verb} ${file.path} — ${file.description}`)
     const category = inlineCategoryOf(file.path)
     const text = texts.get(file.path)
     if (category !== null && text !== undefined) lines.push(inlineBlock({ category, path: file.path, text }))
@@ -61,49 +82,87 @@ export function renderNotice(changes: MemoryChanges, texts: ReadonlyMap<string, 
   for (const file of changes.updated) withText('updated', file)
   for (const { from, to } of changes.moved) lines.push(`- moved ${from} → ${to}`)
   for (const path of changes.removed) lines.push(`- removed ${path}`)
-  return lines.join('\n')
+  return lines
 }
 
-async function setKnown(db: DB, conversationId: number, known: Known): Promise<void> {
-  await db.update(memorySnapshots).set({ known }).where(eq(memorySnapshots.conversation_id, conversationId))
+export const REMINDER_HEADING = 'Memory changed since you last looked:'
+
+const OFF_NOW = {
+  user: 'User memory is now off in this conversation: do not read or save anything under /memory/user.',
+  project: 'Project memory is now off in this conversation: do not read or save anything under /memory/project.',
 }
 
 /**
- * A reminder for the user message this turn answers, when memory changed elsewhere since the
- * conversation last knew it; null otherwise. The core stores it on that message, and history
- * replays it from there.
+ * The notes a turn adds for memory, all on the user message it answers: the full catalog, ahead of
+ * what the person said, the first time memory is on along this path; afterwards a reminder at the
+ * end, when something changed since the conversation was last told.
  *
- * Only a turn that ends at a user message gets one, and only once: a message that already carries
- * a memory reminder — a regenerated reply — keeps it rather than diffing again, and a continuation
- * (an answered question, a task's result) leaves it for the next thing the person says.
+ * Nothing is added to a message that already carries a memory note — a regenerated reply keeps
+ * what it was sent — nor for a turn that does not answer a user message (an answered question, a
+ * task's result), which leaves it for the next thing the person says.
  */
-export async function memoryNotice(input: {
+export async function memoryTurnNotes(input: {
   db: DB
   userId: number
   conversationId: number
   projectId: number | null
   scopes: MemoryScopes
   path: readonly Message[]
-  /** The snapshot was rendered this turn, with a fresh `known`: nothing can have changed since. */
-  rendered: boolean
   readFile: ReadMemoryFile
-}): Promise<string | null> {
-  const { db, userId, conversationId, projectId, scopes, path, rendered, readFile } = input
+}): Promise<Array<{ text: string, at?: 'start' }>> {
+  const { db, userId, conversationId, projectId, scopes, path, readFile } = input
   const leaf = path.at(-1)
-  if (rendered || leaf === undefined || leaf.role !== 'user') return null
-  if (leaf.notes?.some(note => note.plugin === MEMORY_PLUGIN_ID)) return null
+  if (leaf === undefined || leaf.role !== 'user') return []
+  const mine = (message: Message) => message.notes?.some(note => note.plugin === MEMORY_PLUGIN_ID) === true
+  if (mine(leaf)) return []
 
-  const snapshot = await readSnapshot(db, conversationId)
-  if (!snapshot) return null
-  const current = await loadKnown(db, userId, projectId, scopes)
-  // A snapshot from before this was tracked starts from what is there now, not from nothing.
-  if (snapshot.known === null) {
-    await setKnown(db, conversationId, current)
-    return null
+  const current: MemoryState = { projectId, scopes, known: await loadKnown(db, userId, projectId, scopes) }
+  const hasCatalog = path.some(message => message.notes?.some(note => note.plugin === MEMORY_PLUGIN_ID && note.at === 'start'))
+  const before = await readState(db, conversationId)
+  if (!hasCatalog || before === null) {
+    const catalog = await loadCatalog(db, userId, projectId, scopes, readFile)
+    await writeState(db, conversationId, current)
+    return [{ text: renderCatalog(catalog.user, catalog.project), at: 'start' }]
   }
-  const changes = diffKnown(snapshot.known, current)
-  if (isEmpty(changes)) return null
 
+  const text = await reminder(db, userId, before, current, readFile)
+  if (text === null) return []
+  await writeState(db, conversationId, current)
+  return [{ text }]
+}
+
+/** Everything that differs between what the conversation was told and what is there now, or null. */
+async function reminder(db: DB, userId: number, before: MemoryState, after: MemoryState, readFile: ReadMemoryFile): Promise<string | null> {
+  const lines: string[] = []
+  /** Renders one layer that has just opened, as the catalog would have shown it. */
+  const opened = async (layer: 'user' | 'project') => {
+    const catalog = await loadCatalog(db, userId, after.projectId, { user: layer === 'user', project: layer === 'project' }, readFile)
+    return scopeBlock(layer, `memory/${layer}`, (layer === 'user' ? catalog.user : catalog.project) as ScopeCatalog)
+  }
+
+  if (before.scopes.user && !after.scopes.user) lines.push(OFF_NOW.user)
+  if (!before.scopes.user && after.scopes.user) lines.push('User memory is now on in this conversation:', await opened('user'))
+
+  // A Project's memory belongs to that Project: moving the conversation is the old layer closing
+  // and a new one opening, never a list of file changes.
+  const projectBefore = before.scopes.project ? before.projectId : null
+  const projectAfter = after.scopes.project ? after.projectId : null
+  if (projectBefore !== projectAfter) {
+    if (projectAfter === null) lines.push(OFF_NOW.project)
+    else {
+      lines.push(projectBefore === null
+        ? 'Project memory is now on in this conversation:'
+        : 'This conversation is now in a different Project, with project memory of its own:')
+      lines.push(await opened('project'))
+    }
+  }
+
+  // File changes only within layers that stayed open: anything else was just said above.
+  const steady = (path: string) => (path.startsWith('/memory/user/')
+    ? before.scopes.user && after.scopes.user
+    : projectBefore !== null && projectBefore === projectAfter)
+  const within = (known: Known) => Object.fromEntries(Object.entries(known).filter(([, file]) => steady(file.path)))
+  const changes = diffKnown(within(before.known), within(after.known))
   const texts = new Map<string, string>()
   for (const file of [...changes.added, ...changes.updated]) {
     if (inlineCategoryOf(file.path) === null) continue
@@ -111,8 +170,8 @@ export async function memoryNotice(input: {
     const text = await readFile(mount, file.path.slice(`/${mount}/`.length))
     if (text !== null) texts.set(file.path, text)
   }
-  await setKnown(db, conversationId, current)
-  return renderNotice(changes, texts)
+  lines.push(...changeLines(changes, texts))
+  return lines.length === 0 ? null : [REMINDER_HEADING, ...lines].join('\n')
 }
 
 /**
@@ -124,25 +183,23 @@ export async function absorbOwnChanges(input: {
   db: DB
   userId: number
   conversationId: number
-  projectId: number | null
-  scopes: MemoryScopes
   touched: ReadonlySet<string>
 }): Promise<void> {
-  const { db, userId, conversationId, projectId, scopes, touched } = input
+  const { db, userId, conversationId, touched } = input
   if (touched.size === 0) return
-  const snapshot = await readSnapshot(db, conversationId)
-  if (!snapshot?.known) return
-  const current = await loadKnown(db, userId, projectId, scopes)
-  const known: Known = { ...snapshot.known }
+  const state = await readState(db, conversationId)
+  if (!state) return
+  const current = await loadKnown(db, userId, state.projectId, state.scopes)
+  const known: Known = { ...state.known }
   let changed = false
   for (const id of new Set([...Object.keys(known), ...Object.keys(current)])) {
     const was = known[id]
     const now = current[id]
-    const mine = (was !== undefined && touched.has(was.path)) || (now !== undefined && touched.has(now.path))
-    if (!mine) continue
+    const own = (was !== undefined && touched.has(was.path)) || (now !== undefined && touched.has(now.path))
+    if (!own) continue
     if (now === undefined) delete known[id]
     else known[id] = now
     changed = true
   }
-  if (changed) await setKnown(db, conversationId, known)
+  if (changed) await writeState(db, conversationId, { ...state, known })
 }

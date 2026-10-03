@@ -1,6 +1,6 @@
 import { and, desc, eq, isNull, or } from 'drizzle-orm'
 import type { DB } from '@/server/db/client'
-import { memories, memorySnapshots, workspaceFiles, type KnownMemoryFile } from '@/server/db/schema'
+import { memories, workspaceFiles, type KnownMemoryFile } from '@/server/db/schema'
 import { MEMORY_SAVE_TOOL_ID } from '@/shared/plugins'
 import { MEMORY_CATEGORIES, MEMORY_LAYOUT, memoryCategory, type MemoryCategory, type MemoryScopes } from '../shared'
 
@@ -65,7 +65,8 @@ export function inlineBlock(file: InlineFile): string {
   return `<${file.category} path="${file.path}">\n${text.trimEnd()}\n</${file.category}>`
 }
 
-function scopeBlock(name: string, mount: string, scope: ScopeCatalog | ClosedScope): string {
+/** One layer as the catalog shows it; also what a reminder carries for a layer that just opened. */
+export function scopeBlock(name: 'user' | 'project', mount: string, scope: ScopeCatalog | ClosedScope): string {
   if (scope === 'off') return [`<scope name="${name}">`, CLOSED_NOTE[name]!, '</scope>'].join('\n')
   const sorted = ORDER.flatMap(category => scope.entries.filter(entry => entry.category === category))
   const lines = sorted.slice(0, CATALOG_LIMIT).map(line)
@@ -75,14 +76,15 @@ function scopeBlock(name: string, mount: string, scope: ScopeCatalog | ClosedSco
 }
 
 /**
- * The text that leads a conversation's first message. Pure, so the same memories always render
- * the same bytes. `project` is null for a conversation outside any Project, which has no project
- * scope at all rather than an empty one; `'off'` is a layer this conversation has switched off.
+ * The catalog the first memory turn of a conversation leads its user message with. It is stored on
+ * that message and never rendered again; what changes later reaches the model as reminders.
+ * `project` is null for a conversation outside any Project, which has no project scope at all
+ * rather than an empty one; `'off'` is a layer this conversation has switched off.
  */
 export function renderCatalog(user: ScopeCatalog | ClosedScope, project: ScopeCatalog | ClosedScope | null): string {
   return [
     '<memory-catalog>',
-    'Your memory as it stood when this conversation started; memories saved since then are not listed. Read a file before relying on it.',
+    'Your memory as of this message; later changes arrive as reminders on later messages. Read a file before relying on it.',
     scopeBlock('user', 'memory/user', user),
     ...(project === null ? [] : [scopeBlock('project', 'memory/project', project)]),
     '</memory-catalog>',
@@ -168,61 +170,4 @@ export async function loadKnown(db: DB, userId: number, projectId: number | null
 /** How a snapshot records which layers were open when it was rendered. */
 export function scopesKey(scopes: MemoryScopes): string {
   return [scopes.user ? 'user' : null, scopes.project ? 'project' : null].filter(Boolean).join(',')
-}
-
-/**
- * The catalog this conversation leads with: the stored one while it was rendered for the
- * conversation's current Project and the same open layers, otherwise a fresh one.
- *
- * Written conditionally and read back, never written and returned: two generations of one
- * conversation can both find nothing stored, and whichever lands first is the catalog both use —
- * a turn that used its own losing copy would rebuild a different prefix on the next turn.
- *
- * `rendered` says the catalog was made just now, together with a fresh `known`, so there is nothing
- * yet to remind the model of.
- */
-export async function memoryPreamble(input: {
-  db: DB
-  userId: number
-  conversationId: number
-  projectId: number | null
-  scopes: MemoryScopes
-  readFile: ReadMemoryFile
-}): Promise<{ text: string, rendered: boolean }> {
-  const { db, userId, conversationId, projectId, scopes, readFile } = input
-  const key = scopesKey(scopes)
-  const stored = await readSnapshot(db, conversationId)
-  if (stored && stored.project_id === projectId && stored.scopes === key) return { text: stored.text, rendered: false }
-
-  const catalog = await loadCatalog(db, userId, projectId, scopes, readFile)
-  const text = renderCatalog(catalog.user, catalog.project)
-  const known = await loadKnown(db, userId, projectId, scopes)
-  const now = Date.now()
-  if (!stored) {
-    await db.insert(memorySnapshots).values({ conversation_id: conversationId, project_id: projectId, scopes: key, text, known, created_at: now })
-      .onConflictDoNothing()
-  }
-  else {
-    // Only over the stale one this turn saw; a concurrent turn that already replaced it wins.
-    await db.update(memorySnapshots).set({ project_id: projectId, scopes: key, text, known, created_at: now }).where(and(
-      eq(memorySnapshots.conversation_id, conversationId),
-      stored.project_id === null ? isNull(memorySnapshots.project_id) : eq(memorySnapshots.project_id, stored.project_id),
-      eq(memorySnapshots.scopes, stored.scopes),
-    ))
-  }
-  const settled = await readSnapshot(db, conversationId)
-  if (!settled) throw new Error(`memory snapshot for conversation ${conversationId} vanished while it was written`)
-  return { text: settled.text, rendered: true }
-}
-
-export async function readSnapshot(db: DB, conversationId: number) {
-  const [row] = await db.select().from(memorySnapshots).where(eq(memorySnapshots.conversation_id, conversationId)).limit(1)
-  return row
-}
-
-/** A fork replays the source's messages, so it replays the catalog in front of them too. */
-export async function copySnapshot(db: DB, sourceConversationId: number, targetConversationId: number): Promise<void> {
-  const stored = await readSnapshot(db, sourceConversationId)
-  if (!stored) return
-  await db.insert(memorySnapshots).values({ ...stored, conversation_id: targetConversationId }).onConflictDoNothing()
 }

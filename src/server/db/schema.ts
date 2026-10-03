@@ -302,26 +302,21 @@ export const memories = sqliteTable('memories', {
 })
 
 /**
- * The memory catalog one conversation leads with, rendered once and replayed byte for byte: it sits
- * in the first user message, where any change rewrites the head of the cached prefix.
+ * What a conversation was last told about memory: the catalog its first memory turn carried, plus
+ * every reminder since, folded into one state. A difference from what is there now is what the next
+ * user message is reminded of; the catalog and reminders themselves live on the messages they end.
  *
- * `project_id` is the Project it was rendered for and deliberately not a foreign key. Moving the
- * conversation, or deleting the Project, has to leave it mismatched so the next turn renders anew —
- * a cascade to null would make a deleted Project's catalog look current for a loose conversation.
+ * `project_id` is deliberately not a foreign key: moving the conversation, or deleting the Project,
+ * has to leave it mismatched so the next turn says so.
  */
-export const memorySnapshots = sqliteTable('memory_snapshots', {
+export const memoryState = sqliteTable('memory_state', {
   conversation_id: integer().primaryKey().references(() => conversations.id, { onDelete: 'cascade' }),
   project_id: integer(),
-  /** The layers that were open, as `scopesKey` writes them. A different set renders anew. */
-  scopes: text().notNull().default(''),
-  text: text().notNull(),
-  /**
-   * The memory files this conversation knows about, by file id: what the catalog showed, plus what
-   * its own turns changed and what reminders have told it since. A difference is what it is told next.
-   * Null on a snapshot rendered before this was tracked: taken as known, not as everything new.
-   */
-  known: text({ mode: 'json' }).$type<Record<string, KnownMemoryFile>>(),
-  created_at: integer().notNull(),
+  /** Which layers were open, as `scopesKey` writes them. */
+  scopes: text().notNull(),
+  /** The memory files it knows, by file id, in the open layers. */
+  known: text({ mode: 'json' }).$type<Record<string, KnownMemoryFile>>().notNull(),
+  updated_at: integer().notNull(),
 })
 
 /** One memory file as a conversation last knew it. */

@@ -218,12 +218,17 @@ describe('buildModelMessages', () => {
     expect(() => buildModelMessages({ ...input('anthropic'), attachments: new Map() })).toThrow(/attachment 9/)
   })
 
-  it('leads the first user message with the preamble and leaves later ones alone', () => {
-    const out = buildModelMessages({ ...input('anthropic'), preamble: '<memory-catalog />' }) as Array<{ role: string; content: unknown }>
-    const users = out.filter((m) => m.role === 'user') as Array<{ content: Array<{ type: string; text?: string }> }>
-    expect(users[0]!.content[0]).toEqual({ type: 'text', text: '<memory-catalog />' })
-    expect(users[0]!.content[1]).toEqual({ type: 'text', text: 'look' })
-    expect(users.at(-1)!.content).toEqual([{ type: 'text', text: 'and now?' }])
+  it('leads a user message with its start notes and keeps interruption notes after them', () => {
+    const interrupted: Message[] = [
+      msg({ id: 1, role: 'user', parts: [{ type: 'text', text: 'first' }], notes: [{ plugin: 'memory', text: 'P', at: 'start' }] }),
+      msg({ id: 2, role: 'assistant', status: 'aborted', parts: [] }),
+      msg({ id: 3, role: 'user', parts: [{ type: 'text', text: 'second' }] }),
+    ]
+    const out = buildModelMessages({ protocol: 'anthropic', systemPrompt: null, path: interrupted, attachments: new Map() }) as Array<{ role: string; content: Array<{ type: string; text?: string }> }>
+    expect(out).toHaveLength(1)
+    expect(out[0]!.content[0]).toEqual({ type: 'text', text: '<system-reminder>\nP\n</system-reminder>' })
+    expect(out[0]!.content[1]).toEqual({ type: 'text', text: 'first' })
+    expect(out[0]!.content.filter((part) => part.text?.includes('\nP\n'))).toHaveLength(1)
   })
 
   it('ends a user message with its notes as reminders, and leaves the others alone', () => {
@@ -238,18 +243,6 @@ describe('buildModelMessages', () => {
     expect(users[0]!.content.some((part) => part.text?.includes('system-reminder'))).toBe(false)
   })
 
-  it('keeps the preamble ahead of an interruption note when the first reply was cut short', () => {
-    const interrupted: Message[] = [
-      msg({ id: 1, role: 'user', parts: [{ type: 'text', text: 'first' }] }),
-      msg({ id: 2, role: 'assistant', status: 'aborted', parts: [] }),
-      msg({ id: 3, role: 'user', parts: [{ type: 'text', text: 'second' }] }),
-    ]
-    const out = buildModelMessages({ protocol: 'anthropic', systemPrompt: null, path: interrupted, attachments: new Map(), preamble: 'P' }) as Array<{ role: string; content: Array<{ type: string; text?: string }> }>
-    expect(out).toHaveLength(1)
-    expect(out[0]!.content[0]).toEqual({ type: 'text', text: 'P' })
-    expect(out[0]!.content[1]).toEqual({ type: 'text', text: 'first' })
-    expect(out[0]!.content.filter((part) => part.text === 'P')).toHaveLength(1)
-  })
 })
 
 describe('requiredAttachmentIds', () => {

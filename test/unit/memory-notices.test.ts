@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { diffKnown, renderNotice } from '@/plugins/memory/server/notices'
+import { changeLines, diffKnown } from '@/plugins/memory/server/notices'
 
 const file = (path: string, version = 1, description: string | null = null) => ({ path, version, description })
 
@@ -26,16 +26,15 @@ describe('diffKnown', () => {
   })
 })
 
-describe('renderNotice', () => {
+describe('changeLines', () => {
   it('lists each kind of change and carries a changed profile whole', () => {
-    const text = renderNotice({
+    const text = changeLines({
       added: [file('/memory/user/profile.md', 1, 'who')],
       updated: [file('/memory/user/topics/food.md', 2, 'tastes')],
       moved: [{ from: '/memory/user/a.md', to: '/memory/user/topics/a.md' }],
       removed: ['/memory/user/topics/old.md'],
-    }, new Map([['/memory/user/profile.md', 'Engineer.\n']]))
+    }, new Map([['/memory/user/profile.md', 'Engineer.\n']])).join('\n')
     expect(text).toBe([
-      'Memory changed since you last looked:',
       '- new /memory/user/profile.md — who',
       '<profile path="/memory/user/profile.md">\nEngineer.\n</profile>',
       '- updated /memory/user/topics/food.md — tastes',

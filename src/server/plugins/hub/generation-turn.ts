@@ -22,16 +22,10 @@ export interface GenerationTurn {
   /** Set by at most one plugin. Absent, files reach the model with nothing said about them. */
   labeler?: FileLabeler
   /**
-   * Set by at most one plugin: text that leads the first user message. It must be the same on every
-   * turn of the conversation, so whatever produces it persists it rather than recomputing it — a
-   * change rewrites the head of the cached prefix.
-   */
-  preamble?: string
-  /**
    * New notes for user messages on this path, as `<system-reminder>` text the person never typed.
    * The core stores them on their messages (`messages.notes`) before building the prompt, and every
    * later turn replays them from there; a plugin adds a note once, and can tell it already did from
    * the message's own `notes`.
    */
-  notes: Array<{ pluginId: string, messageId: number, text: string }>
+  notes: Array<{ pluginId: string, messageId: number, text: string, at?: 'start' }>
 }

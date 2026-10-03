@@ -57,8 +57,6 @@ export interface BuildInput {
   path: Message[]
   attachments: ReadonlyMap<number, AttachmentInput>
   labeler?: FileLabeler
-  /** Leads the first user message. Persisted by whoever sets it, so it is the same on every turn. */
-  preamble?: string | null
 }
 
 const ANTHROPIC_CACHE = { anthropic: { cacheControl: { type: 'ephemeral' } } } as const
@@ -402,7 +400,7 @@ export function interjectedUserMessage(
  * which rejects a `role: 'system'` message inside `messages`.
  */
 export function buildModelMessages(input: BuildInput): ModelMessage[] {
-  const { protocol, systemPrompt, path, attachments, labeler, preamble } = input
+  const { protocol, systemPrompt, path, attachments, labeler } = input
   const out: ModelMessage[] = []
   const cache = protocol === 'anthropic'
 
@@ -413,7 +411,6 @@ export function buildModelMessages(input: BuildInput): ModelMessage[] {
   }
 
   const lastUserIndex = path.map((m) => m.role).lastIndexOf('user')
-  const firstUserIndex = path.findIndex((m) => m.role === 'user')
   /** Carried onto the next user message: a note about the turn that came before it. */
   let pending: string | null = null
   /** Set when the turn in between said nothing, so the user messages around it are one message. */
@@ -422,8 +419,10 @@ export function buildModelMessages(input: BuildInput): ModelMessage[] {
   path.forEach((m, i) => {
     if (m.role === 'user') {
       const said = userParts(m.parts, attachments, labeler)
-      const lead: UserPart[] = i === firstUserIndex && preamble ? [{ type: 'text', text: preamble }] : []
-      const tail: UserPart[] = (m.notes ?? []).map(note => ({ type: 'text', text: `<system-reminder>\n${note.text}\n</system-reminder>` }))
+      // A plugin's notes, stored on the message: replayed as they were sent, whatever is on now.
+      const reminder = (text: string): UserPart => ({ type: 'text', text: `<system-reminder>\n${text}\n</system-reminder>` })
+      const lead = (m.notes ?? []).filter(note => note.at === 'start').map(note => reminder(note.text))
+      const tail = (m.notes ?? []).filter(note => note.at !== 'start').map(note => reminder(note.text))
       const content: UserPart[] = pending === null ? [...lead, ...said, ...tail] : [...lead, { type: 'text', text: pending }, ...said, ...tail]
       pending = null
 

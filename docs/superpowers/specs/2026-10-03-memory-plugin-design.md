@@ -6,9 +6,9 @@
 
 | 层 | 提供 |
 |---|---|
-| 核心 | 插件 system 段注册与渲染（§2）；`GenerationTurn.preamble` 与首条用户消息注入（§5） |
+| 核心 | 插件 system 段注册与渲染（§2）；固化在消息上的插件附注（§5） |
 | `workspace_files` 插件 | `/memory/user`、`/memory/project` 两个挂载点（§3） |
-| `memory` 插件（依赖 `workspace_files`） | `memory_save` 工具、`memories` 元信息表、catalog 快照、system 段 |
+| `memory` 插件（依赖 `workspace_files`） | `memory_save` 工具、`memories` 元信息表、catalog 与变动提醒、system 段 |
 
 记忆正文就是工作区文件：读用 `read_file`，改用 `edit_file` / `write_file`，删用 `delete_file`，改名或换作用域用 `rename_file`，版本历史、回收站、文件面板全部沿用。记忆插件只替代 Claude Code 中「手写 MEMORY.md 索引 + frontmatter」的部分。
 
@@ -200,23 +200,14 @@ Your memory as it stood when this conversation started; …
 - 其余文件按布局顺序（preferences、topics、areas、people、其他）排列，同类内按 `updated_at` 倒序；每层最多 200 行。
 - 对话不属于 Project 时无 project 段；某作用域为空时该段写 `(empty)`。
 
-### 4.5 快照
+### 4.5 固化
 
-插件自有表 `memory_snapshots`：
+catalog 在记忆首次生效的那一轮渲染一次，作为开头附注（§5）固化在该轮回答的用户消息上，之后随历史原样重放，不再重新渲染：
 
-| 列 | 说明 |
-|---|---|
-| `conversation_id` | 主键，FK → `conversations.id`，ON DELETE CASCADE |
-| `project_id` | 渲染时对话所属的 Project；**不设外键** |
-| `text` | 渲染好的 catalog |
-| `created_at` | 渲染时间 |
-
-- 读取：存在且 `project_id` 与对话当前 Project 相同（同为 null 亦算）时原样使用。编辑首条消息、重新生成均不刷新。
-- 初始化：无记录时渲染并 `INSERT … ON CONFLICT DO NOTHING`；记录的 `project_id` 不符时渲染并 `UPDATE … WHERE conversation_id = ? AND project_id IS <读到的旧值>`。两种情况都随后读回，使用实际持久化的值，并发时以先写入者为准。
-- 换 Project（移入、移出、换一个）无需任何钩子：下一轮发现 `project_id` 不符即重新渲染。Project 变化本身已改变 Project 级 system prompt，缓存本就失效。`project_id` 不设外键正是为此：Project 被删除时对话的 `project_id` 置 null，而快照保留旧 id，二者不符即重新渲染；若级联置 null，已删 Project 的 catalog 会被当作仍然有效。
-- 分叉：插件监听 `conversation/forked`，把源对话的快照复制给新对话。分叉复制了同一条消息路径，继承快照使其前缀保持一致。
-- 本轮不生效时不注入；快照保留，重新生效后继续使用。
-- 快照存在插件自己的表里，核心的 `conversations` 表与对话更新逻辑不感知记忆。
+- 通常是第一条消息；对话中途才开启记忆时，挂在那时的用户消息上，不改写更早的历史。
+- 此后的一切变化——别处的写入、移动、删除，某一层的开关，对话换了 Project——都以结尾附注告知（§9）。
+- 编辑首条消息产生的新分支上还没有 catalog，回答它的那一轮重新挂一份。
+- 本对话被告知过的内容记在插件表 `memory_state`（§9.2）；核心的 `conversations` 表与对话更新逻辑不感知记忆。
 
 ### 4.6 system 段
 
@@ -226,13 +217,13 @@ Your memory as it stood when this conversation started; …
 - 五类路径各放什么（§4.2）与收录门槛；不该记的内容（工作区或对话里已有的、只与当下有关的、猜测、密钥）。
 - 篇幅：多数事实是一行，追加进已覆盖它的文件；内容撑得起才单独成文件。正文是简短的 Markdown 列表，有理由时写在事实旁；不加标题。description 说明文件覆盖什么、何时用得上，不复述正文。写之前先看 catalog，补充已有文件，合并重复。
 - 维护方式：新建文件用 `memory_save` 带 `content`；补充或更正先 `read_file` 再 `edit_file`，描述不再贴切时用不带 `content` 的 `memory_save`；错误或过时的内容用 `edit_file` 删去，整个文件都不值得留时 `delete_file`；`rename_file` 改名或在两层之间移动；未描述的文件补描述，布局外的文件移入布局。
-- 首条消息中的 catalog 是对话开始时的快照；依据记忆行事前先读正文。
+- catalog 随记忆首次生效的那条用户消息给出，之后的变化以附注告知，自己的改动不会被重复告知；依据记忆行事前先读正文。
 
-## 5. 首条用户消息注入（核心）
+## 5. 消息附注（核心）
 
-- `GenerationTurn` 新增 `preamble?: string`，与 `labeler` 相同，至多由一个插件设置。
-- `BuildInput` 新增 `preamble: string | null`；`buildModelMessages` 将其作为首条用户消息的第一个 text part。快照已持久化，函数保持「同样输入 → 逐字节相同输出」。
-- 记忆插件在 `generation/prepare` 中、本轮生效时：调用 `openMemoryMounts(turn.state)`，以 `memoryPreamble` 初始化或读取快照（§4.5），设置 `turn.preamble`。
+- `messages` 新增列 `notes`（JSON，`[{ plugin, text, at? }]`，可空）：插件加在用户消息上、只给模型看的内容。`at: 'start'` 放在用户原话之前，缺省放在之后；每条都包为 `<system-reminder>\n…\n</system-reminder>` 作为一个 text part。附注固化在消息上，之后随历史原样重放，与插件此后是否开启无关；分叉复制消息时随之复制。
+- `GenerationTurn.notes` 只放本轮**新产生**的附注。`generation/prepare` 之后、构建提示词之前，生成流程按 `pluginManifests` 顺序（同一插件内按追加顺序）把它们追加进对应消息的 `notes` 并写库。
+- 插件凭消息自身的 `notes` 判断是否已经为它加过附注。
 
 ## 6. 测试
 
@@ -240,7 +231,7 @@ unit：
 
 - system 段渲染：同样输入两次输出逐字节相同；打乱注册顺序输出不变；返回 `undefined` 的插件不留痕迹；无用户 prompt 且无段时不产生 system 消息。
 - catalog 渲染：未描述文件的标注；超过 200 条的溢出行；无 Project 时无 project 段；空作用域。
-- `buildModelMessages`：preamble 落在首条用户消息最前，与中断提示（`pending`）共存时顺序正确。
+- `buildModelMessages`：开头附注落在原话之前、结尾附注落在之后，与中断提示（`pending`）共存时顺序正确。
 
 worker：
 
@@ -252,11 +243,11 @@ worker：
 - 生命周期：`memory_save` 新建、只改元信息、给二进制文件补描述；对不存在的文件只改元信息时报错；rename 后元信息随行；删除后隐藏、还原后重现、清除后级联删除。
 - 并发：`memory_save` 写正文后、upsert 元信息前，另一写入推进了版本，返回 `METADATA_CONFLICT`，元信息不变。
 - 已见账本：上一轮带 `content` 的 `memory_save` 之后，下一轮直接 `edit_file` 成功。
-- 快照：首轮写入；另一对话新增记忆后，本对话下一轮的首条消息不变；并发初始化只持久化一份，两次生成使用同一值；换 Project 后重新生成；分叉继承。
+- 固化：catalog 挂在记忆首次生效的用户消息上，之后的轮次与重新生成不再添加；分叉复制出的消息带着 catalog 与附注。
 
 ## 7. 文档
 
-更新 `docs/architecture.md`（插件 system 段、首条消息 preamble）、`docs/files.md`（`/memory` 挂载点、回收站与预览规则）、`README.md` 功能列表。
+更新 `docs/architecture.md`（插件 system 段、消息附注）、`docs/files.md`（`/memory` 挂载点、回收站与预览规则）、`README.md` 功能列表。
 
 ## 8. 记忆管理与分层开关
 
@@ -289,7 +280,7 @@ Project 级插件设置照会话级的做法实现：
 
 - 记忆插件在 `generation/prepare` 中读取插件配置（注入 `pluginConfig`）、对话与 Project 行的 `plugin_settings`，用 `memoryScopes` 得出 `{ user, project }`。
 - `WorkspaceScope.memory` 由 `boolean` 改为 `{ user: boolean, project: boolean }`；`openMemoryMounts(state, scopes)` 按层开放，`scopeOf` 按层判断。
-- 快照表 `memory_snapshots` 新增列 `scopes TEXT NOT NULL`（如 `user,project`、`user`、空串）。读取时 `project_id` 与 `scopes` 都相同才复用，否则按 §4.5 的条件写入重新渲染。开关变化是用户操作，带来一次缓存失效。
+- 开关组合与所在 Project 记在 `memory_state`（§9.2）；变化时不重新渲染 catalog，而是在下一条用户消息上以附注告知（§9.3）。
 - Worker 侧文件面板（`/conversations/:id/files` 的 `memoryFiles`）按同一 `memoryScopes` 分别返回两组，关闭的层不返回。
 - 新增只读接口（Worker，`ctx.pluginApi.register`）：
   - `GET /api/plugins/memory/memories` → 用户记忆列表；
@@ -329,51 +320,57 @@ unit：
 worker：
 
 - 关闭用户记忆的轮次：`/memory/user` 经工具与 `vfs:` 均不可达，catalog 只有说明行，`memory_save` 写入报 `MOUNT_UNAVAILABLE`；项目记忆不受影响。
-- 开关组合变化后下一轮重新渲染快照，组合不变则复用。
+- 关闭某一层后，下一条用户消息带一次说明，此后不再重复；该层随即不可达。
 - `project.update` 的 `plugin_settings` 按插件 id 合并、拒绝未声明的插件。
 - 记忆列表接口：只返回本人的、指定 Project 的记忆；他人的 Project 返回 404；开关关闭时仍可列出。
 
 ## 9. 对话中的记忆变动提醒
 
-### 9.1 消息附注（核心）
+### 9.1 消息附注
 
-- `messages` 新增列 `notes`（JSON，`[{ plugin, text }]`，可空）：插件附在用户消息末尾、只给模型看的内容。附注固化在消息上，之后每轮随历史原样重放，与插件此后是否开启无关；分叉复制消息时随之复制。
-- `GenerationTurn` 新增 `notes: Array<{ pluginId, messageId, text }>`，只放本轮**新产生**的附注。`generation/prepare` 之后、构建提示词之前，生成流程按 `pluginManifests` 顺序（同一插件内按追加顺序）把它们追加进对应消息的 `notes` 并写库。
-- `buildModelMessages` 把用户消息自身的 `notes` 逐条作为 text part 追加在消息末尾，包为 `<system-reminder>\n…\n</system-reminder>`。
-- 插件凭消息自身的 `notes` 判断是否已经为它加过附注。
+见 §5。
 
-### 9.2 已知状态
+### 9.2 已告知状态
 
-- `memory_snapshots` 新增列 `known TEXT`（可空）：本对话已知的记忆文件，`{ [fileId]: { path, version, description } }`，只含开放的层。为 null 的是早于本功能的快照，第一次遇到时静默设为当前状态，而不是把所有记忆当作新增来提醒。
-- 渲染快照时同时写入当时的状态；开关组合或 Project 变化导致重新渲染时一并重置。
+插件表 `memory_state`：
+
+| 列 | 说明 |
+|---|---|
+| `conversation_id` | 主键，FK → `conversations.id`，ON DELETE CASCADE |
+| `project_id` | 上次告知时对话所在的 Project；**不设外键**，Project 被删除后仍保留旧 id，下一轮即可告知 |
+| `scopes` | 上次告知时开放的层，如 `user,project` |
+| `known` | 上次告知时的记忆文件，`{ [fileId]: { path, version, description } }`，只含开放的层 |
+| `updated_at` | 更新时间 |
+
 - workspace-files 在本轮状态里记录本轮改动过的路径（`write_file`、`edit_file`、`delete_file`、`rename_file` 的新旧路径、`copy_file`、`restore_file`、带 `content` 的 `memory_save`），导出 `touchedPaths(state)`；不带 `content` 的 `memory_save` 由记忆插件自行记录。
-- `generation/settled` 时：对比当前状态与已知状态，旧路径或新路径在本轮改动过的条目并入已知状态（Agent 自己做的不必提醒）；其余留待下一轮。
+- `generation/settled` 时：在上次告知的层内对比当前文件与 `known`，旧路径或新路径在本轮改动过的条目并入 `known`（Agent 自己做的不必提醒）；其余留待下一轮。
 
 ### 9.3 生成附注
 
-`generation/prepare` 中，快照已存在且本轮未重新渲染时：
+`generation/prepare` 中，本轮路径的末尾是一条用户消息、且它还没有记忆附注时：
 
-1. 本轮路径的末尾是一条用户消息、且它还没有记忆附注时，对比当前状态与已知状态；有差异则渲染附注追加到 `turn.notes`（由核心写入该消息），并把已知状态更新为当前状态。
-2. 末尾不是用户消息（如 `ask_user` 回答后的续写）时不生成，留给下一条用户消息。
-3. 重新生成同一条用户消息时，它已带有记忆附注，不重新对比。
-
-附注格式（英文，每行一项，按 new、updated、moved、removed 排列）：
+1. 路径上还没有记忆的开头附注（或尚无 `memory_state`）：渲染完整 catalog 作为开头附注，并把当前状态写入 `memory_state`。
+2. 否则对比 `memory_state` 与当前状态，有差异则生成一条结尾附注并更新 `memory_state`：
+   - 某层由开变关：`User memory is now off in this conversation: …`；
+   - 某层由关变开，或对话换了 Project：附上该层当前的完整条目（同 catalog 的格式）；移出 Project 时说明项目记忆已关闭；
+   - 两次都开放且 Project 未变的层内，文件按 new、updated、moved、removed 列出；`profile.md`、`preferences.md` 新建或更新时附全文。
+3. 末尾不是用户消息（如 `ask_user` 回答后的续写）时不生成，留给下一条用户消息；已有记忆附注的消息（重新生成）不再添加。
 
 ```
 Memory changed since you last looked:
-- new /memory/user/topics/x.md — 描述
-- updated /memory/user/topics/饮食.md — 描述
-- moved /memory/user/a.md → /memory/project/a.md
-- removed /memory/user/topics/旧笔记.md
+User memory is now off in this conversation: do not read or save anything under /memory/user.
+- new /memory/project/topics/x.md — 描述
+- moved /memory/project/a.md → /memory/project/topics/a.md
+- removed /memory/project/topics/旧笔记.md
 ```
 
-`profile.md`、`preferences.md` 新建或更新时，在对应行后附全文（同 §4.4 的内联格式）。updated 指版本或描述变化。
+已知局限：`memory_state` 按对话记录，附注却在各分支的消息上。在一个分支上收到过某条提醒后，回到更早的消息编辑出新分支，新分支不会再收到这条提醒。
 
 ### 9.4 分叉
 
-附注在消息上，随消息一起复制；快照（含已知状态）照 §4.5 复制。
+catalog 与附注在消息上，随消息一起复制；`memory_state` 原样复制给新对话。
 
 ### 9.5 测试
 
 - unit：`buildModelMessages` 把附注追加在对应用户消息末尾，顺序稳定。
-- worker：别的对话写入、删除、移动后，本对话下一轮的末尾用户消息带对应附注并写入该消息；之后的轮次与重新生成不再产生新附注；本对话自己的改动在本轮结束后不再提醒；分叉复制出的消息带着附注。
+- worker：首个记忆轮次挂上 catalog，之后不变不再添加；别的对话写入、删除、移动后，下一条用户消息带对应附注；本对话自己的改动在本轮结束后不再提醒；关闭某层说明一次并随即不可达；换 Project 时介绍新 Project 的项目记忆，移出 Project 时说明已关闭；分叉带着 catalog、附注与状态。

@@ -143,8 +143,11 @@ export const ProjectSchema = z.object({
 })
 export type Project = z.infer<typeof ProjectSchema>
 
-/** A plugin's note at the end of a user message, sent to the model as a reminder and never shown. */
-export const MessageNoteSchema = z.object({ plugin: z.string(), text: z.string() })
+/**
+ * A plugin's note on a user message, sent to the model as a reminder and never shown. It ends the
+ * message unless `at` is `'start'`, which puts it ahead of what the person said.
+ */
+export const MessageNoteSchema = z.object({ plugin: z.string(), text: z.string(), at: z.literal('start').optional() })
 export type MessageNote = z.infer<typeof MessageNoteSchema>
 
 export const MessageSchema = z.object({

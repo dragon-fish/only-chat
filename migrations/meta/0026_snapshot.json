@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "225134ff-26e7-466d-ac71-74045396dbfb",
+  "id": "e0442630-6f90-43e8-bb79-4bd6515ea08c",
   "prevId": "31854308-5480-4e34-9cbd-e70145732b05",
   "tables": {
     "artifact_links": {
@@ -1626,8 +1626,8 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
-    "memory_snapshots": {
-      "name": "memory_snapshots",
+    "memory_state": {
+      "name": "memory_state",
       "columns": {
         "conversation_id": {
           "name": "conversation_id",
@@ -1648,25 +1648,17 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false,
-          "default": "''"
-        },
-        "text": {
-          "name": "text",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
           "autoincrement": false
         },
         "known": {
           "name": "known",
           "type": "text",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "autoincrement": false
         },
-        "created_at": {
-          "name": "created_at",
+        "updated_at": {
+          "name": "updated_at",
           "type": "integer",
           "primaryKey": false,
           "notNull": true,
@@ -1675,9 +1667,9 @@
       },
       "indexes": {},
       "foreignKeys": {
-        "memory_snapshots_conversation_id_conversations_id_fk": {
-          "name": "memory_snapshots_conversation_id_conversations_id_fk",
-          "tableFrom": "memory_snapshots",
+        "memory_state_conversation_id_conversations_id_fk": {
+          "name": "memory_state_conversation_id_conversations_id_fk",
+          "tableFrom": "memory_state",
           "tableTo": "conversations",
           "columnsFrom": [
             "conversation_id"

@@ -52,8 +52,8 @@ declare module 'cordis' {
     'conversation/before-purge'(payload: { userId: number, conversationId: number }): Promise<void>
     /**
      * A generation is about to be sent (spec §3.5, §4.5). Awaited through `ctx.parallel` before the prompt
-     * is built: a plugin prepares its per-turn state in `turn.state`; one plugin may set `turn.labeler`,
-     * and one `turn.preamble`.
+     * is built: a plugin prepares its per-turn state in `turn.state`, may add `turn.notes`, and one
+     * plugin may set `turn.labeler`.
      */
     'generation/prepare'(turn: GenerationTurn): Promise<void>
     /**

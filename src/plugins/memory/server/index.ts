@@ -12,15 +12,15 @@ import {
   MEMORY_LAYOUT, MEMORY_PLUGIN_ID, MEMORY_SAVE_TOOL_ID, MemorySaveInputSchema, memoryCategory, memoryScopes,
   type MemoryCategory, type MemoryScopes, type MemorySaveInput, type MemorySaveOutput, type MemoryToolError,
 } from '../shared'
-import { copySnapshot, memoryPreamble, type ReadMemoryFile } from './catalog'
-import { absorbOwnChanges, memoryNotice } from './notices'
+import type { ReadMemoryFile } from './catalog'
+import { absorbOwnChanges, copyState, memoryTurnNotes } from './notices'
 
 /** Standing instructions. Static on purpose: it is part of the system prompt, ahead of the cache. */
 const GUIDANCE = `You have a memory that outlives this conversation: Markdown files in the workspace.
 - /memory/user/ holds what is true across all of this user's conversations.
 - /memory/project/ holds what belongs to the current Project only, and does not exist outside one.
 
-The first user message opens with a catalog of these files as they stood when the conversation started: each layer's profile and preferences in full, then one line per other file with its description. It can be stale, and anything saved since is missing from it. When a file looks relevant, read it before relying on it.
+The first user message memory is on for opens with a catalog of these files in a system reminder: each layer's profile and preferences in full, then one line per other file with its description. When memory changes elsewhere later — another conversation, the user's memory page, a switch — a reminder at the end of a later user message says what changed. Your own changes are not repeated back to you. When a file looks relevant, read it before relying on it.
 
 Both layers are laid out the same way, and where a fact goes depends on what it is about:
 - profile.md: who the user is — name, occupation, employer, when they started, and whatever else will still be true in three months. Under 300 words.
@@ -127,11 +127,12 @@ export const MemoryServerPlugin = {
         const read = await files.readBytes(mount, scope, relativePath)
         return read.ok && isTextMime(read.value.mime) ? new TextDecoder().decode(read.value.bytes) : null
       }
-      const where = { db: ctx.db.orm, userId: turn.userId, conversationId: turn.conversationId, projectId: turn.projectId, scopes }
-      const { text, rendered } = await memoryPreamble({ ...where, readFile })
-      turn.preamble = text
-      const notice = await memoryNotice({ ...where, path: turn.path, rendered, readFile })
-      if (notice !== null) turn.notes.push({ pluginId: MEMORY_PLUGIN_ID, messageId: turn.path.at(-1)!.id, text: notice })
+      const notes = await memoryTurnNotes({
+        db: ctx.db.orm, userId: turn.userId, conversationId: turn.conversationId, projectId: turn.projectId,
+        scopes, path: turn.path, readFile,
+      })
+      // Every note goes on the user message the turn answers; the core stores it there.
+      for (const note of notes) turn.notes.push({ pluginId: MEMORY_PLUGIN_ID, messageId: turn.path.at(-1)!.id, ...note })
     })
 
     // What the turn changed itself is now known; the rest waits for the next turn's reminder.
@@ -139,15 +140,13 @@ export const MemoryServerPlugin = {
       if (!turn.toolIds.includes(MEMORY_SAVE_TOOL_ID)) return
       const scopes = memoryOpen(turn.state)
       if (!scopes.user && !scopes.project) return
-      await absorbOwnChanges({
-        db: ctx.db.orm, userId: turn.userId, conversationId: turn.conversationId, projectId: turn.projectId,
-        scopes, touched: touchedPaths(turn.state),
-      })
+      await absorbOwnChanges({ db: ctx.db.orm, userId: turn.userId, conversationId: turn.conversationId, touched: touchedPaths(turn.state) })
     })
 
     ctx.on('conversation/forked', async (payload) => {
-      // Reminders need nothing here: they live on the messages, which the fork copies whole.
-      await copySnapshot(ctx.db.orm, payload.sourceConversationId, payload.conversation.id)
+      // The catalog and reminders live on the messages, which the fork copies whole; what they told
+      // the conversation has to come along, or the fork would be told it all again.
+      await copyState(ctx.db.orm, payload.sourceConversationId, payload.conversation.id)
     })
 
     ctx.promptSections.register(MEMORY_PLUGIN_ID, ({ toolIds }) => toolIds.includes(MEMORY_SAVE_TOOL_ID) ? GUIDANCE : undefined)

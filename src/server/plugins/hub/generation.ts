@@ -285,7 +285,10 @@ export function notesByMessage(notes: GenerationTurn['notes']): Map<number, Mess
     .map((note, index) => ({ note, index }))
     .sort((a, b) => (rank.get(a.note.pluginId) ?? Infinity) - (rank.get(b.note.pluginId) ?? Infinity) || a.index - b.index)
   const out = new Map<number, MessageNote[]>()
-  for (const { note } of sorted) out.set(note.messageId, [...(out.get(note.messageId) ?? []), { plugin: note.pluginId, text: note.text }])
+  for (const { note } of sorted) {
+    const stored: MessageNote = note.at === 'start' ? { plugin: note.pluginId, text: note.text, at: 'start' } : { plugin: note.pluginId, text: note.text }
+    out.set(note.messageId, [...(out.get(note.messageId) ?? []), stored])
+  }
   return out
 }
 
@@ -330,7 +333,7 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
     }
     const messages = buildModelMessages({
       protocol: target.providerInterface.protocol, systemPrompt: payload.systemPrompt, path: payload.path, attachments,
-      labeler: turn.labeler, preamble: turn.preamble ?? null,
+      labeler: turn.labeler,
     })
     const params: ConversationParams = target.config.params
     const trace = {

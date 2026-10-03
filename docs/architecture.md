@@ -64,17 +64,14 @@ section is a synchronous function of the turn's tool ids and nothing else, rende
 own prompt in `pluginManifests` order, each wrapped in `<plugin id="…">`. Tool definitions precede
 the system prompt in the cached prefix, so a section changes only when the tools already did.
 
-Text that varies per conversation goes in front of the first user message instead: one plugin may set
-`GenerationTurn.preamble` during `generation/prepare`. It has to be byte-identical on every turn of
-the conversation, so the plugin persists it — the memory plugin stores its catalog in
-`memory_snapshots`, keyed by conversation and the Project it was rendered for, copies it to forks,
-and renders a new one only when the conversation's Project changes.
-
-Text that belongs to one later message goes in `GenerationTurn.notes`. The core stores each new note
-on its message (`messages.notes`) before building the prompt, in plugin manifest order, and every
-later turn replays it from there as a `<system-reminder>` at the end of that message — whether or not
-the plugin is still on. A fork copies them with the messages. The memory plugin uses this to tell a
-conversation about memory another conversation changed meanwhile.
+Text that varies per conversation goes on a user message instead, as a note: a plugin adds it to
+`GenerationTurn.notes` during `generation/prepare`, ahead of what the person said (`at: 'start'`) or
+after it. The core stores each new note on its message (`messages.notes`) before building the prompt,
+in plugin manifest order, and every later turn replays it from there as a `<system-reminder>` —
+whether or not the plugin is still on. What was sent stays sent; a fork copies the notes with the
+messages. The memory plugin puts its catalog on the first user message memory is on for, and tells
+the conversation about later changes — another conversation's writes, a switch, a new Project — in
+notes on later messages.
 
 ## Image backends
 
