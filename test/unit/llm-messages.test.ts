@@ -226,6 +226,17 @@ describe('buildModelMessages', () => {
     expect(users.at(-1)!.content).toEqual([{ type: 'text', text: 'and now?' }])
   })
 
+  it('ends a user message with its notes as reminders, and leaves the others alone', () => {
+    const out = buildModelMessages({ ...input('responses'), notes: new Map([[3, ['first', 'second']]]) }) as Array<{ role: string; content: unknown }>
+    const users = out.filter((m) => m.role === 'user') as Array<{ content: Array<{ type: string; text?: string }> }>
+    expect(users.at(-1)!.content).toEqual([
+      { type: 'text', text: 'and now?' },
+      { type: 'text', text: '<system-reminder>\nfirst\n</system-reminder>' },
+      { type: 'text', text: '<system-reminder>\nsecond\n</system-reminder>' },
+    ])
+    expect(users[0]!.content.some((part) => part.text?.includes('system-reminder'))).toBe(false)
+  })
+
   it('keeps the preamble ahead of an interruption note when the first reply was cut short', () => {
     const interrupted: Message[] = [
       msg({ id: 1, role: 'user', parts: [{ type: 'text', text: 'first' }] }),

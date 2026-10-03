@@ -27,4 +27,11 @@ export interface GenerationTurn {
    * change rewrites the head of the cached prefix.
    */
   preamble?: string
+  /**
+   * Notes that end user messages, as `<system-reminder>` text the person never typed. A plugin adds
+   * the ones it stored for messages on this path as well as any it makes now, and must store what it
+   * makes: history is rebuilt from the database every turn, and a note that is not replayed would
+   * rewrite the cached prefix from its message on.
+   */
+  notes: Array<{ pluginId: string, messageId: number, text: string }>
 }

@@ -59,6 +59,8 @@ export interface BuildInput {
   labeler?: FileLabeler
   /** Leads the first user message. Persisted by whoever sets it, so it is the same on every turn. */
   preamble?: string | null
+  /** Notes that end a user message, by message id, in order. Persisted by whoever made them. */
+  notes?: ReadonlyMap<number, readonly string[]>
 }
 
 const ANTHROPIC_CACHE = { anthropic: { cacheControl: { type: 'ephemeral' } } } as const
@@ -402,7 +404,7 @@ export function interjectedUserMessage(
  * which rejects a `role: 'system'` message inside `messages`.
  */
 export function buildModelMessages(input: BuildInput): ModelMessage[] {
-  const { protocol, systemPrompt, path, attachments, labeler, preamble } = input
+  const { protocol, systemPrompt, path, attachments, labeler, preamble, notes } = input
   const out: ModelMessage[] = []
   const cache = protocol === 'anthropic'
 
@@ -423,7 +425,8 @@ export function buildModelMessages(input: BuildInput): ModelMessage[] {
     if (m.role === 'user') {
       const said = userParts(m.parts, attachments, labeler)
       const lead: UserPart[] = i === firstUserIndex && preamble ? [{ type: 'text', text: preamble }] : []
-      const content: UserPart[] = pending === null ? [...lead, ...said] : [...lead, { type: 'text', text: pending }, ...said]
+      const tail: UserPart[] = (notes?.get(m.id) ?? []).map(text => ({ type: 'text', text: `<system-reminder>\n${text}\n</system-reminder>` }))
+      const content: UserPart[] = pending === null ? [...lead, ...said, ...tail] : [...lead, { type: 'text', text: pending }, ...said, ...tail]
       pending = null
 
       const previous = joinToPrevious ? out.at(-1) : undefined

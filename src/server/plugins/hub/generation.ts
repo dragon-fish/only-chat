@@ -275,6 +275,20 @@ async function assembleContext(hub: Hub, target: Target, leafMessageId: number):
 
 // ---- stage 5/6: stream + finalize
 
+/**
+ * Plugins add notes in parallel, so their arrival order is not an order: notes go by the plugin's
+ * place in the manifest list, and keep the order each plugin added them in.
+ */
+export function notesByMessage(notes: GenerationTurn['notes']): Map<number, string[]> {
+  const rank = new Map(pluginManifests.map((manifest, index) => [manifest.id, index]))
+  const sorted = notes
+    .map((note, index) => ({ note, index }))
+    .sort((a, b) => (rank.get(a.note.pluginId) ?? Infinity) - (rank.get(b.note.pluginId) ?? Infinity) || a.index - b.index)
+  const out = new Map<number, string[]>()
+  for (const { note } of sorted) out.set(note.messageId, [...(out.get(note.messageId) ?? []), note.text])
+  return out
+}
+
 async function generate(hub: Hub, target: Target, shell: Message, leafMessageId: number): Promise<void> {
   const controller = new AbortController()
   // Rotated by `handOff` when the operator speaks mid-turn: what they said becomes a real user
@@ -305,11 +319,14 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
     // The same map is every tool's `ToolContext.turn`, so it is created once, here.
     const turn: GenerationTurn = {
       userId: hub.userId, conversationId: target.conversation.id, projectId: target.conversation.project_id,
-      toolIds: target.toolIds, path: payload.path, state: new Map<string, unknown>(), canReadFile: canRead(target),
+      toolIds: target.toolIds, path: payload.path, state: new Map<string, unknown>(), canReadFile: canRead(target), notes: [],
     }
     preparedTurn = turn
     await hub.app.parallel('generation/prepare', turn)
-    const messages = buildModelMessages({ protocol: target.providerInterface.protocol, systemPrompt: payload.systemPrompt, path: payload.path, attachments, labeler: turn.labeler, preamble: turn.preamble ?? null })
+    const messages = buildModelMessages({
+      protocol: target.providerInterface.protocol, systemPrompt: payload.systemPrompt, path: payload.path, attachments,
+      labeler: turn.labeler, preamble: turn.preamble ?? null, notes: notesByMessage(turn.notes),
+    })
     const params: ConversationParams = target.config.params
     const trace = {
       conversationId: target.conversation.id,
