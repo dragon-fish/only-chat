@@ -37,7 +37,9 @@ requests are cross-site and arrive without one; such a route carries its own sho
 instead.
 
 A plugin that cannot work without another says so in its manifest (`requires`), and its server half
-injects that plugin's service. The two are checked against each other by a test. Enabling a plugin
+injects that plugin's service — or, when it works through the other plugin's tools rather than a
+service (memory through the workspace file tools), the test lists it as a tool requirement. The two
+are checked against each other by that test. Enabling a plugin
 enables what it requires and disabling one disables what requires it; a conversation's tool
 selection follows the same rule, and each generation adds required tools rather than trusting a
 stored selection. Stored switches count a requirement as on, so settings saved before a plugin gained
@@ -47,6 +49,20 @@ A plugin's routes run on the Worker and its tools run inside the UserHub Durable
 different cordis roots. One plugin object injecting both would sit PENDING forever on whichever
 service its side does not have, so the two halves are separate plugins — see
 `src/plugins/workspace-files/server/`.
+
+## Plugin prompt contributions
+
+Tool descriptions say how to call a tool; they cannot say when to act unprompted. A plugin with
+standing instructions registers a system prompt section with `ctx.promptSections` (hub side). A
+section is a synchronous function of the turn's tool ids and nothing else, rendered after the user's
+own prompt in `pluginManifests` order, each wrapped in `<plugin id="…">`. Tool definitions precede
+the system prompt in the cached prefix, so a section changes only when the tools already did.
+
+Text that varies per conversation goes in front of the first user message instead: one plugin may set
+`GenerationTurn.preamble` during `generation/prepare`. It has to be byte-identical on every turn of
+the conversation, so the plugin persists it — the memory plugin stores its catalog in
+`memory_snapshots`, keyed by conversation and the Project it was rendered for, copies it to forks,
+and renders a new one only when the conversation's Project changes.
 
 ## Image backends
 
@@ -84,3 +100,5 @@ binary workspace files and file understanding.
 `docs/superpowers/specs/2026-09-29-mcp-client-design.md` defines the remote MCP client plugin.
 `docs/superpowers/specs/2026-09-29-comfyui-plugin-design.md` defines the ComfyUI plugin and image
 backends.
+`docs/superpowers/specs/2026-10-03-memory-plugin-design.md` defines the memory plugin, the memory
+mounts and plugin prompt contributions.

@@ -62,37 +62,37 @@ system 段的唯一输入是工具集，而工具定义在 Anthropic 缓存前�
 
 ### 3.2 存储
 
-`workspace_files` 新增列 `mount TEXT NOT NULL`，取值 `project | conversation | memory_user | memory_project`。挂载点一律读 `mount`，不再从 `project_id` / `conversation_id` 推断。
+`workspace_files` 新增列 `mount TEXT NOT NULL`，取值与路径中的挂载点相同：`project | conversation | memory/user | memory/project`，存储与解析之间无需转换。挂载点一律读 `mount`，不再从 `project_id` / `conversation_id` 推断。
 
 | mount | `project_id` | `conversation_id` |
 |---|---|---|
 | `project` | 有 | null |
 | `conversation` | null | 有；回收站孤儿为 null |
-| `memory_user` | null | null |
-| `memory_project` | 有 | null |
+| `memory/user` | null | null |
+| `memory/project` | 有 | null |
 
 - 迁移回填：`project_id` 非空为 `project`，其余为 `conversation`。
-- 唯一索引：`workspace_files_project_path_uq` 改为 `(project_id, mount, relative_path)`；新增 `(user_id, relative_path) WHERE deleted_at IS NULL AND mount = 'memory_user'`。
-- Project 删除时 `memory_project` 文件随 `project_id` 级联；`detachConversationFiles` 只处理 `conversation`。
+- 唯一索引：`workspace_files_project_path_uq` 改为 `(project_id, mount, relative_path)`；新增 `(user_id, relative_path) WHERE deleted_at IS NULL AND mount = 'memory/user'`。
+- Project 删除时 `memory/project` 文件随 `project_id` 级联；`detachConversationFiles` 与分叉复制只处理 `conversation`。
 
 以下各处改按 `mount` 判断（现状均从两个 id 推断）：
 
 - `service.ts`：`scopeOf`、`whereScope`、`FileRecord` 格式化（`FileRecord` 增加 `mount` 字段）。
 - 回收站：孤儿 = `mount = 'conversation' AND conversation_id IS NULL`。`listTrash` 包含两种记忆挂载点的已删除文件；`undelete` 只对孤儿报 `MOUNT_UNAVAILABLE`，记忆文件可正常还原；「清空孤儿」不会触及记忆文件。
-- 预览：`PreviewTicket` 携带 `mount`；`memory_user` 的 `scopeId` 为 `userId`。`previewUrlFor` 与票据路由按 `mount` 重建 scope。票据只在记忆已开放时签发（§3.3），之后不再复查开关，随 TTL 过期。
+- 预览：`PreviewTicket` 携带 `mount`；`memory/user` 的 `scopeId` 为 `userId`。`previewUrlFor` 与票据路由按 `mount` 重建 scope。票据只在记忆已开放时签发（§3.3），之后不再复查开关，随 TTL 过期。
 
 ### 3.3 开放与门禁
 
 `/memory/*` 默认不可用。门禁位于 service 层，而不是工具入口：`WorkspaceScope` 增加必填字段 `memory: boolean`，为 false 时两种记忆挂载点报 `MOUNT_UNAVAILABLE`，`list_files /` 不列出 `/memory`。
 
-- hub 侧：workspace-files 导出 `openMemoryMounts(state)` 与 `memoryOpen(state)`。记忆插件在 `generation/prepare` 中、本轮生效时调用前者；workspace 工具与 `vfs:` 解析器（`read_file`、`analyze_file`、生图参考图共用）一律以 `memoryOpen(turn.state)` 填写 scope。依赖方向是记忆 → workspace。
+- hub 侧：workspace-files 导出 `openMemoryMounts(state)` 与 `memoryOpen(state)`（`src/plugins/workspace-files/server/memory.ts`）。记忆插件在 `generation/prepare` 中、本轮生效时调用前者；workspace 工具与 `vfs:` 解析器（`read_file`、`analyze_file`、生图参考图共用）一律以 `memoryOpen(turn.state)` 填写 scope。依赖方向是记忆 → workspace。
 - `vfs:` 解析失败时沿用现有的错误码转换：错误码为 `FILE_NOT_FOUND`，消息为 `MOUNT_UNAVAILABLE` 的说明文字（与无 Project 时访问 `/project` 一致）。
 - Worker 侧：REST 路由以用户的 `memory` 插件开关填写 `memory`。
 
 ### 3.4 文件面板与打包下载
 
 - `GET /conversations/:id/files` 的响应增加 `memoryFiles: { user, project }`，与 `files`、`projectFiles` 并列；未开启记忆时不返回该字段。
-- 打包下载路由按挂载点泛化（`project` / `conversation` / `memory/user` / `memory/project`），每个挂载点各打一包，避免 `/project/a.md` 与 `/memory/project/a.md` 混在一起。
+- 打包下载每个挂载点各一个路由：`/memory/archive`（用户记忆）与 `/projects/:id/memory/archive`（Project 记忆），与既有的 `/projects/:id/files/archive`、`/conversations/:id/files/archive` 并列，避免 `/project/a.md` 与 `/memory/project/a.md` 混在一起。
 - 客户端 `api.ts` 契约与 `workspace-file-panel.vue` 增加「记忆」分组，内含用户与 Project 两个子组。
 
 ## 4. 记忆插件
@@ -100,6 +100,7 @@ system 段的唯一输入是工具集，而工具定义在 Anthropic 缓存前�
 ### 4.1 Manifest
 
 - id `memory`，`requires: [workspace_files]`，工具 `memory_save`，无配置项。
+- 这项依赖是工具层面的，不是服务注入：`test/worker/plugin-requirements.test.ts` 以 `TOOL_REQUIREMENTS` 登记它。
 - 三处注册清单照常各加一项：`plugin-manifests.ts`、`client/plugins/loaders.ts`、`server/app.ts`。
 
 本轮生效 ⇔ `turn.toolIds.includes('memory_save')`。`requires` 级联保证文件工具同时在场。
@@ -138,7 +139,7 @@ system 段的唯一输入是工具集，而工具定义在 Anthropic 缓存前�
 
 带 `content`：
 
-1. 按 `write_file` 的语义写正文：新建或整篇覆盖，覆盖不要求先读，旧版本保留。目标是二进制文件时报 `BINARY_FILE`。
+1. 调用 workspace-files 导出的 `writeWorkspaceFile`，即 `write_file` 本身的执行逻辑（同文件写入排队、已见账本、`staleReadVersion`）：新建或整篇覆盖，覆盖不要求先读，旧版本保留。目标是二进制文件时报 `BINARY_FILE`。
 2. `WriteResult` 增加返回 `fileId`。元信息以该 `fileId` 做条件 upsert：仅当该文件的 `current_version` 仍等于刚写入的版本时才写入。条件不成立，说明别的对话在此期间改了正文，此时正文已写入、元信息未写入，返回 `METADATA_CONFLICT`，提示重新读取后再保存描述。
 3. 新版本记入本轮已见账本，与 `write_file` 一致。
 
@@ -152,13 +153,13 @@ system 段的唯一输入是工具集，而工具定义在 Anthropic 缓存前�
 - 路径不在 `/memory/*` 下：报 `INVALID_PATH`，提示改用 `write_file`。
 - 返回值：`write_file` 的字段原样透传（`operation: created | updated | replaced`、`version`、`replacedVersion`、`staleReadVersion`，仅带 `content` 时有），另加 `path`、`type`、`description`、`metadata: 'created' | 'updated'`。
 
-已见账本的跨轮重建：workspace-files 的 `seenInResult` 也识别成功且带 `content` 的 `memory_save` 结果，视为一次写入。工具 id 取自 `src/shared/plugins.ts`。不带 `content` 的结果不计入。
+已见账本的跨轮重建：workspace-files 的 `seenInResult` 也识别 `memory_save` 的结果。带 `content` 的结果含 `version`，视为一次写入；不带 `content` 的结果没有 `version`，不计入。工具 id 取自 `src/shared/plugins.ts`。
 
 工具卡片显示路径、type、description 与操作结果，沿用现有紧凑卡片样式。
 
 ### 4.4 catalog
 
-查询本用户的 `memory_user` 文件与当前 Project 的 `memory_project` 文件（未删除），LEFT JOIN `memories`。每个作用域按文件 `updated_at` 倒序，最多 200 条：
+查询本用户的 `memory/user` 文件与当前 Project 的 `memory/project` 文件（未删除），LEFT JOIN `memories`。每个作用域按文件 `updated_at` 倒序，最多 200 条：
 
 ```
 <memory-catalog>
@@ -179,13 +180,21 @@ Snapshot taken when this conversation started; memories saved since then are not
 
 ### 4.5 快照
 
-- `conversations` 新增列 `memory_preamble TEXT`。
-- 初始化：本轮生效且该列为 null 时渲染 catalog，执行 `UPDATE … SET memory_preamble = ? WHERE id = ? AND memory_preamble IS NULL`，再读回该列，使用实际持久化的值。并发初始化时以先写入者为准。
-- 之后每轮原样使用。编辑首条消息、重新生成均不刷新。
+插件自有表 `memory_snapshots`：
+
+| 列 | 说明 |
+|---|---|
+| `conversation_id` | 主键，FK → `conversations.id`，ON DELETE CASCADE |
+| `project_id` | 渲染时对话所属的 Project；**不设外键** |
+| `text` | 渲染好的 catalog |
+| `created_at` | 渲染时间 |
+
+- 读取：存在且 `project_id` 与对话当前 Project 相同（同为 null 亦算）时原样使用。编辑首条消息、重新生成均不刷新。
+- 初始化：无记录时渲染并 `INSERT … ON CONFLICT DO NOTHING`；记录的 `project_id` 不符时渲染并 `UPDATE … WHERE conversation_id = ? AND project_id IS <读到的旧值>`。两种情况都随后读回，使用实际持久化的值，并发时以先写入者为准。
+- 换 Project（移入、移出、换一个）无需任何钩子：下一轮发现 `project_id` 不符即重新渲染。Project 变化本身已改变 Project 级 system prompt，缓存本就失效。`project_id` 不设外键正是为此：Project 被删除时对话的 `project_id` 置 null，而快照保留旧 id，二者不符即重新渲染；若级联置 null，已删 Project 的 catalog 会被当作仍然有效。
+- 分叉：插件监听 `conversation/forked`，把源对话的快照复制给新对话。分叉复制了同一条消息路径，继承快照使其前缀保持一致。
 - 本轮不生效时不注入；快照保留，重新生效后继续使用。
-- 对话的 `project_id` 改变（移入、移出、换 Project）时，`conversationUpdate` 将 `memory_preamble` 置为 null，下一轮按新 Project 重新生成。Project 变化本身已改变 Project 级 system prompt，缓存本就失效。
-- 分叉（`conversations.ts` 复制对话）时复制 `memory_preamble`：分叉复制了同一条消息路径，继承快照使其前缀保持一致。
-- 快照是「配置每轮从 Project 重算、不复制进对话行」的刻意例外：catalog 位于首条用户消息，变化会使整段对话的缓存前缀失效。
+- 快照存在插件自己的表里，核心的 `conversations` 表与对话更新逻辑不感知记忆。
 
 ### 4.6 system 段
 
@@ -201,7 +210,7 @@ Snapshot taken when this conversation started; memories saved since then are not
 
 - `GenerationTurn` 新增 `preamble?: string`，与 `labeler` 相同，至多由一个插件设置。
 - `BuildInput` 新增 `preamble: string | null`；`buildModelMessages` 将其作为首条用户消息的第一个 text part。快照已持久化，函数保持「同样输入 → 逐字节相同输出」。
-- 记忆插件在 `generation/prepare` 中、本轮生效时：调用 `openMemoryMounts(turn.state)`，初始化或读取快照（§4.5），设置 `turn.preamble`。
+- 记忆插件在 `generation/prepare` 中、本轮生效时：调用 `openMemoryMounts(turn.state)`，以 `memoryPreamble` 初始化或读取快照（§4.5），设置 `turn.preamble`。
 
 ## 6. 测试
 
@@ -216,7 +225,7 @@ worker：
 - 路径与隔离：`/memory/project` 与 `/project` 同名文件互不干扰；用户级记忆在不同 Project 的对话中均可见；无 Project 时 `/memory/project` 报 `MOUNT_UNAVAILABLE`；`tenant-isolation` 覆盖 `memories` 与新挂载点。
 - 门禁：未开放时 `/memory/*` 经工具与 `vfs:` 解析器（`read_file`、`analyze_file`）均不可达。
 - 迁移：既有文件回填的 `mount` 正确。
-- 回收站：删除的 `memory_user` 文件出现在回收站而非孤儿列表，可还原；「清空孤儿」不触及它。
+- 回收站：删除的 `memory/user` 文件出现在回收站而非孤儿列表，可还原；「清空孤儿」不触及它。
 - 预览：`/memory/project/a.html` 与 `/project/a.html` 并存时，预览打开的是前者。
 - 生命周期：`memory_save` 新建、只改元信息、给二进制文件补描述；对不存在的文件只改元信息时报错；rename 后元信息随行；删除后隐藏、还原后重现、清除后级联删除。
 - 并发：`memory_save` 写正文后、upsert 元信息前，另一写入推进了版本，返回 `METADATA_CONFLICT`，元信息不变。
