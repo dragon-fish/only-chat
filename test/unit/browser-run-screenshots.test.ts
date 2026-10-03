@@ -51,6 +51,7 @@ async function loadPlugin() {
       return () => {}
     },
   })
+  ctx.provide('promptSections', { register: () => () => {} })
   ctx.provide('pluginChannel', {
     onCommand: () => {},
     onHostCall: (_pluginId: string, handler: HostCallHandler) => { hostCall = handler },

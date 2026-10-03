@@ -21,6 +21,7 @@ import {
 import { absolutePreviewUrl, PREVIEW_TICKET_TTL_SECONDS, previewTypeFor, previewUrlFor } from './preview'
 import { memoryOpen } from './memory'
 import { touchPaths } from './touched'
+import { whileOffered } from '@/server/plugins/prompt-sections'
 
 /** Each expected failure reads as a fact the model can act on, never as a malfunction. */
 const MESSAGES: Record<WorkspaceError, string> = {
@@ -304,6 +305,19 @@ export async function writeWorkspaceFile(
   })
 }
 
+/**
+ * What the workspace is, for every tool here at once. Each tool's own text is only its call; what
+ * holds across them — mounts, versions, the trash, paths in other plugins' file tools — is said once.
+ */
+const GUIDANCE = [
+  'The workspace is a virtual filesystem kept in object storage, not a disk on anyone\'s machine: there is no local path or file:// URL to hand out, and the user finds the files in the chat\'s Files panel.',
+  '- /conversation is private to this conversation. /project is shared by every conversation in its Project and does not exist outside one; rename_file a file from /conversation to /project to share it.',
+  '- Every write keeps the file\'s previous version, so replacing a file never loses anything; restore_file brings an earlier version back under a new name.',
+  '- Change part of a file with edit_file rather than rewriting it with write_file.',
+  '- delete_file sends files to the user\'s trash for 30 days, and nothing you can call brings them back: delete only what is finished with.',
+  '- Every tool that takes a file also takes a workspace path, bare or as vfs:/project/….',
+].join('\n')
+
 /** A workspace failure as every tool here reports it. */
 export function workspaceToolError(error: WorkspaceError): WorkspaceToolError {
   return failure(error)
@@ -311,8 +325,9 @@ export function workspaceToolError(error: WorkspaceError): WorkspaceToolError {
 
 export const WorkspaceFilesServerPlugin = {
   name: 'workspace-files',
-  inject: ['tools', 'fileReader', 'db', 'assets', 'env', 'pluginConfig'] as const,
+  inject: ['tools', 'fileReader', 'db', 'assets', 'env', 'pluginConfig', 'promptSections'] as const,
   apply(ctx: Context) {
+    ctx.promptSections.register(WORKSPACE_FILES_PLUGIN_ID, whileOffered(manifest, GUIDANCE))
     // `vfs:` and bare paths exist only while a workspace tool is on in the turn; otherwise they are
     // left unclaimed. The mount scope is the authorization, as for every tool here.
     ctx.fileReader.registerScheme(VFS_SCHEME, async (turn, body) => {
@@ -361,12 +376,10 @@ export const WorkspaceFilesServerPlugin = {
 
     ctx.tools.register(WORKSPACE_FILES_PLUGIN_ID, WRITE_FILE_TOOL_ID, runtime => tool({
       description: [
-        'Create a workspace file, or replace one completely. This writes the whole file, so use edit_file to change part of one that already exists.',
-'Writing over an existing file is allowed and never loses anything: the previous version is kept and the result tells you which one was displaced, so restore_file can bring it back.',
+        'Create a workspace file, or replace one completely: this writes the whole file.',
+        'Writing over an existing file is allowed; the result names the version it displaced.',
         'Pass expectedVersion only when it matters that nobody else has touched the file meanwhile — it is a guard, not a requirement, and a mismatch means someone else moved it.',
-        'Limit is 1 MiB of UTF-8 text. Every successful write stores an immutable version and advances the file to it.',
-        'Files under /project are shared by every conversation in the project; files under /conversation are private to this one.',
-        'This is not a disk on anyone\'s machine but a virtual filesystem kept in object storage, so there is no local path or file:// URL to hand out: the operator finds the files in the chat\'s Files panel.',
+        'Limit is 1 MiB of UTF-8 text.',
       ].join(' '),
       inputSchema: WriteFileInputSchema,
       async execute(input, options): Promise<WriteFileOutput | WorkspaceToolError> {
@@ -428,11 +441,10 @@ export const WorkspaceFilesServerPlugin = {
 
     ctx.tools.register(WORKSPACE_FILES_PLUGIN_ID, EDIT_FILE_TOOL_ID, runtime => tool({
       description: [
-        'Change part of a file by naming the text to replace. Prefer this over write_file for anything but a new file or a rewrite: sending a whole file back to change one line wastes the turn and drifts in the parts you did not mean to touch.',
+        'Change part of a file by naming the text to replace.',
         'oldText is matched literally, not as a pattern or a regular expression. It must match the file exactly, including indentation — and without the line numbers read_file prints in front of each line.',
         'It must match exactly one place, so include enough surrounding lines to be unambiguous; pass replaceAll to change every occurrence instead. An empty newText deletes the matched text.',
-        'Read the file first — the part you are changing is enough; a large file can be read a page at a time. If the file changed since you read it, the edit is refused rather than applied to content you never saw.',
-        'Like every write, a successful edit stores an immutable version, so restore_file can bring back what it replaced.',
+        'Read the file first — the part you are changing is enough; a large file can be read a page at a time. A file you already read or wrote in this conversation, in this turn or an earlier one, counts as read. If the file changed since, the edit is refused rather than applied to content you never saw.',
       ].join(' '),
       inputSchema: EditFileInputSchema,
       async execute(input, options): Promise<EditFileOutput | WorkspaceToolError> {
@@ -528,7 +540,7 @@ export const WorkspaceFilesServerPlugin = {
       description: [
         'Rename or move a file, keeping its history and costing no storage.',
         'toPath must be free: renaming over a file would delete that file under another word.',
-        'The two paths may be in different mounts, which moves the file — /conversation to /project is how you share something you wrote for yourself with the rest of the Project.',
+        'The two paths may be in different mounts, which moves the file between them.',
         'Pass recursive: true to move a directory; everything under it keeps its relative layout, so a page keeps finding the files it references.',
       ].join(' '),
       inputSchema: RenameFileInputSchema,
@@ -568,7 +580,7 @@ export const WorkspaceFilesServerPlugin = {
     ctx.tools.register(WORKSPACE_FILES_PLUGIN_ID, DELETE_FILE_TOOL_ID, runtime => tool({
       description: [
         'Remove a file from the workspace so later turns stop seeing it.',
-        'Reversible by the user rather than by you: it goes to their trash, where it stays restorable for 30 days. Nothing you can call brings it back, so delete what is genuinely finished with, not what you are unsure about.',
+        'It goes to the user\'s trash.',
         'The name becomes free again immediately.',
         'Pass recursive: true to remove a directory and everything under it.',
       ].join(' '),

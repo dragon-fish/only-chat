@@ -131,7 +131,10 @@ describe('read_file with file understanding', () => {
     const second = prompts[1]!
     const toolAt = second.findIndex(message => message.role === 'tool')
     expect(second[toolAt + 1]!.content.map(part => part.type)).toEqual(['text', 'file', 'text'])
-    const readable = second.flatMap(message => message.content.flatMap(part => [part.text ?? '', JSON.stringify(part.output ?? '')]))
+    // A system message carries plain text; every other message a list of parts.
+    const readable = second.flatMap(message => typeof message.content === 'string'
+      ? [message.content]
+      : message.content.flatMap(part => [part.text ?? '', JSON.stringify(part.output ?? '')]))
     expect(readable.some(text => new RegExp(`\\b${attachmentId}\\b`).test(text))).toBe(false)
   })
 

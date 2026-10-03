@@ -29,6 +29,8 @@ const TEXT: StreamPart[] = [
   finish('stop'),
 ]
 const prompts: Array<Array<{ role: string, content: Array<{ type: string, text?: string }> }>> = []
+/** The first user message of a captured prompt; a plugin's system section may come before it. */
+const firstUser = (prompt: (typeof prompts)[number]) => prompt.find(message => message.role === 'user')!
 let installed = false
 
 async function seed(vision: boolean, mime: string) {
@@ -99,7 +101,7 @@ describe('read_file on an asset reference', () => {
   it('labels the upload by asset, then delivers it in a wrapper after the tool results', async () => {
     const { attachmentId, prefix, result } = await readUpload(true)
     expect(result).toMatchObject({ content: { file: `asset:${prefix}`, mime: 'image/png', message: expect.any(String) }, attachments: [attachmentId] })
-    expect(prompts[0]![0]!.content[0]).toEqual({ type: 'text', text: `[image asset:${prefix}]` })
+    expect(firstUser(prompts[0]!).content[0]).toEqual({ type: 'text', text: `[image asset:${prefix}]` })
     const second = prompts[1]!
     const toolAt = second.findIndex(message => message.role === 'tool')
     expect(second[toolAt + 1]).toMatchObject({ role: 'user', content: [
@@ -118,7 +120,7 @@ describe('read_file on an asset reference', () => {
 
   it('inlines a small text upload with its reference, and reads it back as numbered lines', async () => {
     const { prefix, result } = await readUpload(false, 'text/html')
-    expect(prompts[0]![0]!.content[0]).toMatchObject({ type: 'text', text: `<file asset="${prefix}">\n<p>hi</p>\n</file>` })
+    expect(firstUser(prompts[0]!).content[0]).toMatchObject({ type: 'text', text: `<file asset="${prefix}">\n<p>hi</p>\n</file>` })
     expect(result).toMatchObject({ content: { file: `asset:${prefix}`, content: '1 | <p>hi</p>', totalLines: 1 } })
     expect(result?.attachments).toBeUndefined()
   })
@@ -128,10 +130,10 @@ describe('read_file on an asset reference', () => {
     expect(result?.content).toMatchObject({ error: 'UNSUPPORTED_FILE' })
     expect(result?.attachments).toBeUndefined()
     // The upload keeps its label; its bytes are replaced by a sentence.
-    expect(prompts[0]![0]!.content.slice(0, 2)).toMatchObject([
+    expect(firstUser(prompts[0]!).content.slice(0, 2)).toMatchObject([
       { type: 'text', text: `[image asset:${prefix}]` },
       { type: 'text', text: 'The current model cannot read image/png, so the file was not sent.' },
     ])
-    expect(prompts[0]!.flatMap(message => message.content).some(part => part.type === 'file')).toBe(false)
+    expect(prompts[0]!.filter(message => message.role !== 'system').flatMap(message => message.content).some(part => part.type === 'file')).toBe(false)
   })
 })

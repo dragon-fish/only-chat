@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { tool } from 'ai'
 import { z } from 'zod'
 import { ToolRegistry, ToolRegistryPlugin, type ToolContext } from '@/server/plugins/tools'
+import { PromptSectionsPlugin } from '@/server/plugins/prompt-sections'
 import { AskUserServerPlugin } from '@/plugins/ask-user/server'
 import { TavilyServerPlugin } from '@/plugins/tavily/server'
 import { EDIT_FILE_TOOL_ID, FILE_READER_PLUGIN_ID, READ_FILE_TOOL_ID, TAVILY_PLUGIN_ID, WORKSPACE_FILES_PLUGIN_ID, WRITE_FILE_TOOL_ID } from '@/shared/plugins'
@@ -118,6 +119,7 @@ describe('ToolRegistry', () => {
   it('registers ask_user as a non-executing AI SDK tool', async () => {
     const ctx = contextWith()
     await ctx.plugin(ToolRegistryPlugin)
+    await ctx.plugin(PromptSectionsPlugin)
     await ctx.plugin(AskUserServerPlugin)
     const [[id, askUser]] = await ctx.tools.resolve(['ask_user'], { ask_user: true }, resolution)
     expect(id).toBe('ask_user')
@@ -127,6 +129,7 @@ describe('ToolRegistry', () => {
   it('registers both Tavily tools as executing tools', async () => {
     const ctx = contextWith({ [TAVILY_PLUGIN_ID]: { api_key: 'k', search_depth: 'basic', search_calls_per_turn: 3, extract_calls_per_turn: 2 } })
     await ctx.plugin(ToolRegistryPlugin)
+    await ctx.plugin(PromptSectionsPlugin)
     await ctx.plugin(TavilyServerPlugin)
     const resolved = await ctx.tools.resolve(['web_search', 'web_extract'], { [TAVILY_PLUGIN_ID]: true }, resolution)
     expect(resolved.map(([id]) => id)).toEqual(['web_extract', 'web_search'])
