@@ -108,7 +108,7 @@ describe('workspace files per-turn read tracking', () => {
   beforeEach(async () => { f = await fixture() })
 
   it('warns only when the write went over a version this turn never read', async () => {
-    const scope = { conversationId: f.conversationId, projectId: null, memory: false }
+    const scope = { conversationId: f.conversationId, projectId: null, memory: { user: false, project: false } }
     await f.files.write({ path: '/conversation/a.md', content: 'v1', ...scope })
 
     const read = await run(f.tools.read_file!, { file: '/conversation/a.md' }) as ReadFileOutput
@@ -129,7 +129,7 @@ describe('workspace files per-turn read tracking', () => {
   })
 
   it('treats a version it wrote itself as one it has seen', async () => {
-    const scope = { conversationId: f.conversationId, projectId: null, memory: false }
+    const scope = { conversationId: f.conversationId, projectId: null, memory: { user: false, project: false } }
     await f.files.write({ path: '/conversation/c.md', content: 'v1', ...scope })
     await run(f.tools.read_file!, { file: '/conversation/c.md' })
 
@@ -156,7 +156,7 @@ describe('workspace files per-turn read tracking', () => {
   })
 
   it('says nothing about staleness when the file was never read this turn', async () => {
-    await f.files.write({ path: '/conversation/b.md', content: 'v1', conversationId: f.conversationId, projectId: null, memory: false })
+    await f.files.write({ path: '/conversation/b.md', content: 'v1', conversationId: f.conversationId, projectId: null, memory: { user: false, project: false } })
     const blind = await run(f.tools.write_file!, { path: '/conversation/b.md', content: 'v2' }) as WriteFileOutput
     // Nothing was read, so there is no expectation to have been violated.
     expect(blind).toMatchObject({ replacedVersion: 1, staleReadVersion: null })

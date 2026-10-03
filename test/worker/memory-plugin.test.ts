@@ -145,7 +145,7 @@ describe('memory_save', () => {
     const result = await save(turn, { path: '/memory/project/notes.md', type: 'project', description: 'release notes' })
     expect(result).toMatchObject({ metadata: 'created', type: 'project' })
     expect(result.version).toBeUndefined()
-    expect((await h.files.read({ path: '/memory/project/notes.md', conversationId: h.conversationId, projectId: h.projectId, memory: true })).ok).toBe(true)
+    expect((await h.files.read({ path: '/memory/project/notes.md', conversationId: h.conversationId, projectId: h.projectId, memory: { user: true, project: true } })).ok).toBe(true)
 
     const again = await save(turn, { path: '/memory/project/notes.md', type: 'reference', description: 'where the notes live' })
     expect(again).toMatchObject({ metadata: 'updated' })
@@ -168,7 +168,7 @@ describe('memory_save', () => {
     await run(turn, 'delete_file', { path: '/memory/project/b.md' })
     const fresh = async () => {
       await h.db.delete(memorySnapshots)
-      return memoryPreamble(h.db, 1, h.conversationId, h.projectId)
+      return memoryPreamble(h.db, 1, h.conversationId, h.projectId, { user: true, project: true })
     }
     expect(await fresh()).not.toContain('b.md')
     const [trashed] = await h.files.listTrash()
@@ -195,7 +195,7 @@ describe('memory_save', () => {
           return {
             bind: (...args: unknown[]) => ({
               run: async () => {
-                await h.files.write({ path: '/memory/user/race.md', content: 'theirs', conversationId: h.conversationId, projectId: h.projectId, memory: true })
+                await h.files.write({ path: '/memory/user/race.md', content: 'theirs', conversationId: h.conversationId, projectId: h.projectId, memory: { user: true, project: true } })
                 return statement.bind(...args).run()
               },
             }),
@@ -267,6 +267,30 @@ describe('memory in the prompt', () => {
     await h.ctx.parallel('conversation/forked', { userId: 1, sourceConversationId: h.conversationId, conversation: fork!, messageIds: new Map() })
     const [copied] = await h.db.select().from(memorySnapshots).where(eq(memorySnapshots.conversation_id, fork!.id))
     expect(copied!.text).toBe(original.generation.preamble)
+  })
+
+  it('hides a layer the conversation switched off, and keeps the other one working', async () => {
+    const writer = await startTurn(h)
+    await save(writer, { path: '/memory/user/a.md', description: 'personal', content: 'x' })
+    await h.db.delete(memorySnapshots)
+    await h.db.update(conversations).set({ plugin_settings: { memory: { user_memory: false } } }).where(eq(conversations.id, h.conversationId))
+
+    const turn = await startTurn(h)
+    expect(turn.generation.preamble).toContain('User memory is off in this conversation')
+    expect(turn.generation.preamble).not.toContain('/memory/user/a.md')
+    expect(await run(turn, 'read_file', { file: '/memory/user/a.md' })).toMatchObject({ error: 'FILE_NOT_FOUND' })
+    expect(await save(turn, { path: '/memory/user/b.md', content: 'y' })).toMatchObject({ error: 'MOUNT_UNAVAILABLE' })
+    expect(await save(turn, { path: '/memory/project/c.md', content: 'z' })).toMatchObject({ operation: 'created' })
+  })
+
+  it('renders anew when the open layers change, and reuses the catalog while they do not', async () => {
+    const first = await startTurn(h)
+    await h.db.update(projects).set({ plugin_settings: { memory: { project_memory: false } } }).where(eq(projects.id, h.projectId))
+    const closed = await startTurn(h)
+    expect(closed.generation.preamble).not.toBe(first.generation.preamble)
+    expect(closed.generation.preamble).toContain('Project memory is off in this conversation')
+    const again = await startTurn(h)
+    expect(again.generation.preamble).toBe(closed.generation.preamble)
   })
 
   it('says nothing about memory, and opens nothing, in a turn that does not offer it', async () => {

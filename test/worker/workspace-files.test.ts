@@ -45,7 +45,7 @@ async function fixture(): Promise<Fixture> {
   return { db, files, projectId: project!.id, conversationId: conversation!.id }
 }
 
-const scope = (f: Fixture) => ({ conversationId: f.conversationId, projectId: f.projectId, memory: false })
+const scope = (f: Fixture) => ({ conversationId: f.conversationId, projectId: f.projectId, memory: { user: false, project: false } })
 
 describe('workspace files service', () => {
   let f: Fixture
@@ -243,7 +243,7 @@ describe('workspace files service', () => {
   })
 
   it('reads back numbered lines with the range it actually returned', async () => {
-    await f.files.write({ path: '/conversation/notes.md', content: 'a\nb\nc\nd', conversationId: f.conversationId, projectId: null, memory: false })
+    await f.files.write({ path: '/conversation/notes.md', content: 'a\nb\nc\nd', conversationId: f.conversationId, projectId: null, memory: { user: false, project: false } })
     const result = await f.files.read({ path: '/conversation/notes.md', offset: 2, limit: 2, ...scope(f) })
     expect(result).toMatchObject({ ok: true })
     if (!result.ok) return
@@ -273,12 +273,12 @@ describe('workspace files service', () => {
   })
 
   it('reports an unavailable project mount instead of failing', async () => {
-    const result = await f.files.write({ path: '/project/x.md', content: 'x', conversationId: f.conversationId, projectId: null, memory: false })
+    const result = await f.files.write({ path: '/project/x.md', content: 'x', conversationId: f.conversationId, projectId: null, memory: { user: false, project: false } })
     expect(result).toMatchObject({ ok: false, error: 'MOUNT_UNAVAILABLE' })
   })
 
   it('lists every mount at the root with its availability', async () => {
-    const listed = await f.files.list({ path: '/', conversationId: f.conversationId, projectId: null, memory: false })
+    const listed = await f.files.list({ path: '/', conversationId: f.conversationId, projectId: null, memory: { user: false, project: false } })
     expect(listed.ok).toBe(true)
     if (!listed.ok) return
     expect(listed.value.entries).toEqual([

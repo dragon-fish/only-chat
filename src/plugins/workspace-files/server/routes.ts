@@ -6,6 +6,8 @@ import { and, eq, inArray } from 'drizzle-orm'
 import { conversations, projects } from '@/server/db/schema'
 import { MEMORY_PLUGIN_ID, WORKSPACE_FILES_PLUGIN_ID } from '@/shared/plugins'
 import { getUser } from '@/server/plugins/hub/conversations'
+import { memoryScopes, NO_MEMORY } from '@/plugins/memory/shared'
+import type { ConversationPluginSettings } from '@/shared/models'
 import { PLUGIN_API_PREFIX } from '@/server/plugins/api'
 import { parseWorkspacePath, type WorkspaceMount } from '@/server/plugins/workspace-files/path'
 import { isTextMime, WorkspaceFiles, type WorkspaceError } from '@/server/plugins/workspace-files/service'
@@ -143,12 +145,21 @@ export function workspaceFileRoutes(ctx: Context) {
   const filesFor = (userId: number) => new WorkspaceFiles(db, ctx.assets, userId)
 
   /**
-   * The panel's answer to whether `/memory` exists: the user's own switch for the memory plugin.
-   * The hub answers the same question per turn instead, from whether the turn offers memory.
+   * Which memory a conversation's panel shows: the layers its turns can see, by the same rule the
+   * hub applies (`memoryScopes`), and nothing while the memory plugin is switched off.
    */
-  async function memoryEnabled(userId: number): Promise<boolean> {
+  async function conversationMemory(userId: number, conversation: { project_id: number | null, plugin_settings: ConversationPluginSettings | null }) {
     const user = await getUser(db, userId)
-    return user?.settings.plugins[MEMORY_PLUGIN_ID] === true
+    if (user?.settings.plugins[MEMORY_PLUGIN_ID] !== true) return NO_MEMORY
+    const [project] = conversation.project_id === null
+      ? []
+      : await db.select({ plugin_settings: projects.plugin_settings }).from(projects)
+        .where(and(eq(projects.id, conversation.project_id), eq(projects.user_id, userId))).limit(1)
+    return memoryScopes({
+      config: await ctx.pluginConfig.read(userId, MEMORY_PLUGIN_ID),
+      project: project === undefined ? null : project.plugin_settings?.[MEMORY_PLUGIN_ID] ?? {},
+      conversation: conversation.plugin_settings?.[MEMORY_PLUGIN_ID],
+    })
   }
 
   /**
@@ -175,7 +186,7 @@ export function workspaceFileRoutes(ctx: Context) {
       .where(and(eq(projects.id, projectId), eq(projects.user_id, userId))).limit(1)
     if (!project) return c.json({ error: 'not found' }, 404)
 
-    const result = await filesFor(userId).listRecords('project', { conversationId: 0, projectId, memory: false })
+    const result = await filesFor(userId).listRecords('project', { conversationId: 0, projectId, memory: NO_MEMORY })
     if (!result.ok) return c.json({ error: result.error }, STATUS[result.error])
     return c.json({ files: result.value })
   })
@@ -184,13 +195,13 @@ export function workspaceFileRoutes(ctx: Context) {
     const userId = authUserId(c)
     const conversationId = parseId(c.req.param('id'))
     if (conversationId === null) return c.json({ error: 'invalid id' }, 400)
-    const [conversation] = await db.select({ id: conversations.id, project_id: conversations.project_id })
+    const [conversation] = await db.select({ id: conversations.id, project_id: conversations.project_id, plugin_settings: conversations.plugin_settings })
       .from(conversations)
       .where(and(eq(conversations.id, conversationId), eq(conversations.user_id, userId))).limit(1)
     if (!conversation) return c.json({ error: 'not found' }, 404)
 
     const files = filesFor(userId)
-    const memory = await memoryEnabled(userId)
+    const memory = await conversationMemory(userId, conversation)
     const scope = { conversationId, projectId: conversation.project_id, memory }
     const own = await files.listRecords('conversation', scope)
     if (!own.ok) return c.json({ error: own.error }, STATUS[own.error])
@@ -200,13 +211,12 @@ export function workspaceFileRoutes(ctx: Context) {
       : await files.listRecords('project', scope)
     if (!shared.ok) return c.json({ error: shared.error }, STATUS[shared.error])
     const body = { files: own.value, projectFiles: shared.value, projectId: conversation.project_id }
-    if (!memory) return c.json(body)
+    if (!memory.user && !memory.project) return c.json(body)
 
-    const user = await files.listRecords('memory/user', scope)
+    // A closed layer is shown as empty, the same as the model sees it.
+    const user = memory.user ? await files.listRecords('memory/user', scope) : { ok: true as const, value: [] }
     if (!user.ok) return c.json({ error: user.error }, STATUS[user.error])
-    const project = conversation.project_id === null
-      ? { ok: true as const, value: [] }
-      : await files.listRecords('memory/project', scope)
+    const project = memory.project ? await files.listRecords('memory/project', scope) : { ok: true as const, value: [] }
     if (!project.ok) return c.json({ error: project.error }, STATUS[project.error])
     return c.json({ ...body, memoryFiles: { user: user.value, project: project.value } })
   })
@@ -221,7 +231,7 @@ export function workspaceFileRoutes(ctx: Context) {
 
     const prefix = archivePrefix(c.req.query('prefix'))
     if (prefix === null) return c.json({ error: 'invalid prefix' }, 400)
-    const result = await filesFor(userId).readMount('project', { conversationId: 0, projectId, memory: false }, prefix)
+    const result = await filesFor(userId).readMount('project', { conversationId: 0, projectId, memory: NO_MEMORY }, prefix)
     if (!result.ok) return c.json({ error: result.error }, STATUS[result.error])
     return zipResponse(result.value, archiveName(prefix, project.name || 'project'))
   })
@@ -237,7 +247,8 @@ export function workspaceFileRoutes(ctx: Context) {
 
     const prefix = archivePrefix(c.req.query('prefix'))
     if (prefix === null) return c.json({ error: 'invalid prefix' }, 400)
-    const scope = { conversationId: 0, projectId, memory: await memoryEnabled(userId) }
+    // Like the memory pages, an archive of the owner's own memory ignores the switches.
+    const scope = { conversationId: 0, projectId, memory: { user: false, project: true } }
     const result = await filesFor(userId).readMount('memory/project', scope, prefix)
     if (!result.ok) return c.json({ error: result.error }, STATUS[result.error])
     return zipResponse(result.value, archiveName(prefix, `${project.name || 'project'}-memory`))
@@ -247,7 +258,7 @@ export function workspaceFileRoutes(ctx: Context) {
     const userId = authUserId(c)
     const prefix = archivePrefix(c.req.query('prefix'))
     if (prefix === null) return c.json({ error: 'invalid prefix' }, 400)
-    const scope = { conversationId: 0, projectId: null, memory: await memoryEnabled(userId) }
+    const scope = { conversationId: 0, projectId: null, memory: { user: true, project: false } }
     const result = await filesFor(userId).readMount('memory/user', scope, prefix)
     if (!result.ok) return c.json({ error: result.error }, STATUS[result.error])
     return zipResponse(result.value, archiveName(prefix, 'memory'))
@@ -264,7 +275,7 @@ export function workspaceFileRoutes(ctx: Context) {
 
     const prefix = archivePrefix(c.req.query('prefix'))
     if (prefix === null) return c.json({ error: 'invalid prefix' }, 400)
-    const result = await filesFor(userId).readMount('conversation', { conversationId, projectId: conversation.project_id, memory: false }, prefix)
+    const result = await filesFor(userId).readMount('conversation', { conversationId, projectId: conversation.project_id, memory: NO_MEMORY }, prefix)
     if (!result.ok) return c.json({ error: result.error }, STATUS[result.error])
     return zipResponse(result.value, archiveName(prefix, conversation.title || 'conversation'))
   })

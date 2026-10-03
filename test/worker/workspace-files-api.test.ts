@@ -55,7 +55,7 @@ async function fixture(): Promise<Fixture> {
   }).returning()
 
   const files = new WorkspaceFiles(db, storage, 1)
-  await files.write({ path: '/project/report.md', content: '# Report\nBody', conversationId: conversation!.id, projectId: project!.id, memory: false })
+  await files.write({ path: '/project/report.md', content: '# Report\nBody', conversationId: conversation!.id, projectId: project!.id, memory: { user: false, project: false } })
   const [row] = await db.select().from(workspaceFiles).where(eq(workspaceFiles.relative_path, 'report.md'))
   return { db, client, projectId: project!.id, conversationId: conversation!.id, fileId: row!.id, storage }
 }
@@ -87,7 +87,7 @@ describe('workspace files REST', () => {
     await env.BUCKET.put(key, bytes)
     const [image] = await f.db.insert(attachments).values({ user_id: 1, sha256: crypto.randomUUID(), mime: 'image/png', size: bytes.byteLength, r2_key: key, origin: 'upload', created_at: 0 }).returning()
     const files = new WorkspaceFiles(f.db, storage, 1)
-    await files.copy({ from: { attachment: { attachmentId: image!.id, mime: 'image/png', size: bytes.byteLength } }, toPath: '/project/cat.png', conversationId: f.conversationId, projectId: f.projectId, memory: false })
+    await files.copy({ from: { attachment: { attachmentId: image!.id, mime: 'image/png', size: bytes.byteLength } }, toPath: '/project/cat.png', conversationId: f.conversationId, projectId: f.projectId, memory: { user: false, project: false } })
     const [row] = await f.db.select().from(workspaceFiles).where(eq(workspaceFiles.relative_path, 'cat.png'))
 
     expect(await (await f.client.request(`${API}/files/${row!.id}`)).json()).toMatchObject({
@@ -129,15 +129,15 @@ describe('workspace files REST', () => {
   it('frees the path once the file is deleted', async () => {
     await f.client.request(`${API}/files/${f.fileId}`, { method: 'DELETE' })
     const files = new WorkspaceFiles(f.db, f.storage, 1)
-    const again = await files.write({ path: '/project/report.md', content: 'new one', conversationId: f.conversationId, projectId: f.projectId, memory: false })
+    const again = await files.write({ path: '/project/report.md', content: 'new one', conversationId: f.conversationId, projectId: f.projectId, memory: { user: false, project: false } })
     expect(again).toMatchObject({ ok: true })
     if (again.ok) expect(again.value).toMatchObject({ operation: 'created', version: 1 })
   })
 
   it('packs a mount into one archive so a page keeps the files it references', async () => {
     const files = new WorkspaceFiles(f.db, storage, 1)
-    await files.write({ path: '/project/site/index.html', content: '<link href="./style.css">', conversationId: f.conversationId, projectId: f.projectId, memory: false })
-    await files.write({ path: '/project/site/style.css', content: 'body{}', conversationId: f.conversationId, projectId: f.projectId, memory: false })
+    await files.write({ path: '/project/site/index.html', content: '<link href="./style.css">', conversationId: f.conversationId, projectId: f.projectId, memory: { user: false, project: false } })
+    await files.write({ path: '/project/site/style.css', content: 'body{}', conversationId: f.conversationId, projectId: f.projectId, memory: { user: false, project: false } })
 
     const response = await f.client.request(`${API}/projects/${f.projectId}/files/archive`, { method: 'GET' })
     expect(response.status).toBe(200)
@@ -162,7 +162,7 @@ describe('workspace files REST', () => {
 
   it('serves a file as text until the plugin setting asks for a page', async () => {
     const files = new WorkspaceFiles(f.db, storage, 1)
-    await files.write({ path: '/project/page.html', content: '<h1>hi</h1>', conversationId: f.conversationId, projectId: f.projectId, memory: false })
+    await files.write({ path: '/project/page.html', content: '<h1>hi</h1>', conversationId: f.conversationId, projectId: f.projectId, memory: { user: false, project: false } })
     const [row] = await f.db.select().from(workspaceFiles).where(eq(workspaceFiles.relative_path, 'page.html'))
 
     const body = await (await f.client.request(`${API}/files/${row!.id}`, { method: 'GET' })).json() as { previewUrl: string, canRenderPage: boolean }
@@ -178,8 +178,8 @@ describe('workspace files REST', () => {
   it('serves a page and the files it references under one ticket', async () => {
     await enableHtmlPreview(f.db)
     const files = new WorkspaceFiles(f.db, storage, 1)
-    await files.write({ path: '/project/site/index.html', content: '<link href="./style.css">', conversationId: f.conversationId, projectId: f.projectId, memory: false })
-    await files.write({ path: '/project/site/style.css', content: 'body{}', conversationId: f.conversationId, projectId: f.projectId, memory: false })
+    await files.write({ path: '/project/site/index.html', content: '<link href="./style.css">', conversationId: f.conversationId, projectId: f.projectId, memory: { user: false, project: false } })
+    await files.write({ path: '/project/site/style.css', content: 'body{}', conversationId: f.conversationId, projectId: f.projectId, memory: { user: false, project: false } })
     const [row] = await f.db.select().from(workspaceFiles).where(eq(workspaceFiles.relative_path, 'site/index.html'))
 
     const body = await (await f.client.request(`${API}/files/${row!.id}`, { method: 'GET' })).json() as { previewUrl: string, canRenderPage: boolean }
@@ -202,8 +202,8 @@ describe('workspace files REST', () => {
   it('lets the page fetch its own data files, whose requests come from an opaque origin', async () => {
     await enableHtmlPreview(f.db)
     const files = new WorkspaceFiles(f.db, storage, 1)
-    await files.write({ path: '/project/chart/index.html', content: '<script>fetch("./cars.csv")</script>', conversationId: f.conversationId, projectId: f.projectId, memory: false })
-    await files.write({ path: '/project/chart/cars.csv', content: 'a,b\n1,2\n', conversationId: f.conversationId, projectId: f.projectId, memory: false })
+    await files.write({ path: '/project/chart/index.html', content: '<script>fetch("./cars.csv")</script>', conversationId: f.conversationId, projectId: f.projectId, memory: { user: false, project: false } })
+    await files.write({ path: '/project/chart/cars.csv', content: 'a,b\n1,2\n', conversationId: f.conversationId, projectId: f.projectId, memory: { user: false, project: false } })
     const [row] = await f.db.select().from(workspaceFiles).where(eq(workspaceFiles.relative_path, 'chart/index.html'))
     const body = await (await f.client.request(`${API}/files/${row!.id}`, { method: 'GET' })).json() as { previewUrl: string }
     const csvUrl = body.previewUrl.replace('index.html', 'cars.csv')
@@ -221,7 +221,7 @@ describe('workspace files REST', () => {
   it('stops serving a page as a page the moment the setting goes back off', async () => {
     await enableHtmlPreview(f.db)
     const files = new WorkspaceFiles(f.db, storage, 1)
-    await files.write({ path: '/project/page.html', content: '<h1>hi</h1>', conversationId: f.conversationId, projectId: f.projectId, memory: false })
+    await files.write({ path: '/project/page.html', content: '<h1>hi</h1>', conversationId: f.conversationId, projectId: f.projectId, memory: { user: false, project: false } })
     const [row] = await f.db.select().from(workspaceFiles).where(eq(workspaceFiles.relative_path, 'page.html'))
     const body = await (await f.client.request(`${API}/files/${row!.id}`, { method: 'GET' })).json() as { previewUrl: string }
     expect((await workerFetch(body.previewUrl)).headers.get('content-type')).toContain('text/html')
@@ -257,7 +257,7 @@ describe('workspace files REST', () => {
   it('refuses to restore onto a name that was taken meanwhile', async () => {
     await f.client.request(`${API}/files/${f.fileId}`, { method: 'DELETE' })
     const files = new WorkspaceFiles(f.db, storage, 1)
-    await files.write({ path: '/project/report.md', content: 'a different one', conversationId: f.conversationId, projectId: f.projectId, memory: false })
+    await files.write({ path: '/project/report.md', content: 'a different one', conversationId: f.conversationId, projectId: f.projectId, memory: { user: false, project: false } })
 
     const response = await f.client.request(`${API}/trash/${f.fileId}/restore`, { method: 'POST' })
     expect(response.status).toBe(409)
@@ -267,7 +267,7 @@ describe('workspace files REST', () => {
   it('keeps bytes a live file still shares, and sweeps only what nobody came back for', async () => {
     // Same content, so both versions address one attachment: purging one must not blind the other.
     const files = new WorkspaceFiles(f.db, storage, 1)
-    await files.write({ path: '/project/copy.md', content: '# Report\nBody', conversationId: f.conversationId, projectId: f.projectId, memory: false })
+    await files.write({ path: '/project/copy.md', content: '# Report\nBody', conversationId: f.conversationId, projectId: f.projectId, memory: { user: false, project: false } })
     const [copy] = await f.db.select().from(workspaceFiles).where(eq(workspaceFiles.relative_path, 'copy.md'))
     const [version] = await f.db.select().from(workspaceFileVersions).where(eq(workspaceFileVersions.file_id, copy!.id))
     const [attachment] = await f.db.select().from(attachments).where(eq(attachments.id, version!.attachment_id))

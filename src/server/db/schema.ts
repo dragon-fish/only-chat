@@ -308,6 +308,8 @@ export const memories = sqliteTable('memories', {
 export const memorySnapshots = sqliteTable('memory_snapshots', {
   conversation_id: integer().primaryKey().references(() => conversations.id, { onDelete: 'cascade' }),
   project_id: integer(),
+  /** The layers that were open, as `scopesKey` writes them. A different set renders anew. */
+  scopes: text().notNull().default(''),
   text: text().notNull(),
   created_at: integer().notNull(),
 })

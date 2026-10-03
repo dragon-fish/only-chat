@@ -73,8 +73,8 @@ async function fixture(): Promise<Fixture> {
   }
 }
 
-const open = (conversationId: number, projectId: number | null): WorkspaceScope => ({ conversationId, projectId, memory: true })
-const closed = (conversationId: number, projectId: number | null): WorkspaceScope => ({ conversationId, projectId, memory: false })
+const open = (conversationId: number, projectId: number | null): WorkspaceScope => ({ conversationId, projectId, memory: { user: true, project: true } })
+const closed = (conversationId: number, projectId: number | null): WorkspaceScope => ({ conversationId, projectId, memory: { user: false, project: false } })
 
 async function text(files: WorkspaceFiles, path: string, scope: WorkspaceScope) {
   const read = await files.read({ path, ...scope })

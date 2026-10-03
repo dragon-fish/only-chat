@@ -86,11 +86,12 @@ export interface WorkspaceScope {
   conversationId: number
   projectId: number | null
   /**
-   * Whether `/memory/user` and `/memory/project` are reachable. Required rather than defaulted:
-   * every caller has to say where its answer comes from — the turn's state in the hub, the user's
-   * plugin switch in the Worker — because a forgotten gate here is a leak, not a missing feature.
+   * Which memory mounts are reachable: `user` for `/memory/user`, `project` for `/memory/project`.
+   * Required rather than defaulted: every caller has to say where its answer comes from — the
+   * turn's state in the hub, the memory switches in the Worker — because a forgotten gate here is a
+   * leak, not a missing feature.
    */
-  memory: boolean
+  memory: { user: boolean, project: boolean }
 }
 
 /** The rows one mount addresses for one caller. */
@@ -285,8 +286,8 @@ export class WorkspaceFiles {
   /** Resolves a mount to the row scope it addresses, or reports why it cannot be used. */
   private scopeOf(mount: WorkspaceMount, scope: WorkspaceScope): Result<MountTarget> {
     if (mount === 'conversation') return succeed({ mount, projectId: null, conversationId: scope.conversationId })
-    if (mount.startsWith('memory/') && !scope.memory) return fail('MOUNT_UNAVAILABLE')
-    if (mount === 'memory/user') return succeed({ mount, projectId: null, conversationId: null })
+    if (mount === 'memory/user') return scope.memory.user ? succeed({ mount, projectId: null, conversationId: null }) : fail('MOUNT_UNAVAILABLE')
+    if (mount === 'memory/project' && !scope.memory.project) return fail('MOUNT_UNAVAILABLE')
     // A Conversation outside any Project has nowhere to put shared files. That is a state the model
     // should see and work around, not an error.
     if (scope.projectId === null) return fail('MOUNT_UNAVAILABLE')
@@ -1152,7 +1153,7 @@ export class WorkspaceFiles {
       // Closed memory mounts are left out rather than shown as unavailable: a turn without memory
       // has no use for knowing they exist.
       const names = WORKSPACE_MOUNTS
-        .filter(name => input.memory || !name.startsWith('memory/'))
+        .filter(name => (name === 'memory/user' ? input.memory.user : name === 'memory/project' ? input.memory.project : true))
         .filter(name => relativePath === '' || name.startsWith(`${relativePath}/`))
       if (names.length === 0) return fail('MOUNT_UNAVAILABLE')
       const entries: ListEntry[] = []

@@ -54,10 +54,10 @@ export interface PreviewTicket {
  */
 export function ticketScope(ticket: PreviewTicket): WorkspaceScope {
   switch (ticket.mount) {
-    case 'conversation': return { conversationId: ticket.scopeId, projectId: null, memory: false }
-    case 'project': return { conversationId: 0, projectId: ticket.scopeId, memory: false }
-    case 'memory/user': return { conversationId: 0, projectId: null, memory: true }
-    case 'memory/project': return { conversationId: 0, projectId: ticket.scopeId, memory: true }
+    case 'conversation': return { conversationId: ticket.scopeId, projectId: null, memory: { user: false, project: false } }
+    case 'project': return { conversationId: 0, projectId: ticket.scopeId, memory: { user: false, project: false } }
+    case 'memory/user': return { conversationId: 0, projectId: null, memory: { user: true, project: false } }
+    case 'memory/project': return { conversationId: 0, projectId: ticket.scopeId, memory: { user: false, project: true } }
   }
 }
 

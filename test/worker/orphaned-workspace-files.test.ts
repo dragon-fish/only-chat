@@ -37,7 +37,7 @@ async function seedConversationWithFile(db: DB, files: WorkspaceFiles, title: st
     parts: [{ type: 'text', text: 'hi' }], provider_id: null, model_id: null,
     usage: null, status: 'done', error: null, created_at: 1,
   })
-  await files.write({ path: '/conversation/notes.md', content: 'precious', conversationId: conversation.id, projectId: null, memory: false })
+  await files.write({ path: '/conversation/notes.md', content: 'precious', conversationId: conversation.id, projectId: null, memory: { user: false, project: false } })
   return { conversation, root }
 }
 
@@ -60,7 +60,7 @@ describe('a deleted conversation leaves its files behind instead of destroying t
     const { storage } = memoryStorage()
     const files = new WorkspaceFiles(db, storage, 1)
     const { conversation } = await seedConversationWithFile(db, files, 'doomed')
-    await files.write({ path: '/conversation/other.md', content: 'trashed', conversationId: conversation.id, projectId: null, memory: false })
+    await files.write({ path: '/conversation/other.md', content: 'trashed', conversationId: conversation.id, projectId: null, memory: { user: false, project: false } })
     const [other] = await db.select({ id: workspaceFiles.id }).from(workspaceFiles)
       .where(eq(workspaceFiles.relative_path, 'other.md'))
     await files.softDelete(other!.id)

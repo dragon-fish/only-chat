@@ -1,10 +1,15 @@
 import type { Context } from 'cordis'
 import { tool } from 'ai'
+import { and, eq } from 'drizzle-orm'
 import type { DB } from '@/server/db/client'
+import { conversations, projects } from '@/server/db/schema'
 import { formatWorkspacePath, parseWorkspacePath, pathFromArgument } from '@/server/plugins/workspace-files/path'
 import { openMemoryMounts } from '@/plugins/workspace-files/server/memory'
 import { servicesFor, workspaceToolError, writeWorkspaceFile } from '@/plugins/workspace-files/server'
-import { MEMORY_PLUGIN_ID, MEMORY_SAVE_TOOL_ID, MemorySaveInputSchema, type MemorySaveInput, type MemorySaveOutput, type MemoryToolError } from '../shared'
+import {
+  MEMORY_PLUGIN_ID, MEMORY_SAVE_TOOL_ID, MemorySaveInputSchema, memoryScopes,
+  type MemoryScopes, type MemorySaveInput, type MemorySaveOutput, type MemoryToolError,
+} from '../shared'
 import { copySnapshot, memoryPreamble } from './catalog'
 
 /** Standing instructions. Static on purpose: it is part of the system prompt, ahead of the cache. */
@@ -82,16 +87,33 @@ async function saveMetadata(
   return existed === null ? 'created' : 'updated'
 }
 
+/** The layers this conversation's turns may see, from the three levels of switches. */
+async function scopesOf(ctx: Context, userId: number, conversationId: number, projectId: number | null): Promise<MemoryScopes> {
+  const db = ctx.db.orm
+  const [conversation] = await db.select({ plugin_settings: conversations.plugin_settings }).from(conversations)
+    .where(and(eq(conversations.id, conversationId), eq(conversations.user_id, userId))).limit(1)
+  const [project] = projectId === null
+    ? []
+    : await db.select({ plugin_settings: projects.plugin_settings }).from(projects)
+      .where(and(eq(projects.id, projectId), eq(projects.user_id, userId))).limit(1)
+  return memoryScopes({
+    config: await ctx.pluginConfig.read(userId, MEMORY_PLUGIN_ID),
+    project: project === undefined ? null : project.plugin_settings?.[MEMORY_PLUGIN_ID] ?? {},
+    conversation: conversation?.plugin_settings?.[MEMORY_PLUGIN_ID],
+  })
+}
+
 export const MemoryServerPlugin = {
   name: 'memory',
-  inject: ['tools', 'db', 'promptSections'] as const,
+  inject: ['tools', 'db', 'promptSections', 'pluginConfig'] as const,
   apply(ctx: Context) {
     // Only a turn that can save memories is told about them and shown them: with no memory_save the
     // mounts stay closed, the catalog stays out of the prompt, and so does the guidance.
     ctx.on('generation/prepare', async (turn) => {
       if (!turn.toolIds.includes(MEMORY_SAVE_TOOL_ID)) return
-      openMemoryMounts(turn.state)
-      turn.preamble = await memoryPreamble(ctx.db.orm, turn.userId, turn.conversationId, turn.projectId)
+      const scopes = await scopesOf(ctx, turn.userId, turn.conversationId, turn.projectId)
+      openMemoryMounts(turn.state, scopes)
+      turn.preamble = await memoryPreamble(ctx.db.orm, turn.userId, turn.conversationId, turn.projectId, scopes)
     })
 
     ctx.on('conversation/forked', async (payload) => {
