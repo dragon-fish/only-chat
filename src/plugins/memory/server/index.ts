@@ -5,50 +5,54 @@ import type { DB } from '@/server/db/client'
 import { conversations, projects } from '@/server/db/schema'
 import { formatWorkspacePath, parseWorkspacePath, pathFromArgument } from '@/server/plugins/workspace-files/path'
 import { openMemoryMounts } from '@/plugins/workspace-files/server/memory'
+import { isTextMime, WorkspaceFiles } from '@/server/plugins/workspace-files/service'
 import { servicesFor, workspaceToolError, writeWorkspaceFile } from '@/plugins/workspace-files/server'
 import {
-  MEMORY_PLUGIN_ID, MEMORY_SAVE_TOOL_ID, MemorySaveInputSchema, memoryScopes,
-  type MemoryScopes, type MemorySaveInput, type MemorySaveOutput, type MemoryToolError,
+  MEMORY_LAYOUT, MEMORY_PLUGIN_ID, MEMORY_SAVE_TOOL_ID, MemorySaveInputSchema, memoryCategory, memoryScopes,
+  type MemoryCategory, type MemoryScopes, type MemorySaveInput, type MemorySaveOutput, type MemoryToolError,
 } from '../shared'
 import { copySnapshot, memoryPreamble } from './catalog'
 
 /** Standing instructions. Static on purpose: it is part of the system prompt, ahead of the cache. */
-const GUIDANCE = `You have a memory that outlives this conversation: files in the workspace.
+const GUIDANCE = `You have a memory that outlives this conversation: Markdown files in the workspace.
 - /memory/user/ holds what is true across all of this user's conversations.
-- /memory/project/ holds what matters only inside the current Project, and does not exist outside one.
+- /memory/project/ holds what belongs to the current Project only, and does not exist outside one.
 
-The first user message opens with a catalog of these files as they stood when the conversation started: path, type and description. It can be stale, and memories saved since then are missing from it. When a memory looks relevant, read it before you rely on it.
+The first user message opens with a catalog of these files as they stood when the conversation started: each layer's profile in full, then one line per other file with its description. It can be stale, and anything saved since is missing from it. When a file looks relevant, read it before relying on it.
 
-What is worth remembering is what a later conversation would act on differently and could not work out for itself from the conversation or the workspace: a preference the user stated, a correction they made, an approach they confirmed, a constraint on their work, where something lives. Not what the workspace or the messages already hold, not what matters only to this conversation, not guesses about the user, and never secrets.
+Both layers are laid out the same way, and where a fact goes depends on what it is about:
+- profile.md: who the user is — name, occupation, employer, when they started, and whatever else will still be true in three months. Under 300 words.
+- preferences.md: how the user wants you to answer — language, length, tone, format. Only requirements on your replies; their own tastes go elsewhere.
+- topics/<topic>.md: the user's own habits, tastes, routines and recurring interests, one file per area of life such as food, sleep, films or dev tools. A passing mention is not worth keeping; file it once it comes up again.
+- areas/<name>.md: anything they keep working on, not only formal projects — an open problem, a standing responsibility, an errand such as a house hunt, taxes or a job search. Record what was decided, what constrains it, what is due when (as absolute dates) and where it stands.
+- people/<name>.md: people who matter to later conversations — family, friends, colleagues, teachers — with how they relate to the user and what they do together, not a dossier.
+Name files for their subject, in the language the user talks about it in.
 
-Every memory has a type:
-- user: who the user is — role, expertise, how they like things.
-- feedback: how the user wants you to work — corrections and confirmed approaches alike.
-- project: ongoing work, goals and constraints. Write dates as absolute dates.
-- reference: where to find something — a URL, a document, a system.
+What is worth remembering is what a later conversation would act on and could not work out from the conversation or the workspace. Not what the workspace or the messages already hold, not what only matters right now, not guesses, and never secrets.
 
-Writing a memory:
-- One subject per file, named for it in kebab-case, such as /memory/user/package-manager.md.
-- The description is how a later conversation decides whether to open the file: one line saying what the memory is about and when it matters. It is not a copy of the body.
-- The body says what the description cannot. Lead with the fact or rule itself. For feedback and project, follow it with a "**Why:**" line — the reason the user gave, or what happened — and a "**How to apply:**" line — when it applies and what to do then. Leave a line out rather than invent it. No title heading, and no restating the description.
-- Before creating a memory, look in the catalog for one on the same subject and update that one instead. Merge duplicates when you find them.
+How much to write:
+- Most facts are one line. A favourite food or film, the editor they use, a city they lived in: add a line to the file that already covers it — profile.md, preferences.md or the topic — rather than starting a file of its own.
+- A subject earns its own file only when there is more to it than a line: the user told the story behind a film they love, a person keeps coming up, an errand has decisions and deadlines. Leave a one-line pointer to it in the broader file when there is one.
+- Bodies are short Markdown lists, with the reason beside a fact when the user gave one. No title heading.
+- The description is the catalog line: what the file covers and when it matters, in one line, so a later conversation can decide whether to open it. Update it when the file outgrows it.
+- Look in the catalog before writing; add to what exists, and merge duplicates when you find them.
 
 Keeping memory current:
-- Create a memory: ${MEMORY_SAVE_TOOL_ID} with content.
-- Change what a memory says: read_file it, then edit_file it.
-- Change only its type or description: ${MEMORY_SAVE_TOOL_ID} without content. A file listed as undescribed needs this too.
-- A memory that turned out wrong or outdated: delete_file it. To rename one, or move it between /memory/user and /memory/project: rename_file.`
+- Start a file: ${MEMORY_SAVE_TOOL_ID} with content.
+- Add to or correct a file: read_file it, then edit_file it; call ${MEMORY_SAVE_TOOL_ID} without content if its description no longer fits.
+- Remove what turned out wrong or outdated with edit_file, or delete_file a file with nothing left worth keeping. rename_file renames a file or moves it between /memory/user and /memory/project.
+- A file listed as undescribed needs ${MEMORY_SAVE_TOOL_ID} without content; one outside the layout should be renamed into it.`
 
 const DESCRIPTION = [
-  'Create a memory, or change the line the memory catalog shows for one.',
-  'With content: writes the whole file, as write_file does — an existing file is replaced and its previous version kept — and records its type and description.',
-  'Without content: records the type and description of a file that already exists, leaving the file alone.',
-  'The path must be under /memory/user/ or /memory/project/. To change part of a memory use edit_file; to delete or move one, delete_file or rename_file.',
+  'Start a memory file, or change the line the memory catalog shows for one.',
+  'With content: writes the whole file, as write_file does — an existing file is replaced and its previous version kept — and records its description.',
+  'Without content: records the description of a file that already exists, leaving the file alone.',
+  `The path is /memory/user/ or /memory/project/ followed by ${MEMORY_LAYOUT}. To add to a file use edit_file; to delete or move one, delete_file or rename_file.`,
 ].join(' ')
 
 const NOT_MEMORY: MemoryToolError = {
   error: 'INVALID_PATH',
-  message: `${MEMORY_SAVE_TOOL_ID} only saves files under /memory/user/ or /memory/project/. Use write_file for anywhere else.`,
+  message: `${MEMORY_SAVE_TOOL_ID} only saves memory files: /memory/user/ or /memory/project/ followed by ${MEMORY_LAYOUT}. Use write_file for anywhere else.`,
 }
 
 const METADATA_CONFLICT: MemoryToolError = {
@@ -56,13 +60,15 @@ const METADATA_CONFLICT: MemoryToolError = {
   message: `The content was saved, but the file changed again before its description could be recorded — something else wrote to it at the same moment. Read it, then call ${MEMORY_SAVE_TOOL_ID} without content to describe what it says now.`,
 }
 
-/** The canonical path when the argument names a file inside a memory mount, otherwise null. */
-function memoryPath(argument: string): string | null {
+/** The canonical path and its category when the argument names a memory file in the layout, otherwise null. */
+function memoryPath(argument: string): { path: string, category: MemoryCategory } | null {
   const raw = pathFromArgument(argument)
   const parsed = raw === null ? null : parseWorkspacePath(raw)
   if (parsed === null || !parsed.ok) return null
   const { mount, relativePath } = parsed.value
-  return mount !== null && mount.startsWith('memory/') && relativePath !== '' ? formatWorkspacePath(parsed.value) : null
+  if (mount === null || !mount.startsWith('memory/')) return null
+  const category = memoryCategory(relativePath)
+  return category === null ? null : { path: formatWorkspacePath(parsed.value), category }
 }
 
 /**
@@ -76,13 +82,13 @@ async function saveMetadata(
 ): Promise<'created' | 'updated' | null> {
   const existed = await db.$client.prepare('SELECT 1 FROM memories WHERE file_id = ?1').bind(fileId).first()
   const result = await db.$client.prepare(`
-    INSERT INTO memories (file_id, user_id, type, description, updated_at)
-    SELECT id, user_id, ?1, ?2, ?3 FROM workspace_files
-     WHERE id = ?4 AND user_id = ?5 AND deleted_at IS NULL
+    INSERT INTO memories (file_id, user_id, description, updated_at)
+    SELECT id, user_id, ?1, ?2 FROM workspace_files
+     WHERE id = ?3 AND user_id = ?4 AND deleted_at IS NULL
        AND mount IN ('memory/user', 'memory/project')
-       AND (?6 IS NULL OR current_version = ?6)
-    ON CONFLICT (file_id) DO UPDATE SET type = excluded.type, description = excluded.description, updated_at = excluded.updated_at
-  `).bind(input.type, input.description, Date.now(), fileId, userId, atVersion).run()
+       AND (?5 IS NULL OR current_version = ?5)
+    ON CONFLICT (file_id) DO UPDATE SET description = excluded.description, updated_at = excluded.updated_at
+  `).bind(input.description, Date.now(), fileId, userId, atVersion).run()
   if (result.meta.changes === 0) return null
   return existed === null ? 'created' : 'updated'
 }
@@ -105,7 +111,7 @@ async function scopesOf(ctx: Context, userId: number, conversationId: number, pr
 
 export const MemoryServerPlugin = {
   name: 'memory',
-  inject: ['tools', 'db', 'promptSections', 'pluginConfig'] as const,
+  inject: ['tools', 'db', 'assets', 'promptSections', 'pluginConfig'] as const,
   apply(ctx: Context) {
     // Only a turn that can save memories is told about them and shown them: with no memory_save the
     // mounts stay closed, the catalog stays out of the prompt, and so does the guidance.
@@ -113,7 +119,15 @@ export const MemoryServerPlugin = {
       if (!turn.toolIds.includes(MEMORY_SAVE_TOOL_ID)) return
       const scopes = await scopesOf(ctx, turn.userId, turn.conversationId, turn.projectId)
       openMemoryMounts(turn.state, scopes)
-      turn.preamble = await memoryPreamble(ctx.db.orm, turn.userId, turn.conversationId, turn.projectId, scopes)
+      const files = new WorkspaceFiles(ctx.db.orm, ctx.assets, turn.userId)
+      const scope = { conversationId: turn.conversationId, projectId: turn.projectId, memory: scopes }
+      turn.preamble = await memoryPreamble({
+        db: ctx.db.orm, userId: turn.userId, conversationId: turn.conversationId, projectId: turn.projectId, scopes,
+        readFile: async (mount, relativePath) => {
+          const read = await files.readBytes(mount, scope, relativePath)
+          return read.ok && isTextMime(read.value.mime) ? new TextDecoder().decode(read.value.bytes) : null
+        },
+      })
     })
 
     ctx.on('conversation/forked', async (payload) => {
@@ -126,9 +140,10 @@ export const MemoryServerPlugin = {
       description: DESCRIPTION,
       inputSchema: MemorySaveInputSchema,
       async execute(input, options): Promise<MemorySaveOutput | MemoryToolError> {
-        const path = memoryPath(input.path)
-        if (path === null) return NOT_MEMORY
-        const described = { type: input.type, description: input.description }
+        const target = memoryPath(input.path)
+        if (target === null) return NOT_MEMORY
+        const { path, category } = target
+        const described = { category, description: input.description }
 
         if (input.content !== undefined) {
           const written = await writeWorkspaceFile(runtime, { path, content: input.content }, options?.toolCallId ?? null)
@@ -136,7 +151,7 @@ export const MemoryServerPlugin = {
           const metadata = await saveMetadata(runtime.db, runtime.userId, written.fileId, input, written.output.version)
           if (metadata === null) return METADATA_CONFLICT
           const { message, ...fields } = written.output
-          return { ...fields, ...described, metadata, message: `${message}. Catalogued as ${input.type}.` }
+          return { ...fields, ...described, metadata, message: `${message}. Catalog line saved.` }
         }
 
         const { files, scope } = servicesFor(runtime)

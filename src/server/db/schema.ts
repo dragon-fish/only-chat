@@ -4,7 +4,6 @@ import type { CatalogMatches, ModelMetadata, ModelMetadataOverride } from '@/sha
 import type { ArtifactRunStatus, ArtifactUsage, ImageExtraBody, ImageGenerationParams } from '@/shared/artifacts'
 import type { Part } from '@/shared/parts'
 import type { WorkspaceMount } from '@/shared/workspace-files'
-import type { MemoryType } from '@/plugins/memory/shared'
 import type { McpServerStatus, McpTransport, StoredMcpHeader } from '@/shared/mcp'
 import type {
   InterfaceProtocol, PersistedStatus, ConversationParams, ConversationPluginSettings, ProjectPluginSettings, Usage, UserSettings,
@@ -283,7 +282,8 @@ export const workspaceFileVersions = sqliteTable('workspace_file_versions', {
 ])
 
 /**
- * What the memory plugin knows about a file under `/memory`: the line the catalog shows for it.
+ * What the memory plugin knows about a file under `/memory`: the line the catalog shows for it. What
+ * the memory is about is its path, so nothing here repeats it.
  *
  * Keyed on the file rather than its path, so a rename carries the description along, a trashed
  * file drops out of the catalog through the join, and purging the file cascades this away. A file
@@ -292,7 +292,6 @@ export const workspaceFileVersions = sqliteTable('workspace_file_versions', {
 export const memories = sqliteTable('memories', {
   file_id: integer().primaryKey().references(() => workspaceFiles.id, { onDelete: 'cascade' }),
   user_id: integer().notNull().references(() => users.id, { onDelete: 'cascade' }),
-  type: text().$type<MemoryType>().notNull(),
   description: text().notNull(),
   updated_at: integer().notNull(),
 })

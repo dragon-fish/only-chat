@@ -171,16 +171,16 @@ describe('memory mounts', () => {
   it('lists every memory to its owner on the management pages, whatever the switches say', async () => {
     const scope = open(f.conversationId, f.projectId)
     await f.files.write({ path: '/memory/user/old.md', content: 'a', ...scope })
-    await f.files.write({ path: '/memory/user/reply-style.md', content: 'b', ...scope })
-    await f.files.write({ path: '/memory/project/ctx.md', content: 'c', ...scope })
-    const [described] = await f.db.select().from(workspaceFiles).where(eq(workspaceFiles.relative_path, 'reply-style.md'))
-    await f.db.insert(memories).values({ file_id: described!.id, user_id: 1, type: 'feedback', description: 'terse', updated_at: 0 })
+    await f.files.write({ path: '/memory/user/topics/food.md', content: 'b', ...scope })
+    await f.files.write({ path: '/memory/project/areas/ctx.md', content: 'c', ...scope })
+    const [described] = await f.db.select().from(workspaceFiles).where(eq(workspaceFiles.relative_path, 'topics/food.md'))
+    await f.db.insert(memories).values({ file_id: described!.id, user_id: 1, description: 'tastes', updated_at: 0 })
     await f.db.update(workspaceFiles).set({ updated_at: 1 }).where(eq(workspaceFiles.relative_path, 'old.md'))
 
     // The switch is off in this fixture; the owner still sees everything, newest first.
-    type Listing = { memories: Array<{ name: string, type: string | null, description: string | null }> }
+    type Listing = { memories: Array<{ name: string, category: string | null, description: string | null }> }
     const user = await (await f.client.request('/api/plugins/memory/memories', { method: 'GET' })).json() as Listing
-    expect(user.memories.map(m => [m.name, m.type, m.description])).toEqual([['reply-style', 'feedback', 'terse'], ['old', null, null]])
+    expect(user.memories.map(m => [m.name, m.category, m.description])).toEqual([['food', 'topics', 'tastes'], ['old', null, null]])
     const project = await (await f.client.request(`/api/plugins/memory/projects/${f.projectId}/memories`, { method: 'GET' })).json() as Listing
     expect(project.memories.map(m => m.name)).toEqual(['ctx'])
     const other = await (await f.client.request(`/api/plugins/memory/projects/${f.otherProjectId}/memories`, { method: 'GET' })).json() as Listing

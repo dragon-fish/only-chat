@@ -18,10 +18,10 @@ import { Textarea } from '@/client/ui/textarea'
 import { api } from '@/client/lib/api'
 import { useTheme } from '@/client/composables/use-theme'
 import { startConversation } from '@/client/lib/new-conversation-handoff'
-import { MEMORY_SAVE_TOOL_ID, type MemoryListItem } from '../shared'
+import { MEMORY_SAVE_TOOL_ID, type MemoryCategory, type MemoryListItem } from '../shared'
 
 /**
- * One layer of memory: a list grouped by type, a memory's details, and a box that hands an
+ * One layer of memory: a list grouped by the layout's folders, a memory's details, and a box that hands an
  * instruction to a new conversation. Nothing here edits a memory — the model does that.
  */
 const props = defineProps<{ projectId: number | null }>()
@@ -41,17 +41,29 @@ const deleting = ref(false)
 const instruction = ref('')
 const starting = ref(false)
 
-const GROUPS = [
-  { type: 'user', title: '关于你' },
-  { type: 'feedback', title: '做事方式' },
-  { type: 'project', title: '项目背景' },
-  { type: 'reference', title: '参考' },
-  { type: null, title: '未描述' },
-] as const
+/** The layout's folders as a reader sees them; the two single files sit together under 你. */
+const GROUPS: ReadonlyArray<{ title: string, categories: ReadonlyArray<MemoryCategory | null> }> = [
+  { title: '你', categories: ['profile', 'preferences'] },
+  { title: '话题', categories: ['topics'] },
+  { title: '进行中', categories: ['areas'] },
+  { title: '人物', categories: ['people'] },
+  { title: '其他', categories: [null] },
+]
 
 const groups = computed(() => GROUPS
-  .map(group => ({ ...group, items: items.value.filter(item => item.type === group.type) }))
+  .map(group => ({
+    title: group.title,
+    // Profile before preferences, then newest first, which is the order the list arrives in.
+    items: group.categories.flatMap(category => items.value.filter(item => item.category === category)),
+  }))
   .filter(group => group.items.length > 0))
+
+/** The two single files are named for what they are; every other file for its subject. */
+function titleOf(item: MemoryListItem): string {
+  if (item.category === 'profile') return '个人档案'
+  if (item.category === 'preferences') return '回复偏好'
+  return item.name
+}
 
 const relative = new Intl.RelativeTimeFormat('zh-CN', { numeric: 'auto' })
 function updatedLabel(at: number): string {
@@ -97,7 +109,7 @@ async function remove(item: MemoryListItem) {
   deleting.value = true
   try {
     await api.deleteWorkspaceFile(item.fileId)
-    toast.success(`已删除「${item.name}」`, { description: '它在工作区回收站里保留 30 天。' })
+    toast.success(`已删除「${titleOf(item)}」`, { description: '它在工作区回收站里保留 30 天。' })
     opened.value = null
     await load()
   }
@@ -143,13 +155,13 @@ defineExpose({ load })
             | 删除
         AlertDialogContent
           AlertDialogHeader
-            AlertDialogTitle 删除「{{ opened.name }}」？
+            AlertDialogTitle 删除「{{ titleOf(opened) }}」？
             AlertDialogDescription 模型将不再记得这件事。文件会进入工作区回收站，30 天内可以还原。
           AlertDialogFooter
             AlertDialogCancel(class="min-h-10") 取消
             AlertDialogAction(class="min-h-10" variant="destructive" @click="remove(opened)") 删除
     .flex.flex-col.gap-1
-      h3.text-lg.font-semibold {{ opened.name }}
+      h3.text-lg.font-semibold {{ titleOf(opened) }}
       p(class="text-muted-foreground text-xs") {{ updatedLabel(opened.updatedAt) }} · {{ opened.path }}
     .flex.flex-col.gap-1
       p(class="text-muted-foreground text-xs") 摘要
@@ -187,7 +199,7 @@ defineExpose({ load })
         Item(v-for="item in group.items" :key="item.fileId" as-child variant="outline" size="sm" class="hover:bg-muted/60")
           button.w-full.text-left(type="button" :title="item.path" @click="open(item)")
             ItemContent(class="min-w-0")
-              ItemTitle {{ item.name }}
+              ItemTitle {{ titleOf(item) }}
               ItemDescription.truncate {{ item.description ?? '未描述' }}
             ItemActions(class="text-muted-foreground hidden text-xs md:flex") {{ updatedLabel(item.updatedAt) }}
 

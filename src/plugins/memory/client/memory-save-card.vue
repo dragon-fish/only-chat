@@ -16,7 +16,7 @@ const output = computed(() => (content.value && 'metadata' in content.value ? co
 const failure = computed(() => (content.value && 'error' in content.value ? content.value : null))
 const path = computed(() => output.value?.path ?? input.value.path ?? '')
 
-const TYPE_LABELS: Record<string, string> = { user: '关于你', feedback: '做事方式', project: '项目背景', reference: '参考' }
+const CATEGORY_LABELS: Record<string, string> = { profile: '个人档案', preferences: '回复偏好', topics: '话题', areas: '进行中', people: '人物' }
 
 const label = computed(() => {
   const value = output.value
@@ -40,7 +40,7 @@ const scope = computed(() => (path.value.startsWith('/memory/project/') ? '当�
     .oc-turn-row.text-sm(:title="output.path")
       BrainIcon(class="size-4 shrink-0 text-muted-foreground")
       span.min-w-0.truncate {{ label }} {{ basename(output.path) }}
-      Badge(variant="secondary" class="ml-auto shrink-0") {{ TYPE_LABELS[output.type] ?? output.type }} · {{ scope }}
+      Badge(variant="secondary" class="ml-auto shrink-0") {{ CATEGORY_LABELS[output.category] ?? output.category }} · {{ scope }}
     p(class="text-muted-foreground pl-6 text-xs") {{ output.description }}
   .oc-turn-row.text-sm.text-muted-foreground(v-else)
     TriangleAlertIcon(class="size-4 shrink-0")

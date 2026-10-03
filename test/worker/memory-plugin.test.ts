@@ -107,7 +107,7 @@ async function startTurn(h: Harness, options: { toolIds?: string[], path?: Messa
 const run = async (turn: Turn, name: string, input: unknown) =>
   (turn.tools[name]!.execute as (i: unknown, o: unknown) => Promise<Record<string, unknown>>)(input, { toolCallId: `call-${name}`, messages: [] })
 
-const save = (turn: Turn, input: Record<string, unknown>) => run(turn, 'memory_save', { type: 'feedback', description: 'd', ...input })
+const save = (turn: Turn, input: Record<string, unknown>) => run(turn, 'memory_save', { description: 'd', ...input })
 
 /** A finished assistant turn holding one tool call and its result, as a later turn's path sees it. */
 function answered(name: string, args: unknown, content: unknown): Message {
@@ -122,7 +122,7 @@ function answered(name: string, args: unknown, content: unknown): Message {
 }
 
 async function metadataOf(h: Harness, relativePath: string) {
-  const [row] = await h.db.select({ type: memories.type, description: memories.description })
+  const [row] = await h.db.select({ description: memories.description })
     .from(workspaceFiles).leftJoin(memories, eq(memories.file_id, workspaceFiles.id))
     .where(eq(workspaceFiles.relative_path, relativePath))
   return row
@@ -134,46 +134,55 @@ describe('memory_save', () => {
 
   it('creates a memory: the file and its catalog line together', async () => {
     const turn = await startTurn(h)
-    const result = await save(turn, { path: '/memory/user/style.md', description: 'prefers terse replies', content: 'Keep it short.' })
-    expect(result).toMatchObject({ path: '/memory/user/style.md', operation: 'created', version: 1, metadata: 'created', type: 'feedback' })
-    expect(await metadataOf(h, 'style.md')).toEqual({ type: 'feedback', description: 'prefers terse replies' })
+    const result = await save(turn, { path: '/memory/user/topics/style.md', description: 'prefers terse replies', content: 'Keep it short.' })
+    expect(result).toMatchObject({ path: '/memory/user/topics/style.md', operation: 'created', version: 1, metadata: 'created', category: 'topics' })
+    expect(await metadataOf(h, 'topics/style.md')).toEqual({ description: 'prefers terse replies' })
   })
 
   it('describes an existing file without touching it, binary included', async () => {
     const turn = await startTurn(h)
-    await run(turn, 'write_file', { path: '/memory/project/notes.md', content: 'raw' })
-    const result = await save(turn, { path: '/memory/project/notes.md', type: 'project', description: 'release notes' })
-    expect(result).toMatchObject({ metadata: 'created', type: 'project' })
+    await run(turn, 'write_file', { path: '/memory/project/areas/notes.md', content: 'raw' })
+    const result = await save(turn, { path: '/memory/project/areas/notes.md', description: 'release notes' })
+    expect(result).toMatchObject({ metadata: 'created', category: 'areas' })
     expect(result.version).toBeUndefined()
-    expect((await h.files.read({ path: '/memory/project/notes.md', conversationId: h.conversationId, projectId: h.projectId, memory: { user: true, project: true } })).ok).toBe(true)
+    expect((await h.files.read({ path: '/memory/project/areas/notes.md', conversationId: h.conversationId, projectId: h.projectId, memory: { user: true, project: true } })).ok).toBe(true)
 
-    const again = await save(turn, { path: '/memory/project/notes.md', type: 'reference', description: 'where the notes live' })
+    const again = await save(turn, { path: '/memory/project/areas/notes.md', description: 'where the notes live' })
     expect(again).toMatchObject({ metadata: 'updated' })
-    expect(await metadataOf(h, 'notes.md')).toEqual({ type: 'reference', description: 'where the notes live' })
+    expect(await metadataOf(h, 'areas/notes.md')).toEqual({ description: 'where the notes live' })
+  })
+
+  it('saves only into the layout, telling the model what the layout is', async () => {
+    const turn = await startTurn(h)
+    const refused = await save(turn, { path: '/memory/user/notes.md', content: 'x' })
+    expect(refused).toMatchObject({ error: 'INVALID_PATH' })
+    expect(String(refused.message)).toContain('topics/<topic>.md')
+    expect(await save(turn, { path: '/memory/user/topics/deep/notes.md', content: 'x' })).toMatchObject({ error: 'INVALID_PATH' })
+    expect(await save(turn, { path: '/memory/user/profile.md', content: 'x' })).toMatchObject({ category: 'profile' })
   })
 
   it('refuses to describe a file that does not exist, and anything outside /memory', async () => {
     const turn = await startTurn(h)
-    expect(await save(turn, { path: '/memory/user/missing.md' })).toMatchObject({ error: 'FILE_NOT_FOUND' })
+    expect(await save(turn, { path: '/memory/user/topics/missing.md' })).toMatchObject({ error: 'FILE_NOT_FOUND' })
     expect(await save(turn, { path: '/project/a.md', content: 'x' })).toMatchObject({ error: 'INVALID_PATH' })
     expect(await save(turn, { path: '/memory/user' , content: 'x' })).toMatchObject({ error: 'INVALID_PATH' })
   })
 
   it('keeps the description with the file through a rename, hides it on delete and brings it back on restore', async () => {
     const turn = await startTurn(h)
-    await save(turn, { path: '/memory/user/a.md', description: 'kept', content: 'body' })
-    await run(turn, 'rename_file', { path: '/memory/user/a.md', toPath: '/memory/project/b.md' })
-    expect(await metadataOf(h, 'b.md')).toEqual({ type: 'feedback', description: 'kept' })
+    await save(turn, { path: '/memory/user/topics/a.md', description: 'kept', content: 'body' })
+    await run(turn, 'rename_file', { path: '/memory/user/topics/a.md', toPath: '/memory/project/topics/b.md' })
+    expect(await metadataOf(h, 'topics/b.md')).toEqual({ description: 'kept' })
 
-    await run(turn, 'delete_file', { path: '/memory/project/b.md' })
+    await run(turn, 'delete_file', { path: '/memory/project/topics/b.md' })
     const fresh = async () => {
       await h.db.delete(memorySnapshots)
-      return memoryPreamble(h.db, 1, h.conversationId, h.projectId, { user: true, project: true })
+      return memoryPreamble({ db: h.db, userId: 1, conversationId: h.conversationId, projectId: h.projectId, scopes: { user: true, project: true }, readFile: async () => null })
     }
     expect(await fresh()).not.toContain('b.md')
     const [trashed] = await h.files.listTrash()
     await h.files.undelete(trashed!.id)
-    expect(await fresh()).toContain('- /memory/project/b.md (feedback) — kept')
+    expect(await fresh()).toContain('- /memory/project/topics/b.md — kept')
 
     await h.files.softDelete(trashed!.id)
     await h.files.purge([trashed!.id])
@@ -182,7 +191,7 @@ describe('memory_save', () => {
 
   it('leaves the description unwritten when another write lands between the content and it', async () => {
     const turn0 = await startTurn(h)
-    await save(turn0, { path: '/memory/user/race.md', description: 'original', content: 'v1' })
+    await save(turn0, { path: '/memory/user/topics/race.md', description: 'original', content: 'v1' })
 
     // Someone else's write lands after this save's content and before its catalog line.
     const client = h.db.$client
@@ -195,7 +204,7 @@ describe('memory_save', () => {
           return {
             bind: (...args: unknown[]) => ({
               run: async () => {
-                await h.files.write({ path: '/memory/user/race.md', content: 'theirs', conversationId: h.conversationId, projectId: h.projectId, memory: { user: true, project: true } })
+                await h.files.write({ path: '/memory/user/topics/race.md', content: 'theirs', conversationId: h.conversationId, projectId: h.projectId, memory: { user: true, project: true } })
                 return statement.bind(...args).run()
               },
             }),
@@ -205,27 +214,27 @@ describe('memory_save', () => {
     })
     const raced = new Proxy(h.db, { get: (target, key) => key === '$client' ? racing : Reflect.get(target, key) }) as DB
     const turn = await startTurn(h, { db: raced })
-    const result = await save(turn, { path: '/memory/user/race.md', description: 'mine', content: 'v2' })
+    const result = await save(turn, { path: '/memory/user/topics/race.md', description: 'mine', content: 'v2' })
     expect(result).toMatchObject({ error: 'METADATA_CONFLICT' })
-    expect(await metadataOf(h, 'race.md')).toEqual({ type: 'feedback', description: 'original' })
+    expect(await metadataOf(h, 'topics/race.md')).toEqual({ description: 'original' })
   })
 
   it('counts a save from an earlier turn as having seen the file, so it can be edited straight away', async () => {
     const first = await startTurn(h)
-    const saved = await save(first, { path: '/memory/user/style.md', content: 'Keep it short.' })
+    const saved = await save(first, { path: '/memory/user/topics/style.md', content: 'Keep it short.' })
 
-    const next = await startTurn(h, { path: [answered('memory_save', { path: '/memory/user/style.md' }, saved)] })
-    const edited = await run(next, 'edit_file', { path: '/memory/user/style.md', oldText: 'short', newText: 'brief' })
+    const next = await startTurn(h, { path: [answered('memory_save', { path: '/memory/user/topics/style.md' }, saved)] })
+    const edited = await run(next, 'edit_file', { path: '/memory/user/topics/style.md', oldText: 'short', newText: 'brief' })
     expect(edited).toMatchObject({ version: 2 })
   })
 
   it('does not count a save without content as having seen the file', async () => {
     const first = await startTurn(h)
-    await run(first, 'write_file', { path: '/memory/user/style.md', content: 'Keep it short.' })
-    const described = await save(first, { path: '/memory/user/style.md' })
+    await run(first, 'write_file', { path: '/memory/user/topics/style.md', content: 'Keep it short.' })
+    const described = await save(first, { path: '/memory/user/topics/style.md' })
 
-    const next = await startTurn(h, { path: [answered('memory_save', { path: '/memory/user/style.md' }, described)] })
-    expect(await run(next, 'edit_file', { path: '/memory/user/style.md', oldText: 'short', newText: 'brief' })).toMatchObject({ error: 'NOT_READ' })
+    const next = await startTurn(h, { path: [answered('memory_save', { path: '/memory/user/topics/style.md' }, described)] })
+    expect(await run(next, 'edit_file', { path: '/memory/user/topics/style.md', oldText: 'short', newText: 'brief' })).toMatchObject({ error: 'NOT_READ' })
   })
 })
 
@@ -235,14 +244,30 @@ describe('memory in the prompt', () => {
 
   it('leads every turn of a conversation with the same catalog, however memory changes meanwhile', async () => {
     const writer = await startTurn(h)
-    await save(writer, { path: '/memory/user/a.md', description: 'first', content: 'x' })
+    await save(writer, { path: '/memory/user/topics/a.md', description: 'first', content: 'x' })
     await h.db.delete(memorySnapshots)
 
     const first = await startTurn(h)
-    expect(first.generation.preamble).toContain('/memory/user/a.md (feedback) — first')
-    await save(first, { path: '/memory/user/b.md', description: 'second', content: 'y' })
+    expect(first.generation.preamble).toContain('/memory/user/topics/a.md — first')
+    await save(first, { path: '/memory/user/topics/b.md', description: 'second', content: 'y' })
     const second = await startTurn(h)
     expect(second.generation.preamble).toBe(first.generation.preamble)
+  })
+
+  it('leads with each layer\'s profile in full, and lists the rest by the layout', async () => {
+    const writer = await startTurn(h)
+    await save(writer, { path: '/memory/user/profile.md', description: 'who', content: 'Backend engineer, Shanghai.\n' })
+    await save(writer, { path: '/memory/user/people/mom.md', description: 'family', content: 'x' })
+    await save(writer, { path: '/memory/user/preferences.md', description: 'reply style', content: 'Chinese, terse.' })
+    await run(writer, 'write_file', { path: '/memory/user/stray.md', content: 'x' })
+    await h.db.delete(memorySnapshots)
+
+    const preamble = (await startTurn(h)).generation.preamble!
+    expect(preamble).toContain('<profile path="/memory/user/profile.md">\nBackend engineer, Shanghai.\n</profile>')
+    expect(preamble).not.toContain('- /memory/user/profile.md')
+    // Preferences before people, and the stray file last with a way back into the layout.
+    expect(preamble.indexOf('/memory/user/preferences.md')).toBeLessThan(preamble.indexOf('/memory/user/people/mom.md'))
+    expect(preamble).toMatch(/- \/memory\/user\/stray\.md — outside the memory layout: rename_file it to .*\n<\/scope>/)
   })
 
   it('lets concurrent first turns agree on one catalog', async () => {
@@ -271,16 +296,16 @@ describe('memory in the prompt', () => {
 
   it('hides a layer the conversation switched off, and keeps the other one working', async () => {
     const writer = await startTurn(h)
-    await save(writer, { path: '/memory/user/a.md', description: 'personal', content: 'x' })
+    await save(writer, { path: '/memory/user/topics/a.md', description: 'personal', content: 'x' })
     await h.db.delete(memorySnapshots)
     await h.db.update(conversations).set({ plugin_settings: { memory: { user_memory: false } } }).where(eq(conversations.id, h.conversationId))
 
     const turn = await startTurn(h)
     expect(turn.generation.preamble).toContain('User memory is off in this conversation')
-    expect(turn.generation.preamble).not.toContain('/memory/user/a.md')
-    expect(await run(turn, 'read_file', { file: '/memory/user/a.md' })).toMatchObject({ error: 'FILE_NOT_FOUND' })
-    expect(await save(turn, { path: '/memory/user/b.md', content: 'y' })).toMatchObject({ error: 'MOUNT_UNAVAILABLE' })
-    expect(await save(turn, { path: '/memory/project/c.md', content: 'z' })).toMatchObject({ operation: 'created' })
+    expect(turn.generation.preamble).not.toContain('/memory/user/topics/a.md')
+    expect(await run(turn, 'read_file', { file: '/memory/user/topics/a.md' })).toMatchObject({ error: 'FILE_NOT_FOUND' })
+    expect(await save(turn, { path: '/memory/user/topics/b.md', content: 'y' })).toMatchObject({ error: 'MOUNT_UNAVAILABLE' })
+    expect(await save(turn, { path: '/memory/project/topics/c.md', content: 'z' })).toMatchObject({ operation: 'created' })
   })
 
   it('renders anew when the open layers change, and reuses the catalog while they do not', async () => {
@@ -295,12 +320,12 @@ describe('memory in the prompt', () => {
 
   it('says nothing about memory, and opens nothing, in a turn that does not offer it', async () => {
     const writer = await startTurn(h)
-    await save(writer, { path: '/memory/user/a.md', content: 'secret-ish' })
+    await save(writer, { path: '/memory/user/topics/a.md', content: 'secret-ish' })
 
     const plain = await startTurn(h, { toolIds: ['read_file', 'write_file', 'edit_file'] })
     expect(plain.generation.preamble).toBeUndefined()
     expect(h.ctx.promptSections.render(null, { toolIds: plain.generation.toolIds })).toBeNull()
-    expect(await run(plain, 'read_file', { file: '/memory/user/a.md' })).toMatchObject({ error: 'FILE_NOT_FOUND' })
+    expect(await run(plain, 'read_file', { file: '/memory/user/topics/a.md' })).toMatchObject({ error: 'FILE_NOT_FOUND' })
 
     expect(h.ctx.promptSections.render(null, { toolIds: MEMORY_TOOLS })).toContain('<plugin id="memory">')
   })

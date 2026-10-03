@@ -119,7 +119,7 @@ describe('authenticated REST tenant isolation', () => {
       user_id: aliceId, project_id: project.id, conversation_id: null, mount: 'memory/project', relative_path: 'secret.md',
       current_version: 0, created_at: 0, updated_at: 0, deleted_at: null,
     }).returning()
-    await ctx.db.orm.insert(memories).values({ file_id: file!.id, user_id: aliceId, type: 'user', description: 'Alice only', updated_at: 0 })
+    await ctx.db.orm.insert(memories).values({ file_id: file!.id, user_id: aliceId, description: 'Alice only', updated_at: 0 })
     await ctx.db.orm.insert(workspaceFiles).values({
       user_id: aliceId, project_id: null, conversation_id: null, mount: 'memory/user', relative_path: 'prefs.md',
       current_version: 0, created_at: 0, updated_at: 0, deleted_at: null,

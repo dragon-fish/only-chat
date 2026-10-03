@@ -5,7 +5,7 @@ import type { DB } from '@/server/db/client'
 import { memories, projects, workspaceFiles } from '@/server/db/schema'
 import { authUserId, type ApiEnv } from '@/server/plugins/api/auth'
 import { parseId } from '@/server/plugins/api/params'
-import { MEMORY_PLUGIN_ID, type MemoryListItem } from '../shared'
+import { MEMORY_PLUGIN_ID, memoryCategory, type MemoryListItem } from '../shared'
 
 /**
  * Every live memory in one mount, newest first. The management pages ignore the memory switches on
@@ -17,7 +17,6 @@ async function listMemories(db: DB, userId: number, target: { mount: 'memory/use
     mount: workspaceFiles.mount,
     relativePath: workspaceFiles.relative_path,
     updatedAt: workspaceFiles.updated_at,
-    type: memories.type,
     description: memories.description,
   })
     .from(workspaceFiles)
@@ -33,7 +32,7 @@ async function listMemories(db: DB, userId: number, target: { mount: 'memory/use
     fileId: row.fileId,
     path: `/${row.mount}/${row.relativePath}`,
     name: row.relativePath.slice(row.relativePath.lastIndexOf('/') + 1).replace(/\.[^.]+$/, ''),
-    type: row.type,
+    category: memoryCategory(row.relativePath),
     description: row.description,
     updatedAt: row.updatedAt,
   }))

@@ -3,9 +3,23 @@ import type { WriteFileOutput } from '@/plugins/workspace-files/shared'
 
 export { MEMORY_PLUGIN_ID, MEMORY_SAVE_TOOL_ID } from '@/shared/plugins'
 
-/** What kind of thing a memory records. The catalog shows it, so the model can tell them apart. */
-export const MEMORY_TYPES = ['user', 'feedback', 'project', 'reference'] as const
-export type MemoryType = (typeof MEMORY_TYPES)[number]
+/**
+ * Where a memory lives says what it is about. Both memory mounts share the layout: two single files
+ * and three folders of one file per subject.
+ */
+export const MEMORY_CATEGORIES = ['profile', 'preferences', 'topics', 'areas', 'people'] as const
+export type MemoryCategory = (typeof MEMORY_CATEGORIES)[number]
+
+/** The layout, as the model is told it when a path does not fit. */
+export const MEMORY_LAYOUT = 'profile.md, preferences.md, topics/<topic>.md, areas/<name>.md or people/<name>.md'
+
+/** The category of a path inside a memory mount, or null when it follows none of the five shapes. */
+export function memoryCategory(relativePath: string): MemoryCategory | null {
+  if (relativePath === 'profile.md') return 'profile'
+  if (relativePath === 'preferences.md') return 'preferences'
+  const match = /^(topics|areas|people)\/[^/]+\.md$/.exec(relativePath)
+  return match ? match[1] as MemoryCategory : null
+}
 
 export const MAX_MEMORY_DESCRIPTION = 200
 
@@ -56,20 +70,18 @@ export function memoryScopes(input: {
 
 export const MemorySaveInputSchema = z.strictObject({
   path: z.string().min(1).max(600)
-    .describe('The memory file, under /memory/user/ (every conversation) or /memory/project/ (this Project only), for example /memory/user/reply-style.md.'),
-  type: z.enum(MEMORY_TYPES)
-    .describe('user: who the user is. feedback: how they want you to work. project: ongoing work and its constraints. reference: where to find something.'),
+    .describe(`The memory file: /memory/user/ (every conversation) or /memory/project/ (this Project only), followed by ${MEMORY_LAYOUT}. For example /memory/user/topics/food.md.`),
   description: z.string().min(1).max(MAX_MEMORY_DESCRIPTION).regex(/^[^\r\n]*$/, 'One line, no line breaks.')
-    .describe('The catalog line: what this memory is about and when it matters, so a later conversation can decide whether to open it. Not a copy of the content.'),
+    .describe('The catalog line: what this file covers and when it matters, so a later conversation can decide whether to open it. Not a copy of the content.'),
   content: z.string().optional()
-    .describe('The whole file: the fact or rule first, then for feedback and project a **Why:** line and a **How to apply:** line when they are known. Omit it to change only the type and description of a file that already exists.'),
+    .describe('The whole file, as short Markdown. Omit it to change only the description of a file that already exists.'),
 })
 export type MemorySaveInput = z.infer<typeof MemorySaveInputSchema>
 
 /** A save that wrote content carries the write's own fields; one that only described a file does not. */
 export type MemorySaveOutput = Partial<Omit<WriteFileOutput, 'path' | 'message'>> & {
   path: string
-  type: MemoryType
+  category: MemoryCategory
   description: string
   metadata: 'created' | 'updated'
   message: string
@@ -86,7 +98,8 @@ export interface MemoryListItem {
   path: string
   /** The file name without its extension, which is what the page titles a memory by. */
   name: string
-  type: MemoryType | null
+  /** Null for a file someone put outside the layout. */
+  category: MemoryCategory | null
   description: string | null
   updatedAt: number
 }

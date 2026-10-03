@@ -2,33 +2,62 @@ import { and, desc, eq, isNull, or } from 'drizzle-orm'
 import type { DB } from '@/server/db/client'
 import { memories, memorySnapshots, workspaceFiles } from '@/server/db/schema'
 import { MEMORY_SAVE_TOOL_ID } from '@/shared/plugins'
-import type { MemoryScopes, MemoryType } from '../shared'
+import { MEMORY_CATEGORIES, MEMORY_LAYOUT, memoryCategory, type MemoryCategory, type MemoryScopes } from '../shared'
 
-/** One line of the catalog. A file nobody described has neither a type nor a description. */
+/** One line of the catalog. A file nobody described has no description. */
 export interface CatalogEntry {
   path: string
-  type: MemoryType | null
+  /** Null for a file outside the layout. */
+  category: MemoryCategory | null
   description: string | null
 }
+
+/** One open layer: its profile in full when it has one, and a line for every other file. */
+export interface ScopeCatalog {
+  profile: { path: string, text: string } | null
+  entries: readonly CatalogEntry[]
+}
+
+/** A layer this conversation does not use: said once, so the model neither reads nor saves there. */
+export type ClosedScope = 'off'
 
 /** Per scope. Past it the catalog says how many more there are and how to list them. */
 export const CATALOG_LIMIT = 200
 
-/** A layer this conversation does not use: said once, so the model neither reads nor saves there. */
-export type ClosedScope = 'off'
+/**
+ * The profile is read on every turn, so it travels whole rather than as a line to follow — but only
+ * up to this many characters. Past it the model is told to read the rest and to shorten the file.
+ */
+export const PROFILE_LIMIT = 4000
 
 const CLOSED_NOTE: Record<string, string> = {
   user: 'User memory is off in this conversation: do not read or save anything under /memory/user.',
   project: 'Project memory is off in this conversation: do not read or save anything under /memory/project.',
 }
 
-function scopeBlock(name: string, mount: string, entries: readonly CatalogEntry[] | ClosedScope): string {
-  if (entries === 'off') return [`<scope name="${name}">`, CLOSED_NOTE[name]!, '</scope>'].join('\n')
-  const lines = entries.slice(0, CATALOG_LIMIT).map(entry => entry.type === null || entry.description === null
-    ? `- ${entry.path} — undescribed: give it a type and description with ${MEMORY_SAVE_TOOL_ID}`
-    : `- ${entry.path} (${entry.type}) — ${entry.description}`)
-  if (entries.length > CATALOG_LIMIT) lines.push(`… and ${entries.length - CATALOG_LIMIT} more: list_files /${mount}`)
-  return [`<scope name="${name}">`, ...(lines.length > 0 ? lines : ['(empty)']), '</scope>'].join('\n')
+/** Lines follow the layout's order, so the files about one kind of thing sit together. */
+const ORDER = [...MEMORY_CATEGORIES, null] as const
+
+function line(entry: CatalogEntry): string {
+  if (entry.category === null) return `- ${entry.path} — outside the memory layout: rename_file it to ${MEMORY_LAYOUT}`
+  if (entry.description === null) return `- ${entry.path} — undescribed: describe it with ${MEMORY_SAVE_TOOL_ID}`
+  return `- ${entry.path} — ${entry.description}`
+}
+
+function profileBlock(profile: { path: string, text: string }): string {
+  const text = profile.text.length > PROFILE_LIMIT
+    ? `${profile.text.slice(0, PROFILE_LIMIT)}\n[Cut here: read_file the rest, and shorten the profile.]`
+    : profile.text
+  return `<profile path="${profile.path}">\n${text.trimEnd()}\n</profile>`
+}
+
+function scopeBlock(name: string, mount: string, scope: ScopeCatalog | ClosedScope): string {
+  if (scope === 'off') return [`<scope name="${name}">`, CLOSED_NOTE[name]!, '</scope>'].join('\n')
+  const sorted = ORDER.flatMap(category => scope.entries.filter(entry => entry.category === category))
+  const lines = sorted.slice(0, CATALOG_LIMIT).map(line)
+  if (sorted.length > CATALOG_LIMIT) lines.push(`… and ${sorted.length - CATALOG_LIMIT} more: list_files /${mount}`)
+  const body = [...(scope.profile ? [profileBlock(scope.profile)] : []), ...lines]
+  return [`<scope name="${name}">`, ...(body.length > 0 ? body : ['(empty)']), '</scope>'].join('\n')
 }
 
 /**
@@ -36,7 +65,7 @@ function scopeBlock(name: string, mount: string, entries: readonly CatalogEntry[
  * the same bytes. `project` is null for a conversation outside any Project, which has no project
  * scope at all rather than an empty one; `'off'` is a layer this conversation has switched off.
  */
-export function renderCatalog(user: readonly CatalogEntry[] | ClosedScope, project: readonly CatalogEntry[] | ClosedScope | null): string {
+export function renderCatalog(user: ScopeCatalog | ClosedScope, project: ScopeCatalog | ClosedScope | null): string {
   return [
     '<memory-catalog>',
     'Your memory as it stood when this conversation started; memories saved since then are not listed. Read a file before relying on it.',
@@ -46,15 +75,17 @@ export function renderCatalog(user: readonly CatalogEntry[] | ClosedScope, proje
   ].join('\n')
 }
 
-/** Live files in the open memory mounts, newest first, each with its description when it has one. */
+/** Reads one memory file's text, or null when it is gone or not text. */
+export type ReadMemoryFile = (mount: 'memory/user' | 'memory/project', relativePath: string) => Promise<string | null>
+
+/** Live files in the open memory mounts, newest first, with each layer's profile read in full. */
 export async function loadCatalog(
-  db: DB, userId: number, projectId: number | null, scopes: MemoryScopes,
-): Promise<{ user: CatalogEntry[] | ClosedScope, project: CatalogEntry[] | ClosedScope | null }> {
+  db: DB, userId: number, projectId: number | null, scopes: MemoryScopes, readFile: ReadMemoryFile,
+): Promise<{ user: ScopeCatalog | ClosedScope, project: ScopeCatalog | ClosedScope | null }> {
   const project = scopes.project && projectId !== null
   const rows = !scopes.user && !project ? [] : await db.select({
     mount: workspaceFiles.mount,
     relativePath: workspaceFiles.relative_path,
-    type: memories.type,
     description: memories.description,
   })
     .from(workspaceFiles)
@@ -70,12 +101,22 @@ export async function loadCatalog(
     // The id breaks ties so two files written in the same millisecond still render in one order.
     .orderBy(desc(workspaceFiles.updated_at), desc(workspaceFiles.id))
 
-  const entry = (row: typeof rows[number]): CatalogEntry => ({
-    path: `/${row.mount}/${row.relativePath}`, type: row.type, description: row.description,
-  })
+  async function scope(mount: 'memory/user' | 'memory/project'): Promise<ScopeCatalog> {
+    const own = rows.filter(row => row.mount === mount)
+    const hasProfile = own.some(row => row.relativePath === 'profile.md')
+    const text = hasProfile ? await readFile(mount, 'profile.md') : null
+    return {
+      profile: text === null ? null : { path: `/${mount}/profile.md`, text },
+      // A profile that could not be read still gets its line, so the model knows it is there.
+      entries: own
+        .filter(row => text === null || row.relativePath !== 'profile.md')
+        .map(row => ({ path: `/${row.mount}/${row.relativePath}`, category: memoryCategory(row.relativePath), description: row.description })),
+    }
+  }
+
   return {
-    user: scopes.user ? rows.filter(row => row.mount === 'memory/user').map(entry) : 'off',
-    project: projectId === null ? null : project ? rows.filter(row => row.mount === 'memory/project').map(entry) : 'off',
+    user: scopes.user ? await scope('memory/user') : 'off',
+    project: projectId === null ? null : project ? await scope('memory/project') : 'off',
   }
 }
 
@@ -92,14 +133,20 @@ export function scopesKey(scopes: MemoryScopes): string {
  * conversation can both find nothing stored, and whichever lands first is the catalog both use —
  * a turn that used its own losing copy would rebuild a different prefix on the next turn.
  */
-export async function memoryPreamble(
-  db: DB, userId: number, conversationId: number, projectId: number | null, scopes: MemoryScopes,
-): Promise<string> {
+export async function memoryPreamble(input: {
+  db: DB
+  userId: number
+  conversationId: number
+  projectId: number | null
+  scopes: MemoryScopes
+  readFile: ReadMemoryFile
+}): Promise<string> {
+  const { db, userId, conversationId, projectId, scopes, readFile } = input
   const key = scopesKey(scopes)
   const stored = await readSnapshot(db, conversationId)
   if (stored && stored.project_id === projectId && stored.scopes === key) return stored.text
 
-  const catalog = await loadCatalog(db, userId, projectId, scopes)
+  const catalog = await loadCatalog(db, userId, projectId, scopes, readFile)
   const text = renderCatalog(catalog.user, catalog.project)
   const now = Date.now()
   if (!stored) {

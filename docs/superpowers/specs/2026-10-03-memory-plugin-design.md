@@ -12,7 +12,7 @@
 
 记忆正文就是工作区文件：读用 `read_file`，改用 `edit_file` / `write_file`，删用 `delete_file`，改名或换作用域用 `rename_file`，版本历史、回收站、文件面板全部沿用。记忆插件只替代 Claude Code 中「手写 MEMORY.md 索引 + frontmatter」的部分。
 
-不做：catalog 的对话内刷新；UI 内编辑 type / description；独立的记忆管理页；记忆专用的读、改、删工具。
+不做：catalog 的对话内刷新；UI 内编辑记忆；记忆专用的读、改、删工具。
 
 ## 2. 插件 system 段（核心）
 
@@ -105,17 +105,32 @@ system 段的唯一输入是工具集，而工具定义在 Anthropic 缓存前�
 
 本轮生效 ⇔ `turn.toolIds.includes('memory_save')`。`requires` 级联保证文件工具同时在场。
 
-### 4.2 `memories` 表
+### 4.2 布局与 `memories` 表
+
+记忆按「这条信息关于什么」归类，类别就是路径。`/memory/user` 与 `/memory/project` 布局相同：
+
+| 路径 | 内容 |
+|---|---|
+| `profile.md` | 个人档案：称呼、职业、所在公司、入职时间等三个月后大概仍成立的身份信息，300 字以内 |
+| `preferences.md` | 回复偏好：对模型回答方式的要求（语言、长度、语气、格式）；用户自己的喜好不放这里 |
+| `topics/<领域>.md` | 话题：用户本人的习惯、口味、作息、反复出现的兴趣，按领域分文件；随口一提的不记，反复出现才归档 |
+| `areas/<名称>.md` | 进行中的事务：任何持续投入的事，不限于正式项目（未解决的问题、长期职责、找房、报税、找工作）；记录决策、约束、截止时间与当前状态 |
+| `people/<名字>.md` | 人物：对后续对话有帮助的人，记录与用户的关系和一起在做的事，而非详细档案 |
+
+粒度跟着内容走：一句话能说清的事实（喜欢的食物、电影、常用编辑器）作为一行追加进已覆盖它的文件；只有内容撑得起时（例如用户讲了喜欢一部电影背后的故事）才单独成文件，并在上层文件里留一行指向它。
+
+`memoryCategory(relativePath)`（`src/plugins/memory/shared.ts`）判定一个路径属于哪一类，不符合五种形状的为 null（「其他」）。
+
+`memories` 表只存目录行：
 
 | 列 | 说明 |
 |---|---|
 | `file_id` | 主键，FK → `workspace_files.id`，ON DELETE CASCADE |
 | `user_id` | FK → `users.id`，ON DELETE CASCADE；所有查询带它 |
-| `type` | `user` / `feedback` / `project` / `reference` |
 | `description` | 一行摘要，1–200 字符 |
 | `updated_at` | 元信息最后修改时间 |
 
-路径与作用域不存，从文件行推出。由此文件生命周期无需任何钩子：
+路径、类别与作用域不存，从文件行推出。由此文件生命周期无需任何钩子：
 
 | 文件事件 | 结果 |
 |---|---|
@@ -130,8 +145,7 @@ system 段的唯一输入是工具集，而工具定义在 Anthropic 缓存前�
 
 ```ts
 {
-  path: string          // 必须位于 /memory/user/ 或 /memory/project/ 之下
-  type: 'user' | 'feedback' | 'project' | 'reference'
+  path: string          // /memory/user/ 或 /memory/project/ 之后跟布局中的五种路径之一
   description: string   // 1–200 字符，单行
   content?: string      // 正文
 }
@@ -150,23 +164,28 @@ system 段的唯一输入是工具集，而工具定义在 Anthropic 缓存前�
 
 通用规则：
 
-- 路径不在 `/memory/*` 下：报 `INVALID_PATH`，提示改用 `write_file`。
-- 返回值：`write_file` 的字段原样透传（`operation: created | updated | replaced`、`version`、`replacedVersion`、`staleReadVersion`，仅带 `content` 时有），另加 `path`、`type`、`description`、`metadata: 'created' | 'updated'`。
+- 路径不在 `/memory/*` 下或不符合布局：报 `INVALID_PATH`，错误信息列出五种合法路径。通用文件工具不受此限制，布局外的文件在 catalog 与管理页归入「其他」。
+- 返回值：`write_file` 的字段原样透传（`operation: created | updated | replaced`、`version`、`replacedVersion`、`staleReadVersion`，仅带 `content` 时有），另加 `path`、`category`、`description`、`metadata: 'created' | 'updated'`。
 
 已见账本的跨轮重建：workspace-files 的 `seenInResult` 也识别 `memory_save` 的结果。带 `content` 的结果含 `version`，视为一次写入；不带 `content` 的结果没有 `version`，不计入。工具 id 取自 `src/shared/plugins.ts`。
 
-工具卡片显示路径、type、description 与操作结果，沿用现有紧凑卡片样式。
+工具卡片显示路径、类别、description 与操作结果，沿用现有紧凑卡片样式。
 
 ### 4.4 catalog
 
-查询本用户的 `memory/user` 文件与当前 Project 的 `memory/project` 文件（未删除），LEFT JOIN `memories`。每个作用域按文件 `updated_at` 倒序，最多 200 条：
+查询本用户的 `memory/user` 文件与当前 Project 的 `memory/project` 文件（未删除），LEFT JOIN `memories`：
 
 ```
 <memory-catalog>
-Snapshot taken when this conversation started; memories saved since then are not listed.
+Your memory as it stood when this conversation started; …
 <scope name="user">
-- /memory/user/terse-replies.md (feedback) — 用户偏好简短回答
-- /memory/user/notes.md — undescribed: give it a type and description with memory_save
+<profile path="/memory/user/profile.md">
+（profile.md 全文）
+</profile>
+- /memory/user/preferences.md — 回复语言与篇幅
+- /memory/user/topics/饮食.md — 口味与忌口，推荐吃的时参考
+- /memory/user/topics/旧笔记.md — undescribed: describe it with memory_save
+- /memory/user/notes.md — outside the memory layout: rename_file it to …
 </scope>
 <scope name="project">
 …
@@ -175,8 +194,9 @@ Snapshot taken when this conversation started; memories saved since then are not
 </memory-catalog>
 ```
 
+- 每层开放时，若有 `profile.md`，全文放在该层最前（与 CLAUDE.md 一样随首条消息注入），不再另列一行；超过 4000 字符截断，并提示模型读全文、精简档案。读取失败时退回为普通一行。
+- 其余文件按布局顺序（preferences、topics、areas、people、其他）排列，同类内按 `updated_at` 倒序；每层最多 200 行。
 - 对话不属于 Project 时无 project 段；某作用域为空时该段写 `(empty)`。
-- 面向模型的文字用英文，最终措辞在实现时定。
 
 ### 4.5 快照
 
@@ -201,9 +221,9 @@ Snapshot taken when this conversation started; memories saved since then are not
 本轮生效时返回静态说明（英文），内容：
 
 - 记忆是什么；`/memory/user` 跨所有对话、`/memory/project` 限当前 Project。
-- 四种 type 的含义与各自适合记录的内容；不该记的内容（代码或文件里已有的、只与当前对话有关的、密钥）。
-- 何时主动保存：用户表达偏好、纠正做法、给出长期背景时。
-- 维护方式：新建用 `memory_save` 带 `content`；改正文先 `read_file` 再 `edit_file`；改描述用不带 `content` 的 `memory_save`；过时或错误的记忆用 `delete_file`；合并重复项。
+- 五类路径各放什么（§4.2）与收录门槛；不该记的内容（工作区或对话里已有的、只与当下有关的、猜测、密钥）。
+- 篇幅：多数事实是一行，追加进已覆盖它的文件；内容撑得起才单独成文件。正文是简短的 Markdown 列表，有理由时写在事实旁；不加标题。description 说明文件覆盖什么、何时用得上，不复述正文。写之前先看 catalog，补充已有文件，合并重复。
+- 维护方式：新建文件用 `memory_save` 带 `content`；补充或更正先 `read_file` 再 `edit_file`，描述不再贴切时用不带 `content` 的 `memory_save`；错误或过时的内容用 `edit_file` 删去，整个文件都不值得留时 `delete_file`；`rename_file` 改名或在两层之间移动；未描述的文件补描述，布局外的文件移入布局。
 - 首条消息中的 catalog 是对话开始时的快照；依据记忆行事前先读正文。
 
 ## 5. 首条用户消息注入（核心）
@@ -272,7 +292,7 @@ Project 级插件设置照会话级的做法实现：
 - 新增只读接口（Worker，`ctx.pluginApi.register`）：
   - `GET /api/plugins/memory/memories` → 用户记忆列表；
   - `GET /api/plugins/memory/projects/:id/memories` → 该 Project 的项目记忆列表（先校验 Project 归属）。
-  - 每项：`{ fileId, path, name, type, description, updatedAt }`，`name` 为文件名去掉扩展名；按 `updatedAt` 倒序。
+  - 每项：`{ fileId, path, name, category, description, updatedAt }`，`name` 为文件名去掉扩展名，`category` 由 `memoryCategory` 得出；按 `updatedAt` 倒序。
   - 管理接口不受开关影响：开关关闭时已有记忆仍可查看、删除。
 - 查看正文、删除复用 workspace 现有的 `GET /files/:id` 与 `DELETE /files/:id`（删除进回收站）。
 
@@ -280,7 +300,7 @@ Project 级插件设置照会话级的做法实现：
 
 列表与详情共用一个组件 `memory-browser.vue`：
 
-- 列表按 type 分组：关于你（user）、做事方式（feedback）、项目背景（project）、参考（reference），未描述的文件单列一组；组内每行为名称、description、相对更新时间。
+- 列表按布局分组：你（个人档案、回复偏好）、话题、进行中、人物，布局外的文件归入「其他」；组内每行为名称、description、相对更新时间。`profile.md` 与 `preferences.md` 显示为「个人档案」「回复偏好」，其余文件显示文件名。
 - 点开进入详情视图（带返回）：名称、最后更新时间、摘要（description）、正文（Markdown 渲染，沿用 `workspace-file-preview.vue` 的 `MarkdownRender` 用法）、删除按钮（确认后进回收站）。
 - 底部输入框「告诉模型要记住、修改或忘记什么」：提交后新开一个会话执行（§8.5）。
 - 不提供手工新建与编辑。
