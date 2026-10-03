@@ -57,6 +57,8 @@ export interface BuildInput {
   path: Message[]
   attachments: ReadonlyMap<number, AttachmentInput>
   labeler?: FileLabeler
+  /** Leads the first user message. Persisted by whoever sets it, so it is the same on every turn. */
+  preamble?: string | null
 }
 
 const ANTHROPIC_CACHE = { anthropic: { cacheControl: { type: 'ephemeral' } } } as const
@@ -400,7 +402,7 @@ export function interjectedUserMessage(
  * which rejects a `role: 'system'` message inside `messages`.
  */
 export function buildModelMessages(input: BuildInput): ModelMessage[] {
-  const { protocol, systemPrompt, path, attachments, labeler } = input
+  const { protocol, systemPrompt, path, attachments, labeler, preamble } = input
   const out: ModelMessage[] = []
   const cache = protocol === 'anthropic'
 
@@ -411,6 +413,7 @@ export function buildModelMessages(input: BuildInput): ModelMessage[] {
   }
 
   const lastUserIndex = path.map((m) => m.role).lastIndexOf('user')
+  const firstUserIndex = path.findIndex((m) => m.role === 'user')
   /** Carried onto the next user message: a note about the turn that came before it. */
   let pending: string | null = null
   /** Set when the turn in between said nothing, so the user messages around it are one message. */
@@ -419,7 +422,8 @@ export function buildModelMessages(input: BuildInput): ModelMessage[] {
   path.forEach((m, i) => {
     if (m.role === 'user') {
       const said = userParts(m.parts, attachments, labeler)
-      const content: UserPart[] = pending === null ? said : [{ type: 'text', text: pending }, ...said]
+      const lead: UserPart[] = i === firstUserIndex && preamble ? [{ type: 'text', text: preamble }] : []
+      const content: UserPart[] = pending === null ? [...lead, ...said] : [...lead, { type: 'text', text: pending }, ...said]
       pending = null
 
       const previous = joinToPrevious ? out.at(-1) : undefined

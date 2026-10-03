@@ -21,4 +21,10 @@ export interface GenerationTurn {
   canReadFile(mime: string): boolean
   /** Set by at most one plugin. Absent, files reach the model with nothing said about them. */
   labeler?: FileLabeler
+  /**
+   * Set by at most one plugin: text that leads the first user message. It must be the same on every
+   * turn of the conversation, so whatever produces it persists it rather than recomputing it — a
+   * change rewrites the head of the cached prefix.
+   */
+  preamble?: string
 }

@@ -55,7 +55,7 @@ const ALARM_WATCHDOG_MS = 60_000
 
 export class Hub extends Service {
   static readonly provide = 'hub'
-  static readonly inject = ['env', 'doState', 'db', 'assets', 'llm', 'tools', 'pluginChannel']
+  static readonly inject = ['env', 'doState', 'db', 'assets', 'llm', 'tools', 'promptSections', 'pluginChannel']
 
   /** Owning context (this.ctx inside methods is the caller's context, per cordis semantics). */
   readonly app: Context

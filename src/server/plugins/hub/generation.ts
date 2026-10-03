@@ -297,7 +297,8 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
 
   try {
     const { path, attachments } = await assembleContext(hub, target, leafMessageId)
-    const payload: BeforeSendPayload = { conversationId: target.conversation.id, systemPrompt: target.config.systemPrompt, path }
+    const systemPrompt = hub.app.promptSections.render(target.config.systemPrompt, { toolIds: target.toolIds })
+    const payload: BeforeSendPayload = { conversationId: target.conversation.id, systemPrompt, path }
     hub.app.emit('message/before-send', payload)
 
     // Plugins prepare what their tools will need, and one may name files for the model (spec §4.5).
@@ -308,7 +309,7 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
     }
     preparedTurn = turn
     await hub.app.parallel('generation/prepare', turn)
-    const messages = buildModelMessages({ protocol: target.providerInterface.protocol, systemPrompt: payload.systemPrompt, path: payload.path, attachments, labeler: turn.labeler })
+    const messages = buildModelMessages({ protocol: target.providerInterface.protocol, systemPrompt: payload.systemPrompt, path: payload.path, attachments, labeler: turn.labeler, preamble: turn.preamble ?? null })
     const params: ConversationParams = target.config.params
     const trace = {
       conversationId: target.conversation.id,
