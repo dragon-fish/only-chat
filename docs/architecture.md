@@ -45,6 +45,12 @@ selection follows the same rule, and each generation adds required tools rather 
 stored selection. Stored switches count a requirement as on, so settings saved before a plugin gained
 one keep working.
 
+A plugin can also keep settings per Project: it declares `projectConfigSchema`, and
+`projects.plugin_settings` holds the values keyed by plugin id, validated and merged per plugin by
+`project.update` the way conversation settings are. Core renders no form for them; a plugin that
+declares `projectTab` gets a tab in Project settings, and its client half registers the component
+behind it with `ctx.projectPanel`. The memory plugin is the first user of both.
+
 A plugin's routes run on the Worker and its tools run inside the UserHub Durable Object, which are
 different cordis roots. One plugin object injecting both would sit PENDING forever on whichever
 service its side does not have, so the two halves are separate plugins — see

@@ -99,10 +99,13 @@ branches, read-only) and 当前项目, and — while the memory plugin is on —
 
 `/memory/user` (the user's, shared by every conversation) and `/memory/project` (the conversation's
 Project, a namespace separate from `/project`) hold the memory plugin's files. Every
-`WorkspaceScope` says whether they are reachable: in the hub only a turn the memory plugin opened —
-one that offers `memory_save` — can reach them, through tools and `vfs:` references alike; in the
-Worker the user's memory switch decides. Closed, they answer `MOUNT_UNAVAILABLE` and `/` does not
-list them.
+`WorkspaceScope` says which of the two are reachable. In the hub only a turn the memory plugin
+opened — one that offers `memory_save` — can reach them, through tools and `vfs:` references alike,
+and only the layers that are on for its conversation: the user's switch, the Project's two switches
+and the conversation's own, combined by `memoryScopes` (`src/plugins/memory/shared.ts`). The file
+panel applies the same rule; the memory pages (the plugin's data page and the Project's 记忆 tab)
+ignore it, so a layer switched off is hidden from the model but never from its owner. A closed
+mount answers `MOUNT_UNAVAILABLE` and `/` does not list it.
 
 `workspace_files.mount` records which mount a row belongs to. Nothing infers it from
 `project_id` / `conversation_id`, which cannot tell `/project` from `/memory/project` or a user's
