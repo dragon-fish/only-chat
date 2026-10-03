@@ -16,6 +16,7 @@ import { DatetimeServerPlugin } from '@/plugins/datetime/server'
 import { ImageGenerationServerPlugin } from '@/plugins/image-generation/server'
 import { WorkspaceFilesServerPlugin } from '@/plugins/workspace-files/server'
 import { WorkspaceFilesApiPlugin } from '@/plugins/workspace-files/server/api'
+import { MemoryServerPlugin } from '@/plugins/memory/server'
 import { McpServerPlugin } from '@/plugins/mcp/server'
 import { McpApiPlugin } from '@/plugins/mcp/server/api'
 import { FileUnderstandingServerPlugin } from '@/plugins/file-understanding/server'
@@ -78,6 +79,7 @@ export async function createApp(options: AppOptions): Promise<Context> {
       if (!ctx.get('fileReader')) throw new Error('FileReaderServerPlugin loaded but ctx.fileReader is unavailable')
       await ctx.plugin(ImageGenerationServerPlugin)
       await ctx.plugin(WorkspaceFilesServerPlugin)
+      await ctx.plugin(MemoryServerPlugin)
       await ctx.plugin(FileUnderstandingServerPlugin)
       await ctx.plugin(McpServerPlugin)
       await ctx.plugin(ComfyuiServerPlugin)

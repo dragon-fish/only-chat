@@ -242,12 +242,69 @@ async function readWorkspaceText(
   }
 }
 
-function servicesFor(runtime: ToolContext) {
+export function servicesFor(runtime: ToolContext) {
   const files = new WorkspaceFiles(runtime.db, runtime.assets, runtime.userId)
   // Identity comes from the runtime, never from tool input: a tool can only reach the Conversation
   // and Project it was created inside, and memory only in a turn the memory plugin opened it for.
   const scope = { conversationId: runtime.conversationId, projectId: runtime.projectId, memory: memoryOpen(runtime.turn) }
   return { files, scope }
+}
+
+/**
+ * Everything `write_file` does, for a tool that writes a whole file as part of something larger:
+ * ordered behind this turn's other writes to the file, recorded as seen, and reporting a version the
+ * caller never read. `fileId` is the row it landed on, for a caller that attaches to the file.
+ */
+export async function writeWorkspaceFile(
+  runtime: ToolContext,
+  input: { path: string, content: string, expectedVersion?: number },
+  toolCallId: string | null,
+): Promise<{ output: WriteFileOutput, fileId: number } | WorkspaceToolError> {
+  // One at a time per file within this turn; see `inFileOrder`.
+  return inFileOrder(runtime.turn, input.path, async () => {
+    const target = writablePath(input.path)
+    if (typeof target !== 'string') return target
+    const { files, scope } = servicesFor(runtime)
+    const result = await files.write({
+      path: target,
+      content: input.content,
+      expectedVersion: input.expectedVersion,
+      sourceMessageId: runtime.assistantMessageId,
+      toolCallId,
+      ...scope,
+    })
+    if (!result.ok) return unwrap(result) as WorkspaceToolError
+    const { fileId, path, operation, fileSize, totalLines, version, replacedVersion } = result.value
+    const read = latestSeen(runtime.turn, runtime.path, path)
+    // Older than what was replaced means somebody wrote in between and this write went over
+    // content the caller never read.
+    const staleReadVersion = read !== null && replacedVersion !== null && read.version < replacedVersion
+      ? read.version
+      : null
+    runtime.turn.set(seenKey(path), { version, partial: false, source: 'write' } satisfies SeenFile)
+
+    const previewable = previewTypeFor(path) !== undefined
+    const size = `${fileSize.toLocaleString('en-US')} bytes, ${totalLines.toLocaleString('en-US')} lines`
+    const message = operation === 'created'
+      ? `Created ${size}`
+      : replacedVersion === null
+        ? `Saved ${size}`
+        : staleReadVersion === null
+          ? `Saved ${size}. Replaced v${replacedVersion}, still restorable with restore_file.`
+          : `Saved ${size}. Replaced v${replacedVersion}, which was written after you read v${staleReadVersion} — you never saw it. Restore it with restore_file if that content mattered.`
+    // Said here rather than minted here: a ticket per write would spend one on every draft,
+    // and only the last of them is ever looked at.
+    const hint = previewable ? ' This one can be opened in a browser — preview_file gives you the link.' : ''
+    return {
+      fileId,
+      output: { path, operation, previewable, fileSize, totalLines, version, replacedVersion, staleReadVersion, message: message + hint },
+    }
+  })
+}
+
+/** A workspace failure as every tool here reports it. */
+export function workspaceToolError(error: WorkspaceError): WorkspaceToolError {
+  return failure(error)
 }
 
 export const WorkspaceFilesServerPlugin = {
@@ -311,46 +368,8 @@ export const WorkspaceFilesServerPlugin = {
       ].join(' '),
       inputSchema: WriteFileInputSchema,
       async execute(input, options): Promise<WriteFileOutput | WorkspaceToolError> {
-        // One at a time per file within this turn; see `inFileOrder`.
-        return inFileOrder(runtime.turn, input.path, async () => {
-          const target = writablePath(input.path)
-          if (typeof target !== 'string') return target
-          const { files, scope } = servicesFor(runtime)
-          const result = await files.write({
-            path: target,
-            content: input.content,
-            expectedVersion: input.expectedVersion,
-            sourceMessageId: runtime.assistantMessageId,
-            toolCallId: options?.toolCallId ?? null,
-            ...scope,
-          })
-          if (!result.ok) return unwrap(result) as WorkspaceToolError
-          const { path, operation, fileSize, totalLines, version, replacedVersion } = result.value
-          const read = latestSeen(runtime.turn, runtime.path, path)
-          // Older than what was replaced means somebody wrote in between and this write went over
-          // content the caller never read.
-          const staleReadVersion = read !== null && replacedVersion !== null && read.version < replacedVersion
-            ? read.version
-            : null
-          runtime.turn.set(seenKey(path), { version, partial: false, source: 'write' } satisfies SeenFile)
-
-          const previewable = previewTypeFor(path) !== undefined
-          const size = `${fileSize.toLocaleString('en-US')} bytes, ${totalLines.toLocaleString('en-US')} lines`
-          const message = operation === 'created'
-            ? `Created ${size}`
-            : replacedVersion === null
-              ? `Saved ${size}`
-              : staleReadVersion === null
-                ? `Saved ${size}. Replaced v${replacedVersion}, still restorable with restore_file.`
-                : `Saved ${size}. Replaced v${replacedVersion}, which was written after you read v${staleReadVersion} — you never saw it. Restore it with restore_file if that content mattered.`
-          // Said here rather than minted here: a ticket per write would spend one on every draft,
-          // and only the last of them is ever looked at.
-          const hint = previewable ? ' This one can be opened in a browser — preview_file gives you the link.' : ''
-          return {
-            path, operation, previewable, fileSize, totalLines, version, replacedVersion, staleReadVersion,
-            message: message + hint,
-          }
-        })
+        const written = await writeWorkspaceFile(runtime, input, options?.toolCallId ?? null)
+        return 'error' in written ? written : written.output
       },
     }))
 

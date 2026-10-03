@@ -148,6 +148,13 @@
       "when": 1791034942924,
       "tag": "0021_workspace-mounts",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "6",
+      "when": 1791035485046,
+      "tag": "0022_memory",
+      "breakpoints": true
     }
   ]
 }

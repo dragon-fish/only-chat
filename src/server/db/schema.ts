@@ -4,6 +4,7 @@ import type { CatalogMatches, ModelMetadata, ModelMetadataOverride } from '@/sha
 import type { ArtifactRunStatus, ArtifactUsage, ImageExtraBody, ImageGenerationParams } from '@/shared/artifacts'
 import type { Part } from '@/shared/parts'
 import type { WorkspaceMount } from '@/shared/workspace-files'
+import type { MemoryType } from '@/plugins/memory/shared'
 import type { McpServerStatus, McpTransport, StoredMcpHeader } from '@/shared/mcp'
 import type {
   InterfaceProtocol, PersistedStatus, ConversationParams, ConversationPluginSettings, Usage, UserSettings,
@@ -279,6 +280,36 @@ export const workspaceFileVersions = sqliteTable('workspace_file_versions', {
   index('workspace_file_versions_attachment_idx').on(t.attachment_id),
 ])
 
+/**
+ * What the memory plugin knows about a file under `/memory`: the line the catalog shows for it.
+ *
+ * Keyed on the file rather than its path, so a rename carries the description along, a trashed
+ * file drops out of the catalog through the join, and purging the file cascades this away. A file
+ * under `/memory` with no row here is listed as undescribed.
+ */
+export const memories = sqliteTable('memories', {
+  file_id: integer().primaryKey().references(() => workspaceFiles.id, { onDelete: 'cascade' }),
+  user_id: integer().notNull().references(() => users.id, { onDelete: 'cascade' }),
+  type: text().$type<MemoryType>().notNull(),
+  description: text().notNull(),
+  updated_at: integer().notNull(),
+})
+
+/**
+ * The memory catalog one conversation leads with, rendered once and replayed byte for byte: it sits
+ * in the first user message, where any change rewrites the head of the cached prefix.
+ *
+ * `project_id` is the Project it was rendered for and deliberately not a foreign key. Moving the
+ * conversation, or deleting the Project, has to leave it mismatched so the next turn renders anew —
+ * a cascade to null would make a deleted Project's catalog look current for a loose conversation.
+ */
+export const memorySnapshots = sqliteTable('memory_snapshots', {
+  conversation_id: integer().primaryKey().references(() => conversations.id, { onDelete: 'cascade' }),
+  project_id: integer(),
+  text: text().notNull(),
+  created_at: integer().notNull(),
+})
+
 export const artifactRuns = sqliteTable('artifact_runs', {
   id: integer().primaryKey({ autoIncrement: true }),
   user_id: integer().notNull().references(() => users.id, { onDelete: 'cascade' }),
@@ -444,3 +475,4 @@ export type ArtifactRow = typeof artifacts.$inferSelect
 export type AttachmentProviderFileRow = typeof attachmentProviderFiles.$inferSelect
 export type WorkspaceFileRow = typeof workspaceFiles.$inferSelect
 export type WorkspaceFileVersionRow = typeof workspaceFileVersions.$inferSelect
+export type MemoryRow = typeof memories.$inferSelect
