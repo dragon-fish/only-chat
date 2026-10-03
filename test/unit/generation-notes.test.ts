@@ -11,7 +11,11 @@ describe('notesByMessage', () => {
       { pluginId: first!, messageId: 7, text: 'early plugin, b' },
       { pluginId: first!, messageId: 9, text: 'other message' },
     ])
-    expect(grouped.get(7)).toEqual(['early plugin, a', 'early plugin, b', 'late plugin, first to finish'])
-    expect(grouped.get(9)).toEqual(['other message'])
+    expect(grouped.get(7)).toEqual([
+      { plugin: first, text: 'early plugin, a' },
+      { plugin: first, text: 'early plugin, b' },
+      { plugin: second, text: 'late plugin, first to finish' },
+    ])
+    expect(grouped.get(9)).toEqual([{ plugin: first, text: 'other message' }])
   })
 })

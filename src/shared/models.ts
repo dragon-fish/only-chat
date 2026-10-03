@@ -143,6 +143,10 @@ export const ProjectSchema = z.object({
 })
 export type Project = z.infer<typeof ProjectSchema>
 
+/** A plugin's note at the end of a user message, sent to the model as a reminder and never shown. */
+export const MessageNoteSchema = z.object({ plugin: z.string(), text: z.string() })
+export type MessageNote = z.infer<typeof MessageNoteSchema>
+
 export const MessageSchema = z.object({
   id: z.number().int(),
   conversation_id: z.number().int(),
@@ -155,6 +159,8 @@ export const MessageSchema = z.object({
   usage: UsageSchema.nullable(),
   status: MessageStatusSchema,
   error: z.string().nullable(),
+  /** Absent or null on most messages; see `MessageNote`. */
+  notes: z.array(MessageNoteSchema).nullable().optional(),
   created_at: z.number(),
 })
 export type Message = z.infer<typeof MessageSchema>

@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "41954a74-51d7-4803-99fa-1aed9e5ab7b5",
+  "id": "225134ff-26e7-466d-ac71-74045396dbfb",
   "prevId": "31854308-5480-4e34-9cbd-e70145732b05",
   "tables": {
     "artifact_links": {
@@ -1626,64 +1626,6 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
-    "memory_notes": {
-      "name": "memory_notes",
-      "columns": {
-        "message_id": {
-          "name": "message_id",
-          "type": "integer",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "conversation_id": {
-          "name": "conversation_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "text": {
-          "name": "text",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "memory_notes_message_id_messages_id_fk": {
-          "name": "memory_notes_message_id_messages_id_fk",
-          "tableFrom": "memory_notes",
-          "tableTo": "messages",
-          "columnsFrom": [
-            "message_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "memory_notes_conversation_id_conversations_id_fk": {
-          "name": "memory_notes_conversation_id_conversations_id_fk",
-          "tableFrom": "memory_notes",
-          "tableTo": "conversations",
-          "columnsFrom": [
-            "conversation_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
     "memory_snapshots": {
       "name": "memory_snapshots",
       "columns": {
@@ -1826,6 +1768,13 @@
         },
         "error": {
           "name": "error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "notes": {
+          "name": "notes",
           "type": "text",
           "primaryKey": false,
           "notNull": false,

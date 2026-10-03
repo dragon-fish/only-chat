@@ -13,7 +13,7 @@ import {
   type MemoryCategory, type MemoryScopes, type MemorySaveInput, type MemorySaveOutput, type MemoryToolError,
 } from '../shared'
 import { copySnapshot, memoryPreamble, type ReadMemoryFile } from './catalog'
-import { absorbOwnChanges, copyNotes, memoryNotices } from './notices'
+import { absorbOwnChanges, memoryNotice } from './notices'
 
 /** Standing instructions. Static on purpose: it is part of the system prompt, ahead of the cache. */
 const GUIDANCE = `You have a memory that outlives this conversation: Markdown files in the workspace.
@@ -130,9 +130,8 @@ export const MemoryServerPlugin = {
       const where = { db: ctx.db.orm, userId: turn.userId, conversationId: turn.conversationId, projectId: turn.projectId, scopes }
       const { text, rendered } = await memoryPreamble({ ...where, readFile })
       turn.preamble = text
-      for (const note of await memoryNotices({ ...where, path: turn.path, rendered, readFile })) {
-        turn.notes.push({ pluginId: MEMORY_PLUGIN_ID, messageId: note.messageId, text: note.text })
-      }
+      const notice = await memoryNotice({ ...where, path: turn.path, rendered, readFile })
+      if (notice !== null) turn.notes.push({ pluginId: MEMORY_PLUGIN_ID, messageId: turn.path.at(-1)!.id, text: notice })
     })
 
     // What the turn changed itself is now known; the rest waits for the next turn's reminder.
@@ -147,8 +146,8 @@ export const MemoryServerPlugin = {
     })
 
     ctx.on('conversation/forked', async (payload) => {
+      // Reminders need nothing here: they live on the messages, which the fork copies whole.
       await copySnapshot(ctx.db.orm, payload.sourceConversationId, payload.conversation.id)
-      await copyNotes(ctx.db.orm, payload.sourceConversationId, payload.conversation.id, payload.messageIds)
     })
 
     ctx.promptSections.register(MEMORY_PLUGIN_ID, ({ toolIds }) => toolIds.includes(MEMORY_SAVE_TOOL_ID) ? GUIDANCE : undefined)

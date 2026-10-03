@@ -337,9 +337,10 @@ worker：
 
 ### 9.1 消息附注（核心）
 
-- `GenerationTurn` 新增 `notes: Array<{ pluginId, messageId, text }>`，`generation/prepare` 中由插件追加：既有本轮新产生的附注，也有该插件为路径上历史消息存过的附注。
-- 生成流程按 `pluginManifests` 顺序（同一插件内按追加顺序）把附注归到各消息，传给 `buildModelMessages` 的 `notes`；后者把每条附注作为 text part 追加在对应用户消息末尾，包为 `<system-reminder>\n…\n</system-reminder>`。
-- 附注必须由插件持久化、之后每轮原样重放：历史每轮从数据库重建，未持久化的附注会在下一轮消失，改写该消息之后的缓存前缀。
+- `messages` 新增列 `notes`（JSON，`[{ plugin, text }]`，可空）：插件附在用户消息末尾、只给模型看的内容。附注固化在消息上，之后每轮随历史原样重放，与插件此后是否开启无关；分叉复制消息时随之复制。
+- `GenerationTurn` 新增 `notes: Array<{ pluginId, messageId, text }>`，只放本轮**新产生**的附注。`generation/prepare` 之后、构建提示词之前，生成流程按 `pluginManifests` 顺序（同一插件内按追加顺序）把它们追加进对应消息的 `notes` 并写库。
+- `buildModelMessages` 把用户消息自身的 `notes` 逐条作为 text part 追加在消息末尾，包为 `<system-reminder>\n…\n</system-reminder>`。
+- 插件凭消息自身的 `notes` 判断是否已经为它加过附注。
 
 ### 9.2 已知状态
 
@@ -352,9 +353,9 @@ worker：
 
 `generation/prepare` 中，快照已存在且本轮未重新渲染时：
 
-1. 读出 `memory_notes` 中本对话路径上各条消息的附注，追加到 `turn.notes`。
-2. 本轮路径的末尾是一条用户消息、且它还没有附注时，对比当前状态与已知状态；有差异则渲染附注，`INSERT … ON CONFLICT DO NOTHING` 后读回，追加到 `turn.notes`，并把已知状态更新为当前状态。末尾不是用户消息（如 `ask_user` 回答后的续写）时不生成，留给下一条用户消息。
-3. 重新生成同一条用户消息时复用已存的附注，不重新对比。
+1. 本轮路径的末尾是一条用户消息、且它还没有记忆附注时，对比当前状态与已知状态；有差异则渲染附注追加到 `turn.notes`（由核心写入该消息），并把已知状态更新为当前状态。
+2. 末尾不是用户消息（如 `ask_user` 回答后的续写）时不生成，留给下一条用户消息。
+3. 重新生成同一条用户消息时，它已带有记忆附注，不重新对比。
 
 附注格式（英文，每行一项，按 new、updated、moved、removed 排列）：
 
@@ -368,12 +369,11 @@ Memory changed since you last looked:
 
 `profile.md`、`preferences.md` 新建或更新时，在对应行后附全文（同 §4.4 的内联格式）。updated 指版本或描述变化。
 
-### 9.4 存储与分叉
+### 9.4 分叉
 
-- 新表 `memory_notes`：`message_id` 主键（FK → `messages.id`，ON DELETE CASCADE）、`conversation_id`（FK，CASCADE）、`text`。
-- 分叉时按 `ConversationForked.messageIds` 把源对话的附注复制到新消息上，快照（含已知状态）照 §4.5 复制。
+附注在消息上，随消息一起复制；快照（含已知状态）照 §4.5 复制。
 
 ### 9.5 测试
 
 - unit：`buildModelMessages` 把附注追加在对应用户消息末尾，顺序稳定。
-- worker：别的对话写入、改描述、删除、移动后，本对话下一轮的末尾用户消息带对应附注；本对话自己的改动在本轮结束后不再提醒；附注跨轮原样重放；重新生成复用附注；分叉后附注落在对应的新消息上。
+- worker：别的对话写入、删除、移动后，本对话下一轮的末尾用户消息带对应附注并写入该消息；之后的轮次与重新生成不再产生新附注；本对话自己的改动在本轮结束后不再提醒；分叉复制出的消息带着附注。

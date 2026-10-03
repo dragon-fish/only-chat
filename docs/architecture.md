@@ -70,10 +70,11 @@ the conversation, so the plugin persists it — the memory plugin stores its cat
 `memory_snapshots`, keyed by conversation and the Project it was rendered for, copies it to forks,
 and renders a new one only when the conversation's Project changes.
 
-Text that belongs to one later message goes in `GenerationTurn.notes`: notes end a user message as
-`<system-reminder>` blocks, ordered by plugin manifest order. The same rule applies — history is
-rebuilt every turn, so a plugin stores each note it makes and adds it back on every later turn. The
-memory plugin uses this to tell a conversation about memory another conversation changed meanwhile.
+Text that belongs to one later message goes in `GenerationTurn.notes`. The core stores each new note
+on its message (`messages.notes`) before building the prompt, in plugin manifest order, and every
+later turn replays it from there as a `<system-reminder>` at the end of that message — whether or not
+the plugin is still on. A fork copies them with the messages. The memory plugin uses this to tell a
+conversation about memory another conversation changed meanwhile.
 
 ## Image backends
 

@@ -4,7 +4,7 @@ import { eq } from 'drizzle-orm'
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { Tool } from 'ai'
 import { createDb, type DB } from '@/server/db/client'
-import { attachments, conversations, memories, memoryNotes, memorySnapshots, messages, projects, workspaceFileVersions, workspaceFiles } from '@/server/db/schema'
+import { attachments, conversations, memories, memorySnapshots, messages, projects, workspaceFileVersions, workspaceFiles } from '@/server/db/schema'
 import { ToolRegistry, type ToolContext } from '@/server/plugins/tools'
 import { PromptSections } from '@/server/plugins/prompt-sections'
 import { WorkspaceFiles } from '@/server/plugins/workspace-files/service'
@@ -13,6 +13,8 @@ import { FileReaderServerPlugin } from '@/plugins/file-reader/server'
 import { MemoryServerPlugin } from '@/plugins/memory/server'
 import { memoryPreamble } from '@/plugins/memory/server/catalog'
 import type { GenerationTurn } from '@/server/plugins/hub/generation-turn'
+import { notesByMessage } from '@/server/plugins/hub/generation'
+import { appendMessageNotes, forkConversation, getMessage, insertMessage } from '@/server/plugins/hub/conversations'
 import type { Message } from '@/shared/models'
 import { ensureTestUser } from './auth-helper'
 
@@ -337,14 +339,22 @@ describe('memory change reminders', () => {
   beforeEach(async () => { h = await harness() })
 
   let seq = 100
-  /** A stored message, so a reminder has a real row to belong to. */
+  let last: number | null = null
+  /** A stored message chained onto the previous one, so a reminder has a real row to live on. */
   async function said(role: 'user' | 'assistant', text: string): Promise<Message> {
-    const [row] = await h.db.insert(messages).values({
-      conversation_id: h.conversationId, parent_id: null, seq: seq++, role, parts: [{ type: 'text', text }],
+    const row = await insertMessage(h.db, 1, {
+      conversation_id: h.conversationId, parent_id: last, seq: seq++, role, parts: [{ type: 'text', text }],
       provider_id: null, model_id: null, usage: null, status: 'done', error: null, created_at: 0,
-    }).returning()
-    return { ...row!, parts: row!.parts } as Message
+    })
+    last = row.id
+    return row as Message
   }
+
+  /** What the hub does after `generation/prepare`: store the turn's new notes on their messages. */
+  async function storeNotes(turn: Turn) {
+    for (const [id, notes] of notesByMessage(turn.generation.notes)) await appendMessageNotes(h.db, id, 1, notes)
+  }
+  const reread = async (message: Message) => (await getMessage(h.db, message.id, 1)) as Message
 
   /** Another conversation of the same user, changing memory meanwhile. */
   async function otherScope() {
@@ -356,9 +366,9 @@ describe('memory change reminders', () => {
   }
   const elsewhere = async (path: string, content: string) => h.files.write({ path, content, ...await otherScope() })
 
-  const notesOf = (turn: Turn) => turn.generation.notes.map(note => [note.messageId, note.text] as const)
+  beforeEach(() => { last = null })
 
-  it('reminds the next user message of what changed elsewhere, once, and replays it after', async () => {
+  it('reminds the next user message of what changed elsewhere, once, and keeps it on that message', async () => {
     const u1 = await said('user', 'hi')
     expect((await startTurn(h, { path: [u1] })).generation.notes).toEqual([])
 
@@ -367,18 +377,18 @@ describe('memory change reminders', () => {
     const a1 = await said('assistant', 'hello')
     const u2 = await said('user', 'lunch?')
     const second = await startTurn(h, { path: [u1, a1, u2] })
-    expect(notesOf(second)).toHaveLength(1)
-    const [[messageId, text]] = notesOf(second)
-    expect(messageId).toBe(u2.id)
+    expect(second.generation.notes.map(note => note.messageId)).toEqual([u2.id])
+    const { text } = second.generation.notes[0]!
     expect(text).toContain('- new /memory/user/topics/food.md')
     expect(text).toContain('<profile path="/memory/user/profile.md">\nEngineer.\n</profile>')
+    await storeNotes(second)
+    expect((await reread(u2)).notes).toEqual([{ plugin: 'memory', text }])
 
-    // Later turns carry the same reminder on the same message, and nothing new for theirs.
+    // Nothing new later, and a regenerated reply to u2 does not diff again.
     const a2 = await said('assistant', 'sure')
     const u3 = await said('user', 'thanks')
-    expect(notesOf(await startTurn(h, { path: [u1, a1, u2, a2, u3] }))).toEqual([[u2.id, text]])
-    // Regenerating the reply to u2 replays its reminder rather than diffing again.
-    expect(notesOf(await startTurn(h, { path: [u1, a1, u2] }))).toEqual([[u2.id, text]])
+    expect((await startTurn(h, { path: [u1, a1, await reread(u2), a2, u3] })).generation.notes).toEqual([])
+    expect((await startTurn(h, { path: [u1, a1, await reread(u2)] })).generation.notes).toEqual([])
   })
 
   it('does not remind a conversation of what its own turn changed', async () => {
@@ -404,29 +414,23 @@ describe('memory change reminders', () => {
     await h.files.deleteByPath({ path: '/memory/user/topics/b.md', ...scope })
     const a1 = await said('assistant', 'hello')
     const u2 = await said('user', 'again')
-    const [[, text]] = notesOf(await startTurn(h, { path: [u1, a1, u2] }))
+    const { text } = (await startTurn(h, { path: [u1, a1, u2] })).generation.notes[0]!
     expect(text).toContain('- moved /memory/user/topics/a.md → /memory/project/topics/a.md')
     expect(text).toContain('- removed /memory/user/topics/b.md')
   })
 
-  it('moves a fork\'s reminders onto its copied messages', async () => {
+  it('gives a fork the reminders of the messages it copies', async () => {
     const u1 = await said('user', 'hi')
     await startTurn(h, { path: [u1] })
     await elsewhere('/memory/user/topics/food.md', 'spicy')
     const a1 = await said('assistant', 'hello')
     const u2 = await said('user', 'lunch?')
-    const [[, text]] = notesOf(await startTurn(h, { path: [u1, a1, u2] }))
+    const turn = await startTurn(h, { path: [u1, a1, u2] })
+    await storeNotes(turn)
 
-    const [fork] = await h.db.insert(conversations).values({
-      user_id: 1, project_id: h.projectId, title: 'fork', head_message_id: null, provider_id: null,
-      model_id: null, system_prompt: null, params: null, tools: [], created_at: 0, updated_at: 0,
-    }).returning()
-    const [copy] = await h.db.insert(messages).values({
-      conversation_id: fork!.id, parent_id: null, seq: 1, role: 'user', parts: [], provider_id: null, model_id: null,
-      usage: null, status: 'done', error: null, created_at: 0,
-    }).returning()
-    await h.ctx.parallel('conversation/forked', { userId: 1, sourceConversationId: h.conversationId, conversation: fork!, messageIds: new Map([[u2.id, copy!.id]]) })
-    expect(await h.db.select().from(memoryNotes).where(eq(memoryNotes.conversation_id, fork!.id)))
-      .toEqual([{ message_id: copy!.id, conversation_id: fork!.id, text }])
+    const fork = await forkConversation(h.db, h.conversationId, 1, u2.id)
+    const copied = await h.db.select().from(messages).where(eq(messages.conversation_id, fork.id))
+    expect(copied.find(message => message.role === 'user' && message.seq === 3)?.notes)
+      .toEqual([{ plugin: 'memory', text: turn.generation.notes[0]!.text }])
   })
 })

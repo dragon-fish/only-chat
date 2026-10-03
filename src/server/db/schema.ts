@@ -6,7 +6,7 @@ import type { Part } from '@/shared/parts'
 import type { WorkspaceMount } from '@/shared/workspace-files'
 import type { McpServerStatus, McpTransport, StoredMcpHeader } from '@/shared/mcp'
 import type {
-  InterfaceProtocol, PersistedStatus, ConversationParams, ConversationPluginSettings, ProjectPluginSettings, Usage, UserSettings,
+  InterfaceProtocol, PersistedStatus, ConversationParams, ConversationPluginSettings, ProjectPluginSettings, Usage, UserSettings, MessageNote,
 } from '@/shared/models'
 
 export const users = sqliteTable('users', {
@@ -200,6 +200,11 @@ export const messages = sqliteTable('messages', {
   usage: text({ mode: 'json' }).$type<Usage>(),
   status: text().$type<PersistedStatus>().notNull(),
   error: text(),
+  /**
+   * What plugins added to a user message for the model alone — reminders, never shown as typed.
+   * Stored on the message because history is rebuilt every turn and a note has to come back with it.
+   */
+  notes: text({ mode: 'json' }).$type<MessageNote[]>(),
   created_at: integer().notNull(),
 }, (t) => [
   uniqueIndex('messages_conversation_seq_uq').on(t.conversation_id, t.seq),
@@ -325,16 +330,6 @@ export interface KnownMemoryFile {
   version: number
   description: string | null
 }
-
-/**
- * A reminder that ends one user message: memory that changed elsewhere since the conversation last
- * knew it. Stored because history is rebuilt every turn, and the reminder has to come back with it.
- */
-export const memoryNotes = sqliteTable('memory_notes', {
-  message_id: integer().primaryKey().references(() => messages.id, { onDelete: 'cascade' }),
-  conversation_id: integer().notNull().references(() => conversations.id, { onDelete: 'cascade' }),
-  text: text().notNull(),
-})
 
 export const artifactRuns = sqliteTable('artifact_runs', {
   id: integer().primaryKey({ autoIncrement: true }),

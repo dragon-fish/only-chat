@@ -28,10 +28,10 @@ export interface GenerationTurn {
    */
   preamble?: string
   /**
-   * Notes that end user messages, as `<system-reminder>` text the person never typed. A plugin adds
-   * the ones it stored for messages on this path as well as any it makes now, and must store what it
-   * makes: history is rebuilt from the database every turn, and a note that is not replayed would
-   * rewrite the cached prefix from its message on.
+   * New notes for user messages on this path, as `<system-reminder>` text the person never typed.
+   * The core stores them on their messages (`messages.notes`) before building the prompt, and every
+   * later turn replays them from there; a plugin adds a note once, and can tell it already did from
+   * the message's own `notes`.
    */
   notes: Array<{ pluginId: string, messageId: number, text: string }>
 }

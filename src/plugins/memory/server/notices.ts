@@ -1,8 +1,8 @@
-import { and, eq, inArray } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 import type { DB } from '@/server/db/client'
-import { memoryNotes, memorySnapshots, type KnownMemoryFile } from '@/server/db/schema'
+import { memorySnapshots, type KnownMemoryFile } from '@/server/db/schema'
 import type { Message } from '@/shared/models'
-import type { MemoryScopes } from '../shared'
+import { MEMORY_PLUGIN_ID, type MemoryScopes } from '../shared'
 import { inlineBlock, loadKnown, readSnapshot, type InlineCategory, type ReadMemoryFile } from './catalog'
 
 type Known = Record<string, KnownMemoryFile>
@@ -69,14 +69,15 @@ async function setKnown(db: DB, conversationId: number, known: Known): Promise<v
 }
 
 /**
- * The reminders a turn carries: those stored for user messages on its path, and a new one for the
- * message it answers when memory changed elsewhere since the conversation last knew it.
+ * A reminder for the user message this turn answers, when memory changed elsewhere since the
+ * conversation last knew it; null otherwise. The core stores it on that message, and history
+ * replays it from there.
  *
- * Only a turn that ends at a user message gets a new one, and only once: regenerating that message
- * replays the stored reminder rather than diffing again, and a continuation (an answered question,
- * a task's result) leaves it for the next thing the person says.
+ * Only a turn that ends at a user message gets one, and only once: a message that already carries
+ * a memory reminder — a regenerated reply — keeps it rather than diffing again, and a continuation
+ * (an answered question, a task's result) leaves it for the next thing the person says.
  */
-export async function memoryNotices(input: {
+export async function memoryNotice(input: {
   db: DB
   userId: number
   conversationId: number
@@ -86,30 +87,22 @@ export async function memoryNotices(input: {
   /** The snapshot was rendered this turn, with a fresh `known`: nothing can have changed since. */
   rendered: boolean
   readFile: ReadMemoryFile
-}): Promise<Array<{ messageId: number, text: string }>> {
+}): Promise<string | null> {
   const { db, userId, conversationId, projectId, scopes, path, rendered, readFile } = input
-  const userIds = path.filter(message => message.role === 'user').map(message => message.id)
-  const stored = userIds.length === 0 ? [] : await db.select().from(memoryNotes).where(and(
-    eq(memoryNotes.conversation_id, conversationId),
-    inArray(memoryNotes.message_id, userIds),
-  ))
-  const notes = stored.map(note => ({ messageId: note.message_id, text: note.text }))
-
   const leaf = path.at(-1)
-  if (rendered || leaf === undefined || leaf.role !== 'user' || stored.some(note => note.message_id === leaf.id)) {
-    return order(notes, userIds)
-  }
+  if (rendered || leaf === undefined || leaf.role !== 'user') return null
+  if (leaf.notes?.some(note => note.plugin === MEMORY_PLUGIN_ID)) return null
 
   const snapshot = await readSnapshot(db, conversationId)
-  if (!snapshot) return order(notes, userIds)
+  if (!snapshot) return null
   const current = await loadKnown(db, userId, projectId, scopes)
   // A snapshot from before this was tracked starts from what is there now, not from nothing.
   if (snapshot.known === null) {
     await setKnown(db, conversationId, current)
-    return order(notes, userIds)
+    return null
   }
   const changes = diffKnown(snapshot.known, current)
-  if (isEmpty(changes)) return order(notes, userIds)
+  if (isEmpty(changes)) return null
 
   const texts = new Map<string, string>()
   for (const file of [...changes.added, ...changes.updated]) {
@@ -118,17 +111,8 @@ export async function memoryNotices(input: {
     const text = await readFile(mount, file.path.slice(`/${mount}/`.length))
     if (text !== null) texts.set(file.path, text)
   }
-  await db.insert(memoryNotes).values({ message_id: leaf.id, conversation_id: conversationId, text: renderNotice(changes, texts) })
-    .onConflictDoNothing()
   await setKnown(db, conversationId, current)
-  const [kept] = await db.select().from(memoryNotes).where(eq(memoryNotes.message_id, leaf.id)).limit(1)
-  return order(kept ? [...notes, { messageId: kept.message_id, text: kept.text }] : notes, userIds)
-}
-
-/** Path order, so the same history always yields the same notes in the same order. */
-function order(notes: Array<{ messageId: number, text: string }>, userIds: readonly number[]) {
-  const rank = new Map(userIds.map((id, index) => [id, index]))
-  return [...notes].sort((a, b) => rank.get(a.messageId)! - rank.get(b.messageId)!)
+  return renderNotice(changes, texts)
 }
 
 /**
@@ -161,13 +145,4 @@ export async function absorbOwnChanges(input: {
     changed = true
   }
   if (changed) await setKnown(db, conversationId, known)
-}
-
-/** A fork's messages are copies with new ids; its reminders move onto them. */
-export async function copyNotes(db: DB, sourceConversationId: number, targetConversationId: number, messageIds: ReadonlyMap<number, number>): Promise<void> {
-  const notes = await db.select().from(memoryNotes).where(eq(memoryNotes.conversation_id, sourceConversationId))
-  const copies = notes
-    .filter(note => messageIds.has(note.message_id))
-    .map(note => ({ message_id: messageIds.get(note.message_id)!, conversation_id: targetConversationId, text: note.text }))
-  if (copies.length > 0) await db.insert(memoryNotes).values(copies).onConflictDoNothing()
 }

@@ -2,7 +2,7 @@ import { canReadFile } from '@/shared/file-media'
 import type { GenerationTurn } from './generation-turn'
 import { stepCountIs, streamText, type LanguageModel, type ModelMessage, type StopCondition, type ToolSet } from 'ai'
 import { INFLIGHT_FLUSH_INTERVAL_MS, TOOL_MAX_STEPS } from '@/shared/constants'
-import type { Message, PersistedStatus, ConversationParams, ConversationPluginSettings, StepUsage, Usage } from '@/shared/models'
+import type { Message, MessageNote, PersistedStatus, ConversationParams, ConversationPluginSettings, StepUsage, Usage } from '@/shared/models'
 import { toolResultPart, type Part, type ToolCallPart, type ToolResultPart } from '@/shared/parts'
 import type { SendCommand, WsCommand } from '@/shared/ws'
 import { ASK_USER_TOOL_ID, parseConversationPluginSettings } from '@/shared/plugins'
@@ -22,7 +22,7 @@ import {
 import { persistGeneratedImage } from './generated-images'
 import { getProject } from './projects'
 import {
-  appendToolResult, assertUserAttachments, compareAndSwapConversationHead, createConversation, deleteMessage, deleteMessageIfUnreferenced, finalizeMessage,
+  appendMessageNotes, appendToolResult, assertUserAttachments, compareAndSwapConversationHead, createConversation, deleteMessage, deleteMessageIfUnreferenced, finalizeMessage,
   getMessage, getModel, getProvider, getProviderInterface, getConversation, getUser, insertAssistantChildIfAbsent, insertMessage,
   lastGenerationModel, listAssistantChildren, listMessages, maxSeq, replaceMessagePartsIfCurrentHead, toMessage, updateConversation,
 } from './conversations'
@@ -279,13 +279,13 @@ async function assembleContext(hub: Hub, target: Target, leafMessageId: number):
  * Plugins add notes in parallel, so their arrival order is not an order: notes go by the plugin's
  * place in the manifest list, and keep the order each plugin added them in.
  */
-export function notesByMessage(notes: GenerationTurn['notes']): Map<number, string[]> {
+export function notesByMessage(notes: GenerationTurn['notes']): Map<number, MessageNote[]> {
   const rank = new Map(pluginManifests.map((manifest, index) => [manifest.id, index]))
   const sorted = notes
     .map((note, index) => ({ note, index }))
     .sort((a, b) => (rank.get(a.note.pluginId) ?? Infinity) - (rank.get(b.note.pluginId) ?? Infinity) || a.index - b.index)
-  const out = new Map<number, string[]>()
-  for (const { note } of sorted) out.set(note.messageId, [...(out.get(note.messageId) ?? []), note.text])
+  const out = new Map<number, MessageNote[]>()
+  for (const { note } of sorted) out.set(note.messageId, [...(out.get(note.messageId) ?? []), { plugin: note.pluginId, text: note.text }])
   return out
 }
 
@@ -323,9 +323,14 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
     }
     preparedTurn = turn
     await hub.app.parallel('generation/prepare', turn)
+    // Stored before the prompt is built, so this turn and every later one read the same notes.
+    for (const [messageId, notes] of notesByMessage(turn.notes)) {
+      const stored = await appendMessageNotes(hub.db, messageId, hub.userId, notes)
+      payload.path = payload.path.map(message => (message.id === messageId ? { ...message, notes: stored } : message))
+    }
     const messages = buildModelMessages({
       protocol: target.providerInterface.protocol, systemPrompt: payload.systemPrompt, path: payload.path, attachments,
-      labeler: turn.labeler, preamble: turn.preamble ?? null, notes: notesByMessage(turn.notes),
+      labeler: turn.labeler, preamble: turn.preamble ?? null,
     })
     const params: ConversationParams = target.config.params
     const trace = {

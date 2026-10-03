@@ -227,7 +227,8 @@ describe('buildModelMessages', () => {
   })
 
   it('ends a user message with its notes as reminders, and leaves the others alone', () => {
-    const out = buildModelMessages({ ...input('responses'), notes: new Map([[3, ['first', 'second']]]) }) as Array<{ role: string; content: unknown }>
+    const noted = path.map((m) => (m.id === 3 ? { ...m, notes: [{ plugin: 'a', text: 'first' }, { plugin: 'b', text: 'second' }] } : m))
+    const out = buildModelMessages({ ...input('responses'), path: noted }) as Array<{ role: string; content: unknown }>
     const users = out.filter((m) => m.role === 'user') as Array<{ content: Array<{ type: string; text?: string }> }>
     expect(users.at(-1)!.content).toEqual([
       { type: 'text', text: 'and now?' },
