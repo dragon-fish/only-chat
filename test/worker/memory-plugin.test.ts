@@ -254,7 +254,7 @@ describe('memory in the prompt', () => {
     expect(second.generation.preamble).toBe(first.generation.preamble)
   })
 
-  it('leads with each layer\'s profile in full, and lists the rest by the layout', async () => {
+  it('leads with each layer\'s profile and preferences in full, and lists the rest by the layout', async () => {
     const writer = await startTurn(h)
     await save(writer, { path: '/memory/user/profile.md', description: 'who', content: 'Backend engineer, Shanghai.\n' })
     await save(writer, { path: '/memory/user/people/mom.md', description: 'family', content: 'x' })
@@ -264,9 +264,10 @@ describe('memory in the prompt', () => {
 
     const preamble = (await startTurn(h)).generation.preamble!
     expect(preamble).toContain('<profile path="/memory/user/profile.md">\nBackend engineer, Shanghai.\n</profile>')
+    expect(preamble).toContain('</profile>\n<preferences path="/memory/user/preferences.md">\nChinese, terse.\n</preferences>\n- /memory/user/people/mom.md — family')
     expect(preamble).not.toContain('- /memory/user/profile.md')
-    // Preferences before people, and the stray file last with a way back into the layout.
-    expect(preamble.indexOf('/memory/user/preferences.md')).toBeLessThan(preamble.indexOf('/memory/user/people/mom.md'))
+    expect(preamble).not.toContain('- /memory/user/preferences.md')
+    // The stray file comes last, with a way back into the layout.
     expect(preamble).toMatch(/- \/memory\/user\/stray\.md — outside the memory layout: rename_file it to .*\n<\/scope>/)
   })
 

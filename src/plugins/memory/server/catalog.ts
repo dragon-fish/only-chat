@@ -12,9 +12,16 @@ export interface CatalogEntry {
   description: string | null
 }
 
-/** One open layer: its profile in full when it has one, and a line for every other file. */
+/** A file that travels whole instead of as a line: what it is, where it lives, what it says. */
+export interface InlineFile {
+  category: InlineCategory
+  path: string
+  text: string
+}
+
+/** One open layer: its profile and preferences in full when it has them, and a line for every other file. */
 export interface ScopeCatalog {
-  profile: { path: string, text: string } | null
+  inline: readonly InlineFile[]
   entries: readonly CatalogEntry[]
 }
 
@@ -25,10 +32,17 @@ export type ClosedScope = 'off'
 export const CATALOG_LIMIT = 200
 
 /**
- * The profile is read on every turn, so it travels whole rather than as a line to follow — but only
- * up to this many characters. Past it the model is told to read the rest and to shorten the file.
+ * The two single files apply to every turn, so they travel whole rather than as a line to follow —
+ * each only up to this many characters. Past it the model is told to read the rest and shorten it.
  */
-export const PROFILE_LIMIT = 4000
+export const INLINE_LIMIT = 4000
+
+/** Profile first, then preferences: who the user is reads before how to answer them. */
+const INLINE = [
+  { category: 'profile', relativePath: 'profile.md' },
+  { category: 'preferences', relativePath: 'preferences.md' },
+] as const
+export type InlineCategory = (typeof INLINE)[number]['category']
 
 const CLOSED_NOTE: Record<string, string> = {
   user: 'User memory is off in this conversation: do not read or save anything under /memory/user.',
@@ -44,11 +58,11 @@ function line(entry: CatalogEntry): string {
   return `- ${entry.path} — ${entry.description}`
 }
 
-function profileBlock(profile: { path: string, text: string }): string {
-  const text = profile.text.length > PROFILE_LIMIT
-    ? `${profile.text.slice(0, PROFILE_LIMIT)}\n[Cut here: read_file the rest, and shorten the profile.]`
-    : profile.text
-  return `<profile path="${profile.path}">\n${text.trimEnd()}\n</profile>`
+function inlineBlock(file: InlineFile): string {
+  const text = file.text.length > INLINE_LIMIT
+    ? `${file.text.slice(0, INLINE_LIMIT)}\n[Cut here: read_file the rest, and shorten the file.]`
+    : file.text
+  return `<${file.category} path="${file.path}">\n${text.trimEnd()}\n</${file.category}>`
 }
 
 function scopeBlock(name: string, mount: string, scope: ScopeCatalog | ClosedScope): string {
@@ -56,7 +70,7 @@ function scopeBlock(name: string, mount: string, scope: ScopeCatalog | ClosedSco
   const sorted = ORDER.flatMap(category => scope.entries.filter(entry => entry.category === category))
   const lines = sorted.slice(0, CATALOG_LIMIT).map(line)
   if (sorted.length > CATALOG_LIMIT) lines.push(`… and ${sorted.length - CATALOG_LIMIT} more: list_files /${mount}`)
-  const body = [...(scope.profile ? [profileBlock(scope.profile)] : []), ...lines]
+  const body = [...scope.inline.map(inlineBlock), ...lines]
   return [`<scope name="${name}">`, ...(body.length > 0 ? body : ['(empty)']), '</scope>'].join('\n')
 }
 
@@ -78,7 +92,7 @@ export function renderCatalog(user: ScopeCatalog | ClosedScope, project: ScopeCa
 /** Reads one memory file's text, or null when it is gone or not text. */
 export type ReadMemoryFile = (mount: 'memory/user' | 'memory/project', relativePath: string) => Promise<string | null>
 
-/** Live files in the open memory mounts, newest first, with each layer's profile read in full. */
+/** Live files in the open memory mounts, newest first, with each layer's profile and preferences read in full. */
 export async function loadCatalog(
   db: DB, userId: number, projectId: number | null, scopes: MemoryScopes, readFile: ReadMemoryFile,
 ): Promise<{ user: ScopeCatalog | ClosedScope, project: ScopeCatalog | ClosedScope | null }> {
@@ -103,14 +117,19 @@ export async function loadCatalog(
 
   async function scope(mount: 'memory/user' | 'memory/project'): Promise<ScopeCatalog> {
     const own = rows.filter(row => row.mount === mount)
-    const hasProfile = own.some(row => row.relativePath === 'profile.md')
-    const text = hasProfile ? await readFile(mount, 'profile.md') : null
+    const inline: InlineFile[] = []
+    for (const { category, relativePath } of INLINE) {
+      if (!own.some(row => row.relativePath === relativePath)) continue
+      const text = await readFile(mount, relativePath)
+      if (text !== null) inline.push({ category, path: `/${mount}/${relativePath}`, text })
+    }
+    const shown = new Set(inline.map(file => file.path))
     return {
-      profile: text === null ? null : { path: `/${mount}/profile.md`, text },
-      // A profile that could not be read still gets its line, so the model knows it is there.
+      inline,
+      // A single file that could not be read still gets its line, so the model knows it is there.
       entries: own
-        .filter(row => text === null || row.relativePath !== 'profile.md')
-        .map(row => ({ path: `/${row.mount}/${row.relativePath}`, category: memoryCategory(row.relativePath), description: row.description })),
+        .map(row => ({ path: `/${row.mount}/${row.relativePath}`, category: memoryCategory(row.relativePath), description: row.description }))
+        .filter(entry => !shown.has(entry.path)),
     }
   }
 

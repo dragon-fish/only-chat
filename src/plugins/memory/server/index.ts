@@ -18,7 +18,7 @@ const GUIDANCE = `You have a memory that outlives this conversation: Markdown fi
 - /memory/user/ holds what is true across all of this user's conversations.
 - /memory/project/ holds what belongs to the current Project only, and does not exist outside one.
 
-The first user message opens with a catalog of these files as they stood when the conversation started: each layer's profile in full, then one line per other file with its description. It can be stale, and anything saved since is missing from it. When a file looks relevant, read it before relying on it.
+The first user message opens with a catalog of these files as they stood when the conversation started: each layer's profile and preferences in full, then one line per other file with its description. It can be stale, and anything saved since is missing from it. When a file looks relevant, read it before relying on it.
 
 Both layers are laid out the same way, and where a fact goes depends on what it is about:
 - profile.md: who the user is — name, occupation, employer, when they started, and whatever else will still be true in three months. Under 300 words.

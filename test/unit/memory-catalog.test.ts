@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { CATALOG_LIMIT, PROFILE_LIMIT, renderCatalog, type CatalogEntry } from '@/plugins/memory/server/catalog'
+import { CATALOG_LIMIT, INLINE_LIMIT, renderCatalog, type CatalogEntry } from '@/plugins/memory/server/catalog'
 import { memoryCategory } from '@/plugins/memory/shared'
 
 const topic = (name: string): CatalogEntry => ({ path: `/memory/user/topics/${name}.md`, category: 'topics', description: `about ${name}` })
 const scope = (entries: CatalogEntry[], profile: string | null = null) => ({
-  profile: profile === null ? null : { path: '/memory/user/profile.md', text: profile },
+  inline: profile === null ? [] : [{ category: 'profile' as const, path: '/memory/user/profile.md', text: profile }],
   entries,
 })
 
@@ -38,10 +38,10 @@ describe('renderCatalog', () => {
     expect(renderCatalog(scope([]), null)).not.toContain('<scope name="project">')
   })
 
-  it('cuts an overlong profile and says how to get the rest', () => {
-    const text = renderCatalog(scope([], 'x'.repeat(PROFILE_LIMIT + 10)), null)
-    expect(text).toContain(`${'x'.repeat(PROFILE_LIMIT)}\n[Cut here: read_file the rest, and shorten the profile.]`)
-    expect(text).not.toContain('x'.repeat(PROFILE_LIMIT + 1))
+  it('cuts an overlong single file and says how to get the rest', () => {
+    const text = renderCatalog(scope([], 'x'.repeat(INLINE_LIMIT + 10)), null)
+    expect(text).toContain(`${'x'.repeat(INLINE_LIMIT)}\n[Cut here: read_file the rest, and shorten the file.]`)
+    expect(text).not.toContain('x'.repeat(INLINE_LIMIT + 1))
   })
 
   it('stops at the limit and says how to see the rest', () => {

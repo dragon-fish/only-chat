@@ -182,7 +182,9 @@ Your memory as it stood when this conversation started; …
 <profile path="/memory/user/profile.md">
 （profile.md 全文）
 </profile>
-- /memory/user/preferences.md — 回复语言与篇幅
+<preferences path="/memory/user/preferences.md">
+（preferences.md 全文）
+</preferences>
 - /memory/user/topics/饮食.md — 口味与忌口，推荐吃的时参考
 - /memory/user/topics/旧笔记.md — undescribed: describe it with memory_save
 - /memory/user/notes.md — outside the memory layout: rename_file it to …
@@ -194,7 +196,7 @@ Your memory as it stood when this conversation started; …
 </memory-catalog>
 ```
 
-- 每层开放时，若有 `profile.md`，全文放在该层最前（与 CLAUDE.md 一样随首条消息注入），不再另列一行；超过 4000 字符截断，并提示模型读全文、精简档案。读取失败时退回为普通一行。
+- 每层开放时，`profile.md` 与 `preferences.md`（如有）全文放在该层最前，依次以 `<profile>`、`<preferences>` 包住（与 CLAUDE.md 一样随首条消息注入），不再另列一行；每个超过 4000 字符截断，并提示模型读全文、精简文件。读取失败时退回为普通一行。
 - 其余文件按布局顺序（preferences、topics、areas、people、其他）排列，同类内按 `updated_at` 倒序；每层最多 200 行。
 - 对话不属于 Project 时无 project 段；某作用域为空时该段写 `(empty)`。
 
