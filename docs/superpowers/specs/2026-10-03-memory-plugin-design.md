@@ -235,3 +235,77 @@ worker：
 ## 7. 文档
 
 更新 `docs/architecture.md`（插件 system 段、首条消息 preamble）、`docs/files.md`（`/memory` 挂载点、回收站与预览规则）、`README.md` 功能列表。
+
+## 8. 记忆管理与分层开关
+
+### 8.1 生效规则
+
+两层记忆各自决定本轮是否开放，规则是同一个纯函数 `memoryScopes`（`src/plugins/memory/shared.ts`），hub 与 Worker 共用：
+
+- 用户记忆 = 插件配置 `user_memory` ∧（对话在 Project 中时）该 Project 的 `use_user_memory` ∧ 会话的 `user_memory`。
+- 项目记忆 = 对话属于 Project ∧ 该 Project 的 `project_memory` ∧ 会话的 `project_memory`。
+- 所有开关默认开启。
+
+关闭的一层对模型完全不可见：对应挂载点不开放，不进 catalog，`memory_save` 写入它报 `MOUNT_UNAVAILABLE`。catalog 对关闭的层写一行说明（如 `User memory is off in this conversation.`）代替条目，模型不会再去尝试；两层都关时 catalog 仍注入，只含这两行说明。system 段只由工具集决定，不受开关影响。彻底不用记忆的方式是在工具选择里取消「记忆」。
+
+### 8.2 开关存储
+
+| 层级 | 存储 | 界面 |
+|---|---|---|
+| 用户记忆全局开关 | 记忆插件 `configSchema`：`{ user_memory: boolean = true }`，并在 `config` 中声明该字段 | 记忆数据页顶部；插件配置页同样可改（同一个值） |
+| 项目开关 | **新增** `projects.plugin_settings`（JSON，按插件 id 分键）与 manifest 的 `projectConfigSchema`；记忆插件声明 `{ project_memory: boolean = true, use_user_memory: boolean = true }` | Project 设置页的「记忆」标签 |
+| 会话开关 | 现有 `conversationConfigSchema`：`{ user_memory: boolean = true, project_memory: boolean = true }`，并声明 `conversationConfig` 字段 | 会话设置（现有渲染；无法按上层状态隐藏，标签注明需上层同时开启） |
+
+Project 级插件设置照会话级的做法实现：
+
+- `projects` 新增列 `plugin_settings TEXT`（JSON，可空）。
+- `src/shared/plugins.ts` 新增 `projectConfigOf(manifest, settings)`（套默认值）与 `parseProjectPluginSettings`（拒绝未声明 `projectConfigSchema` 的插件）。
+- WS 命令 `project.update` 新增可选字段 `plugin_settings`，hub 按插件 id 合并进现有值，与 `conversation.update` 相同。
+- 未来其他插件同样可用；本次只有记忆插件声明。
+
+### 8.3 服务端
+
+- 记忆插件在 `generation/prepare` 中读取插件配置（注入 `pluginConfig`）、对话与 Project 行的 `plugin_settings`，用 `memoryScopes` 得出 `{ user, project }`。
+- `WorkspaceScope.memory` 由 `boolean` 改为 `{ user: boolean, project: boolean }`；`openMemoryMounts(state, scopes)` 按层开放，`scopeOf` 按层判断。
+- 快照表 `memory_snapshots` 新增列 `scopes TEXT NOT NULL`（如 `user,project`、`user`、空串）。读取时 `project_id` 与 `scopes` 都相同才复用，否则按 §4.5 的条件写入重新渲染。开关变化是用户操作，带来一次缓存失效。
+- Worker 侧文件面板（`/conversations/:id/files` 的 `memoryFiles`）按同一 `memoryScopes` 分别返回两组，关闭的层不返回。
+- 新增只读接口（Worker，`ctx.pluginApi.register`）：
+  - `GET /api/plugins/memory/memories` → 用户记忆列表；
+  - `GET /api/plugins/memory/projects/:id/memories` → 该 Project 的项目记忆列表（先校验 Project 归属）。
+  - 每项：`{ fileId, path, name, type, description, updatedAt }`，`name` 为文件名去掉扩展名；按 `updatedAt` 倒序。
+  - 管理接口不受开关影响：开关关闭时已有记忆仍可查看、删除。
+- 查看正文、删除复用 workspace 现有的 `GET /files/:id` 与 `DELETE /files/:id`（删除进回收站）。
+
+### 8.4 管理界面
+
+列表与详情共用一个组件 `memory-browser.vue`：
+
+- 列表按 type 分组：关于你（user）、做事方式（feedback）、项目背景（project）、参考（reference），未描述的文件单列一组；组内每行为名称、description、相对更新时间。
+- 点开进入详情视图（带返回）：名称、最后更新时间、摘要（description）、正文（Markdown 渲染，沿用 `workspace-file-preview.vue` 的 `MarkdownRender` 用法）、删除按钮（确认后进回收站）。
+- 底部输入框「告诉模型要记住、修改或忘记什么」：提交后新开一个会话执行（§8.5）。
+- 不提供手工新建与编辑。
+
+两处入口：
+
+- **用户记忆**：记忆插件声明 `settingsEntry`，数据页（`/settings/plugins/memory/data`）顶部为「用户记忆」开关，下方为 `memory-browser`（scope=user）。
+- **项目记忆**：新增 manifest 字段 `projectTab: { label }` 与客户端挂载位 `projectPanel`（照 `settingsPanel` 实现：`ClientPluginContext.projectPanel.register`、`ensureProjectPanel`），`project-settings.vue` 为声明了 `projectTab` 且已启用的插件各加一个标签页并挂载其组件（props：`pluginId`、`projectId`）。记忆插件的标签页含「项目记忆」「在本项目中使用用户记忆」两个开关（后者旁附用户记忆页链接）、`memory-browser`（scope=project）与输入框。开关通过 `project.update` 的 `plugin_settings` 保存。
+
+### 8.5 从管理页开会话
+
+- 输入框提交后跳转到新会话页（用户记忆：`/new`；项目记忆：`/project/:id/new`），经 router history state 传入 `{ prompt, tools }`；`chat.vue` 在挂载时消费一次：工具选择设为记忆插件的工具（服务端照常补齐 `requires` 级联），立即按普通发送流程发出 `prompt`，其余（模型选择、跳转到新会话）沿用现有逻辑。
+- `prompt` 原样发送，不加任何要求更新记忆的包装：模型按 system 段的标准自行判断，用户的话不涉及记忆时可以什么都不改。
+- 刷新或直接打开该地址时 history state 为空，页面就是普通的新会话。
+
+### 8.6 测试
+
+unit：
+
+- `memoryScopes` 的真值表：全局、Project 两个开关、会话两个开关与有无 Project 的组合。
+- `parseProjectPluginSettings` 拒绝未声明 schema 的插件；`projectConfigOf` 套默认值。
+
+worker：
+
+- 关闭用户记忆的轮次：`/memory/user` 经工具与 `vfs:` 均不可达，catalog 只有说明行，`memory_save` 写入报 `MOUNT_UNAVAILABLE`；项目记忆不受影响。
+- 开关组合变化后下一轮重新渲染快照，组合不变则复用。
+- `project.update` 的 `plugin_settings` 按插件 id 合并、拒绝未声明的插件。
+- 记忆列表接口：只返回本人的、指定 Project 的记忆；他人的 Project 返回 404；开关关闭时仍可列出。
