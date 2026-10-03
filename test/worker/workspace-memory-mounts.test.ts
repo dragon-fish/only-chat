@@ -2,7 +2,7 @@ import { env } from 'cloudflare:workers'
 import { eq } from 'drizzle-orm'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createDb, type DB } from '@/server/db/client'
-import { attachments, conversations, pluginConfigs, projects, users, workspaceFileVersions, workspaceFiles } from '@/server/db/schema'
+import { attachments, conversations, memories, pluginConfigs, projects, users, workspaceFileVersions, workspaceFiles } from '@/server/db/schema'
 import { WorkspaceFiles, type WorkspaceScope, type WorkspaceStorage } from '@/server/plugins/workspace-files/service'
 import type { FileRecord } from '@/shared/workspace-files'
 import { ensureTestUser, workerFetch, type AuthTestClient } from './auth-helper'
@@ -166,6 +166,25 @@ describe('memory mounts', () => {
 
     const body = await (await f.client.request(`${API}/files/${memory!.id}`, { method: 'GET' })).json() as { previewUrl: string }
     expect(await (await workerFetch(body.previewUrl)).text()).toBe('memory page')
+  })
+
+  it('lists every memory to its owner on the management pages, whatever the switches say', async () => {
+    const scope = open(f.conversationId, f.projectId)
+    await f.files.write({ path: '/memory/user/old.md', content: 'a', ...scope })
+    await f.files.write({ path: '/memory/user/reply-style.md', content: 'b', ...scope })
+    await f.files.write({ path: '/memory/project/ctx.md', content: 'c', ...scope })
+    const [described] = await f.db.select().from(workspaceFiles).where(eq(workspaceFiles.relative_path, 'reply-style.md'))
+    await f.db.insert(memories).values({ file_id: described!.id, user_id: 1, type: 'feedback', description: 'terse', updated_at: 0 })
+    await f.db.update(workspaceFiles).set({ updated_at: 1 }).where(eq(workspaceFiles.relative_path, 'old.md'))
+
+    // The switch is off in this fixture; the owner still sees everything, newest first.
+    type Listing = { memories: Array<{ name: string, type: string | null, description: string | null }> }
+    const user = await (await f.client.request('/api/plugins/memory/memories', { method: 'GET' })).json() as Listing
+    expect(user.memories.map(m => [m.name, m.type, m.description])).toEqual([['reply-style', 'feedback', 'terse'], ['old', null, null]])
+    const project = await (await f.client.request(`/api/plugins/memory/projects/${f.projectId}/memories`, { method: 'GET' })).json() as Listing
+    expect(project.memories.map(m => m.name)).toEqual(['ctx'])
+    const other = await (await f.client.request(`/api/plugins/memory/projects/${f.otherProjectId}/memories`, { method: 'GET' })).json() as Listing
+    expect(other.memories).toEqual([])
   })
 
   it('lists memory beside the conversation files only while the switch is on', async () => {

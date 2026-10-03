@@ -130,6 +130,8 @@ describe('authenticated REST tenant isolation', () => {
     expect.soft(listing.memoryFiles).toEqual({ user: [], project: [] })
     expect.soft((await bobRequest('GET', `/plugins/workspace_files/projects/${project.id}/memory/archive`)).status).toBe(404)
     expect.soft((await bobRequest('GET', `/plugins/workspace_files/files/${file!.id}`)).status).toBe(404)
+    expect.soft(await (await bobRequest('GET', '/plugins/memory/memories')).json()).toEqual({ memories: [] })
+    expect.soft((await bobRequest('GET', `/plugins/memory/projects/${project.id}/memories`)).status).toBe(404)
   })
 
   it('lists a conversation\'s assets only to its owner', async () => {

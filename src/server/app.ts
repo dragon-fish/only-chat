@@ -17,6 +17,7 @@ import { ImageGenerationServerPlugin } from '@/plugins/image-generation/server'
 import { WorkspaceFilesServerPlugin } from '@/plugins/workspace-files/server'
 import { WorkspaceFilesApiPlugin } from '@/plugins/workspace-files/server/api'
 import { MemoryServerPlugin } from '@/plugins/memory/server'
+import { MemoryApiPlugin } from '@/plugins/memory/server/api'
 import { McpServerPlugin } from '@/plugins/mcp/server'
 import { McpApiPlugin } from '@/plugins/mcp/server/api'
 import { FileUnderstandingServerPlugin } from '@/plugins/file-understanding/server'
@@ -98,6 +99,7 @@ export async function createApp(options: AppOptions): Promise<Context> {
     if (!ctx.get('api')) throw new Error('ApiPlugin loaded but ctx.api is unavailable')
     // Plugin routes mount after the guard is in place, which is what puts them behind it.
     await ctx.plugin(WorkspaceFilesApiPlugin)
+    await ctx.plugin(MemoryApiPlugin)
     await ctx.plugin(FileReaderApiPlugin)
     await ctx.plugin(McpApiPlugin)
   }

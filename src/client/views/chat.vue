@@ -22,6 +22,7 @@ import { usePageTitle } from '@/client/composables/use-page-title'
 import { useWorkspacePanel, MAX_PANEL_SIZE, MIN_PANEL_SIZE } from '@/client/composables/use-workspace-panel'
 import type { ClientPluginHost } from '@/client/plugins/host'
 import { defaultToolsForSettings, conversationToolBlockReason } from '@/client/components/tool-selector'
+import { takeHandoff } from '@/client/lib/new-conversation-handoff'
 import { pendingHumanCalls } from '@/client/components/tool-part-renderer'
 import { pluginManifests } from '@/client/plugins/loaders'
 import { projectPresentation, conversationPath, latestAssistantContextUsage } from '@/client/lib/ui-models'
@@ -355,6 +356,20 @@ function send(command: Parameters<typeof sync.send>[0]): boolean {
   }
   return true
 }
+
+/**
+ * A first message handed over by another page (see `startConversation`), sent once this new
+ * conversation can send: settings loaded, socket open, a model resolved. Read at most once per
+ * page; a page reached by reload or by typing the address has nothing waiting.
+ */
+const handoff = sid.value === null ? takeHandoff() : null
+if (handoff !== null) draftTools.value = handoff.tools
+let handedOff = handoff === null
+watchEffect(() => {
+  if (handedOff || sid.value !== null || !sync.settingsLoaded || sync.status !== 'open' || !effective.value.model) return
+  handedOff = true
+  onSend([{ type: 'text', text: handoff!.prompt }])
+})
 
 function onSend(parts: Part[]) {
   const model = effective.value.model

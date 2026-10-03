@@ -79,3 +79,14 @@ export interface MemoryToolError {
   error: string
   message: string
 }
+
+/** One memory as the management pages list it. */
+export interface MemoryListItem {
+  fileId: number
+  path: string
+  /** The file name without its extension, which is what the page titles a memory by. */
+  name: string
+  type: MemoryType | null
+  description: string | null
+  updatedAt: number
+}
