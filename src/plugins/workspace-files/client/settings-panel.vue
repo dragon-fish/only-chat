@@ -64,6 +64,8 @@ function toggleRow(id: number, value: boolean | 'indeterminate') {
 }
 
 function scopeLabel(file: FileRecord, labels: WorkspaceScopeLabels): string {
+  if (file.mount === 'memory/user') return '记忆'
+  if (file.mount === 'memory/project') return `${labels.projects[String(file.projectId)] ?? `Project ${file.projectId}`} · 记忆`
   if (file.projectId !== null) return labels.projects[String(file.projectId)] ?? `Project ${file.projectId}`
   if (file.conversationId !== null) return labels.conversations[String(file.conversationId)] ?? `会话 ${file.conversationId}`
   return '未知位置'

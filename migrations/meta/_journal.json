@@ -141,6 +141,13 @@
       "when": 1790682146950,
       "tag": "0020_artifact-run-backend-state",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "6",
+      "when": 1791034942924,
+      "tag": "0021_workspace-mounts",
+      "breakpoints": true
     }
   ]
 }

@@ -2,6 +2,7 @@ import type { Context } from 'cordis'
 import { WORKSPACE_FILES_PLUGIN_ID } from '@/shared/plugins'
 import { PLUGIN_API_PREFIX } from '@/server/plugins/api'
 import type { WorkspaceMount } from '@/server/plugins/workspace-files/path'
+import type { WorkspaceScope } from '@/server/plugins/workspace-files/service'
 import type { FileRecord } from '@/shared/workspace-files'
 
 /**
@@ -42,17 +43,32 @@ export const PREVIEW_TICKET_TTL_SECONDS = 600
 export interface PreviewTicket {
   userId: number
   mount: WorkspaceMount
+  /** The conversation, the Project, or for `/memory/user` the user — whatever the mount is keyed on. */
   scopeId: number
+}
+
+/**
+ * The scope a ticket grants, rebuilt from the mount it names. A ticket is only minted for a file its
+ * caller could reach, so memory is open here exactly when the ticket is for a memory mount; it is
+ * not re-checked against the plugin switch while the ticket lives.
+ */
+export function ticketScope(ticket: PreviewTicket): WorkspaceScope {
+  switch (ticket.mount) {
+    case 'conversation': return { conversationId: ticket.scopeId, projectId: null, memory: false }
+    case 'project': return { conversationId: 0, projectId: ticket.scopeId, memory: false }
+    case 'memory/user': return { conversationId: 0, projectId: null, memory: true }
+    case 'memory/project': return { conversationId: 0, projectId: ticket.scopeId, memory: true }
+  }
 }
 
 /** The app-relative preview path for a file, or null when its mount has no id to scope a ticket to. */
 export async function previewUrlFor(ctx: Context, userId: number, record: FileRecord): Promise<string | null> {
-  const mount: WorkspaceMount = record.projectId !== null ? 'project' : 'conversation'
-  const scopeId = record.projectId ?? record.conversationId
+  const scopeId = record.mount === 'memory/user' ? userId
+    : record.mount === 'conversation' ? record.conversationId : record.projectId
   if (scopeId === null) return null
 
   const token = crypto.randomUUID().replaceAll('-', '')
-  const ticket: PreviewTicket = { userId, mount, scopeId }
+  const ticket: PreviewTicket = { userId, mount: record.mount, scopeId }
   await ctx.env.KV.put(`workspace-preview:${token}`, JSON.stringify(ticket), { expirationTtl: PREVIEW_TICKET_TTL_SECONDS })
   const path = record.relativePath.split('/').map(encodeURIComponent).join('/')
   return `${PLUGIN_API_PREFIX}/${WORKSPACE_FILES_PLUGIN_ID}/${PREVIEW_SEGMENT}/${token}/${path}`

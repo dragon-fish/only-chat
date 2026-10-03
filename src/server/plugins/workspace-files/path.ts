@@ -8,17 +8,23 @@
  * then be enforcing something other than what the model sees.
  */
 
-/** Top-level mounts. Models cannot create, rename or delete them. */
-export const WORKSPACE_MOUNTS = ['project', 'conversation'] as const
-export type WorkspaceMount = (typeof WORKSPACE_MOUNTS)[number]
+import { WORKSPACE_MOUNTS, type WorkspaceMount } from '@/shared/workspace-files'
+
+export { WORKSPACE_MOUNTS, type WorkspaceMount }
+
+/** A directory whose only children are mounts. */
+const MOUNT_GROUPS = ['memory'] as const
 
 /** Comfortably below D1's limits while leaving no doubt about where the boundary is. */
 export const MAX_RELATIVE_PATH_LENGTH = 512
 
 export interface WorkspacePath {
-  /** `null` only for `/`, which lists the mounts themselves. */
+  /** `null` for a directory of mounts: `/`, or a mount group such as `/memory`. */
   mount: WorkspaceMount | null
-  /** Empty when the path names a mount root. Never starts or ends with a separator. */
+  /**
+   * Below a mount: empty when the path names the mount root, and never starts or ends with a
+   * separator. With no mount: the group's name, or empty for `/`.
+   */
   relativePath: string
 }
 
@@ -51,7 +57,12 @@ export function parseWorkspacePath(input: string): ParseResult {
   if (trimmed.endsWith('/')) return INVALID
 
   const segments = trimmed.slice(1).split('/')
-  const [mount, ...rest] = segments
+  if (segments.length === 1 && (MOUNT_GROUPS as readonly string[]).includes(segments[0]!)) {
+    return { ok: true, value: { mount: null, relativePath: segments[0]! } }
+  }
+  const depth = (MOUNT_GROUPS as readonly string[]).includes(segments[0]!) ? 2 : 1
+  const mount = segments.slice(0, depth).join('/')
+  const rest = segments.slice(depth)
   if (!WORKSPACE_MOUNTS.includes(mount as WorkspaceMount)) return INVALID
 
   // A file path may not end in a separator; only a mount root may be named with one.
@@ -76,7 +87,7 @@ export function pathFromArgument(input: string): string | null {
 
 /** Renders a parsed path back to its canonical absolute form. */
 export function formatWorkspacePath(path: WorkspacePath): string {
-  if (path.mount === null) return '/'
+  if (path.mount === null) return `/${path.relativePath}`
   return path.relativePath === '' ? `/${path.mount}` : `/${path.mount}/${path.relativePath}`
 }
 

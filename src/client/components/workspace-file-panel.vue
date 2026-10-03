@@ -26,6 +26,8 @@ const props = defineProps<{
 
 const files = ref<FileRecord[]>([])
 const projectFiles = ref<FileRecord[]>([])
+/** Absent while memory is off, which is different from memory holding nothing yet. */
+const memoryFiles = ref<{ user: FileRecord[]; project: FileRecord[] } | null>(null)
 /** Files sent and generated in this conversation. Read-only, and only the conversation mount has them. */
 const assets = ref<ConversationAsset[]>([])
 const sync = useSyncStore()
@@ -93,6 +95,27 @@ const sections = computed((): (FileSection | AssetSection)[] => {
     groups.push({ kind: 'assets', key: 'assets', title: '本会话的附件', hint: '你发送的和生成的文件，只读。', assets: assets.value })
   }
   if (projectFiles.value.length > 0) groups.push(withRows(project))
+  // Memory is the model's to keep tidy, so an empty memory group would only be noise here.
+  if (memoryFiles.value !== null && memoryFiles.value.user.length > 0) {
+    groups.push(withRows({
+      key: 'memory/user',
+      title: '记忆 · 你',
+      hint: '模型在你所有的会话里都能读到。',
+      files: memoryFiles.value.user,
+      empty: '',
+      archive: api.userMemoryArchiveUrl(),
+    }))
+  }
+  if (memoryFiles.value !== null && memoryFiles.value.project.length > 0 && projectId.value !== null) {
+    groups.push(withRows({
+      key: 'memory/project',
+      title: '记忆 · 当前项目',
+      hint: '模型在这个 Project 的会话里都能读到。',
+      files: memoryFiles.value.project,
+      empty: '',
+      archive: api.projectMemoryArchiveUrl(projectId.value),
+    }))
+  }
   return groups
 })
 
@@ -107,6 +130,7 @@ async function load() {
       if (epoch !== loadEpoch) return
       files.value = body.files
       projectFiles.value = []
+      memoryFiles.value = null
       projectId.value = props.scopeId
     }
     else {
@@ -114,6 +138,7 @@ async function load() {
       if (epoch !== loadEpoch) return
       files.value = body.files
       projectFiles.value = body.projectFiles
+      memoryFiles.value = body.memoryFiles ?? null
       projectId.value = body.projectId
       assets.value = assetBody.assets
     }
@@ -134,7 +159,7 @@ async function load() {
 const streaming = computed(() => props.mount === 'conversation' && sync.isStreaming(props.scopeId))
 watch(() => [props.mount, props.scopeId, streaming.value] as const, (next, prev) => {
   if (!prev || next[0] !== prev[0] || next[1] !== prev[1]) {
-    files.value = []; projectFiles.value = []; assets.value = []
+    files.value = []; projectFiles.value = []; memoryFiles.value = null; assets.value = []
   }
   void load()
 }, { immediate: true })

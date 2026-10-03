@@ -7,8 +7,8 @@ import { fileToolError, parseFileRef, refFailure, type FileResult } from '@/plug
 import { binaryFromAttachment, type FileTurn, type ResolvedFile } from '@/plugins/file-reader/server/service'
 import type { Message } from '@/shared/models'
 import {
-  COPY_FILE_TOOL_ID, DELETE_FILE_TOOL_ID, LIST_FILES_TOOL_ID, PREVIEW_FILE_TOOL_ID, READ_FILE_TOOL_ID, RENAME_FILE_TOOL_ID,
-  RESTORE_FILE_TOOL_ID, WORKSPACE_FILES_PLUGIN_ID, WRITE_FILE_TOOL_ID, EDIT_FILE_TOOL_ID, pluginToolIds,
+  COPY_FILE_TOOL_ID, DELETE_FILE_TOOL_ID, LIST_FILES_TOOL_ID, MEMORY_SAVE_TOOL_ID, PREVIEW_FILE_TOOL_ID, READ_FILE_TOOL_ID,
+  RENAME_FILE_TOOL_ID, RESTORE_FILE_TOOL_ID, WORKSPACE_FILES_PLUGIN_ID, WRITE_FILE_TOOL_ID, EDIT_FILE_TOOL_ID, pluginToolIds,
 } from '@/shared/plugins'
 import manifest from '../manifest'
 import {
@@ -19,11 +19,12 @@ import {
   type RenameFileOutput, type RestoreFileOutput, type WriteFileOutput, type WorkspaceToolError,
 } from '../shared'
 import { absolutePreviewUrl, PREVIEW_TICKET_TTL_SECONDS, previewTypeFor, previewUrlFor } from './preview'
+import { memoryOpen } from './memory'
 
 /** Each expected failure reads as a fact the model can act on, never as a malfunction. */
 const MESSAGES: Record<WorkspaceError, string> = {
   INVALID_PATH: 'Not a valid workspace path. Paths are absolute and start with /project or /conversation (or the same as vfs:/project/…), with no . or .. segments.',
-  MOUNT_UNAVAILABLE: 'This conversation does not belong to a project, so /project has nowhere to store files. Use /conversation instead.',
+  MOUNT_UNAVAILABLE: 'That mount is not available here. /project and /memory/project need this conversation to belong to a project, and /memory exists only while memory is on. /conversation is always available.',
   FILE_NOT_FOUND: 'No such file. Use list_files to see what exists.',
   IS_DIRECTORY: 'That path holds other files rather than being one. Pass recursive: true to act on everything under it.',
   FILE_ALREADY_EXISTS: 'That name is taken. Restoring never overwrites, so choose a name nothing uses yet.',
@@ -102,9 +103,16 @@ function seenThisTurn(state: Map<string, unknown>, path: string): SeenFile | nul
   return typeof value === 'object' && value !== null ? value as SeenFile : null
 }
 
+/**
+ * Tools whose result can show the caller a file. `memory_save` writes a whole file when it carries
+ * content, and its result then has a `version` like `write_file`'s; one without content describes
+ * the file without showing it, has no `version`, and so counts as nothing below.
+ */
+const SHOWING_TOOL_IDS: readonly string[] = [READ_FILE_TOOL_ID, WRITE_FILE_TOOL_ID, EDIT_FILE_TOOL_ID, MEMORY_SAVE_TOOL_ID]
+
 /** What one finished tool call says the caller was shown, or null when it shows nothing. */
 function seenInResult(name: string, content: unknown, path: string): SeenFile | null {
-  if (name !== READ_FILE_TOOL_ID && name !== WRITE_FILE_TOOL_ID && name !== EDIT_FILE_TOOL_ID) return null
+  if (!SHOWING_TOOL_IDS.includes(name)) return null
   if (typeof content !== 'object' || content === null) return null
   const record = content as Record<string, unknown>
   // A refusal showed the caller nothing about the file.
@@ -182,7 +190,7 @@ const VFS_SCHEME = 'vfs'
  * shown whole.
  */
 async function resolveWorkspaceFile(files: WorkspaceFiles, turn: FileTurn, path: string): Promise<FileResult<ResolvedFile>> {
-  const scope = { conversationId: turn.conversationId, projectId: turn.projectId }
+  const scope = { conversationId: turn.conversationId, projectId: turn.projectId, memory: memoryOpen(turn.state) }
   const found = await files.current({ path, ...scope })
   if (!found.ok) return refFailure(found.error === 'INVALID_PATH' ? 'INVALID_FILE_REF' : 'FILE_NOT_FOUND', MESSAGES[found.error])
   const { attachment, relativePath } = found.value
@@ -204,7 +212,7 @@ async function readWorkspaceText(
   path: string,
   range: { offset?: number, limit?: number },
 ): Promise<FileResult<ReadFileOutput | ReadFileUnchangedOutput>> {
-  const result = await files.read({ path, ...range, conversationId: turn.conversationId, projectId: turn.projectId })
+  const result = await files.read({ path, ...range, conversationId: turn.conversationId, projectId: turn.projectId, memory: memoryOpen(turn.state) })
   if (!result.ok) {
     return refFailure(result.error === 'READ_RANGE_TOO_LARGE' ? 'READ_RANGE_TOO_LARGE' : 'FILE_NOT_FOUND', MESSAGES[result.error])
   }
@@ -237,8 +245,8 @@ async function readWorkspaceText(
 function servicesFor(runtime: ToolContext) {
   const files = new WorkspaceFiles(runtime.db, runtime.assets, runtime.userId)
   // Identity comes from the runtime, never from tool input: a tool can only reach the Conversation
-  // and Project it was created inside.
-  const scope = { conversationId: runtime.conversationId, projectId: runtime.projectId }
+  // and Project it was created inside, and memory only in a turn the memory plugin opened it for.
+  const scope = { conversationId: runtime.conversationId, projectId: runtime.projectId, memory: memoryOpen(runtime.turn) }
   return { files, scope }
 }
 

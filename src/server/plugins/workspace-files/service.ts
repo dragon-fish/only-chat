@@ -1,5 +1,5 @@
 import type { FileRecord } from '@/shared/workspace-files'
-import { and, asc, desc, eq, inArray, isNotNull, isNull, like, lt, or, sql, type SQL } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, isNotNull, isNull, like, lt, not, sql, type SQL } from 'drizzle-orm'
 import type { DB } from '../../db/client'
 import {
   artifactRunInputs, artifacts, attachments, projects,
@@ -85,7 +85,23 @@ export interface WorkspaceStorage {
 export interface WorkspaceScope {
   conversationId: number
   projectId: number | null
+  /**
+   * Whether `/memory/user` and `/memory/project` are reachable. Required rather than defaulted:
+   * every caller has to say where its answer comes from — the turn's state in the hub, the user's
+   * plugin switch in the Worker — because a forgotten gate here is a leak, not a missing feature.
+   */
+  memory: boolean
 }
+
+/** The rows one mount addresses for one caller. */
+interface MountTarget {
+  mount: WorkspaceMount
+  projectId: number | null
+  conversationId: number | null
+}
+
+/** A conversation file whose conversation is gone. Nothing else is ever an orphan. */
+const ORPHAN = and(eq(workspaceFiles.mount, 'conversation'), isNull(workspaceFiles.conversation_id))!
 
 export interface WriteInput extends WorkspaceScope {
   path: string
@@ -111,6 +127,8 @@ export interface EditResult extends WriteResult {
 }
 
 export interface WriteResult {
+  /** The row this write landed on, so a caller can attach to the file rather than look its path up again. */
+  fileId: number
   path: string
   /** `replaced` means a version was displaced without the caller naming it; it remains restorable. */
   operation: 'created' | 'updated' | 'replaced'
@@ -239,11 +257,11 @@ function escapeLike(value: string): string {
 
 /** One stored row as the panel reads it. `version` is absent only for a row whose bytes are gone. */
 function recordOf(file: WorkspaceFileRow, version: WorkspaceFileVersionRow | null | undefined): FileRecord {
-  const mount: WorkspaceMount = file.project_id === null ? 'conversation' : 'project'
   return {
     id: file.id,
-    path: `/${mount}/${file.relative_path}`,
+    path: `/${file.mount}/${file.relative_path}`,
     relativePath: file.relative_path,
+    mount: file.mount,
     projectId: file.project_id,
     conversationId: file.conversation_id,
     fileSize: version?.file_size ?? 0,
@@ -265,21 +283,28 @@ export class WorkspaceFiles {
   ) {}
 
   /** Resolves a mount to the row scope it addresses, or reports why it cannot be used. */
-  private scopeOf(mount: WorkspaceMount, scope: WorkspaceScope): Result<{ projectId: number | null, conversationId: number | null }> {
-    if (mount === 'conversation') return succeed({ projectId: null, conversationId: scope.conversationId })
+  private scopeOf(mount: WorkspaceMount, scope: WorkspaceScope): Result<MountTarget> {
+    if (mount === 'conversation') return succeed({ mount, projectId: null, conversationId: scope.conversationId })
+    if (mount.startsWith('memory/') && !scope.memory) return fail('MOUNT_UNAVAILABLE')
+    if (mount === 'memory/user') return succeed({ mount, projectId: null, conversationId: null })
     // A Conversation outside any Project has nowhere to put shared files. That is a state the model
     // should see and work around, not an error.
     if (scope.projectId === null) return fail('MOUNT_UNAVAILABLE')
-    return succeed({ projectId: scope.projectId, conversationId: null })
+    return succeed({ mount, projectId: scope.projectId, conversationId: null })
   }
 
-  private whereScope(target: { projectId: number | null, conversationId: number | null }) {
-    return target.projectId === null
+  /**
+   * The rows of one mount. Every caller also filters on `user_id`, which is the whole of the scope
+   * for `/memory/user`.
+   */
+  private whereScope(target: MountTarget): SQL {
+    const owner = target.mount === 'conversation'
       ? eq(workspaceFiles.conversation_id, target.conversationId!)
-      : eq(workspaceFiles.project_id, target.projectId)
+      : target.mount === 'memory/user' ? undefined : eq(workspaceFiles.project_id, target.projectId!)
+    return and(eq(workspaceFiles.mount, target.mount), owner)!
   }
 
-  private async findFile(target: { projectId: number | null, conversationId: number | null }, relativePath: string) {
+  private async findFile(target: MountTarget, relativePath: string) {
     const [row] = await this.db.select().from(workspaceFiles).where(and(
       eq(workspaceFiles.user_id, this.userId),
       this.whereScope(target),
@@ -359,7 +384,7 @@ export class WorkspaceFiles {
       let fileId: number
       try {
         const [created] = await this.db.insert(workspaceFiles).values({
-          user_id: this.userId, project_id: target.projectId, conversation_id: target.conversationId,
+          user_id: this.userId, project_id: target.projectId, conversation_id: target.conversationId, mount: target.mount,
           relative_path: relativePath, current_version: 0, created_at: now, updated_at: now, deleted_at: null,
         }).returning()
         fileId = created!.id
@@ -368,7 +393,7 @@ export class WorkspaceFiles {
         return fail('FILE_ALREADY_EXISTS')
       }
       await this.commitVersion(fileId, 0, 1, { attachmentId, bytes: bytes.byteLength, totalLines, now, input })
-      return succeed({ path, operation: 'created', fileSize: bytes.byteLength, totalLines, version: 1, replacedVersion: null, updatedAt: now })
+      return succeed({ fileId, path, operation: 'created', fileSize: bytes.byteLength, totalLines, version: 1, replacedVersion: null, updatedAt: now })
     }
 
     const version = existing.current_version + 1
@@ -376,6 +401,7 @@ export class WorkspaceFiles {
     if (!moved) return fail('VERSION_CONFLICT')
     const claimed = input.expectedVersion !== undefined
     return succeed({
+      fileId: existing.id,
       path,
       operation: claimed ? 'updated' : 'replaced',
       fileSize: bytes.byteLength,
@@ -435,6 +461,7 @@ export class WorkspaceFiles {
       expectedVersion: existing.current_version,
       conversationId: input.conversationId,
       projectId: input.projectId,
+      memory: input.memory,
       sourceMessageId: input.sourceMessageId,
       toolCallId: input.toolCallId,
     })
@@ -521,6 +548,7 @@ export class WorkspaceFiles {
       await this.db.update(workspaceFiles).set({
         project_id: toScope.value.projectId,
         conversation_id: toScope.value.conversationId,
+        mount: toScope.value.mount,
         relative_path: target,
         updated_at: now,
       }).where(and(eq(workspaceFiles.id, source.id), eq(workspaceFiles.user_id, this.userId)))
@@ -540,7 +568,7 @@ export class WorkspaceFiles {
    * only ever a shared prefix here, so this is where that fiction is made explicit exactly once.
    */
   private async resolveTargets(
-    scope: { projectId: number | null, conversationId: number | null },
+    scope: MountTarget,
     relativePath: string,
     recursive: boolean,
   ): Promise<Result<WorkspaceFileRow[]>> {
@@ -640,7 +668,7 @@ export class WorkspaceFiles {
    * pointer row and one version row and no storage: the bytes already exist. Returns its timestamp.
    */
   private async createWithVersion(
-    target: { projectId: number | null, conversationId: number | null },
+    target: MountTarget,
     relativePath: string,
     content: { attachmentId: number, mime: string, fileSize: number, totalLines: number },
     provenance: WorkspaceScope & { sourceMessageId?: number | null, toolCallId?: string | null },
@@ -651,7 +679,7 @@ export class WorkspaceFiles {
     let fileId: number
     try {
       const [created] = await this.db.insert(workspaceFiles).values({
-        user_id: this.userId, project_id: target.projectId, conversation_id: target.conversationId,
+        user_id: this.userId, project_id: target.projectId, conversation_id: target.conversationId, mount: target.mount,
         relative_path: relativePath, current_version: 0, created_at: now, updated_at: now, deleted_at: null,
       }).returning()
       fileId = created!.id
@@ -684,7 +712,7 @@ export class WorkspaceFiles {
 
     let content: { attachmentId: number, mime: string, fileSize: number, totalLines: number }
     if ('path' in input.from) {
-      const source = await this.current({ path: input.from.path, conversationId: input.conversationId, projectId: input.projectId })
+      const source = await this.current({ path: input.from.path, conversationId: input.conversationId, projectId: input.projectId, memory: input.memory })
       if (!source.ok) return source
       const { version } = source.value
       content = { attachmentId: version.attachment_id, mime: version.mime, fileSize: version.file_size, totalLines: version.total_lines }
@@ -778,6 +806,7 @@ export class WorkspaceFiles {
   async copyConversationFiles(sourceConversationId: number, targetConversationId: number): Promise<{ files: number }> {
     const rows = await this.db.select().from(workspaceFiles).where(and(
       eq(workspaceFiles.user_id, this.userId),
+      eq(workspaceFiles.mount, 'conversation'),
       eq(workspaceFiles.conversation_id, sourceConversationId),
       isNull(workspaceFiles.deleted_at),
     ))
@@ -785,7 +814,7 @@ export class WorkspaceFiles {
 
     for (const file of rows) {
       const [copy] = await this.db.insert(workspaceFiles).values({
-        user_id: file.user_id, project_id: null, conversation_id: targetConversationId,
+        user_id: file.user_id, project_id: null, conversation_id: targetConversationId, mount: 'conversation',
         relative_path: file.relative_path, current_version: file.current_version,
         created_at: file.created_at, updated_at: file.updated_at, deleted_at: null,
       }).returning()
@@ -883,9 +912,7 @@ export class WorkspaceFiles {
    * conversation it came from, which is what makes "restore" a meaningful offer.
    */
   async listTrash(): Promise<Array<FileRecord & { deletedAt: number }>> {
-    return this.listDeleted(and(
-      or(isNotNull(workspaceFiles.project_id), isNotNull(workspaceFiles.conversation_id))!,
-    )!)
+    return this.listDeleted(not(ORPHAN))
   }
 
   /**
@@ -894,10 +921,7 @@ export class WorkspaceFiles {
    * and cannot be restored to one.
    */
   async listOrphans(): Promise<Array<FileRecord & { deletedAt: number }>> {
-    return this.listDeleted(and(
-      isNull(workspaceFiles.project_id),
-      isNull(workspaceFiles.conversation_id),
-    )!)
+    return this.listDeleted(ORPHAN)
   }
 
   private async listDeleted(scope: SQL): Promise<Array<FileRecord & { deletedAt: number }>> {
@@ -928,6 +952,7 @@ export class WorkspaceFiles {
       .set({ conversation_id: null, deleted_at: Date.now() })
       .where(and(
         eq(workspaceFiles.user_id, this.userId),
+        eq(workspaceFiles.mount, 'conversation'),
         eq(workspaceFiles.conversation_id, conversationId),
         isNull(workspaceFiles.deleted_at),
       ))
@@ -948,11 +973,11 @@ export class WorkspaceFiles {
     if (!file) return fail('FILE_NOT_FOUND')
     // An orphan's conversation is gone, so there is no mount to restore it into. Saying so beats
     // reviving a row that every scoped listing would then fail to show.
-    if (file.project_id === null && file.conversation_id === null) return fail('MOUNT_UNAVAILABLE')
+    if (file.mount === 'conversation' && file.conversation_id === null) return fail('MOUNT_UNAVAILABLE')
 
     const [taken] = await this.db.select({ id: workspaceFiles.id }).from(workspaceFiles).where(and(
       eq(workspaceFiles.user_id, this.userId),
-      this.whereScope({ projectId: file.project_id, conversationId: file.conversation_id }),
+      this.whereScope({ mount: file.mount, projectId: file.project_id, conversationId: file.conversation_id }),
       eq(workspaceFiles.relative_path, file.relative_path),
       isNull(workspaceFiles.deleted_at),
     )).limit(1)
@@ -1124,8 +1149,14 @@ export class WorkspaceFiles {
     const { mount, relativePath } = parsed.value
 
     if (mount === null) {
+      // Closed memory mounts are left out rather than shown as unavailable: a turn without memory
+      // has no use for knowing they exist.
+      const names = WORKSPACE_MOUNTS
+        .filter(name => input.memory || !name.startsWith('memory/'))
+        .filter(name => relativePath === '' || name.startsWith(`${relativePath}/`))
+      if (names.length === 0) return fail('MOUNT_UNAVAILABLE')
       const entries: ListEntry[] = []
-      for (const name of WORKSPACE_MOUNTS) {
+      for (const name of names) {
         const resolved = this.scopeOf(name, input)
         if (!resolved.ok) {
           entries.push({ path: `/${name}`, type: 'mount', status: 'unavailable' })
@@ -1136,7 +1167,7 @@ export class WorkspaceFiles {
           .limit(1)
         entries.push({ path: `/${name}`, type: 'mount', status: rows.length === 0 ? 'empty' : 'ready' })
       }
-      return succeed({ path: '/', entries, truncated: false, nextCursor: null })
+      return succeed({ path: formatWorkspacePath(parsed.value), entries, truncated: false, nextCursor: null })
     }
 
     const scope = this.scopeOf(mount, input)

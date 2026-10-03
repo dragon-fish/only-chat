@@ -181,8 +181,8 @@ describe('workspace files and file references', () => {
       user_id: 1, sha256: (crypto.randomUUID() + crypto.randomUUID()).replaceAll('-', '').slice(0, 64), mime: 'image/png', size: 1, r2_key: 'refs/lone', origin: 'upload', created_at: 0,
     }).returning()
     for (const [id, name] of [[f.upload.id, 'a.png'], [referenced, 'b.png'], [lone!.id, 'c.png']] as const) {
-      expect(await f.files.copy({ from: { attachment: { attachmentId: id, mime: 'image/png', size: 1 } }, toPath: `/project/${name}`, conversationId: f.conversationId, projectId: f.projectId })).toMatchObject({ ok: true })
-      await f.files.deleteByPath({ path: `/project/${name}`, conversationId: f.conversationId, projectId: f.projectId })
+      expect(await f.files.copy({ from: { attachment: { attachmentId: id, mime: 'image/png', size: 1 } }, toPath: `/project/${name}`, conversationId: f.conversationId, projectId: f.projectId, memory: false })).toMatchObject({ ok: true })
+      await f.files.deleteByPath({ path: `/project/${name}`, conversationId: f.conversationId, projectId: f.projectId, memory: false })
     }
     const trashed = await f.db.select({ id: workspaceFiles.id }).from(workspaceFiles).where(eq(workspaceFiles.project_id, f.projectId))
     await f.files.purge(trashed.map(row => row.id))

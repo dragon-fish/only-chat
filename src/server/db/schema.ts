@@ -3,6 +3,7 @@ import { check, index, integer, primaryKey, sqliteTable, text, uniqueIndex, type
 import type { CatalogMatches, ModelMetadata, ModelMetadataOverride } from '@/shared/model-metadata'
 import type { ArtifactRunStatus, ArtifactUsage, ImageExtraBody, ImageGenerationParams } from '@/shared/artifacts'
 import type { Part } from '@/shared/parts'
+import type { WorkspaceMount } from '@/shared/workspace-files'
 import type { McpServerStatus, McpTransport, StoredMcpHeader } from '@/shared/mcp'
 import type {
   InterfaceProtocol, PersistedStatus, ConversationParams, ConversationPluginSettings, Usage, UserSettings,
@@ -220,16 +221,25 @@ export const attachments = sqliteTable('attachments', {
  * A named, mutable pointer in the workspace filesystem. Writes never mutate a row's content: they
  * append an immutable version and advance `current_version`.
  *
- * A live row has exactly one of `project_id` and `conversation_id` set. A trashed row may have
- * neither: deleting a conversation detaches its files instead of cascading them away, and those
- * orphans are listed and reclaimed on their own. The service enforces this, not a CHECK, so the
- * scope model can change without rebuilding the table.
+ * `mount` says which mount a row belongs to; never infer it from the id columns, which cannot tell
+ * `/project` from `/memory/project` or a user's memory from an orphan:
+ *
+ * | mount            | project_id | conversation_id                |
+ * | project          | set        | null                           |
+ * | conversation     | null       | set; null once orphaned        |
+ * | memory/user      | null       | null                           |
+ * | memory/project   | set        | null                           |
+ *
+ * Deleting a conversation detaches its files instead of cascading them away, and those orphans are
+ * listed and reclaimed on their own. The service enforces this, not a CHECK, so the scope model can
+ * change without rebuilding the table.
  */
 export const workspaceFiles = sqliteTable('workspace_files', {
   id: integer().primaryKey({ autoIncrement: true }),
   user_id: integer().notNull().references(() => users.id, { onDelete: 'cascade' }),
   project_id: integer().references(() => projects.id, { onDelete: 'cascade' }),
   conversation_id: integer().references(() => conversations.id, { onDelete: 'cascade' }),
+  mount: text().$type<WorkspaceMount>().notNull(),
   relative_path: text().notNull(),
   current_version: integer().notNull().default(0),
   created_at: integer().notNull(),
@@ -239,8 +249,9 @@ export const workspaceFiles = sqliteTable('workspace_files', {
 }, (t) => [
   // Partial, because a deleted path must be reusable. This cannot move to the service: two
   // concurrent creates would both pass an existence check and then both insert.
-  uniqueIndex('workspace_files_project_path_uq').on(t.project_id, t.relative_path).where(sql`${t.deleted_at} IS NULL AND ${t.project_id} IS NOT NULL`),
+  uniqueIndex('workspace_files_project_path_uq').on(t.project_id, t.mount, t.relative_path).where(sql`${t.deleted_at} IS NULL AND ${t.project_id} IS NOT NULL`),
   uniqueIndex('workspace_files_conversation_path_uq').on(t.conversation_id, t.relative_path).where(sql`${t.deleted_at} IS NULL AND ${t.conversation_id} IS NOT NULL`),
+  uniqueIndex('workspace_files_user_memory_path_uq').on(t.user_id, t.relative_path).where(sql`${t.deleted_at} IS NULL AND ${t.mount} = 'memory/user'`),
   index('workspace_files_project_idx').on(t.project_id, t.deleted_at),
   index('workspace_files_conversation_idx').on(t.conversation_id, t.deleted_at),
 ])

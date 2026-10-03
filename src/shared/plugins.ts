@@ -37,10 +37,13 @@ export const COMFYUI_READ_TOOL_ID = 'comfyui_read' as const
 export const COMFYUI_LIST_MODELS_TOOL_ID = 'comfyui_list_models' as const
 export const COMFYUI_NODE_INFO_TOOL_ID = 'comfyui_node_info' as const
 export const COMFYUI_GENERATE_TOOL_ID = 'comfyui_generate' as const
+export const MEMORY_PLUGIN_ID = 'memory' as const
+export const MEMORY_SAVE_TOOL_ID = 'memory_save' as const
 
 export type BuiltInPluginId = typeof ASK_USER_PLUGIN_ID | typeof TAVILY_PLUGIN_ID | typeof DATETIME_PLUGIN_ID
   | typeof WORKSPACE_FILES_PLUGIN_ID | typeof BROWSER_RUN_PLUGIN_ID | typeof IMAGE_GENERATION_PLUGIN_ID
   | typeof FILE_UNDERSTANDING_PLUGIN_ID | typeof FILE_READER_PLUGIN_ID | typeof MCP_PLUGIN_ID | typeof COMFYUI_PLUGIN_ID
+  | typeof MEMORY_PLUGIN_ID
 export type BuiltInToolId = typeof ASK_USER_TOOL_ID | typeof WEB_SEARCH_TOOL_ID | typeof WEB_EXTRACT_TOOL_ID | typeof CURRENT_TIME_TOOL_ID
   | typeof LIST_FILES_TOOL_ID | typeof READ_FILE_TOOL_ID | typeof WRITE_FILE_TOOL_ID | typeof EDIT_FILE_TOOL_ID | typeof RESTORE_FILE_TOOL_ID
   | typeof RENAME_FILE_TOOL_ID | typeof DELETE_FILE_TOOL_ID | typeof PREVIEW_FILE_TOOL_ID | typeof COPY_FILE_TOOL_ID
@@ -49,6 +52,7 @@ export type BuiltInToolId = typeof ASK_USER_TOOL_ID | typeof WEB_SEARCH_TOOL_ID 
   | typeof MCP_LIST_SERVICES_TOOL_ID | typeof MCP_LIST_TOOLS_TOOL_ID | typeof MCP_CALL_TOOL_TOOL_ID
   | typeof COMFYUI_LIST_WORKFLOWS_TOOL_ID | typeof COMFYUI_READ_TOOL_ID | typeof COMFYUI_LIST_MODELS_TOOL_ID
   | typeof COMFYUI_NODE_INFO_TOOL_ID | typeof COMFYUI_GENERATE_TOOL_ID
+  | typeof MEMORY_SAVE_TOOL_ID
 
 /**
  * One tool's own identity. A plugin may own several, and each needs its own label: listing two

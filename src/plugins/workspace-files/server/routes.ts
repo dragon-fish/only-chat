@@ -4,7 +4,8 @@ import { cors } from 'hono/cors'
 import { zipSync } from 'fflate'
 import { and, eq, inArray } from 'drizzle-orm'
 import { conversations, projects } from '@/server/db/schema'
-import { WORKSPACE_FILES_PLUGIN_ID } from '@/shared/plugins'
+import { MEMORY_PLUGIN_ID, WORKSPACE_FILES_PLUGIN_ID } from '@/shared/plugins'
+import { getUser } from '@/server/plugins/hub/conversations'
 import { PLUGIN_API_PREFIX } from '@/server/plugins/api'
 import { parseWorkspacePath, type WorkspaceMount } from '@/server/plugins/workspace-files/path'
 import { isTextMime, WorkspaceFiles, type WorkspaceError } from '@/server/plugins/workspace-files/service'
@@ -12,7 +13,7 @@ import type { FileRecord } from '@/shared/workspace-files'
 import { authUserId, type ApiEnv } from '@/server/plugins/api/auth'
 import { parseId } from '@/server/plugins/api/params'
 import { attachmentDisposition } from '@/server/plugins/api/content-disposition'
-import { PREVIEW_SEGMENT, PREVIEW_TYPES, previewUrlFor, type PreviewTicket } from './preview'
+import { PREVIEW_SEGMENT, PREVIEW_TYPES, previewUrlFor, ticketScope, type PreviewTicket } from './preview'
 
 export { PREVIEW_SEGMENT }
 
@@ -84,11 +85,8 @@ export function workspacePreviewRoutes(ctx: Context) {
     const parsed = parseWorkspacePath(`/${ticket.mount}/${relativePath}`)
     if (!parsed.ok || parsed.value.relativePath === '') return c.json({ error: 'invalid path' }, 400)
 
-    const scope = ticket.mount === 'project'
-      ? { conversationId: 0, projectId: ticket.scopeId }
-      : { conversationId: ticket.scopeId, projectId: null }
     const files = new WorkspaceFiles(ctx.db.orm, ctx.assets, ticket.userId)
-    const result = await files.readBytes(ticket.mount, scope, parsed.value.relativePath)
+    const result = await files.readBytes(ticket.mount, ticketScope(ticket), parsed.value.relativePath)
     if (!result.ok) return c.json({ error: result.error }, STATUS[result.error])
 
     // The setting decides one thing: whether a page is served as a page. Off, every file is text —
@@ -145,6 +143,15 @@ export function workspaceFileRoutes(ctx: Context) {
   const filesFor = (userId: number) => new WorkspaceFiles(db, ctx.assets, userId)
 
   /**
+   * The panel's answer to whether `/memory` exists: the user's own switch for the memory plugin.
+   * The hub answers the same question per turn instead, from whether the turn offers memory.
+   */
+  async function memoryEnabled(userId: number): Promise<boolean> {
+    const user = await getUser(db, userId)
+    return user?.settings.plugins[MEMORY_PLUGIN_ID] === true
+  }
+
+  /**
    * One archive of a whole mount. Stored, not deflated: the entries are small text files and the
    * point is to keep their relative layout intact so an HTML page finds the stylesheet beside it.
    */
@@ -168,7 +175,7 @@ export function workspaceFileRoutes(ctx: Context) {
       .where(and(eq(projects.id, projectId), eq(projects.user_id, userId))).limit(1)
     if (!project) return c.json({ error: 'not found' }, 404)
 
-    const result = await filesFor(userId).listRecords('project', { conversationId: 0, projectId })
+    const result = await filesFor(userId).listRecords('project', { conversationId: 0, projectId, memory: false })
     if (!result.ok) return c.json({ error: result.error }, STATUS[result.error])
     return c.json({ files: result.value })
   })
@@ -183,14 +190,25 @@ export function workspaceFileRoutes(ctx: Context) {
     if (!conversation) return c.json({ error: 'not found' }, 404)
 
     const files = filesFor(userId)
-    const own = await files.listRecords('conversation', { conversationId, projectId: conversation.project_id })
+    const memory = await memoryEnabled(userId)
+    const scope = { conversationId, projectId: conversation.project_id, memory }
+    const own = await files.listRecords('conversation', scope)
     if (!own.ok) return c.json({ error: own.error }, STATUS[own.error])
     // The project mount is shown alongside so a reader can see what this conversation can also reach.
     const shared = conversation.project_id === null
       ? { ok: true as const, value: [] }
-      : await files.listRecords('project', { conversationId, projectId: conversation.project_id })
+      : await files.listRecords('project', scope)
     if (!shared.ok) return c.json({ error: shared.error }, STATUS[shared.error])
-    return c.json({ files: own.value, projectFiles: shared.value, projectId: conversation.project_id })
+    const body = { files: own.value, projectFiles: shared.value, projectId: conversation.project_id }
+    if (!memory) return c.json(body)
+
+    const user = await files.listRecords('memory/user', scope)
+    if (!user.ok) return c.json({ error: user.error }, STATUS[user.error])
+    const project = conversation.project_id === null
+      ? { ok: true as const, value: [] }
+      : await files.listRecords('memory/project', scope)
+    if (!project.ok) return c.json({ error: project.error }, STATUS[project.error])
+    return c.json({ ...body, memoryFiles: { user: user.value, project: project.value } })
   })
 
   r.get('/projects/:id/files/archive', async (c) => {
@@ -203,9 +221,36 @@ export function workspaceFileRoutes(ctx: Context) {
 
     const prefix = archivePrefix(c.req.query('prefix'))
     if (prefix === null) return c.json({ error: 'invalid prefix' }, 400)
-    const result = await filesFor(userId).readMount('project', { conversationId: 0, projectId }, prefix)
+    const result = await filesFor(userId).readMount('project', { conversationId: 0, projectId, memory: false }, prefix)
     if (!result.ok) return c.json({ error: result.error }, STATUS[result.error])
     return zipResponse(result.value, archiveName(prefix, project.name || 'project'))
+  })
+
+  // One archive per mount: `/project/a.md` and `/memory/project/a.md` must never share a zip.
+  r.get('/projects/:id/memory/archive', async (c) => {
+    const userId = authUserId(c)
+    const projectId = parseId(c.req.param('id'))
+    if (projectId === null) return c.json({ error: 'invalid id' }, 400)
+    const [project] = await db.select({ id: projects.id, name: projects.name }).from(projects)
+      .where(and(eq(projects.id, projectId), eq(projects.user_id, userId))).limit(1)
+    if (!project) return c.json({ error: 'not found' }, 404)
+
+    const prefix = archivePrefix(c.req.query('prefix'))
+    if (prefix === null) return c.json({ error: 'invalid prefix' }, 400)
+    const scope = { conversationId: 0, projectId, memory: await memoryEnabled(userId) }
+    const result = await filesFor(userId).readMount('memory/project', scope, prefix)
+    if (!result.ok) return c.json({ error: result.error }, STATUS[result.error])
+    return zipResponse(result.value, archiveName(prefix, `${project.name || 'project'}-memory`))
+  })
+
+  r.get('/memory/archive', async (c) => {
+    const userId = authUserId(c)
+    const prefix = archivePrefix(c.req.query('prefix'))
+    if (prefix === null) return c.json({ error: 'invalid prefix' }, 400)
+    const scope = { conversationId: 0, projectId: null, memory: await memoryEnabled(userId) }
+    const result = await filesFor(userId).readMount('memory/user', scope, prefix)
+    if (!result.ok) return c.json({ error: result.error }, STATUS[result.error])
+    return zipResponse(result.value, archiveName(prefix, 'memory'))
   })
 
   r.get('/conversations/:id/files/archive', async (c) => {
@@ -219,7 +264,7 @@ export function workspaceFileRoutes(ctx: Context) {
 
     const prefix = archivePrefix(c.req.query('prefix'))
     if (prefix === null) return c.json({ error: 'invalid prefix' }, 400)
-    const result = await filesFor(userId).readMount('conversation', { conversationId, projectId: conversation.project_id }, prefix)
+    const result = await filesFor(userId).readMount('conversation', { conversationId, projectId: conversation.project_id, memory: false }, prefix)
     if (!result.ok) return c.json({ error: result.error }, STATUS[result.error])
     return zipResponse(result.value, archiveName(prefix, conversation.title || 'conversation'))
   })
