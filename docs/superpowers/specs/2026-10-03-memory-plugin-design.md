@@ -332,3 +332,48 @@ worker：
 - 开关组合变化后下一轮重新渲染快照，组合不变则复用。
 - `project.update` 的 `plugin_settings` 按插件 id 合并、拒绝未声明的插件。
 - 记忆列表接口：只返回本人的、指定 Project 的记忆；他人的 Project 返回 404；开关关闭时仍可列出。
+
+## 9. 对话中的记忆变动提醒
+
+### 9.1 消息附注（核心）
+
+- `GenerationTurn` 新增 `notes: Array<{ pluginId, messageId, text }>`，`generation/prepare` 中由插件追加：既有本轮新产生的附注，也有该插件为路径上历史消息存过的附注。
+- 生成流程按 `pluginManifests` 顺序（同一插件内按追加顺序）把附注归到各消息，传给 `buildModelMessages` 的 `notes`；后者把每条附注作为 text part 追加在对应用户消息末尾，包为 `<system-reminder>\n…\n</system-reminder>`。
+- 附注必须由插件持久化、之后每轮原样重放：历史每轮从数据库重建，未持久化的附注会在下一轮消失，改写该消息之后的缓存前缀。
+
+### 9.2 已知状态
+
+- `memory_snapshots` 新增列 `known TEXT NOT NULL DEFAULT '{}'`：本对话已知的记忆文件，`{ [fileId]: { path, version, description } }`，只含开放的层。
+- 渲染快照时同时写入当时的状态；开关组合或 Project 变化导致重新渲染时一并重置。
+- workspace-files 在本轮状态里记录本轮改动过的路径（`write_file`、`edit_file`、`delete_file`、`rename_file` 的新旧路径、`copy_file`、`restore_file`、带 `content` 的 `memory_save`），导出 `touchedPaths(state)`；不带 `content` 的 `memory_save` 由记忆插件自行记录。
+- `generation/settled` 时：对比当前状态与已知状态，旧路径或新路径在本轮改动过的条目并入已知状态（Agent 自己做的不必提醒）；其余留待下一轮。
+
+### 9.3 生成附注
+
+`generation/prepare` 中，快照已存在且本轮未重新渲染时：
+
+1. 读出 `memory_notes` 中本对话路径上各条消息的附注，追加到 `turn.notes`。
+2. 本轮路径的末尾是一条用户消息、且它还没有附注时，对比当前状态与已知状态；有差异则渲染附注，`INSERT … ON CONFLICT DO NOTHING` 后读回，追加到 `turn.notes`，并把已知状态更新为当前状态。末尾不是用户消息（如 `ask_user` 回答后的续写）时不生成，留给下一条用户消息。
+3. 重新生成同一条用户消息时复用已存的附注，不重新对比。
+
+附注格式（英文，每行一项，按 new、updated、moved、removed 排列）：
+
+```
+Memory changed since you last looked:
+- new /memory/user/topics/x.md — 描述
+- updated /memory/user/topics/饮食.md — 描述
+- moved /memory/user/a.md → /memory/project/a.md
+- removed /memory/user/topics/旧笔记.md
+```
+
+`profile.md`、`preferences.md` 新建或更新时，在对应行后附全文（同 §4.4 的内联格式）。updated 指版本或描述变化。
+
+### 9.4 存储与分叉
+
+- 新表 `memory_notes`：`message_id` 主键（FK → `messages.id`，ON DELETE CASCADE）、`conversation_id`（FK，CASCADE）、`text`。
+- 分叉时按 `ConversationForked.messageIds` 把源对话的附注复制到新消息上，快照（含已知状态）照 §4.5 复制。
+
+### 9.5 测试
+
+- unit：`buildModelMessages` 把附注追加在对应用户消息末尾，顺序稳定。
+- worker：别的对话写入、改描述、删除、移动后，本对话下一轮的末尾用户消息带对应附注；本对话自己的改动在本轮结束后不再提醒；附注跨轮原样重放；重新生成复用附注；分叉后附注落在对应的新消息上。
