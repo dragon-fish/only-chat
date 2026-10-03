@@ -36,7 +36,7 @@ export async function updateProject(
   db: DB,
   id: number,
   userId: number,
-  patch: Partial<Pick<ProjectRow, 'name' | 'icon_attachment_id' | 'system_prompt' | 'provider_id' | 'model_id' | 'params'>>,
+  patch: Partial<Pick<ProjectRow, 'name' | 'icon_attachment_id' | 'system_prompt' | 'provider_id' | 'model_id' | 'params' | 'plugin_settings'>>,
 ): Promise<ProjectRow> {
   const [row] = await db.update(projects).set({ ...patch, updated_at: Date.now() })
     .where(and(eq(projects.id, id), eq(projects.user_id, userId))).returning()

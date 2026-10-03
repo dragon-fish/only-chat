@@ -7,7 +7,7 @@ import type { WorkspaceMount } from '@/shared/workspace-files'
 import type { MemoryType } from '@/plugins/memory/shared'
 import type { McpServerStatus, McpTransport, StoredMcpHeader } from '@/shared/mcp'
 import type {
-  InterfaceProtocol, PersistedStatus, ConversationParams, ConversationPluginSettings, Usage, UserSettings,
+  InterfaceProtocol, PersistedStatus, ConversationParams, ConversationPluginSettings, ProjectPluginSettings, Usage, UserSettings,
 } from '@/shared/models'
 
 export const users = sqliteTable('users', {
@@ -152,6 +152,8 @@ export const projects = sqliteTable('projects', {
   provider_id: integer(),
   model_id: text(),
   params: text({ mode: 'json' }).$type<ConversationParams>(),
+  /** Per-plugin Project settings, keyed by plugin id and validated through `projectConfigSchema`. */
+  plugin_settings: text({ mode: 'json' }).$type<ProjectPluginSettings>(),
   created_at: integer().notNull(),
   updated_at: integer().notNull(),
 }, (t) => [index('projects_user_updated_idx').on(t.user_id, t.updated_at)])

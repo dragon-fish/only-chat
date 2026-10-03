@@ -1,0 +1,1 @@
+ALTER TABLE `projects` ADD `plugin_settings` text;

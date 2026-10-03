@@ -62,6 +62,10 @@ export type ConversationParams = z.infer<typeof ConversationParamsSchema>
 export const ConversationPluginSettingsSchema = z.record(z.string(), z.record(z.string(), z.unknown()))
 export type ConversationPluginSettings = z.infer<typeof ConversationPluginSettingsSchema>
 
+/** The same per-plugin shape kept on a Project, validated through `projectConfigSchema`. */
+export const ProjectPluginSettingsSchema = z.record(z.string(), z.record(z.string(), z.unknown()))
+export type ProjectPluginSettings = z.infer<typeof ProjectPluginSettingsSchema>
+
 export const UserSettingsSchema = z.object({
   plugins: z.record(z.string(), z.boolean()).default({}),
   /**
@@ -132,6 +136,8 @@ export const ProjectSchema = z.object({
   provider_id: z.number().int().nullable(),
   model_id: z.string().nullable(),
   params: ConversationParamsSchema.nullable(),
+  /** Null until a plugin's Project settings are first saved; both mean "every plugin at its defaults". */
+  plugin_settings: ProjectPluginSettingsSchema.nullable().optional(),
   created_at: z.number(),
   updated_at: z.number(),
 })

@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { PartSchema, PartsSchema } from './parts'
 import {
-  MessageSchema, MessageStatusSchema, PersistedStatusSchema, ProjectSchema, ConversationParamsSchema,
+  MessageSchema, MessageStatusSchema, PersistedStatusSchema, ProjectSchema, ProjectPluginSettingsSchema, ConversationParamsSchema,
   ConversationPluginSettingsSchema, ConversationSchema, UsageSchema, UserSettingsSchema,
 } from './models'
 import { ModelRefSchema } from './model-ref'
@@ -131,6 +131,8 @@ export const ProjectUpdateCommandSchema = z.object({
   provider_id: z.number().int().nullable().optional(),
   model_id: z.string().nullable().optional(),
   params: ConversationParamsSchema.nullable().optional(),
+  /** Merged per plugin id into what is stored; a plugin left out keeps its settings. */
+  plugin_settings: ProjectPluginSettingsSchema.optional(),
 })
 export const ProjectDeleteCommandSchema = z.object({
   type: z.literal('project.delete'),

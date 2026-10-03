@@ -12,7 +12,7 @@ import {
 import { suggestConversationTitle } from './service-model'
 import { canServeAsServiceModel, canServeAsFileModel } from '@/shared/service-model'
 import { mergeServicePrompts, missingRequiredPlaceholders } from '@/shared/service-prompts'
-import { cascadePluginSwitches, parseConversationPluginSettings } from '@/shared/plugins'
+import { cascadePluginSwitches, parseConversationPluginSettings, parseProjectPluginSettings } from '@/shared/plugins'
 import { pluginManifests } from '@/shared/plugin-manifests'
 import { createProject, deleteProject, getProject, listProjectConversations, updateProject, validateProjectIcon } from './projects'
 import { SeqAllocator } from './seq'
@@ -384,11 +384,15 @@ export class Hub extends Service {
   }
 
   async projectUpdate(cmd: Extract<WsCommand, { type: 'project.update' }>): Promise<void> {
-    const { type: _t, request_id: _r, project_id, ...patch } = cmd
+    const { type: _t, request_id: _r, project_id, plugin_settings, ...patch } = cmd
     const current = await getProject(this.db, project_id, this.userId)
     if (!current) throw new Error('project not found')
     await validateProjectIcon(this.db, this.userId, patch.icon_attachment_id === undefined ? current.icon_attachment_id : patch.icon_attachment_id)
-    const p = await updateProject(this.db, project_id, this.userId, patch)
+    const p = await updateProject(this.db, project_id, this.userId, plugin_settings === undefined ? patch : {
+      ...patch,
+      // Per plugin, like conversation settings: one plugin saving its tab leaves the others' alone.
+      plugin_settings: { ...current.plugin_settings, ...parseProjectPluginSettings(pluginManifests, plugin_settings) },
+    })
     await this.emitProjectUpdated(p)
   }
 
