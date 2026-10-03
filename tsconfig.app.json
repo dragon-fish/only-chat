@@ -16,6 +16,10 @@
     "src/client/**/*.vue",
     "src/client/typed-router.d.ts",
     "src/shared/**/*.ts",
+    "src/plugins/*/client/**/*.ts",
+    "src/plugins/*/client/**/*.vue",
+    "src/plugins/*/manifest.ts",
+    "src/plugins/*/shared.ts",
     "test/unit/client-*.test.ts"
   ]
 }

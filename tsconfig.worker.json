@@ -9,5 +9,5 @@
     "paths": { "@/*": ["./src/*"] },
     "types": ["@types/node", "./worker-configuration.d.ts"]
   },
-  "include": ["src/server/**/*.ts", "src/shared/**/*.ts", "src/plugins/cloudflare-browser-run/runtime/**/*.ts", "vite.config.ts", "vitest.config.ts", "drizzle.config.ts", "worker-configuration.d.ts"]
+  "include": ["src/server/**/*.ts", "src/shared/**/*.ts", "src/plugins/*/server/**/*.ts", "src/plugins/*/manifest.ts", "src/plugins/*/shared.ts", "src/plugins/cloudflare-browser-run/runtime/**/*.ts", "vite.config.ts", "vitest.config.ts", "drizzle.config.ts", "worker-configuration.d.ts"]
 }
