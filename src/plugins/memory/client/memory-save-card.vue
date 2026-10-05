@@ -24,7 +24,14 @@ const label = computed(() => {
   if (value.operation === undefined) return '已更新描述'
   return value.operation === 'created' ? '已记住' : '已更新记忆'
 })
-const scope = computed(() => (path.value.startsWith('/memory/project/') ? '当前项目' : '所有会话'))
+const inProject = computed(() => path.value.startsWith('/memory/project/'))
+const scope = computed(() => (inProject.value ? '当前项目' : '所有会话'))
+/** A Project's profile describes the Project, not the user. */
+const category = computed(() => {
+  const value = output.value?.category
+  if (value === 'profile' && inProject.value) return '项目档案'
+  return value === undefined ? '' : CATEGORY_LABELS[value] ?? value
+})
 </script>
 
 <template lang="pug">
@@ -40,7 +47,7 @@ const scope = computed(() => (path.value.startsWith('/memory/project/') ? '当�
     .oc-turn-row.text-sm(:title="output.path")
       BrainIcon(class="size-4 shrink-0 text-muted-foreground")
       span.min-w-0.truncate {{ label }} {{ basename(output.path) }}
-      Badge(variant="secondary" class="ml-auto shrink-0") {{ CATEGORY_LABELS[output.category] ?? output.category }} · {{ scope }}
+      Badge(variant="secondary" class="ml-auto shrink-0") {{ category }} · {{ scope }}
     p(class="text-muted-foreground pl-6 text-xs") {{ output.description }}
   .oc-turn-row.text-sm.text-muted-foreground(v-else)
     TriangleAlertIcon(class="size-4 shrink-0")

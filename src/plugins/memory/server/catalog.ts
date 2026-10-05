@@ -85,8 +85,9 @@ export function renderCatalog(user: ScopeCatalog | ClosedScope, project: ScopeCa
   return [
     '<memory-catalog>',
     'Your memory as of this message; later changes arrive as reminders on later messages. Read a file before relying on it.',
-    scopeBlock('user', 'memory/user', user),
+    // Project memory is the primary layer inside a Project, so it reads first.
     ...(project === null ? [] : [scopeBlock('project', 'memory/project', project)]),
+    scopeBlock('user', 'memory/user', user),
     '</memory-catalog>',
   ].join('\n')
 }

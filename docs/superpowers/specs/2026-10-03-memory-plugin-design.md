@@ -111,8 +111,8 @@ system 段的唯一输入是工具集，而工具定义在 Anthropic 缓存前�
 
 | 路径 | 内容 |
 |---|---|
-| `profile.md` | 个人档案：称呼、职业、所在公司、入职时间等三个月后大概仍成立的身份信息，300 字以内 |
-| `preferences.md` | 回复偏好：对模型回答方式的要求（语言、长度、语气、格式）；用户自己的喜好不放这里 |
+| `profile.md` | 用户层为个人档案：称呼、职业、所在公司、入职时间等三个月后大概仍成立的身份信息，300 字以内。项目层为项目档案：Project 的目标、背景、约定与常驻指令，相当于 Project 的 CLAUDE.md，只写每个会话都需要的内容 |
+| `preferences.md` | 回复偏好：对模型回答方式的要求（语言、长度、语气、格式），用户层对所有会话、项目层对本 Project；用户自己的喜好不放这里 |
 | `topics/<领域>.md` | 话题：用户本人的习惯、口味、作息、反复出现的兴趣，按领域分文件；随口一提的不记，反复出现才归档 |
 | `areas/<名称>.md` | 进行中的事务：任何持续投入的事，不限于正式项目（未解决的问题、长期职责、找房、报税、找工作）；记录决策、约束、截止时间与当前状态 |
 | `people/<名字>.md` | 人物：对后续对话有帮助的人，记录与用户的关系和一起在做的事，而非详细档案 |
@@ -178,6 +178,10 @@ system 段的唯一输入是工具集，而工具定义在 Anthropic 缓存前�
 ```
 <memory-catalog>
 Your memory as it stood when this conversation started; …
+<scope name="project">
+…
+… and 12 more: list_files /memory/project
+</scope>
 <scope name="user">
 <profile path="/memory/user/profile.md">
 （profile.md 全文）
@@ -189,12 +193,10 @@ Your memory as it stood when this conversation started; …
 - /memory/user/topics/旧笔记.md — undescribed: describe it with memory_save
 - /memory/user/notes.md — outside the memory layout: rename_file it to …
 </scope>
-<scope name="project">
-…
-… and 12 more: list_files /memory/project
-</scope>
 </memory-catalog>
 ```
+
+- project 段在 user 段之前：Project 内项目记忆为主（§4.6）。
 
 - 每层开放时，`profile.md` 与 `preferences.md`（如有）全文放在该层最前，依次以 `<profile>`、`<preferences>` 包住（与 CLAUDE.md 一样随首条消息注入），不再另列一行；每个超过 4000 字符截断，并提示模型读全文、精简文件。读取失败时退回为普通一行。
 - 其余文件按布局顺序（preferences、topics、areas、people、其他）排列，同类内按 `updated_at` 倒序；每层最多 200 行。
@@ -214,6 +216,7 @@ catalog 在记忆首次生效的那一轮渲染一次，作为开头附注（§5
 本轮生效时返回静态说明（英文），内容：
 
 - 记忆是什么；`/memory/user` 跨所有对话、`/memory/project` 限当前 Project。
+- Project 内项目记忆为主：项目层 `profile.md` 是 Project 的常驻指令，按 system prompt 对待；两层冲突时以项目记忆为准，更正写进项目记忆、不动用户记忆，除非用户说明该事实在所有场合都已改变；只有跨所有对话都成立的事才写用户层，拿不准时写项目层。
 - 五类路径各放什么（§4.2）与收录门槛；不该记的内容（工作区或对话里已有的、只与当下有关的、猜测、密钥）。
 - 篇幅：多数事实是一行，追加进已覆盖它的文件；内容撑得起才单独成文件。正文是简短的 Markdown 列表，有理由时写在事实旁；不加标题。description 说明文件覆盖什么、何时用得上，不复述正文。写之前先看 catalog，补充已有文件，合并重复。
 - 维护方式：新建文件用 `memory_save` 带 `content`；补充或更正先 `read_file` 再 `edit_file`，描述不再贴切时用不带 `content` 的 `memory_save`；错误或过时的内容用 `edit_file` 删去，整个文件都不值得留时 `delete_file`；`rename_file` 改名或在两层之间移动；未描述的文件补描述，布局外的文件移入布局。
@@ -293,7 +296,7 @@ Project 级插件设置照会话级的做法实现：
 
 列表与详情共用一个组件 `memory-browser.vue`：
 
-- 列表按布局分组：你（个人档案、回复偏好）、话题、进行中、人物，布局外的文件归入「其他」；组内每行为名称、description、相对更新时间。`profile.md` 与 `preferences.md` 显示为「个人档案」「回复偏好」，其余文件显示文件名。
+- 列表按布局分组：你（个人档案、回复偏好；Project 记忆页为「项目」组，含项目档案、回复偏好）、话题、进行中、人物，布局外的文件归入「其他」；组内每行为名称、description、相对更新时间。`profile.md` 与 `preferences.md` 显示为「个人档案」（项目层为「项目档案」）「回复偏好」，其余文件显示文件名。
 - 点开进入详情视图（带返回）：名称、最后更新时间、摘要（description）、正文（Markdown 渲染，沿用 `workspace-file-preview.vue` 的 `MarkdownRender` 用法）、删除按钮（确认后进回收站）。
 - 底部输入框「告诉模型要记住、修改或忘记什么」：提交后新开一个会话执行（§8.5）。
 - 不提供手工新建与编辑。

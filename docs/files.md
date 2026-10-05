@@ -98,7 +98,9 @@ branches, read-only) and 当前项目, and — while the memory plugin is on —
 ### Memory mounts
 
 `/memory/user` (the user's, shared by every conversation) and `/memory/project` (the conversation's
-Project, a namespace separate from `/project`) hold the memory plugin's files. Every
+Project, a namespace separate from `/project`) hold the memory plugin's files. Inside a Project the
+project layer is primary: it leads the catalog, its `profile.md` holds the Project's standing
+instructions, and the model is told to let it win over user memory. Every
 `WorkspaceScope` says which of the two are reachable. In the hub only a turn the memory plugin
 opened — one that offers `memory_save` — can reach them, through tools and `vfs:` references alike,
 and only the layers that are on for its conversation: the user's switch, the Project's two switches

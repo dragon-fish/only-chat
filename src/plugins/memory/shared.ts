@@ -70,7 +70,7 @@ export function memoryScopes(input: {
 
 export const MemorySaveInputSchema = z.strictObject({
   path: z.string().min(1).max(600)
-    .describe(`The memory file: /memory/user/ (every conversation) or /memory/project/ (this Project only), followed by ${MEMORY_LAYOUT}. For example /memory/user/topics/food.md.`),
+    .describe(`The memory file: /memory/user/ (every conversation) or /memory/project/ (this Project only, and the default inside a Project), followed by ${MEMORY_LAYOUT}. For example /memory/user/topics/food.md.`),
   description: z.string().min(1).max(MAX_MEMORY_DESCRIPTION).regex(/^[^\r\n]*$/, 'One line, no line breaks.')
     .describe('The catalog line: what this file covers and when it matters, so a later conversation can decide whether to open it. Not a copy of the content.'),
   content: z.string().optional()

@@ -41,16 +41,19 @@ const deleting = ref(false)
 const instruction = ref('')
 const starting = ref(false)
 
-/** The layout's folders as a reader sees them; the two single files sit together under 你. */
-const GROUPS: ReadonlyArray<{ title: string, categories: ReadonlyArray<MemoryCategory | null> }> = [
-  { title: '你', categories: ['profile', 'preferences'] },
+/**
+ * The layout's folders as a reader sees them; the two single files sit together at the top, under 你
+ * for user memory and 项目 for a Project's, whose profile describes the Project rather than the user.
+ */
+const GROUPS = computed<ReadonlyArray<{ title: string, categories: ReadonlyArray<MemoryCategory | null> }>>(() => [
+  { title: props.projectId === null ? '你' : '项目', categories: ['profile', 'preferences'] },
   { title: '话题', categories: ['topics'] },
   { title: '进行中', categories: ['areas'] },
   { title: '人物', categories: ['people'] },
   { title: '其他', categories: [null] },
-]
+])
 
-const groups = computed(() => GROUPS
+const groups = computed(() => GROUPS.value
   .map(group => ({
     title: group.title,
     // Profile before preferences, then newest first, which is the order the list arrives in.
@@ -60,7 +63,7 @@ const groups = computed(() => GROUPS
 
 /** The two single files are named for what they are; every other file for its subject. */
 function titleOf(item: MemoryListItem): string {
-  if (item.category === 'profile') return '个人档案'
+  if (item.category === 'profile') return props.projectId === null ? '个人档案' : '项目档案'
   if (item.category === 'preferences') return '回复偏好'
   return item.name
 }
