@@ -1510,7 +1510,7 @@ describe('effective model interface', () => {
     const c = await connect(await seedTestUser())
     c.ws.send(JSON.stringify({ type: 'send', conversation_id: null, parent_id: null, parts: [{ type: 'text', text: 'first' }], provider_id: providerId, model_id: 'mock-1', params: { reasoning_effort: 'high' } }))
     expect(await c.next('message.done')).toMatchObject({ status: 'done' })
-    expect(created[0]!.doStreamCalls[0]!.providerOptions).toEqual({ responses: { reasoningEffort: 'high' } })
+    expect(created[0]!.doStreamCalls[0]!.providerOptions).toEqual({ responses: { reasoningSummary: 'auto', reasoningEffort: 'high' } })
     const conversationId = conversationIdOf(c)
     await db.update(models).set({ interface_id: other!.id }).where(eq(models.provider_id, providerId))
     c.ws.send(JSON.stringify({ type: 'send', conversation_id: conversationId, parent_id: null, parts: [{ type: 'text', text: 'second' }], provider_id: providerId, model_id: 'mock-1' }))
@@ -1588,7 +1588,7 @@ describe('DeepSeek Responses reasoning lifecycle', () => {
     await updateConversation(db, conversationId, 1, { params: { reasoning_enabled: false, reasoning_effort: 'high' } })
     c.ws.send(JSON.stringify({ type: 'send', conversation_id: conversationId, parent_id: null, parts: [{ type: 'text', text: 'next' }], provider_id: providerId, model_id: 'deepseek-fixture' }))
     expect(await c.nextAfter('message.done', 2)).toMatchObject({ status: 'done' })
-    expect(requests.map(request => request.body.reasoning)).toEqual([{ effort: 'high' }, metadataPresent ? { effort: 'none' } : undefined])
+    expect(requests.map(request => request.body.reasoning)).toEqual([{ effort: 'high', summary: 'auto' }, metadataPresent ? { effort: 'none' } : undefined])
     expect(requests[1]!.body.input).toEqual([
       { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'first' }] },
       { type: 'reasoning', id: 'rs_fixture', summary: deepseekReasoningItem.summary, content: deepseekReasoningItem.content, encrypted_content: 'fixture-encrypted-state' },

@@ -30,6 +30,13 @@ input it does not declare is one the model is never sent; `tool_call` describes 
 Reasoning settings affect the current request only. Returned reasoning and its provider metadata
 are stored and replayed regardless of the toggle or capability metadata.
 
+Whenever reasoning is on, every protocol asks for readable reasoning: Responses sends
+`reasoning.summary: 'auto'`, Anthropic sends `thinking: { type: 'adaptive', display: 'summarized' }`
+and Vertex sends `includeThoughts`. Recent Claude models default to empty thinking blocks, and a
+gateway that translates Responses into Anthropic Messages (CLIProxyAPI) maps `reasoning.summary` onto
+`thinking.display`, so dropping the summary request leaves every Claude turn with blank thinking. A
+provider that returns full reasoning text (DeepSeek) still has it shown in preference to a summary.
+
 Reasoning strength itself is three-state everywhere: absent means *inherit* from the Project,
 `null` means *explicit Auto* (reasoning on, no effort sent), and a string is an explicit strength.
 

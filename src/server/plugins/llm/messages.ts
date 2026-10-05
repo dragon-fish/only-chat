@@ -541,8 +541,15 @@ export function buildProviderOptions(
     && (options.some(option => option.type === 'toggle') || declared.includes('none'))
   switch (protocol) {
     case 'responses': {
-      const value = disable ? 'none' : effort
-      return value ? { [RESPONSES_PROVIDER_NAME]: { reasoningEffort: value } satisfies OpenResponsesLanguageModelOptions } : {}
+      // Summaries are opt-in on this protocol: without `reasoning.summary` OpenAI streams no
+      // reasoning text, and gateways that translate to Anthropic leave `thinking.display` omitted,
+      // so the thinking arrives as empty blocks. Ask for one whenever reasoning is on.
+      if (disable) return { [RESPONSES_PROVIDER_NAME]: { reasoningEffort: 'none' } satisfies OpenResponsesLanguageModelOptions }
+      if (!enabled) return {}
+      return { [RESPONSES_PROVIDER_NAME]: {
+        reasoningSummary: 'auto',
+        ...(effort ? { reasoningEffort: effort } : {}),
+      } satisfies OpenResponsesLanguageModelOptions }
     }
     case 'chat-completions': {
       const value = disable ? 'none' : effort

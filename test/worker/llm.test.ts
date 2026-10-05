@@ -259,7 +259,7 @@ describe('responses protocol', () => {
     })
   })
 
-  it('receives full Responses SSE through the registered adapter without requesting a summary', async () => {
+  it('receives full Responses SSE through the registered adapter while requesting a summary', async () => {
     await inHub(async ctx => {
       const lm = await ctx.llm.createModel(await provider('k'), providerInterface('responses'), model)
       let requestBody: unknown
@@ -274,8 +274,8 @@ describe('responses protocol', () => {
           if (part.type === 'error') throw part.error
           acc.apply(part)
         }
-        expect(requestBody).toMatchObject({ reasoning: { effort: 'high' } })
-        expect((requestBody as { reasoning: object }).reasoning).not.toHaveProperty('summary')
+        // Full reasoning text still wins over a summary when the provider returns both.
+        expect(requestBody).toMatchObject({ reasoning: { effort: 'high', summary: 'auto' } })
         expect(acc.parts.map(part => part.type)).toEqual(['reasoning', 'tool_call', 'text'])
         expect(acc.parts[0]).toMatchObject({ type: 'reasoning', text: 'complete reasoning', providerOptions: { responses: { itemId: 'rs_fixture' } } })
       } finally { vi.unstubAllGlobals() }

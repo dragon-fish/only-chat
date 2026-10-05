@@ -297,7 +297,7 @@ describe('buildProviderOptions', () => {
   it('enables reasoning with no effort for an explicit Auto', () => {
     const auto = { reasoning_enabled: true, reasoning_effort: null } as const
     expect(buildProviderOptions('responses', auto, REASONING))
-      .toEqual({})
+      .toEqual({ responses: { reasoningSummary: 'auto' } })
     expect(buildProviderOptions('chat-completions', auto, REASONING)).toEqual({})
     expect(buildProviderOptions('anthropic', auto, REASONING))
       .toEqual({ anthropic: { thinking: { type: 'adaptive', display: 'summarized' } } })
@@ -308,14 +308,14 @@ describe('buildProviderOptions', () => {
   it('treats an inherited-empty reasoning setting as enabled', () => {
     // An inherited-empty setting leaves the reasoning model's default effort in effect.
     expect(buildProviderOptions('responses', {}, REASONING))
-      .toEqual({})
+      .toEqual({ responses: { reasoningSummary: 'auto' } })
     expect(buildProviderOptions('vertex-compatible', {}, REASONING))
       .toEqual({ googleVertex: { thinkingConfig: { includeThoughts: true } } })
   })
 
   it('maps an explicit effort per protocol', () => {
     expect(buildProviderOptions('responses', { reasoning_effort: 'high' }, REASONING))
-      .toEqual({ responses: { reasoningEffort: 'high' } })
+      .toEqual({ responses: { reasoningSummary: 'auto', reasoningEffort: 'high' } })
     expect(buildProviderOptions('chat-completions', { reasoning_effort: 'low' }, REASONING))
       .toEqual({ compat: { reasoningEffort: 'low' } })
     expect(buildProviderOptions('anthropic', { reasoning_effort: 'medium' }, REASONING))
@@ -350,10 +350,10 @@ describe('buildProviderOptions', () => {
   it('sends only an effort the model declares, and falls back to Auto for one it does not', () => {
     const caps: ModelMetadata = { reasoning: true, reasoning_options: [{ type: 'effort', values: ['low', 'high'] }] }
     expect(buildProviderOptions('responses', { reasoning_effort: 'high' }, caps))
-      .toEqual({ responses: { reasoningEffort: 'high' } })
+      .toEqual({ responses: { reasoningSummary: 'auto', reasoningEffort: 'high' } })
     // `medium` is not declared: reasoning stays on, the stale level is simply not sent.
     expect(buildProviderOptions('responses', { reasoning_effort: 'medium' }, caps))
-      .toEqual({})
+      .toEqual({ responses: { reasoningSummary: 'auto' } })
     expect(buildProviderOptions('chat-completions', { reasoning_effort: 'medium' }, caps)).toEqual({})
     expect(buildProviderOptions('anthropic', { reasoning_effort: 'medium' }, caps))
       .toEqual({ anthropic: { thinking: { type: 'adaptive', display: 'summarized' } } })
@@ -365,7 +365,7 @@ describe('buildProviderOptions', () => {
     // An absent or empty declaration means "undeclared", never "nothing allowed".
     for (const caps of [REASONING, { reasoning: true, reasoning_options: [{ type: 'effort', values: [] }] } as ModelMetadata]) {
       expect(buildProviderOptions('responses', { reasoning_effort: 'medium' }, caps))
-        .toEqual({ responses: { reasoningEffort: 'medium' } })
+        .toEqual({ responses: { reasoningSummary: 'auto', reasoningEffort: 'medium' } })
     }
   })
 
