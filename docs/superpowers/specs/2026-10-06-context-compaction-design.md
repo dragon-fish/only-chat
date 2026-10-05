@@ -20,8 +20,12 @@
   focus: string | null       // 手动压缩时用户写的重点说明
   tokensBefore: number | null
   usage: StepUsage | null    // 这次总结请求的用量
+  coveredThrough: { messageId: number, partIndex: number | null }
+                             // 摘要覆盖到的最后一处内容：一条消息，或消息内的某个 part
 }
 ```
+
+同步压缩时 `coveredThrough` 就是压缩点紧挨着的前一处内容：轮与轮之间为上一条消息，一轮之内为同一消息中压缩点之前的那个 part（第一步之前压缩时为这一轮的用户消息）。
 
 `content` 落库而不是每轮重新渲染：发出去的内容保持冻结，渲染逻辑以后改了也不影响已有会话的字节。
 
@@ -34,11 +38,13 @@
 
 ### 1.2 回放规则
 
-`buildModelMessages` 沿根到叶的路径找**最后一个** `compaction` part，之前的一切都不发送。发送内容为：
+`buildModelMessages` 沿根到叶的路径找**最后一个** `compaction` part，以它的 `coveredThrough` 为界，之前的一切都不发送。发送内容为：
 
 ```
-system + [user: 压缩点.content] + 压缩点之后的消息与 part
+system + [user: 压缩点.content] + coveredThrough 之后的消息与 part（不含压缩点本身）
 ```
+
+`coveredThrough` 与压缩点之间若还有内容（同步压缩时没有），这部分的思考内容及其服务商元数据不发送：它们是在完整历史下生成的，换上摘要后回放会让 Claude 的思考块失效。正文、工具调用与结果照常发送。
 
 - 压缩点在一条助手消息中间时，其后的同消息 part 作为助手消息发出；这一轮的用户消息按 §3.4 原样附在 `content` 之后。
 - 压缩点之前的思考块、工具调用与结果、附件、插件附注一律不发送。这是追加式的，不会让 Claude 的思考块因"历史被改写"而失效。
@@ -169,3 +175,4 @@ worker（mock provider 返回指定 usage）：
 - 按成本设置的压缩阈值。
 - 用服务模型代替会话模型写摘要。
 - 重新生成某个压缩点。
+- 后台压缩（一轮结束后在后台写摘要、下一轮开始前写入压缩点，期间的轮次原样回放）：下一期。存储格式已由 `coveredThrough` 预留，回放规则已覆盖中间有内容的情况；Durable Object 中用 `state.waitUntil` 执行，官方文档说明它阻止驱逐直至 promise 完成，最长 15 分钟。
