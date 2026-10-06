@@ -10,7 +10,7 @@ import type {
 import type {
   Message, MessageNote, MessageStatus, PersistedStatus, ConversationParams, ConversationPluginSettings, Usage, UserSettings,
 } from '@/shared/models'
-import type { FilePart, ImagePart, Part, ToolResultPart } from '@/shared/parts'
+import { isAuthoredParts, type FilePart, type ImagePart, type Part, type ToolResultPart } from '@/shared/parts'
 
 /** Row → wire DTO. Persisted rows only carry the persisted statuses; live ones pass `status` in. */
 export function toMessage(row: MessageRow, status: MessageStatus = row.status): Message {
@@ -419,6 +419,8 @@ export async function getAttachment(db: DB, id: number, userId: number): Promise
  * account's attachment reads as missing, never as "not yours".
  */
 export async function assertUserAttachments(db: DB, userId: number, parts: Part[]): Promise<void> {
+  // Also refused by the command schemas; checked again here for parts that reach a send another way.
+  if (!isAuthoredParts(parts)) throw new Error('checkpoint parts are written by the server')
   const refs = parts.filter((part): part is ImagePart | FilePart => part.type === 'image' || part.type === 'file')
   if (refs.length === 0) return
   const ids = [...new Set(refs.map(part => part.attachment_id))]
