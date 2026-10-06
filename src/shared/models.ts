@@ -78,6 +78,8 @@ export const UserSettingsSchema = z.object({
     text: ModelRefSchema.nullable().optional(),
     image: ModelRefSchema.nullable().optional(),
     file_understanding: ModelRefSchema.nullable().optional(),
+    /** Writes a compaction summary when the conversation's own prompt no longer fits (spec context-compaction §3.4). */
+    compaction: ModelRefSchema.nullable().optional(),
   }).optional(),
   /**
    * One template per service job. Stored unvalidated: a template that stopped being usable must
