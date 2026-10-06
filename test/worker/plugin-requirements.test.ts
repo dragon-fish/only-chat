@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { pluginManifests } from '@/shared/plugin-manifests'
 import {
-  ASK_USER_PLUGIN_ID, BROWSER_RUN_PLUGIN_ID, COMFYUI_PLUGIN_ID, DATETIME_PLUGIN_ID, FILE_READER_PLUGIN_ID, FILE_UNDERSTANDING_PLUGIN_ID,
+  ASK_USER_PLUGIN_ID, BROWSER_RUN_PLUGIN_ID, COMFYUI_PLUGIN_ID, CONTEXT_COMPACTION_PLUGIN_ID, DATETIME_PLUGIN_ID, FILE_READER_PLUGIN_ID, FILE_UNDERSTANDING_PLUGIN_ID,
   IMAGE_GENERATION_PLUGIN_ID, MCP_PLUGIN_ID, MEMORY_PLUGIN_ID, TAVILY_PLUGIN_ID, WORKSPACE_FILES_PLUGIN_ID,
 } from '@/shared/plugins'
 import { AskUserServerPlugin } from '@/plugins/ask-user/server'
 import { BrowserRunServerPlugin } from '@/plugins/cloudflare-browser-run/server'
 import { ComfyuiServerPlugin } from '@/plugins/comfyui/server'
+import { ContextCompactionServerPlugin } from '@/plugins/context-compaction/server'
 import { DatetimeServerPlugin } from '@/plugins/datetime/server'
 import { FileReaderServerPlugin } from '@/plugins/file-reader/server'
 import { FileReader } from '@/plugins/file-reader/server/service'
@@ -22,6 +23,7 @@ const SERVERS: Record<string, { inject?: readonly string[] }> = {
   [ASK_USER_PLUGIN_ID]: AskUserServerPlugin,
   [BROWSER_RUN_PLUGIN_ID]: BrowserRunServerPlugin,
   [COMFYUI_PLUGIN_ID]: ComfyuiServerPlugin,
+  [CONTEXT_COMPACTION_PLUGIN_ID]: ContextCompactionServerPlugin,
   [DATETIME_PLUGIN_ID]: DatetimeServerPlugin,
   [FILE_READER_PLUGIN_ID]: FileReaderServerPlugin,
   [FILE_UNDERSTANDING_PLUGIN_ID]: FileUnderstandingServerPlugin,

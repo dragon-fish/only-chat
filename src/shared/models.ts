@@ -78,13 +78,15 @@ export const UserSettingsSchema = z.object({
     text: ModelRefSchema.nullable().optional(),
     image: ModelRefSchema.nullable().optional(),
     file_understanding: ModelRefSchema.nullable().optional(),
+    /** Writes a compaction summary when the conversation's own prompt no longer fits (spec context-compaction §3.4). */
+    compaction: ModelRefSchema.nullable().optional(),
   }).optional(),
   /**
    * One template per service job. Stored unvalidated: a template that stopped being usable must
    * still load, or a bad save would lock the user out of the settings page that repairs it. The
    * write path is where a template is refused.
    */
-  service_prompts: z.object({ conversation_title: z.string().optional(), file_understanding: z.string().optional() }).optional(),
+  service_prompts: z.object({ conversation_title: z.string().optional(), file_understanding: z.string().optional(), compaction: z.string().optional() }).optional(),
 })
 export type UserSettings = z.infer<typeof UserSettingsSchema>
 

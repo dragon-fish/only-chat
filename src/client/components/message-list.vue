@@ -15,7 +15,8 @@ import {
 } from '@/client/ui/message-scroller'
 import type { Message, Project } from '@/shared/models'
 import type { EffectiveModel } from '@/client/stores/sync'
-import { projectPresentation } from '@/client/lib/ui-models'
+import { messagesBehindCheckpoint, projectPresentation } from '@/client/lib/ui-models'
+import { cn } from '@/client/lib/utils'
 import { useAuditContext, type AuditModel } from '@/client/lib/audit-context'
 import type { ModelRef } from '@/shared/api'
 
@@ -42,9 +43,13 @@ function modelInfo(model: ModelRef): AuditModel | undefined {
   return actual && { name: actual.model.metadata.name ?? null, providerName: actual.provider.name, labId: actual.model.lab_id, family: actual.model.metadata.family ?? null }
 }
 
+/** Shown as they were, but faded: the model now receives the checkpoint's summary instead. */
+const behindCheckpoint = computed(() => messagesBehindCheckpoint(props.messages))
+
 const rows = computed(() => props.messages.map((message) => {
   const optimistic = props.optimisticId === message.id
-  if (message.role !== 'assistant') return { message, optimistic }
+  const superseded = behindCheckpoint.value.has(message.id)
+  if (message.role !== 'assistant') return { message, optimistic, superseded }
   const actual = message.provider_id !== null && message.model_id !== null
     ? modelInfo({ provider_id: message.provider_id, model_id: message.model_id })
     : undefined
@@ -52,6 +57,7 @@ const rows = computed(() => props.messages.map((message) => {
   return {
     message,
     optimistic,
+    superseded,
     assistantName: props.project ? projectPresentation(props.project.name).title : actualModelName,
     assistantModelName: props.project && message.model_id !== null ? actualModelName : undefined,
     assistantProviderName: actual?.providerName ?? actualModelName,
@@ -75,7 +81,8 @@ MessageScrollerProvider(
       MessageScrollerContent(:aria-busy="streaming" class="mx-auto w-full max-w-3xl gap-6 px-4 py-5")
         MessageScrollerItem(
           v-for="row in rows" :key="row.message.id" :message-id="String(row.message.id)"
-          :scroll-anchor="row.message.role === 'user'")
+          :scroll-anchor="row.message.role === 'user'"
+          :class="cn(row.superseded && 'opacity-55 transition-opacity hover:opacity-90')")
           MessageItem(
             :message="row.message" :project="project" :assistant-name="row.assistantName"
             :effective-model="effectiveModel"

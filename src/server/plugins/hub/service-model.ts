@@ -22,7 +22,7 @@ export interface ResolvedServiceModel {
 
 export interface ServiceModelSlot {
   /** Which `settings.service_models` entry to read. */
-  slot: 'text' | 'file_understanding'
+  slot: 'text' | 'file_understanding' | 'compaction'
   /** Whether the model can do this slot's job at all, judged on its current metadata. */
   accepts: (metadata: ModelMetadata) => boolean
 }

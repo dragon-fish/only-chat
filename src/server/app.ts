@@ -10,6 +10,7 @@ import { ToolRegistryPlugin } from './plugins/tools'
 import { PluginConfigPlugin } from './plugins/plugin-config'
 import { PluginChannelPlugin } from './plugins/plugin-channel'
 import { PromptSectionsPlugin } from './plugins/prompt-sections'
+import { ContextManagersPlugin } from './plugins/context-manager'
 import { AskUserServerPlugin } from '@/plugins/ask-user/server'
 import { TavilyServerPlugin } from '@/plugins/tavily/server'
 import { DatetimeServerPlugin } from '@/plugins/datetime/server'
@@ -24,6 +25,7 @@ import { FileUnderstandingServerPlugin } from '@/plugins/file-understanding/serv
 import { FileReaderServerPlugin } from '@/plugins/file-reader/server'
 import { FileReaderApiPlugin } from '@/plugins/file-reader/server/api'
 import { BrowserRunServerPlugin } from '@/plugins/cloudflare-browser-run/server'
+import { ContextCompactionServerPlugin } from '@/plugins/context-compaction/server'
 import { ComfyuiServerPlugin } from '@/plugins/comfyui/server'
 import { ComfyuiBackendPlugin } from '@/plugins/comfyui/server/backend'
 import { ImageBackendsPlugin } from './plugins/artifacts/backends'
@@ -72,6 +74,8 @@ export async function createApp(options: AppOptions): Promise<Context> {
       if (!ctx.get('promptSections')) throw new Error('PromptSectionsPlugin loaded but ctx.promptSections is unavailable')
       await ctx.plugin(PluginChannelPlugin)
       if (!ctx.get('pluginChannel')) throw new Error('PluginChannelPlugin loaded but ctx.pluginChannel is unavailable')
+      await ctx.plugin(ContextManagersPlugin)
+      if (!ctx.get('contextManager')) throw new Error('ContextManagersPlugin loaded but ctx.contextManager is unavailable')
       await ctx.plugin(AskUserServerPlugin)
       await ctx.plugin(TavilyServerPlugin)
       await ctx.plugin(DatetimeServerPlugin)
@@ -88,6 +92,7 @@ export async function createApp(options: AppOptions): Promise<Context> {
       if (!ctx.get('hub')) throw new Error('HubPlugin loaded but ctx.hub is unavailable')
       // Needs the hub for its realtime channel and session store, so it comes after it.
       await ctx.plugin(BrowserRunServerPlugin)
+      await ctx.plugin(ContextCompactionServerPlugin)
     }
   }
   if (options.side === 'worker') {

@@ -2,19 +2,21 @@
 import { createApp, h, nextTick, ref } from 'vue'
 import { createPinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
-import { afterEach, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/client/lib/api'
 import { DEFAULT_UPLOAD_POLICY } from '@/shared/upload-policy'
 import Composer from '@/client/components/composer.vue'
 import { TooltipProvider } from '@/client/ui/tooltip'
 import type { Part } from '@/shared/parts'
+import { toast } from 'vue-sonner'
+import type { SlashCommandBinding, SlashCommandInvocation } from '@/client/lib/slash-commands'
 
 let cleanup = () => {}
 afterEach(() => { cleanup(); vi.restoreAllMocks(); document.body.innerHTML = '' })
 
 interface Fired { send: Part[][], queue: Part[][], interrupt: Part[][], stop: number, withdraw: number }
 
-function mount(options: { streaming: boolean, stash?: Part[] }) {
+function mount(options: { streaming: boolean, stash?: Part[], canSend?: boolean, slash?: SlashCommandBinding }) {
   vi.spyOn(api, 'siteConfig').mockResolvedValue({ allowRegister: false, uploads: DEFAULT_UPLOAD_POLICY })
   const host = document.createElement('div')
   document.body.append(host)
@@ -23,8 +25,9 @@ function mount(options: { streaming: boolean, stash?: Part[] }) {
     setup: () => () => h(TooltipProvider, null, { default: () => h(Composer, {
       streaming: options.streaming,
       connected: true,
-      canSend: true,
+      canSend: options.canSend ?? true,
       stash: options.stash ?? [],
+      slash: options.slash,
       onSend: (parts: Part[]) => fired.send.push(parts),
       onQueue: (parts: Part[]) => fired.queue.push(parts),
       onInterrupt: (parts: Part[]) => fired.interrupt.push(parts),
@@ -222,4 +225,79 @@ it('keeps the box focused through a withdrawal', async () => {
   await nextTick()
   expect(document.activeElement).toBe(box)
   expect(box.disabled).toBe(false)
+})
+
+describe('slash commands', () => {
+  function binding(run: (invocation: SlashCommandInvocation) => Promise<void> = async () => {}) {
+    const runs: SlashCommandInvocation[] = []
+    const slash: SlashCommandBinding = {
+      commands: [{ pluginId: 'context_compaction', name: 'compress', description: '压缩上下文', argsHint: '[重点]' }],
+      run: async (invocation) => { runs.push(invocation); await run(invocation) },
+    }
+    return { slash, runs }
+  }
+  const settle = () => new Promise(resolve => setTimeout(resolve, 0))
+
+  it('runs a command instead of queueing it while a turn is running, then clears the box', async () => {
+    const { slash, runs } = binding()
+    const { host, fired } = mount({ streaming: true, slash })
+    await typeAndEnter(host, '/compress keep the API notes')
+    await settle()
+    expect(runs).toEqual([{ pluginId: 'context_compaction', name: 'compress', args: 'keep the API notes' }])
+    expect(fired).toMatchObject({ send: [], queue: [], interrupt: [], stop: 0 })
+    expect(host.querySelector('textarea')!.value).toBe('')
+  })
+
+  it('runs even when sending is blocked, since a command never becomes a message', async () => {
+    const { slash, runs } = binding()
+    const { host, fired } = mount({ streaming: false, canSend: false, slash })
+    // The trailing space closes the menu; without it Enter completes the name instead.
+    await typeAndEnter(host, '/compress ')
+    await settle()
+    expect(runs).toHaveLength(1)
+    expect(fired.send).toHaveLength(0)
+  })
+
+  it('keeps the input and shows the error when the command fails', async () => {
+    const error = vi.spyOn(toast, 'error')
+    const { slash } = binding(async () => { throw new Error('正在生成，稍后再试') })
+    const { host, fired } = mount({ streaming: false, slash })
+    await typeAndEnter(host, '/compress focus')
+    await settle()
+    expect(error).toHaveBeenCalledWith('正在生成，稍后再试')
+    expect(host.querySelector('textarea')!.value).toBe('/compress focus')
+    expect(fired.send).toHaveLength(0)
+  })
+
+  it('sends a message starting with a path as ordinary text', async () => {
+    const { slash, runs } = binding()
+    const { host, fired } = mount({ streaming: false, slash })
+    await typeAndEnter(host, '/project/a.md 看看这个')
+    expect(runs).toHaveLength(0)
+    expect(fired.send).toEqual([[{ type: 'text', text: '/project/a.md 看看这个' }]])
+  })
+
+  it('completes from the menu on Enter without running', async () => {
+    const { slash, runs } = binding()
+    const { host } = mount({ streaming: false, slash })
+    await typeAndEnter(host, '/co')
+    await nextTick()
+    expect(runs).toHaveLength(0)
+    expect(host.querySelector('textarea')!.value).toBe('/compress ')
+  })
+
+  it('lists matching commands and closes the menu on Escape', async () => {
+    const { slash } = binding()
+    const { host, fired } = mount({ streaming: true, slash })
+    const box = host.querySelector('textarea')!
+    box.value = '/'
+    box.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+    expect(host.querySelector('[role="listbox"]')?.textContent).toContain('/compress')
+    await press(host, 'Escape')
+    await nextTick()
+    expect(host.querySelector('[role="listbox"]')).toBeNull()
+    // Escape closed the menu and did nothing else.
+    expect(fired.stop).toBe(0)
+  })
 })

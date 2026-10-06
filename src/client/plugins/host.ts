@@ -1,5 +1,6 @@
-import type { PluginManifest } from '@/shared/plugins'
+import { slashCommandOwners, type PluginManifest } from '@/shared/plugins'
 import type { WsCommand } from '@/shared/ws'
+import type { SlashCommandInvocation } from '@/client/lib/slash-commands'
 
 /** Kept framework-neutral so lazy host behavior is testable without mounting Vue. */
 export type ToolRenderer = unknown
@@ -9,11 +10,37 @@ export type SettingsPanelRenderer = unknown
 export type WorkspacePanelRenderer = unknown
 export type ProjectPanelRenderer = unknown
 export type NotificationRenderer = unknown
+export type CheckpointRenderer = unknown
 
 /** What a plugin asks of the workspace panel; the shell decides whether to grant it. */
 export interface WorkspaceAttention {
   /** A handoff or anything else a person must see now; otherwise the shell may decline quietly. */
   force?: boolean
+}
+
+export type SlashCommandToastKind = 'info' | 'success' | 'error'
+
+/** What a slash command sees of the chat it was typed into, taken when it was submitted. */
+export interface SlashCommandContext {
+  /** Null while the conversation has not been started. */
+  conversationId: number | null
+  streaming: boolean
+  compacting: boolean
+  /** This plugin's `plugin.command`; false when no socket is available to carry it. */
+  send(payload: unknown): boolean
+  /** This plugin's `plugin.event`s; released with the plugin if the command never unsubscribes. */
+  on(handler: (payload: unknown) => void): () => void
+  toast(message: string, kind?: SlashCommandToastKind): void
+}
+
+/** What the chat supplies; the host adds the plugin-scoped channel. */
+export type SlashCommandEnvironment = Pick<SlashCommandContext, 'conversationId' | 'streaming' | 'compacting' | 'toast'>
+
+export interface SlashCommand {
+  /** `true` when it can run now, otherwise the reason it cannot, shown to the person. */
+  enabled?(ctx: SlashCommandContext): true | string
+  /** Resolves when done; a rejection's message is shown as an error and the input is kept. */
+  run(ctx: SlashCommandContext, args: string): Promise<void>
 }
 
 export interface ClientPluginContext {
@@ -35,6 +62,11 @@ export interface ClientPluginContext {
    * `notification`. Without one the notification shows its summary text.
    */
   notifications: { register(component: NotificationRenderer): () => void }
+  /**
+   * A checkpoint this plugin wrote, given the part as `checkpoint`. Without one — the plugin's
+   * client not loaded, or gone — the core draws a plain "上下文已压缩" divider.
+   */
+  checkpoints: { register(component: CheckpointRenderer): () => void }
   /**
    * Extra content on this plugin's own settings page, under `/settings/plugins/<id>`. The
    * declaration-driven form stays; this is for what a form cannot be — a file manager, a log, a
@@ -66,6 +98,8 @@ export interface ClientPluginContext {
     /** False when no socket is available to carry the command. */
     send(payload: unknown): boolean
   }
+  /** The behaviour behind a command this plugin's manifest declares in `slashCommands`. */
+  slashCommands: { register(name: string, command: SlashCommand): () => void }
 }
 
 export type ClientPluginSetup = (ctx: ClientPluginContext) => void | (() => void)
@@ -82,10 +116,13 @@ export class ClientPluginHost {
   readonly manifests: readonly PluginManifest[]
   private readonly loaders: Record<string, ClientPluginLoader>
   private readonly toolPlugins = new Map<string, string>()
+  private readonly commandPlugins: Map<string, string>
+  private readonly slashCommands = new Map<string, { command: SlashCommand, events: ClientPluginContext['events'] }>()
   private readonly renderers = new Map<string, ToolRenderer>()
   private readonly configRenderers = new Map<string, ConfigRenderer>()
   private readonly messageFooters = new Map<string, MessageFooterRenderer>()
   private readonly notificationRenderers = new Map<string, NotificationRenderer>()
+  private readonly checkpointRenderers = new Map<string, CheckpointRenderer>()
   private readonly settingsPanels = new Map<string, SettingsPanelRenderer>()
   private readonly projectPanels = new Map<string, ProjectPanelRenderer>()
   private readonly eventListeners = new Map<string, Set<(payload: unknown) => void>>()
@@ -105,6 +142,23 @@ export class ClientPluginHost {
         this.toolPlugins.set(toolId, manifest.id)
       }
     }
+    this.commandPlugins = slashCommandOwners(manifests)
+  }
+
+  /**
+   * Loads the owning plugin if needed, then runs the command. Throws with a message fit to show
+   * when the command is unavailable — `enabled`'s reason included — or when `run` rejects.
+   */
+  async runSlashCommand(invocation: SlashCommandInvocation, environment: SlashCommandEnvironment): Promise<void> {
+    const { pluginId, name, args } = invocation
+    if (this.commandPlugins.get(name) !== pluginId) throw new Error(`指令 /${name} 不属于插件 ${pluginId}`)
+    await this.ensurePlugin(pluginId)
+    const registered = this.slashCommands.get(name)
+    if (!registered) throw new Error(`指令 /${name} 当前不可用`)
+    const ctx: SlashCommandContext = { ...environment, send: registered.events.send, on: registered.events.on }
+    const available = registered.command.enabled?.(ctx) ?? true
+    if (available !== true) throw new Error(available)
+    await registered.command.run(ctx, args)
   }
 
   renderer(toolId: string): ToolRenderer | undefined {
@@ -189,6 +243,20 @@ export class ClientPluginHost {
     this.disposePlugin(pluginId)
     const registrations: (() => void)[] = []
     let cleanup: void | (() => void)
+    const events: ClientPluginContext['events'] = {
+      on: (handler) => {
+        let listeners = this.eventListeners.get(pluginId)
+        if (!listeners) {
+          listeners = new Set()
+          this.eventListeners.set(pluginId, listeners)
+        }
+        listeners.add(handler)
+        const unregister = () => { this.eventListeners.get(pluginId)?.delete(handler) }
+        registrations.push(unregister)
+        return unregister
+      },
+      send: payload => this.sender?.({ type: 'plugin.command', plugin: pluginId, payload }) ?? false,
+    }
     try {
       cleanup = setup({
         manifests: this.manifests,
@@ -248,6 +316,17 @@ export class ClientPluginHost {
             return unregister
           },
         },
+        checkpoints: {
+          register: (component) => {
+            if (this.checkpointRenderers.has(pluginId)) throw new Error(`checkpoint renderer already registered: ${pluginId}`)
+            this.checkpointRenderers.set(pluginId, component)
+            const unregister = () => {
+              if (this.checkpointRenderers.get(pluginId) === component) this.checkpointRenderers.delete(pluginId)
+            }
+            registrations.push(unregister)
+            return unregister
+          },
+        },
         workspacePanel: {
           register: (component) => {
             if (this.workspacePanels.has(pluginId)) throw new Error(`workspace panel already registered: ${pluginId}`)
@@ -262,19 +341,19 @@ export class ClientPluginHost {
             for (const listener of this.attentionListeners) listener(pluginId, request)
           },
         },
-        events: {
-          on: (handler) => {
-            let listeners = this.eventListeners.get(pluginId)
-            if (!listeners) {
-              listeners = new Set()
-              this.eventListeners.set(pluginId, listeners)
+        events,
+        slashCommands: {
+          register: (name, command) => {
+            if (this.commandPlugins.get(name) !== pluginId) throw new Error(`plugin ${pluginId} does not declare slash command ${name}`)
+            if (this.slashCommands.has(name)) throw new Error(`slash command already registered: ${name}`)
+            const entry = { command, events }
+            this.slashCommands.set(name, entry)
+            const unregister = () => {
+              if (this.slashCommands.get(name) === entry) this.slashCommands.delete(name)
             }
-            listeners.add(handler)
-            const unregister = () => { this.eventListeners.get(pluginId)?.delete(handler) }
             registrations.push(unregister)
             return unregister
           },
-          send: payload => this.sender?.({ type: 'plugin.command', plugin: pluginId, payload }) ?? false,
         },
         config: {
           register: (component) => {
@@ -323,6 +402,18 @@ export class ClientPluginHost {
     if (!this.loaders[pluginId]) return undefined
     await this.ensurePlugin(pluginId)
     return this.notificationRenderers.get(pluginId)
+  }
+
+  /**
+   * Historical checkpoints use this path even when their plugin is now globally disabled. Undefined
+   * for a plugin this build does not know, which the caller draws with the core fallback.
+   */
+  async ensureCheckpointRenderer(pluginId: string): Promise<CheckpointRenderer | undefined> {
+    const existing = this.checkpointRenderers.get(pluginId)
+    if (existing !== undefined) return existing
+    if (!this.loaders[pluginId]) return undefined
+    await this.ensurePlugin(pluginId)
+    return this.checkpointRenderers.get(pluginId)
   }
 
   /** Historical Parts use this path even when their plugin is now globally disabled. */

@@ -10,7 +10,7 @@ import type {
 import type {
   Message, MessageNote, MessageStatus, PersistedStatus, ConversationParams, ConversationPluginSettings, Usage, UserSettings,
 } from '@/shared/models'
-import type { FilePart, ImagePart, Part, ToolResultPart } from '@/shared/parts'
+import { isAuthoredParts, type FilePart, type ImagePart, type Part, type ToolResultPart } from '@/shared/parts'
 
 /** Row → wire DTO. Persisted rows only carry the persisted statuses; live ones pass `status` in. */
 export function toMessage(row: MessageRow, status: MessageStatus = row.status): Message {
@@ -329,7 +329,10 @@ export async function deleteMessageIfUnreferenced(db: DB, id: number, userId: nu
   return deleted?.id === id
 }
 
-/** Creates the sole assistant continuation for one tool-call parent with an atomic SQLite fence. */
+/**
+ * Creates the sole assistant continuation for one tool-call parent with an atomic SQLite fence. A
+ * checkpoint child is not a continuation and does not count; the test mirrors `checkpointOf`.
+ */
 export async function insertAssistantChildIfAbsent(
   db: DB,
   userId: number,
@@ -342,6 +345,7 @@ export async function insertAssistantChildIfAbsent(
     SELECT ?, ?, ?, 'assistant', json(?), ?, ?, ?, ?, ?, ?
      WHERE NOT EXISTS (
        SELECT 1 FROM messages WHERE parent_id = ? AND role = 'assistant'
+          AND NOT (json_array_length(parts) = 1 AND json_extract(parts, '$[0].type') = 'checkpoint')
      )
        AND EXISTS (
          SELECT 1 FROM conversations WHERE id = ? AND head_message_id = ? AND user_id = ?
@@ -419,6 +423,8 @@ export async function getAttachment(db: DB, id: number, userId: number): Promise
  * account's attachment reads as missing, never as "not yours".
  */
 export async function assertUserAttachments(db: DB, userId: number, parts: Part[]): Promise<void> {
+  // Also refused by the command schemas; checked again here for parts that reach a send another way.
+  if (!isAuthoredParts(parts)) throw new Error('checkpoint parts are written by the server')
   const refs = parts.filter((part): part is ImagePart | FilePart => part.type === 'image' || part.type === 'file')
   if (refs.length === 0) return
   const ids = [...new Set(refs.map(part => part.attachment_id))]

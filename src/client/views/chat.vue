@@ -4,7 +4,7 @@ import { useMediaQuery } from '@vueuse/core'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import ImageArtifactDetail from '@/client/views/image-artifact-detail.vue'
 import { viewerArtifactId, withoutViewer, withViewer } from '@/client/lib/image-viewer'
-import { ArrowLeftIcon, PanelRightIcon, RotateCcwIcon } from '@lucide/vue'
+import { ArrowLeftIcon, LoaderCircle, PanelRightIcon, RotateCcwIcon } from '@lucide/vue'
 import MessageList from '@/client/components/message-list.vue'
 import Composer from '@/client/components/composer.vue'
 import ModelPicker from '@/client/components/model-picker.vue'
@@ -43,6 +43,8 @@ import type { ConversationPluginSettings, Message } from '@/shared/models'
 import { joinStash } from '@/shared/stash'
 import type { Part } from '@/shared/parts'
 import { workspaceTabs } from '@/shared/plugins'
+import { availableSlashCommands, type SlashCommandBinding } from '@/client/lib/slash-commands'
+import { toast } from 'vue-sonner'
 
 const props = withDefaults(defineProps<{ conversationId: number | null; projectId?: number | null }>(), { projectId: null })
 const router = useRouter()
@@ -151,6 +153,34 @@ const workspace = useWorkspacePanel(pluginHost, computed(() => ({
 })))
 const workspaceOpen = computed(() => workspace.open.value && tabs.value.length > 0)
 
+// ---- slash commands
+
+/** Whether this conversation is being compacted (spec context-compaction §1.4), as the hub reports it. */
+const conversationCompacting = computed(() => sid.value !== null && sync.compacting.has(sid.value))
+const enabledSlashCommands = computed(() => availableSlashCommands(pluginManifests, sync.settings.plugins))
+/**
+ * A plugin that offers commands here is part of the chat, so its client half is loaded with it
+ * rather than on first use: its `plugin.event`s are not buffered, and a notice about this
+ * conversation (a compaction that failed on its own) would otherwise go unheard.
+ */
+watch(() => [...new Set(enabledSlashCommands.value.map(command => command.pluginId))].join(','), (ids) => {
+  if (!pluginHost || !ids) return
+  for (const id of ids.split(',')) pluginHost.ensurePlugin(id).catch(error => console.error(`plugin ${id} failed to load`, error))
+}, { immediate: true })
+const slashCommands = computed<SlashCommandBinding | undefined>(() => {
+  const host = pluginHost
+  if (!host) return undefined
+  return {
+    commands: enabledSlashCommands.value,
+    run: invocation => host.runSlashCommand(invocation, {
+      conversationId: sid.value,
+      streaming: streaming.value,
+      compacting: conversationCompacting.value,
+      toast: (message, kind = 'info') => { toast[kind](message) },
+    }),
+  }
+})
+
 // ---- model and reasoning
 
 /** Only a deliberate pick is remembered globally; it is the lowest layer of the precedence. */
@@ -205,10 +235,12 @@ const canSend = computed(() => (
   && toolBlockReason.value === null
   && messageHistoryReady.value
   && outstanding.value === 'idle'
+  && !conversationCompacting.value
 ))
 const sendHint = computed(() => {
   if (!messageHistoryReady.value) return '正在加载对话…'
   if (outstanding.value === 'outstanding') return '消息发送中…'
+  if (conversationCompacting.value) return '正在压缩上下文'
   if (toolBlockReason.value) return toolBlockReason.value
   if (effective.value.model === null) return '未选择模型'
   if (modelAvailable.value) return null
@@ -584,10 +616,15 @@ ResizablePanelGroup(direction="horizontal" class="h-full")
               EmptyDescription 从下方输入消息，开启这次交流。
             EmptyContent
               Button(variant="outline" class="min-h-10" @click="focusComposer") 输入消息
+      //- Between turns nothing streams, so the composer has no stop of its own to offer here.
+      .mx-auto.flex.w-full.max-w-3xl.items-center.gap-2.px-4.pb-1.text-xs.text-muted-foreground(v-if="conversationCompacting" role="status")
+        LoaderCircle(class="size-3.5 animate-spin")
+        span 正在压缩上下文…
+        Button(variant="ghost" size="xs" class="ml-auto min-h-10 md:min-h-6" @click="onStop") 停止
       Composer(
         ref="composer" :streaming="streaming" :connected="sync.status === 'open'"
         :can-send="canSend" :hint="sendHint" :replaced="pendingToolCall !== null"
-        :stash="stash"
+        :stash="stash" :slash="slashCommands"
         @send="onSend" @stop="onStop" @queue="onQueue" @interrupt="onInterrupt" @withdraw="onWithdraw")
         template(#replacement)
           .oc-scroll.flex.max-h-96.flex-col.overflow-y-auto(class="md:max-h-[60vh]")

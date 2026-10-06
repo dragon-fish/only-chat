@@ -76,6 +76,25 @@ export const TaskNotificationPartSchema = z.object({
   attachments: z.array(z.number().int()).optional(),
 })
 
+/**
+ * Everything before it, summarized (spec §1.1). Only ever the sole part of an assistant message the
+ * server wrote, and replayed as a user message carrying `content` and `attachments` in place of the
+ * history it covers. A client never authors one: see `AuthoredPartSchema`.
+ */
+export const CheckpointPartSchema = z.object({
+  type: z.literal('checkpoint'),
+  /** The plugin that produced it. Replay does not depend on that plugin being on. */
+  plugin: z.string().min(1),
+  /** Sent verbatim, every turn after it, as the opening user message. */
+  content: z.string(),
+  /** Attachment ids re-attached alongside `content`; named `attachments` so cleanup counts them as in use. */
+  attachments: z.array(z.number().int()),
+  /** Plugins whose `checkpoint/compose` blocks went into `content`. */
+  contributors: z.array(z.string()),
+  /** The producing plugin's own record; the core never reads it. */
+  data: z.unknown(),
+})
+
 export const PartSchema = z.discriminatedUnion('type', [
   TextPartSchema,
   ImagePartSchema,
@@ -84,8 +103,14 @@ export const PartSchema = z.discriminatedUnion('type', [
   ToolCallPartSchema,
   ToolResultPartSchema,
   TaskNotificationPartSchema,
+  CheckpointPartSchema,
 ])
 export const PartsSchema = z.array(PartSchema)
+
+/** Whether a client may have written these: anything but a checkpoint, which only the server writes. */
+export function isAuthoredParts(parts: readonly Part[]): boolean {
+  return parts.every(part => part.type !== 'checkpoint')
+}
 
 export type TextPart = z.infer<typeof TextPartSchema>
 export type FilePart = z.infer<typeof FilePartSchema>
@@ -94,6 +119,7 @@ export type ReasoningPart = z.infer<typeof ReasoningPartSchema>
 export type ToolCallPart = z.infer<typeof ToolCallPartSchema>
 export type ToolResultPart = z.infer<typeof ToolResultPartSchema>
 export type TaskNotificationPart = z.infer<typeof TaskNotificationPartSchema>
+export type CheckpointPart = z.infer<typeof CheckpointPartSchema>
 export type Part = z.infer<typeof PartSchema>
 
 /**

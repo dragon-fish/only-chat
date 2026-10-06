@@ -10,13 +10,14 @@ import fileReader from '@/plugins/file-reader/manifest'
 import mcp from '@/plugins/mcp/manifest'
 import comfyui from '@/plugins/comfyui/manifest'
 import memory from '@/plugins/memory/manifest'
+import contextCompaction from '@/plugins/context-compaction/manifest'
 
 /**
  * The one list both halves of the app read. The client used to discover manifests with
  * `import.meta.glob`, which the Worker cannot share: the server needs the same declarations to
  * know which config keys are secrets, and two discovery mechanisms would eventually disagree.
  */
-export const pluginManifests: readonly PluginManifest[] = [askUser, tavily, datetime, fileReader, imageGeneration, workspaceFiles, memory, fileUnderstanding, browserRun, mcp, comfyui]
+export const pluginManifests: readonly PluginManifest[] = [askUser, tavily, datetime, fileReader, imageGeneration, workspaceFiles, memory, fileUnderstanding, browserRun, mcp, comfyui, contextCompaction]
 
 export function findPluginManifest(pluginId: string): PluginManifest | undefined {
   return pluginManifests.find(manifest => manifest.id === pluginId)

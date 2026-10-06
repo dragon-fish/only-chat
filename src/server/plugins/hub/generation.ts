@@ -29,7 +29,15 @@ import {
 import { resolveAttachmentInputs } from './attachment-transport'
 import { pathToRoot, titleFromParts, titleTextFromParts } from './tree'
 import { completedToolState } from './tool-state'
+import { projectContext } from './checkpoint'
+import { checkpointOf } from '@/shared/checkpoint'
 import { awaitsHuman, deliveredTaskIds, MAX_NOTIFICATION_TURNS, notificationTurnsSinceHuman, originOnPath, type TaskSettlement } from './tasks'
+import { COMPACTING_MESSAGE, type OperationHandle } from './operations'
+import type { ActiveContextManager, StepInput } from '../context-manager'
+import {
+  compactConversation, decide, definitionsOnly, isOverflow, pathTo, tryAcquire, turnInputOf, usageFromSteps,
+  turnInputsOnPath, type CompactionOutcome, type ComposeRequestSource, type LogicalTurn,
+} from './compaction'
 
 /** Payload of the `message/before-send` event: feature plugins may inspect or amend the prompt. */
 export interface BeforeSendPayload {
@@ -39,7 +47,7 @@ export interface BeforeSendPayload {
   path: Message[]
 }
 
-interface Target {
+export interface Target {
   conversation: ConversationRow
   provider: ProviderRow
   providerInterface: ProviderInterfaceRow
@@ -292,16 +300,161 @@ export function notesByMessage(notes: GenerationTurn['notes']): Map<number, Mess
   return out
 }
 
-async function generate(hub: Hub, target: Target, shell: Message, leafMessageId: number): Promise<void> {
+interface PreparedRequest {
+  payload: BeforeSendPayload
+  turn: GenerationTurn
+  attachments: Map<number, AttachmentInput>
+  messages: ModelMessage[]
+}
+
+/**
+ * The request a reply under `leafMessageId` sends first: context, `generation/prepare`, its notes
+ * stored, and the messages built. `prepared` receives the turn as soon as plugins are about to see
+ * it, so a caller owes `generation/settled` even when this throws halfway.
+ */
+async function prepareRequest(
+  hub: Hub,
+  target: Target,
+  leafMessageId: number,
+  prepared: (turn: GenerationTurn) => void,
+): Promise<PreparedRequest> {
+  const { path, attachments } = await assembleContext(hub, target, leafMessageId)
+  const systemPrompt = hub.app.promptSections.render(target.config.systemPrompt, { toolIds: target.toolIds })
+  const payload: BeforeSendPayload = { conversationId: target.conversation.id, systemPrompt, path }
+  hub.app.emit('message/before-send', payload)
+
+  // Plugins prepare what their tools will need, and one may name files for the model (spec §4.5).
+  // The same map is every tool's `ToolContext.turn`, so it is created once, here.
+  const projection = projectContext(payload.path)
+  const turn: GenerationTurn = {
+    userId: hub.userId, conversationId: target.conversation.id, projectId: target.conversation.project_id,
+    toolIds: target.toolIds, path: projection.path, checkpoint: projection.checkpoint, visible: projection.visible,
+    state: new Map<string, unknown>(), canReadFile: canRead(target), notes: [],
+  }
+  prepared(turn)
+  await hub.app.parallel('generation/prepare', turn)
+  // Stored before the prompt is built, so this turn and every later one read the same notes.
+  for (const [messageId, notes] of notesByMessage(turn.notes)) {
+    const stored = await appendMessageNotes(hub.db, messageId, hub.userId, notes)
+    payload.path = payload.path.map(message => (message.id === messageId ? { ...message, notes: stored } : message))
+  }
+  const messages = buildModelMessages({
+    protocol: target.providerInterface.protocol, systemPrompt: payload.systemPrompt, path: payload.path, attachments,
+    labeler: turn.labeler,
+  })
+  return { payload, turn, attachments, messages }
+}
+
+function traceOf(target: Target, messageId: number) {
+  return {
+    conversationId: target.conversation.id,
+    messageId,
+    providerId: target.provider.id,
+    interfaceId: target.providerInterface.id,
+    protocol: target.providerInterface.protocol,
+    modelId: target.model.model_id,
+  }
+}
+
+/**
+ * Built here rather than while the target was resolved: `assistantMessageId` does not exist any
+ * earlier, and a tool that records provenance needs the message it is about to answer into.
+ * One Map per generation (`turn.state`): tools that budget their own calls count into it, and it
+ * dies with the assistant message. Anything longer-lived would leak a budget across conversations.
+ */
+async function resolveTools(
+  hub: Hub,
+  target: Target,
+  assistantMessageId: number,
+  prepared: PreparedRequest,
+  signal: AbortSignal,
+): Promise<ToolSet> {
+  return Object.fromEntries(await hub.app.tools.resolve(target.toolIds, target.enabledPlugins, {
+    userId: hub.userId,
+    conversationId: target.conversation.id,
+    projectId: target.conversation.project_id,
+    assistantMessageId,
+    turn: prepared.turn.state,
+    db: hub.db,
+    assets: hub.app.assets,
+    signal,
+    pluginSettings: target.conversation.plugin_settings ?? null,
+    toolIds: target.toolIds,
+    canReadFile: prepared.turn.canReadFile,
+    acceptsImages: target.model.metadata_resolved.modalities?.input.includes('image') ?? false,
+    acceptsToolResultImages: carriesToolResultImages(target.providerInterface.protocol),
+    publicOrigin: hub.publicOrigin,
+    // What the model has seen, not the structural path: a file read before a checkpoint has to be
+    // read again before it can be edited (spec §1.3).
+    path: projectContext(prepared.payload.path).visible,
+  }))
+}
+
+/**
+ * The request a reply under `leafMessageId` would send, for a compaction that happens outside any
+ * running generation (before a turn, or by hand). Prepared exactly like a generation's, so the
+ * summary request can reuse its cached prefix; `dispose` settles what preparing opened.
+ */
+function standaloneRequest(hub: Hub, target: Target, leafMessageId: number): ComposeRequestSource {
+  return async (signal) => {
+    let turn: GenerationTurn | undefined
+    const settle = async () => {
+      if (!turn) return
+      await hub.app.parallel('generation/settled', turn)
+        .catch(err => console.error('generation/settled listener failed', err))
+    }
+    try {
+      const prepared = await prepareRequest(hub, target, leafMessageId, (prepared) => { turn = prepared })
+      const languageModel = await hub.app.llm.createModel(target.provider, target.providerInterface, target.model, traceOf(target, leafMessageId))
+      const tools = await resolveTools(hub, target, leafMessageId, prepared, signal)
+      return {
+        request: {
+          messages: prepared.messages, tools: definitionsOnly(tools), languageModel,
+          providerOptions: buildProviderOptions(target.providerInterface.protocol, target.config.params, target.model.metadata_resolved),
+        },
+        dispose: settle,
+      }
+    } catch (err) {
+      await settle()
+      throw err
+    }
+  }
+}
+
+/** Stream parts that mean the step in flight has produced something (spec §2, overflow). */
+const OUTPUT_PARTS = new Set([
+  'text-delta', 'reasoning-delta', 'tool-input-start', 'tool-input-delta', 'tool-call', 'tool-result', 'tool-error', 'file', 'source',
+])
+
+interface GenerateOptions {
+  /** Shared with the continuations compaction starts; a reply of its own starts a fresh one. */
+  logical?: LogicalTurn
+  /** A conversation operation held for this reply, released the moment the reply is tracked. */
+  handle?: OperationHandle
+}
+
+async function generate(hub: Hub, target: Target, shell: Message, leafMessageId: number, options: GenerateOptions = {}): Promise<void> {
+  const logical: LogicalTurn = options.logical ?? { stepsUsed: 0, overflowRetried: false, inputs: [] }
+  const stepsBefore = logical.stepsUsed
+  const active = hub.app.contextManager.active(target.enabledPlugins)
   const controller = new AbortController()
   // Rotated by `handOff` when the operator speaks mid-turn: what they said becomes a real user
   // message, so the reply above it has to end and a new one has to begin.
   let acc = new PartAccumulator()
   /** Tool calls whose files the model has already been shown this turn. */
   const shown = new Set<string>()
+  /** Those shown for the step most recently sent, which an overflow means were never answered. */
+  let shownLast: string[] = []
+  /** Parts of the replies this run already handed off. */
+  const handedOff: Part[] = []
   const job = { message: shell, conversationId: target.conversation.id, controller, startedAt: Date.now(), parts: acc.parts, stash: [] as Part[] }
-  // `trackInflight` assigns `settled` onto this very object, so the reference stays usable.
-  await hub.trackInflight(job)
+  // `trackInflight` assigns `settled` onto this very object, so the reference stays usable. A held
+  // compaction is released only now: from here on the reply itself keeps the conversation busy.
+  try {
+    await hub.trackInflight(job)
+  } finally {
+    await options.handle?.release()
+  }
   let tracked = job as InflightJob
 
   /** False once the stream is no longer being read, which is when a result counts as late. */
@@ -309,64 +462,43 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
   let status: PersistedStatus = 'done'
   let error: string | null = null
   let usage: Usage | null = null
+  let failure: unknown
   /** Set once the turn exists; `generation/settled` is owed only for a turn plugins were told about. */
   let preparedTurn: GenerationTurn | undefined
+  /** Set when `afterStep` asked for a checkpoint, which is what ended the run. */
+  let checkpointRequested = false
+  /** Whether the step in flight has produced anything; an overflow is retried only from one that did not. */
+  let stepProduced = false
+  /** The turn's request at a given head, for a compaction after the run. */
+  let composeSource: ((expectedHead: number) => ComposeRequestSource) | undefined
+  // One entry per round trip. The totals below are their sum, which is a cost and not a context.
+  const stepUsage: StepUsage[] = []
 
   try {
-    const { path, attachments } = await assembleContext(hub, target, leafMessageId)
-    const systemPrompt = hub.app.promptSections.render(target.config.systemPrompt, { toolIds: target.toolIds })
-    const payload: BeforeSendPayload = { conversationId: target.conversation.id, systemPrompt, path }
-    hub.app.emit('message/before-send', payload)
-
-    // Plugins prepare what their tools will need, and one may name files for the model (spec §4.5).
-    // The same map is every tool's `ToolContext.turn`, so it is created once, here.
-    const turn: GenerationTurn = {
-      userId: hub.userId, conversationId: target.conversation.id, projectId: target.conversation.project_id,
-      toolIds: target.toolIds, path: payload.path, state: new Map<string, unknown>(), canReadFile: canRead(target), notes: [],
-    }
-    preparedTurn = turn
-    await hub.app.parallel('generation/prepare', turn)
-    // Stored before the prompt is built, so this turn and every later one read the same notes.
-    for (const [messageId, notes] of notesByMessage(turn.notes)) {
-      const stored = await appendMessageNotes(hub.db, messageId, hub.userId, notes)
-      payload.path = payload.path.map(message => (message.id === messageId ? { ...message, notes: stored } : message))
-    }
-    const messages = buildModelMessages({
-      protocol: target.providerInterface.protocol, systemPrompt: payload.systemPrompt, path: payload.path, attachments,
-      labeler: turn.labeler,
-    })
+    const prepared = await prepareRequest(hub, target, leafMessageId, (turn) => { preparedTurn = turn })
+    const { payload, turn, attachments, messages } = prepared
+    if (!options.logical) logical.inputs = turnInputsOnPath(payload.path)
     const params: ConversationParams = target.config.params
-    const trace = {
-      conversationId: target.conversation.id,
-      messageId: shell.id,
-      providerId: target.provider.id,
-      interfaceId: target.providerInterface.id,
-      protocol: target.providerInterface.protocol,
-      modelId: target.model.model_id,
-    }
+    const trace = traceOf(target, shell.id)
     const model: LanguageModel = await hub.app.llm.createModel(target.provider, target.providerInterface, target.model, trace)
+    const tools = await resolveTools(hub, target, shell.id, prepared, controller.signal)
+    const providerOptions = buildProviderOptions(target.providerInterface.protocol, params, target.model.metadata_resolved)
 
-    // Built here rather than while the target was resolved: `assistantMessageId` does not exist any
-    // earlier, and a tool that records provenance needs the message it is about to answer into.
-    // One Map per generation: tools that budget their own calls count into it, and it dies with the
-    // assistant message. Anything longer-lived would leak a budget across conversations.
-    const tools: ToolSet = Object.fromEntries(await hub.app.tools.resolve(target.toolIds, target.enabledPlugins, {
-      userId: hub.userId,
-      conversationId: target.conversation.id,
-      projectId: target.conversation.project_id,
-      assistantMessageId: shell.id,
-      turn: turn.state,
-      db: hub.db,
-      assets: hub.app.assets,
-      signal: controller.signal,
-      pluginSettings: target.conversation.plugin_settings ?? null,
-      toolIds: target.toolIds,
-      canReadFile: turn.canReadFile,
-      acceptsImages: target.model.metadata_resolved.modalities?.input.includes('image') ?? false,
-      acceptsToolResultImages: carriesToolResultImages(target.providerInterface.protocol),
-      publicOrigin: hub.publicOrigin,
-      path: payload.path,
-    }))
+    // Rebuilt from the rows rather than taken from the SDK's list: `buildModelMessages` is what the
+    // next request is built by, and building the same way keeps the cached prefix intact.
+    composeSource = expectedHead => async () => {
+      const path = await pathTo(hub, target.conversation.id, expectedHead)
+      const missing = [...requiredAttachmentIds(path)].filter(id => !attachments.has(id))
+      if (missing.length > 0) {
+        const deps = { db: hub.db, userId: hub.userId, assets: hub.app.assets, llm: hub.app.llm }
+        const added = await resolveAttachmentInputs(deps, target.provider, target.providerInterface, missing, canRead(target), toolDeliveredAttachmentIds(path))
+        for (const [id, input] of added) attachments.set(id, input)
+      }
+      const rebuilt = buildModelMessages({
+        protocol: target.providerInterface.protocol, systemPrompt: payload.systemPrompt, path, attachments, labeler: turn.labeler,
+      })
+      return { request: { messages: rebuilt, tools: definitionsOnly(tools), languageModel: model, providerOptions } }
+    }
 
     // Interrupting is best effort. The abort reaches a tool that is already running, and plenty of
     // them cannot be stopped at all — a search over the network is away and billed the moment it
@@ -380,11 +512,35 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
       await recordLateResult(hub, shell.id, target.conversation.id, name, callId, output)
     })
 
+    const waitsForHuman = awaitsHumanToolResult(tools)
+    /**
+     * The context manager's say between two steps (spec §2). Asked only when the run would go on —
+     * the SDK consults stop conditions only once every call of the step has its result — and never
+     * while a person is being asked or on the last step the budget allows, which ends the turn anyway.
+     * Read off the SDK's own steps: the consumer loop below may not have seen this step's parts yet.
+     */
+    const compactBetweenSteps: StopCondition<ToolSet> = async ({ steps }) => {
+      if (!active || stepsBefore + steps.length >= TOOL_MAX_STEPS || await waitsForHuman({ steps })) return false
+      const last = steps.at(-1)
+      const toolResults = (last?.toolResults ?? []).map(result => toolResultPart(result.toolCallId, result.toolName, result.output))
+      const queued = await hub.queuedTasks(target.conversation.id)
+      const input: StepInput = {
+        ...turnInputOf(hub, target, payload.path),
+        steps: steps.map(step => toStepUsage(step.usage)),
+        stepsUsed: stepsBefore + steps.length,
+        toolResults,
+        pendingAttachments: toolResults.flatMap(result => result.attachments ?? []),
+        pendingInterjections: [...queued.map(entry => entry.notification), ...tracked.stash],
+      }
+      input.lastStep = { usage: input.steps.at(-1)!, messageId: shell.id }
+      if (await decide(() => active.manager.afterStep(input)) !== 'checkpoint') return false
+      checkpointRequested = true
+      return true
+    }
+
     const requestStartedAt = performance.now()
     let firstTokenAt: number | null = null
     const stepPerformance: GenerationStepPerformance[] = []
-    // One entry per round trip. The totals below are their sum, which is a cost and not a context.
-    const stepUsage: StepUsage[] = []
     const result = streamText({
       model,
       messages,
@@ -393,8 +549,8 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
       // the model never gets to answer from. The second condition is not optional: a tool with no
       // `execute` still yields a tool-error output, which satisfies the SDK's own continue check —
       // measured — so a bare step cap would make `ask_user` loop until the cap instead of stopping
-      // for the human.
-      stopWhen: [stepCountIs(TOOL_MAX_STEPS), awaitsHumanToolResult(tools)],
+      // for the human. The cap is what is left of this logical turn's budget.
+      stopWhen: [stepCountIs(TOOL_MAX_STEPS - stepsBefore), waitsForHuman, compactBetweenSteps],
       // The system prompt travels as a `role: 'system'` message so cache breakpoints can attach to it.
       allowSystemInMessages: true,
       // Responses raw deltas preserve full-text versus summary provenance before SDK normalization.
@@ -405,16 +561,6 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
       maxOutputTokens: params.max_tokens,
       repairToolCall: createAskUserToolCallRepair(model, controller.signal),
       /**
-       * Where anything said mid-turn is handed to the model.
-       *
-       * Runs between steps, which is the only place a user message may go: the API refuses one
-       * interleaved among tool results. Draining here rather than on arrival is what makes the
-       * stash a stash — it is held exactly until the model can be told.
-       *
-       * The same text is recorded on the message as it goes, so the transcript shows it where it
-       * landed and a later prompt rebuild puts it back in the same place.
-       */
-      /**
        * Where anything said mid-turn reaches the model.
        *
        * Between steps, which is the only place a user message may go: the API refuses one
@@ -422,12 +568,16 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
        * far is finalized, their words are stored as their own, and a fresh reply begins under
        * them. Anything else would put the operator's sentence inside the assistant's record, where
        * neither the tree nor the screen has any use for it.
+       *
+       * The same text is recorded on the message as it goes, so the transcript shows it where it
+       * landed and a later prompt rebuild puts it back in the same place.
        */
       prepareStep: async ({ messages }) => {
         // Files a tool delivered in the step just finished, in the one message `buildModelMessages`
         // puts right after that batch of tool results. Taken before a handoff rotates the accumulator.
         const shownNow = acc.parts.filter((part): part is ToolResultPart =>
           part.type === 'tool_result' && (part.attachments?.length ?? 0) > 0 && !shown.has(part.call_id))
+        shownLast = shownNow.map(part => part.call_id)
         const extra: ModelMessage[] = []
         if (shownNow.length > 0) {
           const delivered = shownNow.flatMap(part => part.attachments!)
@@ -451,7 +601,7 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
         // every later step sees it too.
         return { messages: [...messages, ...extra, interjectedUserMessage(said, attachments, turn.labeler, interrupted)] }
       },
-      providerOptions: buildProviderOptions(target.providerInterface.protocol, params, target.model.metadata_resolved),
+      providerOptions,
     })
 
     /**
@@ -484,8 +634,10 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
       logLifecycle('generation.handoff', {
         conversationId: target.conversation.id, messageId: shell.id, bytes: partsBytes(said),
       })
+      handedOff.push(...acc.parts)
 
       const interjection = await reserveUserMessage(hub, target.conversation, shell.id, said)
+      logical.inputs.push(interjection)
       await hub.broadcast({ type: 'interject.stash', conversation_id: target.conversation.id, parts: [] })
 
       // Pictures they attached are not in the map assembled before the run began. Which ids are
@@ -516,6 +668,9 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
     // opening with a tool call never produces — and then every part of the stream logs this line.
     let announcedFirstChunk = false
     for await (const part of result.stream) {
+      // Cleared at both boundaries: a step whose request fails outright never emits `start-step`.
+      if (part.type === 'start-step' || part.type === 'finish-step') stepProduced = false
+      else if (OUTPUT_PARTS.has(part.type)) stepProduced = true
       // The gap this exists for: a turn that produces nothing looks identical to one that never
       // asked. Whichever chunk arrives first, the request is answered and the model is speaking.
       if (!announcedFirstChunk && part.type !== 'start' && part.type !== 'start-step') {
@@ -618,15 +773,34 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
       status = 'aborted'
     } else {
       status = 'error'
+      failure = err
       error = err instanceof Error ? err.message : String(err)
       console.error('generation failed', err)
     }
   }
+  logical.stepsUsed = stepsBefore + stepUsage.length
   // Whatever a plugin opened for this turn is released on every exit path, before the message is
   // finalized: nothing the stream could still use is left once it has stopped being read.
   if (preparedTurn) {
     await hub.app.parallel('generation/settled', preparedTurn)
       .catch(err => console.error('generation/settled listener failed', err))
+  }
+
+  // Which compaction this run ends in, if any (spec §2). Decided before the reply is finalized,
+  // because an overflow changes how it is: the failed step is dropped and the reply closes on the
+  // steps that completed — `error` only when none did. Retried once per logical turn.
+  let flow: 'step' | 'overflow' | 'turn' | null = null
+  if (active && composeSource) {
+    if (status === 'done' && checkpointRequested) flow = 'step'
+    else if (status === 'error' && !stepProduced && !logical.overflowRetried && isOverflow(active, failure)) {
+      flow = 'overflow'
+      logical.overflowRetried = true
+      if (acc.parts.length > 0) {
+        status = 'done'
+        error = null
+        usage = usageFromSteps(stepUsage)
+      }
+    }
   }
 
   // Spec §8.3 step 4, in this order on every exit path: UPDATE D1 → broadcast the terminal event →
@@ -647,14 +821,31 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
     finalizeFailure = { err }
     console.error('finalize failed for message', shell.id, err)
   }
+  const final: Message = { ...shell, parts: acc.parts, usage, status, error }
+
+  // Taken while the reply is still in flight, so nothing can be sent into the gap between it and
+  // the checkpoint: the conversation goes straight from generating to compacting.
+  let handle: OperationHandle | undefined
+  if (active && !finalizeFailure) {
+    if (flow === null && status === 'done' && !awaitsHuman(final, name => hub.app.tools.human(name) !== undefined)) {
+      const path = await pathTo(hub, shell.conversation_id, shell.id).catch(() => undefined)
+      if (path && await decide(() => active.manager.afterTurn(turnInputOf(hub, target, path))) === 'checkpoint') flow = 'turn'
+    }
+    if (flow !== null) handle = tryAcquire(hub, shell.conversation_id)
+  }
+  // A continuation takes over whatever was waiting to be said; it reaches the model there.
+  const stash = handle && flow !== 'turn' ? hub.takeStash(shell.id) : []
+
   try {
-    const final: Message = { ...shell, parts: acc.parts, usage, status, error }
     await hub.broadcastGeneration({ type: 'message.done', message_id: shell.id, status, usage, error })
     hub.app.emit('message/done', final)
   } finally {
     await hub.untrackInflight(shell.id)
   }
-  if (finalizeFailure) throw finalizeFailure.err
+  if (finalizeFailure) {
+    await handle?.release()
+    throw finalizeFailure.err
+  }
 
   // After the message is settled and untracked, so the result lands on a terminal message and the
   // continuation starts from one — the same state a person answering would have left behind.
@@ -662,8 +853,88 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
   // conversation that can never be written to again, and the ways to acquire one are ordinary:
   // arguments repair could not fix, or a tool the model named that is not in its set.
   await closeUnanswerableCalls(hub, shell.id, shell.conversation_id, acc.parts, status)
+
+  if (handle && flow !== null && active && composeSource) {
+    // Files tools returned that no completed step answered: never shown, or shown only to the step
+    // that overflowed. They go into the checkpoint, since the request that would carry them is gone.
+    const unanswered = new Set(flow === 'overflow' ? shownLast : [])
+    const pending = [...handedOff, ...acc.parts].flatMap(part => (
+      part.type === 'tool_result' && (!shown.has(part.call_id) || unanswered.has(part.call_id)) ? part.attachments ?? [] : []
+    ))
+    await compactAfterRun(hub, target, active, handle, {
+      flow, expectedHead: shell.id, pending, source: composeSource(shell.id), logical, stash,
+    })
+    return
+  }
   // Tasks that settled during this turn but after its last step had nowhere else to go.
   await deliverTaskNotifications(hub, shell.conversation_id)
+}
+
+/**
+ * The compaction a run ended in, then — mid-turn or after an overflow — the reply that carries the
+ * turn on under the checkpoint (spec §2). The continuation is opened while the conversation is still
+ * held and releases it once tracked; whatever happens, the conversation is released on the way out,
+ * which delivers any task notification held back meanwhile.
+ *
+ * What was interjected and not yet delivered becomes the person's own message under the checkpoint,
+ * and the continuation answers it. Handing it to the new reply's stash instead would make that
+ * reply's very first step hand off, leaving an empty reply in the transcript.
+ */
+async function compactAfterRun(
+  hub: Hub,
+  target: Target,
+  active: ActiveContextManager,
+  handle: OperationHandle,
+  run: {
+    flow: 'step' | 'overflow' | 'turn'
+    expectedHead: number
+    pending: number[]
+    source: ComposeRequestSource
+    logical: LogicalTurn
+    stash: Part[]
+  },
+): Promise<void> {
+  const conversationId = target.conversation.id
+  const continues = run.flow !== 'turn'
+  let carried = false
+  try {
+    const outcome = await compactConversation(hub, target, active, handle, {
+      trigger: run.flow === 'overflow' ? 'overflow' : 'auto',
+      expectedHead: run.expectedHead,
+      turn: continues ? { inputs: [...run.logical.inputs], pendingToolAttachments: [...new Set(run.pending)] } : null,
+      focus: null,
+    }, run.source)
+    if (!outcome.ok || !continues || handle.signal.aborted) return
+    // Like the continuation after a tool answer: the configuration is resolved afresh, and the turn's
+    // model stands in for the per-turn selection only the client knows.
+    const next = await resolveTarget(hub, {
+      conversationId,
+      fallbackModel: { provider_id: target.provider.id, model_id: target.model.model_id },
+      firstParts: [],
+    })
+    if (handle.signal.aborted) return
+    let parentId = outcome.message.id
+    let shell: Message | undefined
+    if (run.stash.length > 0) {
+      const said = await reserveUserMessage(hub, next.conversation, parentId, run.stash)
+      carried = true
+      await hub.broadcast({ type: 'interject.stash', conversation_id: conversationId, parts: [] })
+      run.logical.inputs.push(said)
+      parentId = said.id
+      shell = await openReservedAssistantShell(hub, next, parentId)
+    } else {
+      shell = await openContinuationShell(hub, next, parentId)
+    }
+    if (!shell) return
+    await generate(hub, next, shell, parentId, { logical: run.logical, handle })
+  } finally {
+    // No reply took them over, so they go back to the person rather than vanish.
+    if (!carried && run.stash.length > 0) {
+      await hub.broadcast({ type: 'interject.withdrawn', conversation_id: conversationId, parts: run.stash })
+        .catch(err => console.error('returning an interjection failed', err))
+    }
+    await handle.release()
+  }
 }
 
 /**
@@ -820,11 +1091,119 @@ async function resolveSendParent(hub: Hub, conversation: ConversationRow, parent
   return { ...parent, parts: nextParts }
 }
 
+/** Moves the head onto `messageId` unless something moved it first; true once it is there. */
+async function moveHeadTo(hub: Hub, conversationId: number, messageId: number): Promise<boolean> {
+  const current = await getConversation(hub.db, conversationId, hub.userId)
+  if (!current) return false
+  if (current.head_message_id === messageId) return true
+  const updated = await compareAndSwapConversationHead(hub.db, conversationId, hub.userId, current.head_message_id, messageId)
+  if (!updated) return false
+  await hub.broadcast({ type: 'head.changed', conversation_id: conversationId, message_id: messageId })
+  await hub.emitConversationUpdated(updated)
+  return true
+}
+
+/** Where a reply opens, and the conversation operation it opens under, if one is held for it. */
+interface ReplyStart {
+  parentId: number
+  handle?: OperationHandle
+}
+
+/**
+ * `beforeTurn` (spec §2): asked before the reply exists, so a compaction never leaves an empty reply
+ * to clean up. On 'checkpoint' the checkpoint goes right under `parentId` — the turn's user message,
+ * or the tool message a continuation resumes from — and the reply opens under the checkpoint while
+ * the conversation is still held; the caller hands the handle to `generate`. A compaction that
+ * fails leaves the turn to run as it would have.
+ */
+async function checkpointBeforeTurn(hub: Hub, target: Target, parentId: number): Promise<ReplyStart> {
+  const active = hub.app.contextManager.active(target.enabledPlugins)
+  if (!active) return { parentId }
+  const path = await pathTo(hub, target.conversation.id, parentId)
+  if (await decide(() => active.manager.beforeTurn(turnInputOf(hub, target, path))) !== 'checkpoint') return { parentId }
+  const handle = tryAcquire(hub, target.conversation.id)
+  if (!handle) return { parentId }
+  try {
+    // An edit or a regenerate answers a message that is not the head yet; a checkpoint goes under the head.
+    if (await moveHeadTo(hub, target.conversation.id, parentId)) {
+      const leaf = path.at(-1)
+      // A continuation resumes after tool results no request has carried yet.
+      const pending = leaf?.role === 'assistant'
+        ? leaf.parts.flatMap(part => (part.type === 'tool_result' ? part.attachments ?? [] : []))
+        : []
+      const outcome = await compactConversation(hub, target, active, handle, {
+        trigger: 'auto', expectedHead: parentId, turn: { inputs: turnInputsOnPath(path), pendingToolAttachments: pending }, focus: null,
+      }, standaloneRequest(hub, target, parentId))
+      if (outcome.ok) return { parentId: outcome.message.id, handle }
+    }
+  } catch (err) {
+    await handle.release()
+    throw err
+  }
+  await handle.release()
+  return { parentId }
+}
+
+/** Opens the reply under `start` and generates it, releasing a held operation however that goes. */
+async function startReply(
+  hub: Hub,
+  target: Target,
+  start: ReplyStart,
+  open: (parentId: number) => Promise<Message>,
+): Promise<void> {
+  try {
+    const shell = await open(start.parentId)
+    await generate(hub, target, shell, start.parentId, { handle: start.handle })
+  } finally {
+    await start.handle?.release()
+  }
+}
+
+export interface ManualCheckpointInput {
+  conversationId: number
+  /** What the person wants the summary to keep above all. */
+  focus?: string | null
+}
+
+/**
+ * A compaction asked for by hand (spec §3.7): the checkpoint goes under the current head and nothing
+ * continues. Refused while the conversation is generating or already held, before it has any
+ * message, while a tool waits on the person, and while no context manager is on.
+ */
+export async function requestCheckpoint(hub: Hub, input: ManualCheckpointInput): Promise<CompactionOutcome> {
+  const { conversationId } = input
+  // Checked and taken with no await between them, so nothing can start in the gap.
+  if (hub.inflight().some(job => job.conversationId === conversationId)) return { ok: false, error: '正在生成回复' }
+  const handle = tryAcquire(hub, conversationId)
+  if (!handle) return { ok: false, error: COMPACTING_MESSAGE }
+  try {
+    const conversation = await getConversation(hub.db, conversationId, hub.userId)
+    if (!conversation) return { ok: false, error: 'conversation not found' }
+    const head = conversation.head_message_id
+    if (head === null) return { ok: false, error: '会话还没有消息' }
+    const headMessage = await getMessage(hub.db, head, hub.userId)
+    if (awaitsHuman(headMessage, name => hub.app.tools.human(name) !== undefined)) return { ok: false, error: '有工具在等待回答' }
+    const user = await getUser(hub.db, hub.userId)
+    const active = user ? hub.app.contextManager.active(user.settings.plugins) : undefined
+    if (!active) return { ok: false, error: '上下文管理未开启' }
+    const fallbackModel = await lastGenerationModel(hub.db, conversationId, hub.userId)
+    const target = await resolveTarget(hub, { conversationId, fallbackModel, firstParts: [] })
+    return await compactConversation(hub, target, active, handle, {
+      trigger: 'manual', expectedHead: head, turn: null, focus: input.focus ?? null,
+    }, standaloneRequest(hub, target, head))
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  } finally {
+    await handle.release()
+  }
+}
+
 export async function runSend(hub: Hub, cmd: SendCommand): Promise<void> {
   // Dropping them silently would let a client believe it had changed a conversation's settings (spec §9).
   if (cmd.conversation_id !== null && INIT_FIELDS.some((k) => cmd[k] !== undefined)) {
     throw new Error('conversation init fields are only allowed when conversation_id is null')
   }
+  if (cmd.conversation_id !== null) hub.operations.assertFree(cmd.conversation_id)
   await assertUserAttachments(hub.db, hub.userId, cmd.parts)
   const target = await resolveTarget(hub, {
     conversationId: cmd.conversation_id,
@@ -849,8 +1228,8 @@ export async function runSend(hub: Hub, cmd: SendCommand): Promise<void> {
     projectId: target.conversation.project_id, bytes: partsBytes(cmd.parts),
     ...(cmd.conversation_id === null ? { reason: 'new_conversation' } : {}),
   })
-  const shell = await openReservedAssistantShell(hub, target, user.id)
-  await generate(hub, target, shell, user.id)
+  const start = await checkpointBeforeTurn(hub, target, user.id)
+  await startReply(hub, target, start, parentId => openReservedAssistantShell(hub, target, parentId))
 }
 
 /**
@@ -866,27 +1245,32 @@ function commandModel(cmd: { provider_id?: number; model_id?: string }): { provi
 export async function runRegenerate(hub: Hub, cmd: Extract<WsCommand, { type: 'regenerate' }>): Promise<void> {
   const old = await getMessage(hub.db, cmd.message_id, hub.userId)
   if (!old || old.role !== 'assistant' || old.parent_id === null) throw new Error('not an assistant message')
+  // A checkpoint is not a reply. Skipping a compaction means editing a message before it (spec §1.4).
+  if (checkpointOf(old)) throw new Error('a checkpoint cannot be regenerated')
+  hub.operations.assertFree(old.conversation_id)
   const explicitModel = commandModel(cmd)
   // Without one, regenerate reuses the model that produced the reply being replaced.
   const fallbackModel = old.provider_id !== null && old.model_id !== null
     ? { provider_id: old.provider_id, model_id: old.model_id }
     : undefined
   const target = await resolveTarget(hub, { conversationId: old.conversation_id, explicitModel, fallbackModel, firstParts: [] })
-  const shell = await openAssistantShell(hub, target, old.parent_id)
-  await generate(hub, target, shell, old.parent_id)
+  const start = await checkpointBeforeTurn(hub, target, old.parent_id)
+  await startReply(hub, target, start, parentId => openAssistantShell(hub, target, parentId))
 }
 
 export async function runEdit(hub: Hub, cmd: Extract<WsCommand, { type: 'edit' }>): Promise<void> {
   const old = await getMessage(hub.db, cmd.message_id, hub.userId)
+  // A checkpoint is an assistant message, so this refuses editing one too (spec §1.4).
   if (!old || old.role !== 'user') throw new Error('not a user message')
+  hub.operations.assertFree(old.conversation_id)
   await assertUserAttachments(hub.db, hub.userId, cmd.parts)
   const explicitModel = commandModel(cmd)
   // Without one, the conversation's last generation stands in as the command layer.
   const fallbackModel = await lastGenerationModel(hub.db, old.conversation_id, hub.userId)
   const target = await resolveTarget(hub, { conversationId: old.conversation_id, explicitModel, fallbackModel, firstParts: cmd.parts })
   const user = await persistUserMessage(hub, target.conversation, old.parent_id, cmd.parts)
-  const shell = await openAssistantShell(hub, target, user.id)
-  await generate(hub, target, shell, user.id)
+  const start = await checkpointBeforeTurn(hub, target, user.id)
+  await startReply(hub, target, start, parentId => openAssistantShell(hub, target, parentId))
 }
 
 function toolResultFor(parts: Part[], callId: string): ToolResultPart | undefined {
@@ -912,6 +1296,10 @@ async function ownedTerminalToolMessage(hub: Hub, messageId: number) {
   return { message, conversation }
 }
 
+async function listContinuations(hub: Hub, messageId: number) {
+  return (await listAssistantChildren(hub.db, messageId, hub.userId)).filter(row => !checkpointOf(row))
+}
+
 async function continueFromToolMessage(hub: Hub, messageId: number): Promise<void> {
   const { message, conversation } = await ownedTerminalToolMessage(hub, messageId)
   const state = completedToolState(message.parts, hub.app.tools.skipped.bind(hub.app.tools))
@@ -929,7 +1317,8 @@ async function continueFromToolMessage(hub: Hub, messageId: number): Promise<voi
     await hub.emitConversationUpdated(updated)
   }
 
-  const existingChildren = await listAssistantChildren(hub.db, message.id, hub.userId)
+  // A checkpoint under the tool message is not its continuation (spec §1.4).
+  const existingChildren = await listContinuations(hub, message.id)
   if (existingChildren.length > 1) throw new Error('tool-call message has multiple continuation children')
   if (existingChildren.length === 1) {
     const child = toMessage(existingChildren[0]!)
@@ -950,9 +1339,19 @@ async function continueFromToolMessage(hub: Hub, messageId: number): Promise<voi
     : await lastGenerationModel(hub.db, message.conversation_id, hub.userId)
   const target = await resolveTarget(hub, { conversationId: message.conversation_id, fallbackModel, firstParts: [] })
   if (!(await headStillParent())) return
+  const start = await checkpointBeforeTurn(hub, target, message.id)
+  if (start.parentId !== message.id) {
+    // Under a fresh checkpoint nothing else can have opened a reply: the conversation is still held.
+    await startReply(hub, target, start, async (parentId) => {
+      const shell = await openContinuationShell(hub, target, parentId)
+      if (!shell) throw new Error('continuation could not be opened under the checkpoint')
+      return shell
+    })
+    return
+  }
   const shell = await openContinuationShell(hub, target, message.id)
   if (!shell) {
-    const raced = await listAssistantChildren(hub.db, message.id, hub.userId)
+    const raced = await listContinuations(hub, message.id)
     if (raced.length === 0) {
       if (!(await headStillParent())) return
       throw new Error('continuation child could not be resolved')
@@ -982,6 +1381,8 @@ export async function runInterjectInterrupt(
 ): Promise<void> {
   const conversation = await getConversation(hub.db, cmd.conversation_id, hub.userId)
   if (!conversation) throw new Error('conversation not found')
+  // Before the stash is taken: the send it ends in would be refused, and the words lost with it.
+  hub.operations.assertFree(cmd.conversation_id)
   const job = hub.inflight().find(entry => entry.conversationId === cmd.conversation_id)
   if (!job) throw new Error('nothing is generating in this conversation')
 
@@ -1081,6 +1482,8 @@ async function takeTurnNotifications(hub: Hub, conversationId: number): Promise<
  */
 export async function deliverTaskNotifications(hub: Hub, conversationId: number): Promise<void> {
   if (hub.inflight().some(job => job.conversationId === conversationId)) return
+  // Held until the operation releases the conversation, which delivers them then (spec §1.4).
+  if (hub.operations.isHeld(conversationId)) return
   const found = await deliverableTasks(hub, conversationId)
   if (!found || found.deliverable.length === 0) return
   const { deliverable, path, byId } = found
@@ -1107,6 +1510,6 @@ export async function deliverTaskNotifications(hub: Hub, conversationId: number)
     fallbackModel: { provider_id: origin.provider_id, model_id: origin.model_id },
     firstParts: parts,
   })
-  const shell = await openReservedAssistantShell(hub, target, written.id)
-  await generate(hub, target, shell, written.id)
+  const start = await checkpointBeforeTurn(hub, target, written.id)
+  await startReply(hub, target, start, parentId => openReservedAssistantShell(hub, target, parentId))
 }

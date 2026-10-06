@@ -2,6 +2,7 @@ import { eq } from 'drizzle-orm'
 import type { DB } from '@/server/db/client'
 import { memoryState, type KnownMemoryFile } from '@/server/db/schema'
 import type { Message } from '@/shared/models'
+import type { CheckpointPart } from '@/shared/parts'
 import { MEMORY_PLUGIN_ID, type MemoryScopes } from '../shared'
 import {
   inlineBlock, loadCatalog, loadKnown, renderCatalog, scopeBlock, scopesKey,
@@ -93,9 +94,30 @@ const OFF_NOW = {
 }
 
 /**
+ * The catalog as it stands, and what the conversation knows once the model has read it. The files
+ * are listed before the catalog is rendered, so a write landing in between is told again rather
+ * than never told.
+ */
+export async function catalogSnapshot(input: {
+  db: DB
+  userId: number
+  projectId: number | null
+  scopes: MemoryScopes
+  readFile: ReadMemoryFile
+}): Promise<{ text: string, state: MemoryState }> {
+  const { db, userId, projectId, scopes, readFile } = input
+  const state: MemoryState = { projectId, scopes, known: await loadKnown(db, userId, projectId, scopes) }
+  const catalog = await loadCatalog(db, userId, projectId, scopes, readFile)
+  return { text: renderCatalog(catalog.user, catalog.project), state }
+}
+
+/**
  * The notes a turn adds for memory, all on the user message it answers: the full catalog, ahead of
- * what the person said, the first time memory is on along this path; afterwards a reminder at the
- * end, when something changed since the conversation was last told.
+ * what the person said, when the model has none in context; otherwise a reminder at the end, when
+ * something changed since the conversation was last told.
+ *
+ * The model has a catalog in context when one leads a message after the last checkpoint, or that
+ * checkpoint carries one. A catalog before the checkpoint is no longer sent and does not count.
  *
  * Nothing is added to a message that already carries a memory note — a regenerated reply keeps
  * what it was sent — nor for a turn that does not answer a user message (an answered question, a
@@ -107,24 +129,27 @@ export async function memoryTurnNotes(input: {
   conversationId: number
   projectId: number | null
   scopes: MemoryScopes
-  path: readonly Message[]
+  /** The messages after the last checkpoint; the whole path when there is none. */
+  visible: readonly Message[]
+  checkpoint: CheckpointPart | null
   readFile: ReadMemoryFile
 }): Promise<Array<{ text: string, at?: 'start' }>> {
-  const { db, userId, conversationId, projectId, scopes, path, readFile } = input
-  const leaf = path.at(-1)
+  const { db, userId, conversationId, projectId, scopes, visible, checkpoint, readFile } = input
+  const leaf = visible.at(-1)
   if (leaf === undefined || leaf.role !== 'user') return []
   const mine = (message: Message) => message.notes?.some(note => note.plugin === MEMORY_PLUGIN_ID) === true
   if (mine(leaf)) return []
 
-  const current: MemoryState = { projectId, scopes, known: await loadKnown(db, userId, projectId, scopes) }
-  const hasCatalog = path.some(message => message.notes?.some(note => note.plugin === MEMORY_PLUGIN_ID && note.at === 'start'))
+  const hasCatalog = checkpoint?.contributors.includes(MEMORY_PLUGIN_ID) === true
+    || visible.some(message => message.notes?.some(note => note.plugin === MEMORY_PLUGIN_ID && note.at === 'start'))
   const before = await readState(db, conversationId)
   if (!hasCatalog || before === null) {
-    const catalog = await loadCatalog(db, userId, projectId, scopes, readFile)
-    await writeState(db, conversationId, current)
-    return [{ text: renderCatalog(catalog.user, catalog.project), at: 'start' }]
+    const { text, state } = await catalogSnapshot({ db, userId, projectId, scopes, readFile })
+    await writeState(db, conversationId, state)
+    return [{ text, at: 'start' }]
   }
 
+  const current: MemoryState = { projectId, scopes, known: await loadKnown(db, userId, projectId, scopes) }
   const text = await reminder(db, userId, before, current, readFile)
   if (text === null) return []
   await writeState(db, conversationId, current)

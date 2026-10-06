@@ -43,3 +43,21 @@ it('saves file settings without overwriting other slots and rejects a text-only 
     expect(service?.canRead('image/png')).toBe(true)
   })
 })
+
+it('validates the compaction fallback slot like the text slot', async () => {
+  const db = createDb(env.DB)
+  await connect(await ensureTestUser())
+  const [provider] = await db.insert(providers).values({ user_id: 1, name: 'compaction service', enabled: true, created_at: 0 }).returning()
+  for (const [model_id, output] of [['painter', ['image']], ['writer', ['text']]] as const) {
+    await db.insert(models).values({ provider_id: provider!.id, model_id, enabled: true, metadata_resolved: { modalities: { input: ['text'], output: [...output] } } })
+  }
+  const painter = { provider_id: provider!.id, model_id: 'painter' }
+  const writer = { provider_id: provider!.id, model_id: 'writer' }
+  await runInDurableObject(env.USER_HUB.getByName('1'), async (instance: UserHub) => {
+    await expect(instance.app.hub.settingsUpdate({ service_models: { compaction: painter } })).rejects.toThrow('compaction model not found')
+    await instance.app.hub.settingsUpdate({ service_models: { compaction: writer } })
+    expect((await getUser(db, 1))!.settings.service_models?.compaction).toEqual(writer)
+    await instance.app.hub.settingsUpdate({ service_models: { compaction: null } })
+    expect((await getUser(db, 1))!.settings.service_models?.compaction).toBeNull()
+  })
+})

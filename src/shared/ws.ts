@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { PartSchema, PartsSchema } from './parts'
+import { isAuthoredParts, PartSchema, PartsSchema } from './parts'
 import {
   MessageSchema, MessageStatusSchema, PersistedStatusSchema, ProjectSchema, ProjectPluginSettingsSchema, ConversationParamsSchema,
   ConversationPluginSettingsSchema, ConversationSchema, UsageSchema, UserSettingsSchema,
@@ -8,12 +8,16 @@ import { ModelRefSchema } from './model-ref'
 
 const base = { request_id: z.string().optional() }
 
+/** Parts a client writes. A checkpoint is the server's alone (spec §1.1), whatever a socket claims. */
+const AuthoredPartsSchema = PartsSchema.refine(isAuthoredParts, 'checkpoint parts are written by the server')
+const NonEmptyAuthoredPartsSchema = PartsSchema.min(1).refine(isAuthoredParts, 'checkpoint parts are written by the server')
+
 export const SendCommandSchema = z.object({
   type: z.literal('send'),
   ...base,
   conversation_id: z.number().int().nullable(),
   parent_id: z.number().int().nullable(),
-  parts: PartsSchema.min(1),
+  parts: NonEmptyAuthoredPartsSchema,
   /** The provider/model actually used for this generation — always required, independent of any conversation override below. */
   provider_id: z.number().int(),
   model_id: z.string().min(1),
@@ -51,7 +55,7 @@ export const EditCommandSchema = z.object({
   type: z.literal('edit'),
   ...base,
   message_id: z.number().int(),
-  parts: PartsSchema.min(1),
+  parts: NonEmptyAuthoredPartsSchema,
   provider_id: z.number().int().optional(),
   model_id: z.string().min(1).optional(),
 })
@@ -103,11 +107,13 @@ export const SettingsUpdateCommandSchema = z.object({
       text: ModelRefSchema.nullable().optional(),
       image: ModelRefSchema.nullable().optional(),
       file_understanding: ModelRefSchema.nullable().optional(),
+      compaction: ModelRefSchema.nullable().optional(),
     }).optional(),
     /** `null` clears a prompt back to its default; see `mergeServicePrompts`. */
     service_prompts: z.object({
       conversation_title: z.string().nullable().optional(),
       file_understanding: z.string().refine(value => value.trim().length > 0, 'File understanding prompt cannot be blank').nullable().optional(),
+      compaction: z.string().refine(value => value.trim().length > 0, 'Compaction prompt cannot be blank').nullable().optional(),
     }).optional(),
   }),
 })
@@ -163,7 +169,7 @@ export const InterjectCommandSchema = z.object({
   type: z.literal('interject'),
   ...base,
   conversation_id: z.number().int(),
-  parts: PartsSchema,
+  parts: AuthoredPartsSchema,
 })
 /**
  * Stop the turn and say it now, rather than waiting for a boundary that may be far off.
@@ -222,10 +228,23 @@ export type RegenerateCommand = z.infer<typeof RegenerateCommandSchema>
 export type EditCommand = z.infer<typeof EditCommandSchema>
 
 export const WsEventSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('snapshot'), inflight: z.array(MessageSchema) }),
+  z.object({
+    type: z.literal('snapshot'),
+    inflight: z.array(MessageSchema),
+    /**
+     * Conversations whose context is being compacted right now (spec §1.4), so a client that
+     * reconnects mid-compaction still shows it. The server always sends it; absent reads as none.
+     */
+    compacting: z.array(z.number().int()).optional(),
+  }),
   z.object({ type: z.literal('conversation.created'), conversation: ConversationSchema }),
   z.object({ type: z.literal('conversation.updated'), conversation: ConversationSchema }),
   z.object({ type: z.literal('conversation.deleted'), conversation_id: z.number().int() }),
+  /**
+   * A conversation operation (spec §1.4 — compaction) took or released the conversation. The
+   * snapshot's `compacting` is the same state for a client that was not connected to see this.
+   */
+  z.object({ type: z.literal('conversation.compacting'), conversation_id: z.number().int(), compacting: z.boolean() }),
   z.object({ type: z.literal('conversation.forked'), request_id: z.string(), conversation_id: z.number().int() }),
   z.object({ type: z.literal('message.created'), message: MessageSchema }),
   z.object({

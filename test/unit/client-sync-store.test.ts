@@ -106,6 +106,22 @@ describe('sync store', () => {
     expect(s.snapshotSeq).toBe(2)
   })
 
+  it('tracks compacting conversations live and resets them from each snapshot', () => {
+    const s = useSyncStore()
+    s.applyEvent({ type: 'conversation.created', conversation })
+    s.applyEvent({ type: 'snapshot', inflight: [], compacting: [1, 7] })
+    expect([...s.compacting]).toEqual([1, 7])
+    s.applyEvent({ type: 'conversation.compacting', conversation_id: 7, compacting: false })
+    s.applyEvent({ type: 'conversation.compacting', conversation_id: 9, compacting: true })
+    expect([...s.compacting].sort()).toEqual([1, 9])
+    // Reconnect: whatever finished while offline must not keep showing.
+    s.applyEvent({ type: 'snapshot', inflight: [] })
+    expect(s.compacting.size).toBe(0)
+    s.applyEvent({ type: 'conversation.compacting', conversation_id: 1, compacting: true })
+    s.applyEvent({ type: 'conversation.deleted', conversation_id: 1 })
+    expect(s.compacting.has(1)).toBe(false)
+  })
+
   it('ignores a duplicate streaming shell so accumulated parts survive', () => {
     const s = useSyncStore()
     s.applyEvent({ type: 'conversation.created', conversation })
