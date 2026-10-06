@@ -18,8 +18,14 @@ declare module 'cordis' {
   }
 }
 
-/** What this plugin knows about one generation. Lives in `GenerationTurn.state`, i.e. `ToolContext.turn`. */
-export interface FileTurn extends Omit<GenerationTurn, 'labeler' | 'notes'> {
+/**
+ * What this plugin knows about one generation. Lives in `GenerationTurn.state`, i.e. `ToolContext.turn`.
+ *
+ * `path` is the turn's *visible* messages — what the model has been shown since the last checkpoint —
+ * because a tool reading it asks what the model has seen. `visible` is the assets the turn may name,
+ * which is decided on the whole structural path: a file shown before a checkpoint stays reachable.
+ */
+export interface FileTurn extends Omit<GenerationTurn, 'labeler' | 'notes' | 'checkpoint' | 'visible'> {
   visible: VisibleAssets
 }
 

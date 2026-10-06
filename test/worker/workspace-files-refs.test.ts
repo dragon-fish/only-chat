@@ -78,7 +78,7 @@ async function fixture(toolIds: readonly string[] = WORKSPACE_TOOLS, extraParts:
   const path = [{ id: user!.id, conversation_id: conversation!.id, parent_id: null, seq: 0, role: 'user' as const, parts: user!.parts, provider_id: null, model_id: null, usage: null, status: 'done' as const, error: null, created_at: 0 }]
   // What the hub does at generation start: plugins prepare the turn their tools then run in.
   const turn: GenerationTurn = {
-    userId: 1, conversationId: conversation!.id, projectId: project!.id, toolIds, path, state: new Map(), notes: [],
+    userId: 1, conversationId: conversation!.id, projectId: project!.id, toolIds, path, checkpoint: null, visible: path, state: new Map(), notes: [],
     canReadFile: mime => mime.startsWith('image/'),
   }
   await ctx.parallel('generation/prepare', turn)

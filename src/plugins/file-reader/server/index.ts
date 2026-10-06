@@ -37,7 +37,8 @@ export const FileReaderServerPlugin = {
         if (!turn.toolIds.includes(READ_FILE_TOOL_ID)) return
         const fileTurn: FileTurn = {
           userId: turn.userId, conversationId: turn.conversationId, projectId: turn.projectId,
-          toolIds: turn.toolIds, path: turn.path, state: turn.state, canReadFile: turn.canReadFile,
+          toolIds: turn.toolIds, path: turn.visible, state: turn.state, canReadFile: turn.canReadFile,
+          // Authorization stays on the structural path (spec §1.3); see `FileTurn`.
           visible: await loadVisibleAssets(ctx.db.orm, turn.userId, turn.path),
         }
         ctx.fileReader.begin(fileTurn)

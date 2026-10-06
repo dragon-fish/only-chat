@@ -29,6 +29,7 @@ import {
 import { resolveAttachmentInputs } from './attachment-transport'
 import { pathToRoot, titleFromParts, titleTextFromParts } from './tree'
 import { completedToolState } from './tool-state'
+import { projectContext } from './checkpoint'
 import { awaitsHuman, deliveredTaskIds, MAX_NOTIFICATION_TURNS, notificationTurnsSinceHuman, originOnPath, type TaskSettlement } from './tasks'
 
 /** Payload of the `message/before-send` event: feature plugins may inspect or amend the prompt. */
@@ -320,9 +321,11 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
 
     // Plugins prepare what their tools will need, and one may name files for the model (spec §4.5).
     // The same map is every tool's `ToolContext.turn`, so it is created once, here.
+    const projection = projectContext(payload.path)
     const turn: GenerationTurn = {
       userId: hub.userId, conversationId: target.conversation.id, projectId: target.conversation.project_id,
-      toolIds: target.toolIds, path: payload.path, state: new Map<string, unknown>(), canReadFile: canRead(target), notes: [],
+      toolIds: target.toolIds, path: projection.path, checkpoint: projection.checkpoint, visible: projection.visible,
+      state: new Map<string, unknown>(), canReadFile: canRead(target), notes: [],
     }
     preparedTurn = turn
     await hub.app.parallel('generation/prepare', turn)
@@ -365,7 +368,9 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
       acceptsImages: target.model.metadata_resolved.modalities?.input.includes('image') ?? false,
       acceptsToolResultImages: carriesToolResultImages(target.providerInterface.protocol),
       publicOrigin: hub.publicOrigin,
-      path: payload.path,
+      // What the model has seen, not the structural path: a file read before a checkpoint has to be
+      // read again before it can be edited (spec §1.3).
+      path: projectContext(payload.path).visible,
     }))
 
     // Interrupting is best effort. The abort reaches a tool that is already running, and plenty of

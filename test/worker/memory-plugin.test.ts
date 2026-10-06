@@ -93,7 +93,7 @@ async function startTurn(h: Harness, options: { toolIds?: string[], path?: Messa
   const projectId = options.projectId === undefined ? h.projectId : options.projectId
   const generation: GenerationTurn = {
     userId: 1, conversationId: h.conversationId, projectId, toolIds,
-    path: options.path ?? [], state: new Map(), canReadFile: () => false, notes: [],
+    path: options.path ?? [], checkpoint: null, visible: options.path ?? [], state: new Map(), canReadFile: () => false, notes: [],
   }
   await h.ctx.parallel('generation/prepare', generation)
   const runtime: ToolContext = {
