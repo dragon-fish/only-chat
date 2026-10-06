@@ -209,6 +209,7 @@ catalog 在记忆首次生效的那一轮渲染一次，作为开头附注（§5
 - 通常是第一条消息；对话中途才开启记忆时，挂在那时的用户消息上，不改写更早的历史。
 - 此后的一切变化——别处的写入、移动、删除，某一层的开关，对话换了 Project——都以结尾附注告知（§9）。
 - 编辑首条消息产生的新分支上还没有 catalog，回答它的那一轮重新挂一份。
+- 上下文压缩后，检查点之前的附注不再发送。生成检查点时记忆插件经 `checkpoint/compose` 把当前 catalog 放进检查点；检查点没有带上 catalog（记忆当时未生效）时，之后第一轮记忆生效的用户消息重新挂一份。
 - 本对话被告知过的内容记在插件表 `memory_state`（§9.2）；核心的 `conversations` 表与对话更新逻辑不感知记忆。
 
 ### 4.6 system 段
@@ -347,12 +348,13 @@ worker：
 
 - workspace-files 在本轮状态里记录本轮改动过的路径（`write_file`、`edit_file`、`delete_file`、`rename_file` 的新旧路径、`copy_file`、`restore_file`、带 `content` 的 `memory_save`），导出 `touchedPaths(state)`；不带 `content` 的 `memory_save` 由记忆插件自行记录。
 - `generation/settled` 时：在上次告知的层内对比当前文件与 `known`，旧路径或新路径在本轮改动过的条目并入 `known`（Agent 自己做的不必提醒）；其余留待下一轮。
+- `checkpoint/committed` 时：检查点的 `contributors` 含记忆插件，则把 `memory_state` 重置为 `checkpoint/compose` 渲染那份 catalog 时的状态；压缩失败时不变。
 
 ### 9.3 生成附注
 
 `generation/prepare` 中，本轮路径的末尾是一条用户消息、且它还没有记忆附注时：
 
-1. 路径上还没有记忆的开头附注（或尚无 `memory_state`）：渲染完整 catalog 作为开头附注，并把当前状态写入 `memory_state`。
+1. 模型可见的部分（`turn.visible`）没有记忆的开头附注、当前检查点的 `contributors` 也不含记忆插件（或尚无 `memory_state`）：渲染完整 catalog 作为开头附注，并把当前状态写入 `memory_state`。
 2. 否则对比 `memory_state` 与当前状态，有差异则生成一条结尾附注并更新 `memory_state`：
    - 某层由开变关：`User memory is now off in this conversation: …`；
    - 某层由关变开，或对话换了 Project：附上该层当前的完整条目（同 catalog 的格式）；移出 Project 时说明项目记忆已关闭；

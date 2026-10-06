@@ -88,7 +88,45 @@ in plugin manifest order, and every later turn replays it from there as a `<syst
 whether or not the plugin is still on. What was sent stays sent; a fork copies the notes with the
 messages. The memory plugin puts its catalog on the first user message memory is on for, and tells
 the conversation about later changes — another conversation's writes, a switch, a new Project — in
-notes on later messages.
+notes on later messages. Notes before a checkpoint are no longer sent (see below), so a plugin asks
+"has the model seen this?" of `GenerationTurn.visible`, not `path`: memory contributes its catalog to
+the checkpoint through `checkpoint/compose`, and when a checkpoint did not carry it, the next memory
+turn attaches it again.
+
+## Context compaction
+
+A checkpoint is an assistant message whose only part is `{ type: 'checkpoint', plugin, content,
+attachments, contributors, data }`. Only `hub.checkpoints.commit` writes one — one D1 batch that
+inserts it under `expectedHead` and moves the head there with a compare-and-swap — and clients can
+never send one. `buildModelMessages` replays the last checkpoint on the path as a user message
+(`content` plus its attachments) and sends nothing before it, whether or not the plugin that wrote
+it is still on. `GenerationTurn.path` stays the whole structural path for permission questions
+(which attachments the conversation may reach); `checkpoint` and `visible` (the messages after it)
+answer what the model has seen, and `ToolContext.path` is `visible`.
+
+The core owns the checkpoint, the per-conversation operation lock (`hub.operations`) and the flows;
+the summary is a plugin's business. A plugin registers a `ContextManager` with
+`ctx.contextManager.register` — one at most, counted only while that plugin is switched on, tool
+selection playing no part — and the hub consults it before a turn (before the reply shell exists),
+between steps (as a `stopWhen` condition), after a normal finish, and on a provider error it
+recognises as overflow (one retry per logical turn, only when the failed step produced nothing). On
+`checkpoint` the hub holds the conversation, collects `checkpoint/compose` blocks (collect-only),
+has the manager write the content, commits under the expected head and — mid-turn or after an
+overflow — continues in a new reply under the checkpoint on the turn's remaining step budget. While
+held, send, edit, regenerate, switch_head and delete are refused with "正在压缩上下文", task
+notifications wait, and `stop` aborts the operation; the lock is announced with
+`conversation.compacting` and listed in the snapshot's `compacting`. A failed compaction writes
+nothing and emits `checkpoint/failed`; a written one emits `checkpoint/committed`, which is where a
+contributing plugin updates its own state. `hub.compaction.requestCheckpoint` is the manual entry.
+On the client, checkpoints render through the owning plugin's `ctx.checkpoints.register` component,
+or a core divider when none is loaded.
+
+`context_compaction` is that plugin. It has no tools. It compacts at 80% of the model's context
+window (90% from 300k), or on `/compress [focus]`. The summary comes from the conversation's own
+model on its cached prefix, with tool definitions but no execute handlers; when that prefix no
+longer fits, from the compaction fallback model (Settings → 全局服务模型), and without one the
+compaction fails rather than resending the history uncached. The spec is
+`docs/superpowers/specs/2026-10-06-context-compaction-design.md`.
 
 ## Image backends
 
@@ -128,3 +166,5 @@ binary workspace files and file understanding.
 backends.
 `docs/superpowers/specs/2026-10-03-memory-plugin-design.md` defines the memory plugin, the memory
 mounts and plugin prompt contributions.
+`docs/superpowers/specs/2026-10-06-context-compaction-design.md` defines checkpoints, the context
+manager hook, the context compaction plugin and slash commands.
