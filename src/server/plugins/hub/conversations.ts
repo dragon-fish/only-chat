@@ -127,9 +127,20 @@ export async function compareAndSwapConversationHead(
  * live in. Do not reintroduce a cascade here — a fork, a retry or a branch would each make one
  * conversation's deletion destroy images another still shows.
  */
+/**
+ * `messages.parent_id` cascades, so deleting the conversation would delete each message by deleting
+ * its parent: one level of recursion per message in a chain. D1 refuses past its trigger-recursion
+ * limit ("too many levels of trigger recursion"), which a fork — one chain of its whole path — or any
+ * long conversation exceeds. Detaching the parents first, in the same batch, leaves one level.
+ */
 export async function deleteConversation(db: DB, id: number, userId: number): Promise<void> {
-  const [row] = await db.delete(conversations).where(and(eq(conversations.id, id), eq(conversations.user_id, userId))).returning({ id: conversations.id })
-  if (!row) throw new Error('conversation not found')
+  const owned = and(eq(conversations.id, id), eq(conversations.user_id, userId))
+  const [, deleted] = await db.batch([
+    db.update(messages).set({ parent_id: null })
+      .where(inArray(messages.conversation_id, db.select({ id: conversations.id }).from(conversations).where(owned))),
+    db.delete(conversations).where(owned).returning({ id: conversations.id }),
+  ])
+  if (deleted.length === 0) throw new Error('conversation not found')
 }
 
 /**
