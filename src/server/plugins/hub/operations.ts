@@ -32,8 +32,14 @@ interface Held {
 export class ConversationOperations {
   private readonly held = new Map<number, Held>()
 
-  /** `onRelease` runs after every release, for work that waited on the lock. */
-  constructor(private readonly onRelease: (conversationId: number) => Promise<void>) {}
+  /**
+   * `onRelease` runs after every release, for work that waited on the lock. `onChange` announces
+   * each take and release, so clients see "compacting" live and not only from a reconnect snapshot.
+   */
+  constructor(
+    private readonly onRelease: (conversationId: number) => Promise<void>,
+    private readonly onChange: (conversationId: number, held: boolean) => Promise<void> = async () => {},
+  ) {}
 
   isHeld(conversationId: number): boolean {
     return this.held.has(conversationId)
@@ -59,11 +65,13 @@ export class ConversationOperations {
     let settle!: () => void
     const released = new Promise<void>((resolve) => { settle = resolve })
     this.held.set(conversationId, { controller, released })
+    this.onChange(conversationId, true).catch(error => console.error('announcing a conversation operation failed', error))
     let releasing: Promise<void> | undefined
     const release = (): Promise<void> => {
       releasing ??= (async () => {
         if (this.held.get(conversationId)?.controller === controller) this.held.delete(conversationId)
         settle()
+        await this.onChange(conversationId, false).catch(error => console.error('announcing a conversation operation failed', error))
         await this.onRelease(conversationId).catch(error => console.error('work waiting on a conversation operation failed', error))
       })()
       return releasing

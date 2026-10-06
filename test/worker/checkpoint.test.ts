@@ -299,6 +299,19 @@ describe('conversation operation lock', () => {
     expect(await headOf(conversationId)).not.toBe(assistantId)
   })
 
+  it('announces taking and releasing the lock to connected clients', async () => {
+    const providerId = await seedProvider()
+    const { conversationId } = await seedChat(providerId)
+    const c = await connect(await ensureTestUser())
+    await c.next('snapshot')
+    const mine = () => c.events.filter(event => event.type === 'conversation.compacting' && event.conversation_id === conversationId)
+    let held: OperationHandle | undefined
+    await runInDurableObject(hubStub(), (instance: UserHub) => { held = instance.app.hub.operations.acquire(conversationId) })
+    await expect.poll(mine).toEqual([{ type: 'conversation.compacting', conversation_id: conversationId, compacting: true }])
+    await runInDurableObject(hubStub(), () => held!.release())
+    await expect.poll(() => mine().map(event => event.type === 'conversation.compacting' && event.compacting)).toEqual([true, false])
+  })
+
   it('is aborted and released by stop, writing nothing', async () => {
     const providerId = await seedProvider()
     const { conversationId, assistantId } = await seedChat(providerId)

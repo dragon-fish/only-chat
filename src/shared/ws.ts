@@ -107,6 +107,7 @@ export const SettingsUpdateCommandSchema = z.object({
       text: ModelRefSchema.nullable().optional(),
       image: ModelRefSchema.nullable().optional(),
       file_understanding: ModelRefSchema.nullable().optional(),
+      compaction: ModelRefSchema.nullable().optional(),
     }).optional(),
     /** `null` clears a prompt back to its default; see `mergeServicePrompts`. */
     service_prompts: z.object({
@@ -238,6 +239,11 @@ export const WsEventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('conversation.created'), conversation: ConversationSchema }),
   z.object({ type: z.literal('conversation.updated'), conversation: ConversationSchema }),
   z.object({ type: z.literal('conversation.deleted'), conversation_id: z.number().int() }),
+  /**
+   * A conversation operation (spec §1.4 — compaction) took or released the conversation. The
+   * snapshot's `compacting` is the same state for a client that was not connected to see this.
+   */
+  z.object({ type: z.literal('conversation.compacting'), conversation_id: z.number().int(), compacting: z.boolean() }),
   z.object({ type: z.literal('conversation.forked'), request_id: z.string(), conversation_id: z.number().int() }),
   z.object({ type: z.literal('message.created'), message: MessageSchema }),
   z.object({
