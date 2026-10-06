@@ -10,6 +10,7 @@ import { ToolRegistryPlugin } from './plugins/tools'
 import { PluginConfigPlugin } from './plugins/plugin-config'
 import { PluginChannelPlugin } from './plugins/plugin-channel'
 import { PromptSectionsPlugin } from './plugins/prompt-sections'
+import { ContextManagersPlugin } from './plugins/context-manager'
 import { AskUserServerPlugin } from '@/plugins/ask-user/server'
 import { TavilyServerPlugin } from '@/plugins/tavily/server'
 import { DatetimeServerPlugin } from '@/plugins/datetime/server'
@@ -72,6 +73,8 @@ export async function createApp(options: AppOptions): Promise<Context> {
       if (!ctx.get('promptSections')) throw new Error('PromptSectionsPlugin loaded but ctx.promptSections is unavailable')
       await ctx.plugin(PluginChannelPlugin)
       if (!ctx.get('pluginChannel')) throw new Error('PluginChannelPlugin loaded but ctx.pluginChannel is unavailable')
+      await ctx.plugin(ContextManagersPlugin)
+      if (!ctx.get('contextManager')) throw new Error('ContextManagersPlugin loaded but ctx.contextManager is unavailable')
       await ctx.plugin(AskUserServerPlugin)
       await ctx.plugin(TavilyServerPlugin)
       await ctx.plugin(DatetimeServerPlugin)

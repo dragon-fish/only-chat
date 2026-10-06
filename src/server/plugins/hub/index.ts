@@ -18,7 +18,11 @@ import { createProject, deleteProject, getProject, listProjectConversations, upd
 import { SeqAllocator } from './seq'
 import { joinStash } from '@/shared/stash'
 import { logLifecycle, partsBytes } from './lifecycle-log'
-import { deliverTaskNotifications, runEdit, runInterjectInterrupt, runRegenerate, runSend, runToolContinue, runToolRespond } from './generation'
+import {
+  deliverTaskNotifications, requestCheckpoint, runEdit, runInterjectInterrupt, runRegenerate, runSend, runToolContinue, runToolRespond,
+  type ManualCheckpointInput,
+} from './generation'
+import type { CompactionOutcome } from './compaction'
 import { TASK_STORAGE_PREFIX, type TaskSettlement } from './tasks'
 import { ConversationOperations } from './operations'
 import { Checkpoints } from './checkpoint-writer'
@@ -57,7 +61,7 @@ const ALARM_WATCHDOG_MS = 60_000
 
 export class Hub extends Service {
   static readonly provide = 'hub'
-  static readonly inject = ['env', 'doState', 'db', 'assets', 'llm', 'tools', 'promptSections', 'pluginChannel']
+  static readonly inject = ['env', 'doState', 'db', 'assets', 'llm', 'tools', 'promptSections', 'pluginChannel', 'contextManager']
 
   /** Owning context (this.ctx inside methods is the caller's context, per cordis semantics). */
   readonly app: Context
@@ -69,6 +73,14 @@ export class Hub extends Service {
   readonly operations = new ConversationOperations(conversationId => deliverTaskNotifications(this, conversationId))
   /** Writing checkpoints and collecting what plugins add to them (spec §1.4, §1.5). */
   readonly checkpoints = new Checkpoints(this)
+  /**
+   * Compaction on request (spec §3.7), for the context manager's plugin: a checkpoint under the
+   * current head, written by the registered manager with trigger 'manual'. Resolves with the
+   * checkpoint message or the reason nothing was written.
+   */
+  readonly compaction = {
+    requestCheckpoint: (input: ManualCheckpointInput): Promise<CompactionOutcome> => requestCheckpoint(this, input),
+  }
   private readonly _inflight = new Map<number, InflightJob>()
   private readonly _settlers = new Map<number, () => void>()
   private _revoked = false
