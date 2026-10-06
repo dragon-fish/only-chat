@@ -1,5 +1,6 @@
 import type { CatalogProviderSummary, ModelRef } from '@/shared/api'
 import type { ModelListItem, ModelQuery, Project, ProviderWithInterfaces, Conversation, Message, Usage } from '@/shared/models'
+import { lastCheckpointIndex } from '@/shared/checkpoint'
 
 export type EnabledModelEntry = {
   provider: ProviderWithInterfaces
@@ -146,9 +147,18 @@ export function messageUsageMetrics(usage: Usage): { cachedPercent: number | nul
   }
 }
 
-/** Keep the previous turn's known context visible while the same model is producing its successor. */
-export function latestAssistantContextUsage(path: readonly Message[], model: ModelRef): Usage | null {
-  const assistants = [...path].reverse().filter(message => message.role === 'assistant')
+/**
+ * Keep the previous turn's known context visible while the same model is producing its successor.
+ *
+ * `'pending'` after a checkpoint until a reply after it reports usage: every number before it
+ * measured a context the model no longer receives, and the checkpoint's own usage is what writing
+ * the summary cost — reading either as the context size shows a full gauge on an emptied context.
+ */
+export function latestAssistantContextUsage(path: readonly Message[], model: ModelRef): Usage | 'pending' | null {
+  const cut = lastCheckpointIndex(path)
+  const tail = cut === null ? path : path.slice(cut + 1)
+  if (cut !== null && !tail.some(message => message.role === 'assistant' && message.usage)) return 'pending'
+  const assistants = [...tail].reverse().filter(message => message.role === 'assistant')
   const latest = assistants[0]
   if (!latest || latest.provider_id !== model.provider_id || latest.model_id !== model.model_id) return null
   if (latest.usage) return latest.usage
@@ -173,6 +183,24 @@ export function messageContextUsage(usage: Usage, limit: number): { used: number
   if (prompt === undefined || completion === undefined || limit <= 0) return null
   const used = prompt + completion
   return { used, limit, percent: used / limit * 100 }
+}
+
+const tokenNumbers = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 })
+
+/** A token count at a glance: `950`, `12.5k`, `1.2M`. */
+export function compactTokenCount(value: number): string {
+  if (value >= 1_000_000) return `${tokenNumbers.format(value / 1_000_000)}M`
+  if (value >= 1_000) return `${tokenNumbers.format(value / 1_000)}k`
+  return tokenNumbers.format(value)
+}
+
+/**
+ * Messages the model no longer receives: everything before the last checkpoint on the path,
+ * which replays as its summary instead (spec context-compaction §1.2).
+ */
+export function messagesBehindCheckpoint(path: readonly Message[]): Set<number> {
+  const cut = lastCheckpointIndex(path)
+  return new Set(cut === null ? [] : path.slice(0, cut).map(message => message.id))
 }
 
 export function labName(id: string, catalogProviders: readonly CatalogProviderSummary[] = []): string {

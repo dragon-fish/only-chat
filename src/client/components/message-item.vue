@@ -16,6 +16,7 @@ import { messageSegments, turnBlocks } from '@/client/components/message-segment
 import { canContinueToolMessage } from '@/client/components/tool-part-renderer'
 import ProjectAvatar from '@/client/components/project-avatar.vue'
 import TaskNotificationRow from '@/client/components/task-notification-row.vue'
+import CheckpointDivider from '@/client/components/checkpoint-divider.vue'
 import { provideAssetScope } from '@/client/lib/asset-refs'
 import { useAttachmentUrl, useAuditContext } from '@/client/lib/audit-context'
 import { cn } from '@/client/lib/utils'
@@ -28,6 +29,7 @@ import { Message as MessageRoot, MessageAvatar, MessageContent, MessageFooter, M
 import { Textarea } from '@/client/ui/textarea'
 import type { Message, Project } from '@/shared/models'
 import { isNotificationOnly, type TaskNotificationPart } from '@/shared/parts'
+import { checkpointOf } from '@/shared/checkpoint'
 import { useConversationFork } from '@/client/composables/use-conversation-fork'
 import { useTheme } from '@/client/composables/use-theme'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/client/ui/dropdown-menu'
@@ -69,6 +71,11 @@ const attachmentParts = computed(() => props.message.parts.filter(p => p.type ==
 const notices = computed(() => props.message.parts.filter((p): p is TaskNotificationPart => p.type === 'task_notification'))
 /** Written by the server when a background task finished: a status row, not something the person said. */
 const notificationOnly = computed(() => props.message.role === 'user' && isNotificationOnly(props.message.parts))
+/**
+ * A divider, not a reply: nobody said it, and the server refuses to regenerate or edit it — going
+ * around a compaction means editing a message before it.
+ */
+const checkpoint = computed(() => checkpointOf(props.message))
 /**
  * The assistant bubble renders these in order. A reasoning block is "active" — expanded, labelled
  * 正在思考… — only while it is the live tail of a streaming reply; anything arriving after it
@@ -141,6 +148,7 @@ function regenerate() {
 //- Not a bubble: nobody wrote it, and there is nothing to edit or copy.
 .flex.flex-col.gap-2(v-if="notificationOnly")
   TaskNotificationRow(v-for="notice in notices" :key="notice.task_id" :notification="notice")
+CheckpointDivider(v-else-if="checkpoint" :checkpoint="checkpoint")
 MessageRoot(
   v-else-if="!emptyTurn"
   :align="message.role === 'user' ? 'end' : 'start'"

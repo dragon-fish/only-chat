@@ -1,5 +1,5 @@
 import type { Usage } from '@/shared/models'
-import type { ImagePart, Part, ToolCallPart, ToolResultPart } from '@/shared/parts'
+import type { CheckpointPart, ImagePart, Part, ToolCallPart, ToolResultPart } from '@/shared/parts'
 
 export type MessageSegment =
   | {
@@ -10,6 +10,8 @@ export type MessageSegment =
   | { kind: 'text'; key: string; markdown: string }
   | { kind: 'tool'; key: string; call: ToolCallPart; result: ToolResultPart | null }
   | { kind: 'image'; key: string; part: ImagePart }
+  /** A boundary, never folded or merged: text on either side of it is not one document. */
+  | { kind: 'checkpoint'; key: string; part: CheckpointPart }
 
 /**
  * `parts` is already in the order the model produced it — the accumulator gives every kind/id pair
@@ -81,6 +83,10 @@ export function messageSegments(parts: readonly Part[], usage?: Usage | null): M
       }
       case 'image': {
         segments.push({ kind: 'image', key: `image:${index}`, part })
+        break
+      }
+      case 'checkpoint': {
+        segments.push({ kind: 'checkpoint', key: `checkpoint:${index}`, part })
         break
       }
     }
