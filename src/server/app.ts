@@ -25,6 +25,7 @@ import { FileUnderstandingServerPlugin } from '@/plugins/file-understanding/serv
 import { FileReaderServerPlugin } from '@/plugins/file-reader/server'
 import { FileReaderApiPlugin } from '@/plugins/file-reader/server/api'
 import { BrowserRunServerPlugin } from '@/plugins/cloudflare-browser-run/server'
+import { ContextCompactionServerPlugin } from '@/plugins/context-compaction/server'
 import { ComfyuiServerPlugin } from '@/plugins/comfyui/server'
 import { ComfyuiBackendPlugin } from '@/plugins/comfyui/server/backend'
 import { ImageBackendsPlugin } from './plugins/artifacts/backends'
@@ -91,6 +92,7 @@ export async function createApp(options: AppOptions): Promise<Context> {
       if (!ctx.get('hub')) throw new Error('HubPlugin loaded but ctx.hub is unavailable')
       // Needs the hub for its realtime channel and session store, so it comes after it.
       await ctx.plugin(BrowserRunServerPlugin)
+      await ctx.plugin(ContextCompactionServerPlugin)
     }
   }
   if (options.side === 'worker') {

@@ -13,7 +13,6 @@ import type { UserHub } from '@/server/index'
 import type { UserSettings } from '@/shared/models'
 import type { CheckpointPart } from '@/shared/parts'
 import type { WsEvent } from '@/shared/ws'
-import { ContextCompactionServerPlugin } from '@/plugins/context-compaction/server'
 import { NO_FALLBACK_ERROR } from '@/plugins/context-compaction/server/summarize'
 import { INEFFECTIVE_MESSAGE } from '@/plugins/context-compaction/server/manager'
 import type { CompactionData, CompactionEvent } from '@/plugins/context-compaction/shared'
@@ -141,7 +140,6 @@ async function setup(): Promise<void> {
     instance.app.tools.register('ask_user', 'echo', () => ({
       description: 'echo', inputSchema: z.object({}), execute: async () => { echoRuns++; return { ok: true } },
     }))
-    await instance.app.plugin(ContextCompactionServerPlugin)
   })
   ids = { provider, fallbackProvider }
   await setAuto(true)

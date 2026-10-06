@@ -315,12 +315,15 @@ describe('conversation operation lock', () => {
   it('is aborted and released by stop, writing nothing', async () => {
     const providerId = await seedProvider()
     const { conversationId, assistantId } = await seedChat(providerId)
-    const outcome = runInDurableObject(hubStub(), (instance: UserHub) =>
-      instance.app.hub.operations.run(conversationId, signal => new Promise<string>((_resolve, reject) => {
+    // Started and checked inside one call: two separate runInDurableObject calls are not ordered.
+    let outcome!: Promise<string>
+    await runInDurableObject(hubStub(), (instance: UserHub) => {
+      outcome = instance.app.hub.operations.run(conversationId, signal => new Promise<string>((_resolve, reject) => {
         signal.addEventListener('abort', () => reject(new Error(`aborted: ${String(signal.reason)}`)))
-      })).catch((error: Error) => error.message))
-    // The lock is taken synchronously by `run`, before its first await.
-    await runInDurableObject(hubStub(), (instance: UserHub) => expect(instance.app.hub.operations.isHeld(conversationId)).toBe(true))
+      })).catch((error: Error) => error.message)
+      // The lock is taken synchronously by `run`, before its first await.
+      expect(instance.app.hub.operations.isHeld(conversationId)).toBe(true)
+    })
     const c = await connect(await ensureTestUser())
     c.ws.send(JSON.stringify({ type: 'stop', conversation_id: conversationId }))
     expect(await outcome).toBe('aborted: user stopped')

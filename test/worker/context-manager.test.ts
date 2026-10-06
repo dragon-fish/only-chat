@@ -1,4 +1,5 @@
 import { env } from 'cloudflare:workers'
+import { ContextCompactionServerPlugin } from '@/plugins/context-compaction/server'
 import { runInDurableObject } from 'cloudflare:test'
 import { MockLanguageModelV4, simulateReadableStream } from 'ai/test'
 import { eq } from 'drizzle-orm'
@@ -133,6 +134,8 @@ async function setup(): Promise<number> {
     instance.app.tools.register('ask_user', 'echo', () => ({
       description: 'echo', inputSchema: z.object({}), execute: async () => ({ ok: true }),
     }))
+    // The real plugin holds the single registration; the fake takes its place for these tests.
+    for (const fiber of [...instance.app.registry.get(ContextCompactionServerPlugin)?.fibers ?? []]) await fiber.dispose()
     unregister = instance.app.contextManager.register('context_compaction', fake)
   })
   providerId = provider!.id
