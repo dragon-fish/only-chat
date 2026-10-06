@@ -43,6 +43,8 @@ import type { ConversationPluginSettings, Message } from '@/shared/models'
 import { joinStash } from '@/shared/stash'
 import type { Part } from '@/shared/parts'
 import { workspaceTabs } from '@/shared/plugins'
+import { availableSlashCommands, type SlashCommandBinding } from '@/client/lib/slash-commands'
+import { toast } from 'vue-sonner'
 
 const props = withDefaults(defineProps<{ conversationId: number | null; projectId?: number | null }>(), { projectId: null })
 const router = useRouter()
@@ -150,6 +152,27 @@ const workspace = useWorkspacePanel(pluginHost, computed(() => ({
   tabs: tabs.value.map(tab => tab.pluginId),
 })))
 const workspaceOpen = computed(() => workspace.open.value && tabs.value.length > 0)
+
+// ---- slash commands
+
+/**
+ * Whether this conversation is being compacted (spec §1.4). Always false until the conversation
+ * snapshot carries that state; read it from the sync store here, and nowhere else.
+ */
+const conversationCompacting = computed(() => false)
+const slashCommands = computed<SlashCommandBinding | undefined>(() => {
+  const host = pluginHost
+  if (!host) return undefined
+  return {
+    commands: availableSlashCommands(pluginManifests, sync.settings.plugins),
+    run: invocation => host.runSlashCommand(invocation, {
+      conversationId: sid.value,
+      streaming: streaming.value,
+      compacting: conversationCompacting.value,
+      toast: (message, kind = 'info') => { toast[kind](message) },
+    }),
+  }
+})
 
 // ---- model and reasoning
 
@@ -587,7 +610,7 @@ ResizablePanelGroup(direction="horizontal" class="h-full")
       Composer(
         ref="composer" :streaming="streaming" :connected="sync.status === 'open'"
         :can-send="canSend" :hint="sendHint" :replaced="pendingToolCall !== null"
-        :stash="stash"
+        :stash="stash" :slash="slashCommands"
         @send="onSend" @stop="onStop" @queue="onQueue" @interrupt="onInterrupt" @withdraw="onWithdraw")
         template(#replacement)
           .oc-scroll.flex.max-h-96.flex-col.overflow-y-auto(class="md:max-h-[60vh]")

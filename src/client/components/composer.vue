@@ -16,6 +16,7 @@ import AttachmentLightbox from '@/client/components/attachment-lightbox.vue'
 import { mergeRestoredText } from '@/client/stores/sync'
 import { api } from '@/client/lib/api'
 import type { Part } from '@/shared/parts'
+import { parseSlashCommand, slashCommandMenu, type SlashCommandBinding, type SlashCommandEntry, type SlashCommandInvocation } from '@/client/lib/slash-commands'
 
 /**
  * One chip in the box. Only a file knows its MIME: an `image` part carries none, so a restored image
@@ -44,6 +45,8 @@ const props = defineProps<{
   replaced?: boolean
   /** What the server is holding for this conversation, said while the turn ran. */
   stash?: Part[]
+  /** Commands the box offers and runs; without it every `/…` is ordinary text. */
+  slash?: SlashCommandBinding
 }>()
 const emit = defineEmits<{
   send: [parts: Part[]]
@@ -78,6 +81,14 @@ function openTrayImage(item: Attached) {
 // A counter, not a flag: concurrent uploads must not let the first one to finish clear `busy`.
 const pending = ref(0)
 const busy = computed(() => pending.value > 0)
+/** What is typed, when it is a command rather than a message (spec §4.3). */
+const typedCommand = computed(() => (props.slash ? parseSlashCommand(text.value, props.slash.commands) : null))
+const commandRunning = ref(false)
+/** Dismissed by Escape until the text changes again. */
+const menuDismissed = ref(false)
+const menuIndex = ref(0)
+const menu = computed(() => (menuDismissed.value || !props.slash ? [] : slashCommandMenu(text.value, props.slash.commands)))
+watch(text, () => { menuDismissed.value = false; menuIndex.value = 0 })
 const hasContent = computed(() => text.value.trim() !== '' || attachments.value.some((item) => item.state === 'done'))
 /**
  * Set the moment stopping or interrupting is asked for, cleared when the turn actually ends.
@@ -127,6 +138,7 @@ const actionLabel = computed(() => ({
 }[action.value]))
 
 const actionHint = computed(() => {
+  if (typedCommand.value && action.value !== 'stop' && action.value !== 'interrupt') return `执行指令 /${typedCommand.value.name}`
   if (action.value === 'send') return sendBlockedReason.value ?? '发送消息'
   if (action.value === 'stop') return '停止生成（Esc）'
   if (action.value === 'queue') {
@@ -136,6 +148,8 @@ const actionHint = computed(() => {
 })
 
 const sendBlockedReason = computed(() => {
+  // A command is never sent, so nothing that gates sending gates it.
+  if (typedCommand.value) return null
   if (busy.value) return '文件上传完成后即可发送'
   if (!props.connected) return '未连接'
   if (!props.canSend) return props.hint ?? '当前无法发送'
@@ -239,8 +253,39 @@ function takeBox(): Part[] {
   return parts
 }
 
+/** Fills in the command word; running it is a separate, deliberate Enter. */
+async function completeCommand(command: SlashCommandEntry) {
+  text.value = `/${command.name} `
+  await nextTick()
+  autoGrow()
+  element()?.focus()
+}
+
+/**
+ * Commands never become messages and never queue. Only success clears the text — and only if it is
+ * still what was run — while attachment chips are left exactly as they were.
+ */
+async function runCommand(invocation: SlashCommandInvocation) {
+  if (!props.slash || commandRunning.value) return
+  commandRunning.value = true
+  const typed = text.value
+  try {
+    await props.slash.run(invocation)
+    if (text.value === typed) text.value = ''
+    await nextTick()
+    autoGrow()
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : String(error))
+  } finally {
+    commandRunning.value = false
+  }
+}
+
 function act() {
   if (acting.value) return
+  // Parsed before the send/queue decision and before any send gating (spec §4.3).
+  const command = typedCommand.value
+  if (command) { void runCommand(command); return }
   // Read once. `action` is derived from what is in the box, and `takeBox` empties it — read again
   // afterwards it reports the state of a composer that has already been cleared, which turned
   // every queue into an interrupt: the turn was aborted by the act of typing into it.
@@ -277,7 +322,25 @@ function restore(parts: Part[]) {
   void nextTick().then(autoGrow)
 }
 
+function onMenuKeydown(e: KeyboardEvent): boolean {
+  const items = menu.value
+  if (items.length === 0 || e.isComposing) return false
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    const step = e.key === 'ArrowDown' ? 1 : items.length - 1
+    menuIndex.value = (menuIndex.value + step) % items.length
+  } else if ((e.key === 'Enter' && !e.shiftKey) || e.key === 'Tab') {
+    void completeCommand(items[Math.min(menuIndex.value, items.length - 1)]!)
+  } else if (e.key === 'Escape') {
+    menuDismissed.value = true
+  } else {
+    return false
+  }
+  e.preventDefault()
+  return true
+}
+
 function onKeydown(e: KeyboardEvent) {
+  if (onMenuKeydown(e)) return
   // Escape undoes the last thing that was committed to, innermost first. Something waiting to be
   // said is nearer than the turn itself, so it comes back before anything is stopped — and it comes
   // back rather than going out, because sending it now is the orange button's job and not a thing
@@ -351,6 +414,18 @@ onBeforeUnmount(() => { releasePreviews(attachments.value); dropSent() })
   .mx-auto.w-full.max-w-3xl(v-if="replaced")
     slot(name="replacement")
   InputGroup.mx-auto(v-else class="max-w-3xl rounded-xl")
+    //- Absolute against InputGroup (which is `relative`), so opening it never moves the box.
+    //- `mousedown.prevent` keeps focus in the textarea while an option is clicked.
+    .absolute.inset-x-0.z-20.mb-2.flex.flex-col.rounded-lg.border.bg-popover.p-1.text-popover-foreground.shadow-md(
+      v-if="menu.length" role="listbox" aria-label="指令" class="bottom-full")
+      button.flex.w-full.items-baseline.gap-2.rounded-md.px-2.text-left.text-sm(
+        v-for="(command, i) in menu" :key="command.name" type="button" role="option"
+        :aria-selected="i === menuIndex" :class="i === menuIndex ? 'bg-accent text-accent-foreground' : ''"
+        class="min-h-10 py-1.5 md:min-h-0"
+        @mousedown.prevent @click="completeCommand(command)")
+        span.shrink-0.font-mono.font-medium /{{ command.name }}
+        span.shrink-0.text-muted-foreground(v-if="command.argsHint") {{ command.argsHint }}
+        span.ml-auto.min-w-0.truncate.text-xs.text-muted-foreground {{ command.description }}
     //- `w-full`: InputGroup is `items-center`, so without it the row of previews sits centred.
     AttachmentGroup.w-full.px-2(v-if="attachments.length")
       //- No `size`: the vendored CSS emits `group-data-[size=xs]:w-7` after
@@ -410,7 +485,7 @@ onBeforeUnmount(() => { releasePreviews(attachments.value); dropSent() })
               :class="actionClass"
               :aria-label="actionLabel"
               :aria-disabled="acting || (action === 'send' && sendBlockedReason !== null)" @click="act")
-              Spinner(v-if="acting" class="size-4")
+              Spinner(v-if="acting || commandRunning" class="size-4")
               Square(v-else-if="action === 'stop'" data-icon="inline-start")
               ArrowUp(v-else-if="action === 'queue'" data-icon="inline-start")
               Zap(v-else-if="action === 'interrupt'" data-icon="inline-start")

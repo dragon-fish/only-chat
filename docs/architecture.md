@@ -51,6 +51,14 @@ A plugin can also keep settings per Project: it declares `projectConfigSchema`, 
 declares `projectTab` gets a tab in Project settings, and its client half registers the component
 behind it with `ctx.projectPanel`. The memory plugin is the first user of both.
 
+A plugin can offer composer commands: it declares `slashCommands` in its manifest (names unique
+across all manifests, checked by a test) and its client half registers the behaviour behind each with
+`ctx.slashCommands.register`. The composer lists the commands of enabled plugins without loading
+them; on submit, a first word that is exactly `/` plus one of those names loads the owning plugin and
+runs the command instead of sending — never as a message, never queued. Any other `/…` text, such as
+a path, is sent as usual. A command talks to its server half over the plugin's own `plugin.command` /
+`plugin.event` channel; there is no server-side command parsing.
+
 A plugin's routes run on the Worker and its tools run inside the UserHub Durable Object, which are
 different cordis roots. One plugin object injecting both would sit PENDING forever on whichever
 service its side does not have, so the two halves are separate plugins — see
