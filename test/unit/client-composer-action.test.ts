@@ -248,6 +248,18 @@ describe('slash commands', () => {
     expect(host.querySelector('textarea')!.value).toBe('')
   })
 
+  it('clears the box as soon as a long command starts, not when it finishes', async () => {
+    let finish!: () => void
+    const { slash } = binding(() => new Promise<void>((resolve) => { finish = resolve }))
+    const { host } = mount({ streaming: false, slash })
+    await typeAndEnter(host, '/compress keep the API notes')
+    await settle()
+    expect(host.querySelector('textarea')!.value).toBe('')
+    finish()
+    await settle()
+    expect(host.querySelector('textarea')!.value).toBe('')
+  })
+
   it('runs even when sending is blocked, since a command never becomes a message', async () => {
     const { slash, runs } = binding()
     const { host, fired } = mount({ streaming: false, canSend: false, slash })

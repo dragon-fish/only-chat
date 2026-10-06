@@ -262,19 +262,23 @@ async function completeCommand(command: SlashCommandEntry) {
 }
 
 /**
- * Commands never become messages and never queue. Only success clears the text — and only if it is
- * still what was run — while attachment chips are left exactly as they were.
+ * Commands never become messages and never queue. The text clears at once, as a sent message does —
+ * a command can take minutes (`/compress` waits for a summary) — and comes back if the command fails,
+ * unless something else has been typed meanwhile. Attachment chips are left exactly as they were.
  */
 async function runCommand(invocation: SlashCommandInvocation) {
   if (!props.slash || commandRunning.value) return
   commandRunning.value = true
   const typed = text.value
+  text.value = ''
+  await nextTick()
+  autoGrow()
   try {
     await props.slash.run(invocation)
-    if (text.value === typed) text.value = ''
+  } catch (error) {
+    if (text.value === '') text.value = typed
     await nextTick()
     autoGrow()
-  } catch (error) {
     toast.error(error instanceof Error ? error.message : String(error))
   } finally {
     commandRunning.value = false
