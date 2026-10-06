@@ -29,6 +29,8 @@ import {
 import { resolveAttachmentInputs } from './attachment-transport'
 import { pathToRoot, titleFromParts, titleTextFromParts } from './tree'
 import { completedToolState } from './tool-state'
+import { projectContext } from './checkpoint'
+import { checkpointOf } from '@/shared/checkpoint'
 import { awaitsHuman, deliveredTaskIds, MAX_NOTIFICATION_TURNS, notificationTurnsSinceHuman, originOnPath, type TaskSettlement } from './tasks'
 
 /** Payload of the `message/before-send` event: feature plugins may inspect or amend the prompt. */
@@ -320,9 +322,11 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
 
     // Plugins prepare what their tools will need, and one may name files for the model (spec §4.5).
     // The same map is every tool's `ToolContext.turn`, so it is created once, here.
+    const projection = projectContext(payload.path)
     const turn: GenerationTurn = {
       userId: hub.userId, conversationId: target.conversation.id, projectId: target.conversation.project_id,
-      toolIds: target.toolIds, path: payload.path, state: new Map<string, unknown>(), canReadFile: canRead(target), notes: [],
+      toolIds: target.toolIds, path: projection.path, checkpoint: projection.checkpoint, visible: projection.visible,
+      state: new Map<string, unknown>(), canReadFile: canRead(target), notes: [],
     }
     preparedTurn = turn
     await hub.app.parallel('generation/prepare', turn)
@@ -365,7 +369,9 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
       acceptsImages: target.model.metadata_resolved.modalities?.input.includes('image') ?? false,
       acceptsToolResultImages: carriesToolResultImages(target.providerInterface.protocol),
       publicOrigin: hub.publicOrigin,
-      path: payload.path,
+      // What the model has seen, not the structural path: a file read before a checkpoint has to be
+      // read again before it can be edited (spec §1.3).
+      path: projectContext(payload.path).visible,
     }))
 
     // Interrupting is best effort. The abort reaches a tool that is already running, and plenty of
@@ -825,6 +831,7 @@ export async function runSend(hub: Hub, cmd: SendCommand): Promise<void> {
   if (cmd.conversation_id !== null && INIT_FIELDS.some((k) => cmd[k] !== undefined)) {
     throw new Error('conversation init fields are only allowed when conversation_id is null')
   }
+  if (cmd.conversation_id !== null) hub.operations.assertFree(cmd.conversation_id)
   await assertUserAttachments(hub.db, hub.userId, cmd.parts)
   const target = await resolveTarget(hub, {
     conversationId: cmd.conversation_id,
@@ -866,6 +873,9 @@ function commandModel(cmd: { provider_id?: number; model_id?: string }): { provi
 export async function runRegenerate(hub: Hub, cmd: Extract<WsCommand, { type: 'regenerate' }>): Promise<void> {
   const old = await getMessage(hub.db, cmd.message_id, hub.userId)
   if (!old || old.role !== 'assistant' || old.parent_id === null) throw new Error('not an assistant message')
+  // A checkpoint is not a reply. Skipping a compaction means editing a message before it (spec §1.4).
+  if (checkpointOf(old)) throw new Error('a checkpoint cannot be regenerated')
+  hub.operations.assertFree(old.conversation_id)
   const explicitModel = commandModel(cmd)
   // Without one, regenerate reuses the model that produced the reply being replaced.
   const fallbackModel = old.provider_id !== null && old.model_id !== null
@@ -878,7 +888,9 @@ export async function runRegenerate(hub: Hub, cmd: Extract<WsCommand, { type: 'r
 
 export async function runEdit(hub: Hub, cmd: Extract<WsCommand, { type: 'edit' }>): Promise<void> {
   const old = await getMessage(hub.db, cmd.message_id, hub.userId)
+  // A checkpoint is an assistant message, so this refuses editing one too (spec §1.4).
   if (!old || old.role !== 'user') throw new Error('not a user message')
+  hub.operations.assertFree(old.conversation_id)
   await assertUserAttachments(hub.db, hub.userId, cmd.parts)
   const explicitModel = commandModel(cmd)
   // Without one, the conversation's last generation stands in as the command layer.
@@ -912,6 +924,10 @@ async function ownedTerminalToolMessage(hub: Hub, messageId: number) {
   return { message, conversation }
 }
 
+async function listContinuations(hub: Hub, messageId: number) {
+  return (await listAssistantChildren(hub.db, messageId, hub.userId)).filter(row => !checkpointOf(row))
+}
+
 async function continueFromToolMessage(hub: Hub, messageId: number): Promise<void> {
   const { message, conversation } = await ownedTerminalToolMessage(hub, messageId)
   const state = completedToolState(message.parts, hub.app.tools.skipped.bind(hub.app.tools))
@@ -929,7 +945,8 @@ async function continueFromToolMessage(hub: Hub, messageId: number): Promise<voi
     await hub.emitConversationUpdated(updated)
   }
 
-  const existingChildren = await listAssistantChildren(hub.db, message.id, hub.userId)
+  // A checkpoint under the tool message is not its continuation (spec §1.4).
+  const existingChildren = await listContinuations(hub, message.id)
   if (existingChildren.length > 1) throw new Error('tool-call message has multiple continuation children')
   if (existingChildren.length === 1) {
     const child = toMessage(existingChildren[0]!)
@@ -952,7 +969,7 @@ async function continueFromToolMessage(hub: Hub, messageId: number): Promise<voi
   if (!(await headStillParent())) return
   const shell = await openContinuationShell(hub, target, message.id)
   if (!shell) {
-    const raced = await listAssistantChildren(hub.db, message.id, hub.userId)
+    const raced = await listContinuations(hub, message.id)
     if (raced.length === 0) {
       if (!(await headStillParent())) return
       throw new Error('continuation child could not be resolved')
@@ -982,6 +999,8 @@ export async function runInterjectInterrupt(
 ): Promise<void> {
   const conversation = await getConversation(hub.db, cmd.conversation_id, hub.userId)
   if (!conversation) throw new Error('conversation not found')
+  // Before the stash is taken: the send it ends in would be refused, and the words lost with it.
+  hub.operations.assertFree(cmd.conversation_id)
   const job = hub.inflight().find(entry => entry.conversationId === cmd.conversation_id)
   if (!job) throw new Error('nothing is generating in this conversation')
 
@@ -1081,6 +1100,8 @@ async function takeTurnNotifications(hub: Hub, conversationId: number): Promise<
  */
 export async function deliverTaskNotifications(hub: Hub, conversationId: number): Promise<void> {
   if (hub.inflight().some(job => job.conversationId === conversationId)) return
+  // Held until the operation releases the conversation, which delivers them then (spec §1.4).
+  if (hub.operations.isHeld(conversationId)) return
   const found = await deliverableTasks(hub, conversationId)
   if (!found || found.deliverable.length === 0) return
   const { deliverable, path, byId } = found

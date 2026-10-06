@@ -56,6 +56,7 @@ export interface ToolContext {
   publicOrigin: string | null
   /**
    * The messages this generation was built from, root to leaf — what the model can actually see.
+   * Starts after the last checkpoint: what came before it was summarized and is not in context.
    *
    * A tool that would ask for something already on screen can look here instead. `turn` holds what
    * this generation has done since; together they are the whole of what the caller knows.

@@ -13,6 +13,7 @@ import type { PluginConfig } from './plugins/plugin-config'
 import type { PluginChannel } from './plugins/plugin-channel'
 import type { ImageBackends } from './plugins/artifacts/backends'
 import type { GenerationTurn } from './plugins/hub/generation-turn'
+import type { CheckpointCommittedPayload, CheckpointComposePayload } from './plugins/hub/checkpoint-writer'
 import type { Message, Project, Conversation } from '@/shared/models'
 
 declare module 'cordis' {
@@ -64,6 +65,17 @@ declare module 'cordis' {
     'generation/settled'(turn: GenerationTurn): Promise<void>
     /** Messages joined a running generation (an interjection), after its prompt was first built. */
     'generation/interjected'(turn: GenerationTurn, messages: readonly Message[]): Promise<void>
+    /**
+     * A checkpoint is about to be composed (spec §1.5). Awaited through `ctx.parallel`. Collect-only:
+     * a listener appends `{ pluginId, text }` to `payload.blocks` and has no other effect, since the
+     * checkpoint may still fail. Emitted through `hub.checkpoints.compose`.
+     */
+    'checkpoint/compose'(payload: CheckpointComposePayload): Promise<void>
+    /**
+     * A checkpoint was written and is the conversation's head (spec §1.5); never emitted for one that
+     * was not. Awaited through `ctx.parallel`; a listener's failure is logged and changes nothing.
+     */
+    'checkpoint/committed'(payload: CheckpointCommittedPayload): Promise<void>
     'message/before-send'(payload: BeforeSendPayload): void
     'message/done'(message: Message): void
     'project/created'(project: Project): void

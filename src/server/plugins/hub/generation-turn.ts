@@ -1,4 +1,5 @@
 import type { Message } from '@/shared/models'
+import type { CheckpointPart } from '@/shared/parts'
 import type { FileLabeler } from '../llm/messages'
 
 /**
@@ -14,8 +15,18 @@ export interface GenerationTurn {
   projectId: number | null
   /** The tools this generation offers, requirements included. */
   toolIds: readonly string[]
-  /** Root → leaf, what the model is about to see. */
+  /**
+   * Root → leaf, the whole structural path, checkpoints and all. What this turn may reach — which
+   * attachments it can name, for one — is decided on this, never on `visible` (spec §1.3).
+   */
   path: readonly Message[]
+  /** The last checkpoint on `path`, which the model reads in place of everything before it. */
+  checkpoint: CheckpointPart | null
+  /**
+   * The messages after the last checkpoint message, or `path` when there is none. Anything that asks
+   * what the model has already been shown reads this, together with `checkpoint`.
+   */
+  visible: readonly Message[]
   state: Map<string, unknown>
   /** Whether the generating model can take a file of this MIME (spec §3.4). */
   canReadFile(mime: string): boolean

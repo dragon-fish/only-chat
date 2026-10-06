@@ -15,7 +15,7 @@ describe('UserHub DO', () => {
     expect(plain.status).toBe(426)
     const { next } = await connect(await seedTestUser())
     const snap = await next('snapshot')
-    expect(snap).toEqual({ type: 'snapshot', inflight: [] })
+    expect(snap).toEqual({ type: 'snapshot', inflight: [], compacting: [] })
   })
 
   it('rejects a websocket upgrade whose Origin does not match the request host', async () => {

@@ -425,3 +425,31 @@ describe('write_file previewability', () => {
     expect(notes.result?.content).toMatchObject({ previewable: false })
   })
 })
+
+describe('after a checkpoint', () => {
+  it('asks for a fresh read before editing a file only read before it', async () => {
+    const providerId = await seedProvider()
+    await installModel()
+    const { conversationId } = await callTool(providerId, 'write_file', {
+      path: '/conversation/app.ts', content: 'const PORT = 3000\nstart(PORT)',
+    })
+    await callTool(providerId, 'read_file', { file: '/conversation/app.ts' }, conversationId)
+    const head = (await listMessages(createDb(env.DB), conversationId, 1)).at(-1)!.id
+    await runInDurableObject(env.USER_HUB.getByName(String(1)), (instance: UserHub) => instance.app.hub.checkpoints.commit({
+      conversationId, expectedHead: head, usage: null,
+      part: { type: 'checkpoint', plugin: 'context_compaction', content: 'summary', attachments: [], contributors: [], data: null },
+    }))
+
+    // The read was summarized away: the model no longer has the text an edit would name.
+    const stale = await callTool(providerId, 'edit_file', {
+      path: '/conversation/app.ts', oldText: 'PORT = 3000', newText: 'PORT = 8080',
+    }, conversationId)
+    expect(stale.result?.content).toMatchObject({ error: 'NOT_READ' })
+
+    const { results } = await callTools(providerId, [
+      { name: 'read_file', input: { file: '/conversation/app.ts' } },
+      { name: 'edit_file', input: { path: '/conversation/app.ts', oldText: 'PORT = 3000', newText: 'PORT = 8080' } },
+    ], conversationId)
+    expect(results.at(-1)?.content).toMatchObject({ replacements: 1 })
+  })
+})

@@ -70,7 +70,7 @@ async function fixture(): Promise<Fixture> {
   // What the hub does at generation start: plugins prepare the turn their tools then run in.
   const generation: GenerationTurn = {
     userId: 1, conversationId: conversation!.id, projectId: project!.id, toolIds: ['read_file', 'write_file', 'edit_file'],
-    path: [], state: new Map(), canReadFile: () => false, notes: [],
+    path: [], checkpoint: null, visible: [], state: new Map(), canReadFile: () => false, notes: [],
   }
   await ctx.parallel('generation/prepare', generation)
   const turn = generation.state

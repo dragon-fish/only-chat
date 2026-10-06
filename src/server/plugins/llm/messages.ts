@@ -7,7 +7,8 @@ import type { OpenResponsesLanguageModelOptions } from '@ai-sdk/open-responses'
 import type { OpenAICompatibleProviderOptions } from '@ai-sdk/openai-compatible'
 import type { Message, InterfaceProtocol, ReasoningEffort, ConversationParams } from '@/shared/models'
 import type { ModelMetadata } from '@/shared/model-metadata'
-import type { FilePart, ImagePart, Part, ProviderOptions, TaskNotificationPart, ToolResultPart } from '@/shared/parts'
+import type { CheckpointPart, FilePart, ImagePart, Part, ProviderOptions, TaskNotificationPart, ToolResultPart } from '@/shared/parts'
+import { checkpointOf, lastCheckpointIndex } from '@/shared/checkpoint'
 import { RESPONSES_PROVIDER_NAME, responsesReasoningReplayOptions } from './responses-reasoning'
 
 export const COMPAT_PROVIDER_NAME = 'compat'
@@ -270,6 +271,24 @@ function assistantMessages(
 }
 
 /**
+ * The part of a path a request replays (spec §1.2): everything after the last checkpoint message,
+ * with that checkpoint standing in for what came before it. Nothing earlier is sent, so nothing
+ * earlier may be asked for either.
+ */
+interface Replay {
+  checkpoint: CheckpointPart | null
+  /** What the checkpoint covers; empty without one. Only read to recover an upload's own part. */
+  covered: readonly Message[]
+  messages: readonly Message[]
+}
+
+function replayOf(path: readonly Message[]): Replay {
+  const index = lastCheckpointIndex(path)
+  if (index === null) return { checkpoint: null, covered: [], messages: path }
+  return { checkpoint: checkpointOf(path[index]!), covered: path.slice(0, index), messages: path.slice(index + 1) }
+}
+
+/**
  * Which attachments `buildModelMessages` will actually ask for, given the same path. Pure, and
  * deliberately next to the builder: "which attachments does the request need?" and "which ones does
  * it use?" have to be one answer, or the caller resolves bytes for parts that are never sent.
@@ -280,8 +299,9 @@ function assistantMessages(
  * provider's Files API, and fail the whole turn on a missing R2 object nothing in the request needed.
  */
 export function requiredAttachmentIds(path: readonly Message[]): Set<number> {
-  const ids = new Set<number>()
-  for (const m of path) {
+  const { checkpoint, messages } = replayOf(path)
+  const ids = new Set<number>(checkpoint?.attachments ?? [])
+  for (const m of messages) {
     for (const p of m.parts) {
       if (m.role === 'user' && (p.type === 'image' || p.type === 'file')) ids.add(p.attachment_id)
       if (p.type === 'tool_result') for (const id of p.attachments ?? []) ids.add(id)
@@ -292,12 +312,14 @@ export function requiredAttachmentIds(path: readonly Message[]): Set<number> {
 
 /**
  * Attachments only a tool result names. Nothing in D1 references them until the turn is persisted,
- * so a purge in between can remove their row; message parts keep theirs referenced.
+ * so a purge in between can remove their row; message parts keep theirs referenced, and so does a
+ * checkpoint's `attachments`.
  */
 export function toolDeliveredAttachmentIds(path: readonly Message[]): Set<number> {
-  const named = new Set<number>()
+  const { checkpoint, messages } = replayOf(path)
+  const named = new Set<number>(checkpoint?.attachments ?? [])
   const delivered = new Set<number>()
-  for (const m of path) {
+  for (const m of messages) {
     for (const p of m.parts) {
       if (p.type === 'image' || p.type === 'file') named.add(p.attachment_id)
       if (p.type === 'task_notification') for (const id of p.attachments ?? []) named.add(id)
@@ -305,6 +327,34 @@ export function toolDeliveredAttachmentIds(path: readonly Message[]): Set<number
     }
   }
   return new Set([...delivered].filter(id => !named.has(id)))
+}
+
+/**
+ * A checkpoint as the user message that replaces its history: `content`, then each attachment the
+ * way an upload is sent. An attachment the person uploaded keeps the part it arrived in, so its
+ * label still carries their filename; anything else — a tool's delivery, a task's output — goes as
+ * a bare upload of its type.
+ */
+function checkpointParts(
+  checkpoint: CheckpointPart,
+  covered: readonly Message[],
+  attachments: ReadonlyMap<number, AttachmentInput>,
+  labeler: FileLabeler | undefined,
+): UserPart[] {
+  const uploads = new Map<number, ImagePart | FilePart>()
+  for (const m of covered) {
+    if (m.role !== 'user') continue
+    for (const p of m.parts) {
+      if ((p.type === 'image' || p.type === 'file') && !uploads.has(p.attachment_id)) uploads.set(p.attachment_id, p)
+    }
+  }
+  const files = checkpoint.attachments.map((attachmentId): ImagePart | FilePart => {
+    const upload = uploads.get(attachmentId)
+    if (upload) return upload
+    const { mime } = inputOf(attachments, attachmentId)
+    return mime.startsWith('image/') ? { type: 'image', attachment_id: attachmentId } : { type: 'file', attachment_id: attachmentId, mime }
+  })
+  return userParts([{ type: 'text', text: checkpoint.content }, ...files], attachments, labeler)
 }
 
 function escapeAttribute(value: string): string {
@@ -410,13 +460,23 @@ export function buildModelMessages(input: BuildInput): ModelMessage[] {
       : { role: 'system', content: systemPrompt })
   }
 
-  const lastUserIndex = path.map((m) => m.role).lastIndexOf('user')
+  // Spec §1.2: the last checkpoint replaces everything before it, whichever plugin wrote it and
+  // whether or not that plugin is still on — a checkpoint once sent stays what the model was told.
+  const replay = replayOf(path)
+  const lastUserIndex = replay.messages.map((m) => m.role).lastIndexOf('user')
+  if (replay.checkpoint) {
+    const content = checkpointParts(replay.checkpoint, replay.covered, attachments, labeler)
+    // The cache breakpoint goes on the last user message sent, which is this one when none follows.
+    out.push(cache && lastUserIndex === -1
+      ? { role: 'user', content, providerOptions: ANTHROPIC_CACHE }
+      : { role: 'user', content })
+  }
   /** Carried onto the next user message: a note about the turn that came before it. */
   let pending: string | null = null
   /** Set when the turn in between said nothing, so the user messages around it are one message. */
   let joinToPrevious = false
 
-  path.forEach((m, i) => {
+  replay.messages.forEach((m, i) => {
     if (m.role === 'user') {
       const said = userParts(m.parts, attachments, labeler)
       // A plugin's notes, stored on the message: replayed as they were sent, whatever is on now.

@@ -131,6 +131,9 @@ function seenInResult(name: string, content: unknown, path: string): SeenFile | 
 /**
  * What the caller has been shown of a file, from everything it can see: this turn's ledger first,
  * then the messages this generation was built from. The version is what says whether it still holds.
+ * `messages` must be the visible ones (`ToolContext.path`, `FileTurn.path`), never the structural
+ * path: a read before a checkpoint was summarized away, and editing on its strength patches text the
+ * model no longer has in front of it.
  *
  * `latestSeen` is the newest view, whole or not — what an edit or a write is checked against.
  * `seenInContext` prefers the newest whole view, which only answers whether a repeat read can say

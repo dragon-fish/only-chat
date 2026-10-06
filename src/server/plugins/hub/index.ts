@@ -20,6 +20,8 @@ import { joinStash } from '@/shared/stash'
 import { logLifecycle, partsBytes } from './lifecycle-log'
 import { deliverTaskNotifications, runEdit, runInterjectInterrupt, runRegenerate, runSend, runToolContinue, runToolRespond } from './generation'
 import { TASK_STORAGE_PREFIX, type TaskSettlement } from './tasks'
+import { ConversationOperations } from './operations'
+import { Checkpoints } from './checkpoint-writer'
 import { parseAuthUserId } from '../auth/user-id'
 import { AUTH_REVOKED_CLOSE_CODE, hasActiveAuthSession, ORIGIN_STORAGE_KEY, type SocketAttachment } from './identity'
 
@@ -63,6 +65,10 @@ export class Hub extends Service {
   readonly db: DB
   readonly userId: number
   readonly seq = new SeqAllocator()
+  /** Per-conversation operation lock (spec §1.4); notifications held back by it go out on release. */
+  readonly operations = new ConversationOperations(conversationId => deliverTaskNotifications(this, conversationId))
+  /** Writing checkpoints and collecting what plugins add to them (spec §1.4, §1.5). */
+  readonly checkpoints = new Checkpoints(this)
   private readonly _inflight = new Map<number, InflightJob>()
   private readonly _settlers = new Map<number, () => void>()
   private _revoked = false
@@ -157,7 +163,11 @@ export class Hub extends Service {
 
   handleConnect(ws: WebSocket): void {
     this._revoked = false
-    ws.send(encodeEvent({ type: 'snapshot', inflight: this.inflight().map((j) => ({ ...j.message, parts: j.parts })) }))
+    ws.send(encodeEvent({
+      type: 'snapshot',
+      inflight: this.inflight().map((j) => ({ ...j.message, parts: j.parts })),
+      compacting: this.operations.heldConversations(),
+    }))
   }
 
   async handleCommand(ws: WebSocket, raw: string): Promise<void> {
@@ -216,9 +226,10 @@ export class Hub extends Service {
   // ---- non-generation commands
 
   /**
-   * Aborts the conversation's generations and waits for them to unwind, so a caller like `conversationDelete`
-   * can touch the rows right afterwards. `generation.ts` must always call `untrackInflight()` from
-   * its finally path; otherwise a job only settles through the timeout below.
+   * Aborts the conversation's generations, and any operation holding it, and waits for them to
+   * unwind, so a caller like `conversationDelete` can touch the rows right afterwards.
+   * `generation.ts` must always call `untrackInflight()` from its finally path, and an operation
+   * must release its lock; otherwise they only settle through the timeout below.
    */
   async stop(conversationId: number): Promise<void> {
     const settled: Promise<void>[] = []
@@ -227,6 +238,8 @@ export class Hub extends Service {
       job.controller.abort('user stopped')
       settled.push(job.settled)
     }
+    const operation = this.operations.abort(conversationId, 'user stopped')
+    if (operation) settled.push(operation)
     await this._awaitSettlement(settled)
   }
 
@@ -258,6 +271,7 @@ export class Hub extends Service {
   }
 
   async switchHead(conversationId: number, messageId: number): Promise<void> {
+    this.operations.assertFree(conversationId)
     const m = await getMessage(this.db, messageId, this.userId)
     if (!m || m.conversation_id !== conversationId) throw new Error('message not in conversation')
     const s = await updateConversation(this.db, conversationId, this.userId, { head_message_id: messageId })
@@ -285,6 +299,7 @@ export class Hub extends Service {
 
   async conversationDelete(conversationId: number): Promise<void> {
     if (!(await getConversation(this.db, conversationId, this.userId))) throw new Error('conversation not found')
+    this.operations.assertFree(conversationId)
     await this.stop(conversationId)
     await this.app.parallel('conversation/before-purge', { userId: this.userId, conversationId })
     await deleteConversation(this.db, conversationId, this.userId)
