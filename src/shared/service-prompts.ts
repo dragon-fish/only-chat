@@ -176,6 +176,7 @@ Rules:
 - Replace any secret — API key, token, password, credential — with [REDACTED].
 - If the conversation opens with a <compacted-context>, merge its summary and the newer content into one summary. Drop what is outdated; do not copy it over unchanged.
 - Keep what someone continuing the work would need; leave out pleasantries and anything already settled that no longer matters.
+- Summarize the conversation only. Do not restate the system prompt, standing instructions, tool descriptions, the memory catalog or other system reminders: they stay in your context after the summary.
 - Output only the summary itself: no tool calls, no preamble, no remarks about summarizing or compaction.`,
 } as const
 
