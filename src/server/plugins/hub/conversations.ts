@@ -329,7 +329,10 @@ export async function deleteMessageIfUnreferenced(db: DB, id: number, userId: nu
   return deleted?.id === id
 }
 
-/** Creates the sole assistant continuation for one tool-call parent with an atomic SQLite fence. */
+/**
+ * Creates the sole assistant continuation for one tool-call parent with an atomic SQLite fence. A
+ * checkpoint child is not a continuation and does not count; the test mirrors `checkpointOf`.
+ */
 export async function insertAssistantChildIfAbsent(
   db: DB,
   userId: number,
@@ -342,6 +345,7 @@ export async function insertAssistantChildIfAbsent(
     SELECT ?, ?, ?, 'assistant', json(?), ?, ?, ?, ?, ?, ?
      WHERE NOT EXISTS (
        SELECT 1 FROM messages WHERE parent_id = ? AND role = 'assistant'
+          AND NOT (json_array_length(parts) = 1 AND json_extract(parts, '$[0].type') = 'checkpoint')
      )
        AND EXISTS (
          SELECT 1 FROM conversations WHERE id = ? AND head_message_id = ? AND user_id = ?

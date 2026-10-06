@@ -226,7 +226,15 @@ export type RegenerateCommand = z.infer<typeof RegenerateCommandSchema>
 export type EditCommand = z.infer<typeof EditCommandSchema>
 
 export const WsEventSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('snapshot'), inflight: z.array(MessageSchema) }),
+  z.object({
+    type: z.literal('snapshot'),
+    inflight: z.array(MessageSchema),
+    /**
+     * Conversations whose context is being compacted right now (spec §1.4), so a client that
+     * reconnects mid-compaction still shows it. The server always sends it; absent reads as none.
+     */
+    compacting: z.array(z.number().int()).optional(),
+  }),
   z.object({ type: z.literal('conversation.created'), conversation: ConversationSchema }),
   z.object({ type: z.literal('conversation.updated'), conversation: ConversationSchema }),
   z.object({ type: z.literal('conversation.deleted'), conversation_id: z.number().int() }),
