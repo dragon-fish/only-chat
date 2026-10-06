@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { latestAssistantContextUsage, messageContextUsage, messageUsageMetrics } from '@/client/lib/ui-models'
+import { latestAssistantContextUsage, messageContextUsage, messageUsageMetrics, messagesBehindCheckpoint } from '@/client/lib/ui-models'
 import type { Message } from '@/shared/models'
 
 function message(id: number, role: Message['role'], over: Partial<Message> = {}): Message {
@@ -69,5 +69,35 @@ describe('context usage across a multi-step turn', () => {
 
   it('falls back to the totals for a turn recorded before steps were kept', () => {
     expect(messageContextUsage({ prompt: 1000, completion: 200 }, 10000)).toMatchObject({ used: 1200 })
+  })
+})
+
+describe('context usage across a checkpoint', () => {
+  const model = { provider_id: 7, model_id: 'm' }
+  const checkpoint = (id: number) => message(id, 'assistant', {
+    parts: [{ type: 'checkpoint', plugin: 'context_compaction', content: 'summary', attachments: [], contributors: [], data: null }],
+    // What writing the summary cost — never the context size.
+    usage: { prompt: 150_000, completion: 4_000 },
+  })
+  const before = [
+    message(1, 'user'),
+    message(2, 'assistant', { ...model, usage: { prompt: 180_000, completion: 2_000 } }),
+  ]
+
+  it('is pending until a reply after the checkpoint reports usage', () => {
+    expect(latestAssistantContextUsage([...before, checkpoint(3)], model)).toBe('pending')
+    expect(latestAssistantContextUsage([...before, checkpoint(3), message(4, 'user'), message(5, 'assistant', { ...model, status: 'streaming' })], model)).toBe('pending')
+    expect(latestAssistantContextUsage([...before, checkpoint(3), message(4, 'assistant', { ...model, status: 'error' })], model)).toBe('pending')
+  })
+
+  it('returns to a number once real usage arrives after it', () => {
+    const usage = { prompt: 9_000, completion: 300 }
+    expect(latestAssistantContextUsage([...before, checkpoint(3), message(4, 'user'), message(5, 'assistant', { ...model, usage })], model)).toBe(usage)
+  })
+
+  it('de-emphasises only what lies before the last checkpoint on the path', () => {
+    const path = [...before, checkpoint(3), message(4, 'user'), message(5, 'assistant'), checkpoint(6), message(7, 'user')]
+    expect([...messagesBehindCheckpoint(path)]).toEqual([1, 2, 3, 4, 5])
+    expect(messagesBehindCheckpoint(before).size).toBe(0)
   })
 })

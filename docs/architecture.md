@@ -53,9 +53,11 @@ behind it with `ctx.projectPanel`. The memory plugin is the first user of both.
 
 A plugin can offer composer commands: it declares `slashCommands` in its manifest (names unique
 across all manifests, checked by a test) and its client half registers the behaviour behind each with
-`ctx.slashCommands.register`. The composer lists the commands of enabled plugins without loading
-them; on submit, a first word that is exactly `/` plus one of those names loads the owning plugin and
-runs the command instead of sending — never as a message, never queued. Any other `/…` text, such as
+`ctx.slashCommands.register`. The composer lists the commands of enabled plugins from their
+manifests; the chat view also loads those plugins' client halves while it is open, because their
+`plugin.event`s are not buffered and a notice nobody was listening for is lost. On submit, a first
+word that is exactly `/` plus one of those names runs the command instead of sending — never as a
+message, never queued. Any other `/…` text, such as
 a path, is sent as usual. A command talks to its server half over the plugin's own `plugin.command` /
 `plugin.event` channel; there is no server-side command parsing.
 

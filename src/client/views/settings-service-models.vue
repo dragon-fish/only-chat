@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { ChevronRightIcon, ImagesIcon, SparklesIcon } from '@lucide/vue'
+import { ChevronRightIcon, FoldVerticalIcon, ImagesIcon, SparklesIcon } from '@lucide/vue'
 import { toast } from 'vue-sonner'
 import PageBackButton from '@/client/components/layout/page-back-button.vue'
 import ModelCapabilityIcons from '@/client/components/model-capability-icons.vue'
@@ -26,6 +26,7 @@ const sync = useSyncStore()
 const textKey = ref('')
 const imageKey = ref('')
 const fileKey = ref('')
+const compactionKey = ref('')
 const filePrompt = ref('')
 const titlePrompt = ref('')
 const loading = ref(true)
@@ -47,6 +48,11 @@ const textOptions = computed(() => [
     label: entry.model.metadata.name || entry.model.model_id,
     description: `${entry.provider.name} · ${entry.model.model_id}`,
   })),
+])
+/** Same capability as the text slot: it reads a flattened transcript and writes a summary. */
+const compactionOptions = computed(() => [
+  { value: '', label: '不使用' },
+  ...textOptions.value.slice(1),
 ])
 const imageOptions = computed(() => [
   { value: '', label: '不使用' },
@@ -73,6 +79,7 @@ const savedFile = computed(() => keyOf(sync.settings.service_models?.file_unders
 const savedFilePrompt = computed(() => sync.settings.service_prompts?.file_understanding ?? SERVICE_PROMPT_DEFAULTS.file_understanding)
 const savedText = computed(() => keyOf(sync.settings.service_models?.text))
 const savedImage = computed(() => keyOf(sync.settings.service_models?.image))
+const savedCompaction = computed(() => keyOf(sync.settings.service_models?.compaction))
 const savedPrompt = computed(() =>
   sync.settings.service_prompts?.conversation_title ?? SERVICE_PROMPT_DEFAULTS.conversation_title)
 
@@ -89,12 +96,13 @@ const fileOpen = ref(false)
 watch([titleCustom, missing], ([custom, absent]) => { if (custom || absent.length) titleOpen.value = true })
 watch([fileCustom, () => filePrompt.value.trim()], ([custom, text]) => { if (custom || !text) fileOpen.value = true })
 const changed = computed(() =>
-  fileKey.value !== savedFile.value || filePrompt.value !== savedFilePrompt.value || textKey.value !== savedText.value || imageKey.value !== savedImage.value || titlePrompt.value !== savedPrompt.value)
+  fileKey.value !== savedFile.value || filePrompt.value !== savedFilePrompt.value || textKey.value !== savedText.value || imageKey.value !== savedImage.value || compactionKey.value !== savedCompaction.value || titlePrompt.value !== savedPrompt.value)
 
 watch(savedFile, value => { fileKey.value = value; saving.value = false })
 watch(savedFilePrompt, value => { filePrompt.value = value; saving.value = false })
 watch(savedText, value => { textKey.value = value; saving.value = false })
 watch(savedImage, value => { imageKey.value = value; saving.value = false })
+watch(savedCompaction, value => { compactionKey.value = value; saving.value = false })
 watch(savedPrompt, value => { titlePrompt.value = value; saving.value = false })
 watch(() => sync.lastError, error => { if (error) saving.value = false })
 
@@ -107,6 +115,7 @@ async function load() {
     filePrompt.value = savedFilePrompt.value
     textKey.value = savedText.value
     imageKey.value = savedImage.value
+    compactionKey.value = savedCompaction.value
     titlePrompt.value = savedPrompt.value
   }
   catch (error) { toast.error(error instanceof Error ? error.message : String(error)) }
@@ -119,7 +128,10 @@ function save() {
   const sent = sync.send({
     type: 'settings.update', request_id: crypto.randomUUID(),
     settings: {
-      service_models: { text: refOf(textKey.value), image: refOf(imageKey.value), file_understanding: refOf(fileKey.value) },
+      service_models: {
+        text: refOf(textKey.value), image: refOf(imageKey.value), file_understanding: refOf(fileKey.value),
+        compaction: refOf(compactionKey.value),
+      },
       // A prompt equal to its default is sent as `null` and stored as unset (spec §9).
       service_prompts: {
         conversation_title: servicePromptPatch('conversation_title', titlePrompt.value),
@@ -225,6 +237,21 @@ onMounted(load)
                       type="button" variant="ghost" class="min-h-10"
                       :disabled="saving || !fileCustom"
                       @click="filePrompt = SERVICE_PROMPT_DEFAULTS.file_understanding") 恢复默认
+
+        Card
+          CardHeader
+            CardTitle.flex.items-center.gap-2
+              FoldVerticalIcon
+              | 压缩备用模型
+            CardDescription 对话已超出当前模型窗口时，用这个模型把历史压平后写摘要。建议选便宜、上下文大的模型。未设置时，超长对话无法自动压缩。
+          CardContent
+            FieldGroup
+              Field
+                FieldLabel(for="service-compaction-model") 模型
+                SearchableSelect#service-compaction-model(
+                  v-model="compactionKey" :options="compactionOptions" :disabled="saving"
+                  placeholder="选择压缩备用模型" search-placeholder="搜索供应商、模型名称或 ID…")
+                FieldDescription 只列出能读文本也能写文本的模型。
 
         .sticky.bottom-0.-mx-4.flex.items-center.justify-end.gap-3.border-t.p-4.backdrop-blur(class="bg-background/95 pb-[calc(1rem+env(safe-area-inset-bottom))] md:-mx-6 md:px-6 lg:-mx-8 lg:px-8")
           .flex.items-center.gap-2(aria-label="服务模型操作")

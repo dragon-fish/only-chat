@@ -51,3 +51,13 @@ it('still draws a turn that is only now starting', () => {
   const host = mount({ ...base, status: 'streaming' })
   expect(host.textContent?.trim()).not.toBe('')
 })
+
+it('draws a checkpoint as a divider with no reply actions, falling back when no plugin renders it', () => {
+  const host = mount({
+    ...base, provider_id: null, model_id: null, usage: { prompt: 90_000, completion: 2_000 },
+    parts: [{ type: 'checkpoint', plugin: 'context_compaction', content: 'summary', attachments: [], contributors: [], data: null }],
+  })
+  expect(host.querySelector('[role="separator"]')?.textContent).toContain('上下文已压缩')
+  expect(host.querySelector('[aria-label="重新生成"]')).toBeNull()
+  expect(host.querySelector('[aria-label="编辑消息"]')).toBeNull()
+})

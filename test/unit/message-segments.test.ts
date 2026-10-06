@@ -20,6 +20,14 @@ describe('messageSegments', () => {
     ])
   })
 
+  it('keeps a checkpoint as its own segment and never merges text across it', () => {
+    const checkpoint: Part = { type: 'checkpoint', plugin: 'context_compaction', content: 'summary', attachments: [], contributors: [], data: null }
+    const segments = messageSegments([text('before'), checkpoint, text('after')])
+    expect(segments.map(s => s.kind)).toEqual(['text', 'checkpoint', 'text'])
+    expect(segments.flatMap(s => s.kind === 'text' ? [s.markdown] : [])).toEqual(['before', 'after'])
+    expect(turnBlocks(segments).map(block => block.kind)).toEqual(['segment', 'segment', 'segment'])
+  })
+
   it('attaches each result to its own call and leaves an unanswered call pending', () => {
     const segments = messageSegments([call('a'), result('a'), call('b')])
     const tools = segments.filter(s => s.kind === 'tool')

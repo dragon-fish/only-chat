@@ -102,6 +102,26 @@ describe('ClientPluginHost', () => {
     expect(await host.ensureNotificationRenderer('nobody')).toBeUndefined()
   })
 
+  it('lazily loads the plugin that renders its checkpoints, one renderer per plugin, none for an unknown plugin', async () => {
+    const compaction = { id: 'context_compaction', name: 'C', description: 'C', tools: [] }
+    const host = new ClientPluginHost({
+      manifests: [compaction, { id: 'twice', name: 'T', description: 'T', tools: [] }],
+      loaders: {
+        context_compaction: async () => ({ setup: ctx => { ctx.checkpoints.register({ name: 'divider' }) } }),
+        twice: async () => ({ setup: (ctx) => {
+          ctx.checkpoints.register({ name: 'first' })
+          ctx.checkpoints.register({ name: 'second' })
+        } }),
+      },
+    })
+    expect(await host.ensureCheckpointRenderer('context_compaction')).toEqual({ name: 'divider' })
+    // A checkpoint from a plugin this build does not know falls back to the core divider.
+    expect(await host.ensureCheckpointRenderer('gone')).toBeUndefined()
+    await expect(host.ensurePlugin('twice')).rejects.toThrow(/checkpoint renderer already registered/)
+    host.disposePlugin('context_compaction')
+    expect(await host.ensureCheckpointRenderer('context_compaction')).toEqual({ name: 'divider' })
+  })
+
   describe('slash commands', () => {
     const env = { conversationId: 7, streaming: false, compacting: false, toast: () => {} }
     const manifest = (id: string, commands: string[]) => ({

@@ -7,6 +7,7 @@ import { useConfigStore } from '@/client/stores/config'
 import { cn } from '@/client/lib/utils'
 import type { MapNodeData } from '@/client/components/conversation-map'
 import { NODE_HEIGHT, NODE_WIDTH } from '@/client/components/conversation-map'
+import { checkpointOf } from '@/shared/checkpoint'
 
 const props = defineProps<{ data: MapNodeData, conversationId: number }>()
 const sync = useSyncStore()
@@ -37,16 +38,20 @@ const modelLabel = computed(() => {
     ?? current.model_id
 })
 
+/** Written by the server with no model of its own; said as what it is, never as an empty reply. */
+const isCheckpoint = computed(() => message.value !== undefined && checkpointOf(message.value) !== null)
+
 /** Tool-only replies carry no text; naming the tool beats showing an empty card. */
 const preview = computed(() => {
   const current = message.value
   if (!current) return ''
+  if (isCheckpoint.value) return '上下文已压缩'
   const text = current.parts.filter(part => part.type === 'text').map(part => part.text).join('').trim()
   if (text) return text
   const call = current.parts.find(part => part.type === 'tool_call')
   return call ? call.name : ''
 })
-const toolOnly = computed(() => preview.value !== '' && message.value?.parts.every(part => part.type !== 'text') === true)
+const toolOnly = computed(() => !isCheckpoint.value && preview.value !== '' && message.value?.parts.every(part => part.type !== 'text') === true)
 
 const time = computed(() => {
   const created = message.value?.created_at
@@ -61,7 +66,7 @@ const time = computed(() => {
 div(:class="cardClass" :style="cardStyle" role="button" :aria-label="`分支节点 ${data.messageId}`")
   Handle(type="target" :position="Position.Top" class="opacity-0")
   .flex.items-center.gap-1.leading-none(class="text-[10px]")
-    span.font-medium(:class="isUser ? 'text-emerald-300' : 'text-sky-300'") {{ isUser ? '用户' : '助手' }}
+    span.font-medium(:class="isUser ? 'text-emerald-300' : 'text-sky-300'") {{ isUser ? '用户' : isCheckpoint ? '检查点' : '助手' }}
     span.truncate.text-muted-foreground(v-if="modelLabel") {{ modelLabel }}
   .min-h-0.flex-1.overflow-hidden
     p.line-clamp-2.leading-snug.text-foreground(class="text-[11px]")

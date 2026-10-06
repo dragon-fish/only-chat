@@ -70,7 +70,10 @@ export class Hub extends Service {
   readonly userId: number
   readonly seq = new SeqAllocator()
   /** Per-conversation operation lock (spec §1.4); notifications held back by it go out on release. */
-  readonly operations = new ConversationOperations(conversationId => deliverTaskNotifications(this, conversationId))
+  readonly operations = new ConversationOperations(
+    conversationId => deliverTaskNotifications(this, conversationId),
+    (conversationId, compacting) => this.broadcast({ type: 'conversation.compacting', conversation_id: conversationId, compacting }),
+  )
   /** Writing checkpoints and collecting what plugins add to them (spec §1.4, §1.5). */
   readonly checkpoints = new Checkpoints(this)
   /**
@@ -382,6 +385,12 @@ export class Hub extends Service {
       const provider = await getProvider(this.db, fileModel.provider_id, this.userId)
       const model = await getModel(this.db, fileModel.provider_id, fileModel.model_id, this.userId)
       if (!provider?.enabled || !model?.enabled || !canServeAsFileModel(model.metadata_resolved)) throw new Error('file understanding model not found')
+    }
+    const compactionModel = patch.service_models?.compaction
+    if (compactionModel) {
+      const provider = await getProvider(this.db, compactionModel.provider_id, this.userId)
+      const model = await getModel(this.db, compactionModel.provider_id, compactionModel.model_id, this.userId)
+      if (!provider?.enabled || !model?.enabled || !canServeAsServiceModel(model.metadata_resolved)) throw new Error('compaction model not found')
     }
     const titlePrompt = patch.service_prompts?.conversation_title
     if (typeof titlePrompt === 'string') {

@@ -10,6 +10,7 @@ export type SettingsPanelRenderer = unknown
 export type WorkspacePanelRenderer = unknown
 export type ProjectPanelRenderer = unknown
 export type NotificationRenderer = unknown
+export type CheckpointRenderer = unknown
 
 /** What a plugin asks of the workspace panel; the shell decides whether to grant it. */
 export interface WorkspaceAttention {
@@ -61,6 +62,11 @@ export interface ClientPluginContext {
    * `notification`. Without one the notification shows its summary text.
    */
   notifications: { register(component: NotificationRenderer): () => void }
+  /**
+   * A checkpoint this plugin wrote, given the part as `checkpoint`. Without one — the plugin's
+   * client not loaded, or gone — the core draws a plain "上下文已压缩" divider.
+   */
+  checkpoints: { register(component: CheckpointRenderer): () => void }
   /**
    * Extra content on this plugin's own settings page, under `/settings/plugins/<id>`. The
    * declaration-driven form stays; this is for what a form cannot be — a file manager, a log, a
@@ -116,6 +122,7 @@ export class ClientPluginHost {
   private readonly configRenderers = new Map<string, ConfigRenderer>()
   private readonly messageFooters = new Map<string, MessageFooterRenderer>()
   private readonly notificationRenderers = new Map<string, NotificationRenderer>()
+  private readonly checkpointRenderers = new Map<string, CheckpointRenderer>()
   private readonly settingsPanels = new Map<string, SettingsPanelRenderer>()
   private readonly projectPanels = new Map<string, ProjectPanelRenderer>()
   private readonly eventListeners = new Map<string, Set<(payload: unknown) => void>>()
@@ -309,6 +316,17 @@ export class ClientPluginHost {
             return unregister
           },
         },
+        checkpoints: {
+          register: (component) => {
+            if (this.checkpointRenderers.has(pluginId)) throw new Error(`checkpoint renderer already registered: ${pluginId}`)
+            this.checkpointRenderers.set(pluginId, component)
+            const unregister = () => {
+              if (this.checkpointRenderers.get(pluginId) === component) this.checkpointRenderers.delete(pluginId)
+            }
+            registrations.push(unregister)
+            return unregister
+          },
+        },
         workspacePanel: {
           register: (component) => {
             if (this.workspacePanels.has(pluginId)) throw new Error(`workspace panel already registered: ${pluginId}`)
@@ -384,6 +402,18 @@ export class ClientPluginHost {
     if (!this.loaders[pluginId]) return undefined
     await this.ensurePlugin(pluginId)
     return this.notificationRenderers.get(pluginId)
+  }
+
+  /**
+   * Historical checkpoints use this path even when their plugin is now globally disabled. Undefined
+   * for a plugin this build does not know, which the caller draws with the core fallback.
+   */
+  async ensureCheckpointRenderer(pluginId: string): Promise<CheckpointRenderer | undefined> {
+    const existing = this.checkpointRenderers.get(pluginId)
+    if (existing !== undefined) return existing
+    if (!this.loaders[pluginId]) return undefined
+    await this.ensurePlugin(pluginId)
+    return this.checkpointRenderers.get(pluginId)
   }
 
   /** Historical Parts use this path even when their plugin is now globally disabled. */

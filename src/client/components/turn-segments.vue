@@ -14,6 +14,7 @@ import { computed, ref } from 'vue'
 import ReasoningBlock from '@/client/components/reasoning-block.vue'
 import AttachmentLightbox from '@/client/components/attachment-lightbox.vue'
 import ToolPartRenderer from '@/client/components/tool-part-renderer.vue'
+import CheckpointDivider from '@/client/components/checkpoint-divider.vue'
 import type { MessageSegment } from '@/client/components/message-segments'
 import { useAttachmentUrl } from '@/client/lib/audit-context'
 
@@ -62,5 +63,6 @@ function openImage(key: string) {
     button.w-fit.cursor-zoom-in.rounded(
       v-else-if="segment.kind === 'image'" type="button" aria-label="查看图片" @click="openImage(segment.key)")
       img(class="max-h-80 rounded border" :src="attachmentUrl(segment.part.attachment_id)" alt="")
+    CheckpointDivider(v-else-if="segment.kind === 'checkpoint'" :checkpoint="segment.part")
   AttachmentLightbox(:images="lightboxImages" :index="lightboxIndex" @update:index="lightboxIndex = $event")
 </template>
