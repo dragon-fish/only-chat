@@ -189,6 +189,35 @@ export interface PluginManifest {
   /** Declaration order is the form's field order. */
   config?: readonly PluginConfigField[]
   configIntro?: PluginConfigIntro
+  /**
+   * Commands the composer offers as `/name args`. Declared so the menu lists them without loading
+   * the plugin; the client half registers the behaviour behind each name (spec §4).
+   */
+  slashCommands?: readonly PluginSlashCommand[]
+}
+
+export interface PluginSlashCommand {
+  /** Lowercase letters, digits and inner dashes; unique across every manifest. */
+  name: string
+  description: string
+  /** Shown after the name in the menu, e.g. `[重点]`. */
+  argsHint?: string
+}
+
+const SLASH_COMMAND_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
+
+/** The plugin each slash command belongs to; throws on a malformed name or one declared twice. */
+export function slashCommandOwners(manifests: readonly PluginManifest[]): Map<string, string> {
+  const owners = new Map<string, string>()
+  for (const manifest of manifests) {
+    for (const { name } of manifest.slashCommands ?? []) {
+      if (!SLASH_COMMAND_NAME.test(name)) throw new Error(`plugin ${manifest.id} declares an invalid slash command name: ${JSON.stringify(name)}`)
+      const owner = owners.get(name)
+      if (owner) throw new Error(`slash command ${name} is declared by multiple plugins: ${owner}, ${manifest.id}`)
+      owners.set(name, manifest.id)
+    }
+  }
+  return owners
 }
 
 /**

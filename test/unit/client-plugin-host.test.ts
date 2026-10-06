@@ -101,5 +101,93 @@ describe('ClientPluginHost', () => {
     expect(await host.ensureNotificationRenderer('image_generation')).toEqual({ name: 'thumbs' })
     expect(await host.ensureNotificationRenderer('nobody')).toBeUndefined()
   })
-})
 
+  describe('slash commands', () => {
+    const env = { conversationId: 7, streaming: false, compacting: false, toast: () => {} }
+    const manifest = (id: string, commands: string[]) => ({
+      id, name: id, description: id, tools: [], slashCommands: commands.map(name => ({ name, description: name })),
+    })
+
+    it('rejects a command its manifest does not declare, and a second registration', async () => {
+      const host = new ClientPluginHost({
+        manifests: [manifest('alpha', ['go']), manifest('beta', ['other'])],
+        loaders: {
+          alpha: async () => ({ setup: (ctx) => { ctx.slashCommands.register('other', { run: async () => {} }) } }),
+          beta: async () => ({ setup: (ctx) => {
+            ctx.slashCommands.register('other', { run: async () => {} })
+            ctx.slashCommands.register('other', { run: async () => {} })
+          } }),
+        },
+      })
+      await expect(host.ensurePlugin('alpha')).rejects.toThrow(/does not declare slash command other/i)
+      await expect(host.ensurePlugin('beta')).rejects.toThrow(/already registered/i)
+    })
+
+    it('rejects two manifests declaring the same command', () => {
+      expect(() => new ClientPluginHost({ manifests: [manifest('a', ['go']), manifest('b', ['go'])], loaders: {} })).toThrow(/go/)
+    })
+
+    it('loads the owning plugin on demand and runs with a context scoped to it', async () => {
+      const sent: unknown[] = []
+      const seen: unknown[] = []
+      let loads = 0
+      const host = new ClientPluginHost({
+        manifests: [manifest('alpha', ['go'])],
+        loaders: { alpha: async () => {
+          loads++
+          return { setup: (ctx) => {
+            ctx.slashCommands.register('go', {
+              run: async (command, args) => {
+                seen.push({ conversationId: command.conversationId, streaming: command.streaming, compacting: command.compacting, args })
+                await new Promise<void>((resolve) => {
+                  const off = command.on((payload) => { seen.push(payload); off(); resolve() })
+                  command.send({ type: 'go', args })
+                })
+              },
+            })
+          } }
+        } },
+      })
+      host.setSender((command) => { sent.push(command); queueMicrotask(() => host.dispatchEvent('alpha', { ok: true })); return true })
+      await host.runSlashCommand({ pluginId: 'alpha', name: 'go', args: 'now' }, env)
+      expect(loads).toBe(1)
+      expect(sent).toEqual([{ type: 'plugin.command', plugin: 'alpha', payload: { type: 'go', args: 'now' } }])
+      expect(seen).toEqual([{ conversationId: 7, streaming: false, compacting: false, args: 'now' }, { ok: true }])
+    })
+
+    it('refuses with the reason enabled gives, without running', async () => {
+      let ran = false
+      const host = new ClientPluginHost({
+        manifests: [manifest('alpha', ['go'])],
+        loaders: { alpha: async () => ({ setup: (ctx) => {
+          ctx.slashCommands.register('go', {
+            enabled: command => (command.streaming ? '生成中' : true),
+            run: async () => { ran = true },
+          })
+        } }) },
+      })
+      await expect(host.runSlashCommand({ pluginId: 'alpha', name: 'go', args: '' }, { ...env, streaming: true })).rejects.toThrow('生成中')
+      expect(ran).toBe(false)
+      await host.runSlashCommand({ pluginId: 'alpha', name: 'go', args: '' }, env)
+      expect(ran).toBe(true)
+    })
+
+    it('releases the registration with the plugin', async () => {
+      let runs = 0
+      const host = new ClientPluginHost({
+        manifests: [manifest('alpha', ['go'])],
+        loaders: { alpha: async () => ({ setup: (ctx) => { ctx.slashCommands.register('go', { run: async () => { runs++ } }) } }) },
+      })
+      await host.ensurePlugin('alpha')
+      host.disposePlugin('alpha')
+      // Reinstalling registers again; a leftover registration would make this throw "already registered".
+      await host.runSlashCommand({ pluginId: 'alpha', name: 'go', args: '' }, env)
+      expect(runs).toBe(1)
+    })
+
+    it('fails when the plugin never registers a command it declares', async () => {
+      const host = new ClientPluginHost({ manifests: [manifest('alpha', ['go'])], loaders: { alpha: async () => ({ setup: () => {} }) } })
+      await expect(host.runSlashCommand({ pluginId: 'alpha', name: 'go', args: '' }, env)).rejects.toThrow(/go/)
+    })
+  })
+})
