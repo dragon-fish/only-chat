@@ -276,6 +276,7 @@ describe('REST api', () => {
         cloudflare_browser_run: { configured: true, values: {}, secrets: {} },
         comfyui: { configured: false, values: {}, secrets: {} },
         memory: { configured: true, values: {}, secrets: {} },
+        context_compaction: { configured: true, values: {}, secrets: {} },
       },
       created_at: stored!.created_at,
     })
