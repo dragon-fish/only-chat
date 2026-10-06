@@ -625,6 +625,12 @@ export const useSyncStore = defineStore('sync', () => {
   const loadedMessageConversations = reactive(new Set<number>())
   const streamingIds = reactive(new Set<number>())
   /**
+   * Conversations whose context is being compacted (spec context-compaction §1.4). The snapshot
+   * replaces it whole and `conversation.compacting` keeps it live, so a reconnect cannot leave a
+   * finished compaction showing.
+   */
+  const compacting = reactive(new Set<number>())
+  /**
    * What is waiting to be said in each conversation, as the server holds it.
    *
    * Mirrored, never owned: the hub decides whether a withdrawal beat the injection, so this only
@@ -667,6 +673,7 @@ export const useSyncStore = defineStore('sync', () => {
     messages.clear()
     loadedMessageConversations.clear()
     streamingIds.clear()
+    compacting.clear()
     optimisticMutations.clear()
     toolProgress.clear()
     forkResult.value = null
@@ -763,14 +770,21 @@ export const useSyncStore = defineStore('sync', () => {
         // REST reload can overwrite them.
         streamingIds.clear()
         for (const m of e.inflight) { streamingIds.add(m.id); bucket(m.conversation_id).set(m.id, m) }
+        compacting.clear()
+        for (const id of e.compacting ?? []) compacting.add(id)
         snapshotSeq.value++
         break
       case 'conversation.created':
       case 'conversation.updated':
         conversations.set(e.conversation.id, e.conversation)
         break
+      case 'conversation.compacting':
+        if (e.compacting) compacting.add(e.conversation_id)
+        else compacting.delete(e.conversation_id)
+        break
       case 'conversation.deleted': {
         conversations.delete(e.conversation_id)
+        compacting.delete(e.conversation_id)
         for (const id of messages.get(e.conversation_id)?.keys() ?? []) streamingIds.delete(id)
         messages.delete(e.conversation_id)
         loadedMessageConversations.delete(e.conversation_id)
@@ -984,7 +998,7 @@ export const useSyncStore = defineStore('sync', () => {
   }
 
   return {
-    status, snapshotSeq, conversations, projects, messages, streamingIds, stashes, withdrawn, forkResult, titleSuggestion, settings, pluginConfig, lastError, projectsLoaded, conversationsLoaded, settingsLoaded,
+    status, snapshotSeq, conversations, projects, messages, streamingIds, compacting, stashes, withdrawn, forkResult, titleSuggestion, settings, pluginConfig, lastError, projectsLoaded, conversationsLoaded, settingsLoaded,
     optimisticMutations, toolProgress,
     conversationsError, projectsError, settingsError, loadedMessageConversations, conversationList, imageConversationList, projectList,
     applyEvent, ingestConversations, ingestMessages, conversationsInProject, pathFor, siblingsOf, leafOf, isStreaming, loadConversations, loadProjects, loadSettings, loadMessages, connect, reset, send, onPluginEvent,
