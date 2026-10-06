@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Project, Conversation, ProviderWithInterfaces } from '@/shared/models'
 import {
+  canonicalConversationPath,
   displayInitials,
   projectPresentation,
   recentProjects,
@@ -24,6 +25,16 @@ const conversation = (id: number, project_id: number | null, updated_at: number,
 })
 
 describe('navigation view models', () => {
+  it('names the route a conversation belongs on only when the current one is wrong', () => {
+    // Same place: nothing to do.
+    expect(canonicalConversationPath(null, conversation(7, null, 1))).toBeNull()
+    expect(canonicalConversationPath(3, conversation(7, 3, 1))).toBeNull()
+    // Moved into a Project, out of one, or between two.
+    expect(canonicalConversationPath(null, conversation(7, 3, 1))).toBe('/project/3/c/7')
+    expect(canonicalConversationPath(3, conversation(7, null, 1))).toBe('/c/7')
+    expect(canonicalConversationPath(3, conversation(7, 4, 1))).toBe('/project/4/c/7')
+  })
+
   it('derives initials with locale-independent casing', () => {
     expect(displayInitials('istanbul intelligence')).toBe('II')
   })

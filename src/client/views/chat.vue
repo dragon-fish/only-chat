@@ -25,7 +25,7 @@ import { defaultToolsForSettings, conversationToolBlockReason } from '@/client/c
 import { takeHandoff } from '@/client/lib/new-conversation-handoff'
 import { pendingHumanCalls } from '@/client/components/tool-part-renderer'
 import { pluginManifests } from '@/client/plugins/loaders'
-import { projectPresentation, conversationPath, latestAssistantContextUsage } from '@/client/lib/ui-models'
+import { projectPresentation, conversationPath, canonicalConversationPath, latestAssistantContextUsage } from '@/client/lib/ui-models'
 import {
   choiceFromParams, DISCONNECTED_MESSAGE, effectiveModelFor, modelOverrideAfterPick, nextSendState,
   optimisticUserMessage, paramsFromFields, sendCommandFor, conversationFormFrom, conversationSettingSources, useSyncStore,
@@ -59,6 +59,11 @@ const isDesktop = useMediaQuery('(min-width: 768px)')
 
 const sid = computed(() => props.conversationId)
 const conversation = computed(() => (sid.value === null ? undefined : sync.conversations.get(sid.value)))
+// Moving the conversation into, out of or between Projects arrives as `conversation.updated`; a
+// stale link or a refresh lands here the same way. Replace, so Back does not return to the wrong one.
+watch(() => conversation.value && canonicalConversationPath(props.projectId, conversation.value), (path) => {
+  if (path) void router.replace({ path, query: route.query, hash: route.hash })
+}, { immediate: true })
 const path = computed(() => (sid.value === null ? [] : sync.pathFor(sid.value)))
 const streaming = computed(() => sid.value !== null && sync.isStreaming(sid.value))
 const composer = ref<InstanceType<typeof Composer> | null>(null)

@@ -22,6 +22,16 @@ export function conversationPath(conversation: Pick<Conversation, 'id' | 'projec
   return conversation.project_id === null ? `/c/${conversation.id}` : `/project/${conversation.project_id}/c/${conversation.id}`
 }
 
+/**
+ * Where an open conversation belongs when the route it is shown under names another Project — it
+ * was moved in, out or across, or opened from a stale link — or null when the route is right. The
+ * sidebar and page title follow the route, so a conversation left under the wrong one splits the
+ * view from them.
+ */
+export function canonicalConversationPath(routeProjectId: number | null, conversation: Pick<Conversation, 'id' | 'project_id'>): string | null {
+  return routeProjectId === conversation.project_id ? null : conversationPath(conversation)
+}
+
 /** Builds a stable avatar fallback without depending on the host's default locale. */
 export function displayInitials(name: string, fallback = 'AI'): string {
   const value = name.trim()
