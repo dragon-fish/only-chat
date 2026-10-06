@@ -86,7 +86,7 @@ export const UserSettingsSchema = z.object({
    * still load, or a bad save would lock the user out of the settings page that repairs it. The
    * write path is where a template is refused.
    */
-  service_prompts: z.object({ conversation_title: z.string().optional(), file_understanding: z.string().optional() }).optional(),
+  service_prompts: z.object({ conversation_title: z.string().optional(), file_understanding: z.string().optional(), compaction: z.string().optional() }).optional(),
 })
 export type UserSettings = z.infer<typeof UserSettingsSchema>
 

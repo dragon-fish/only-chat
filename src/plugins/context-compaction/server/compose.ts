@@ -9,6 +9,7 @@ import { renderContent } from './content'
 import { attachmentIdsOf, attachmentsTokens, MESSAGE_OVERHEAD_TOKENS, textTokens } from './estimate'
 import { previousFiles, touchedFiles } from './files'
 import { summaryInstruction, todayIso } from './instruction'
+import { SERVICE_PROMPT_DEFAULTS } from '@/shared/service-prompts'
 import { flattenConversation, recentTranscript, transcriptBudget } from './render'
 import { MAX_SUMMARY_TOKENS, summarizeCached, summarizeFlattened, type SummaryOutcome } from './summarize'
 import { estimateAttachmentIds, estimateNextRequest, triggerLine } from './trigger'
@@ -19,7 +20,7 @@ const MIN_CACHED_OUTPUT_TOKENS = 2048
 export interface ComposeDeps {
   db: DB
   llm: Llm
-  /** The person's settings, read when the fallback model is needed. */
+  /** The person's settings: the compaction instruction, and the fallback model when it is needed. */
   settings: (userId: number) => Promise<UserSettings>
   now?: () => Date
 }
@@ -54,19 +55,21 @@ export async function composeCheckpoint(deps: ComposeDeps, input: ComposeInput):
   const estimated = estimateNextRequest({ projection, lastStep: lastMeasuredStep(projection.visible) }, { pendingAttachments }, infos)
   const before = input.trigger === 'overflow' && input.model.contextLimit !== null ? Math.max(estimated, input.model.contextLimit) : estimated
   const date = todayIso(deps.now?.())
-  const cap = cachedOutputCap(input, before, textTokens(summaryInstruction({ date, focus: input.focus, strict: true })))
+  const settings = await deps.settings(input.userId)
+  const template = settings.service_prompts?.compaction ?? SERVICE_PROMPT_DEFAULTS.compaction
+  const cap = cachedOutputCap(input, before, textTokens(summaryInstruction({ template, date, focus: input.focus, strict: true })))
 
   let mode: CompactionData['mode']
   let outcome: SummaryOutcome
   if (cap !== null) {
     mode = 'cached'
-    outcome = await summarizeCached({ request: input, signal: input.signal, maxOutputTokens: cap, date, focus: input.focus })
+    outcome = await summarizeCached({ request: input, signal: input.signal, maxOutputTokens: cap, template, date, focus: input.focus })
   } else {
     mode = 'flattened'
     const previous = projection.checkpoint?.content ?? null
     outcome = await summarizeFlattened({
-      db: deps.db, llm: deps.llm, userId: input.userId, settings: await deps.settings(input.userId),
-      signal: input.signal, date, focus: input.focus,
+      db: deps.db, llm: deps.llm, userId: input.userId, settings,
+      signal: input.signal, template, date, focus: input.focus,
       flatten: budget => flattenConversation(previous, projection.visible, infos, budget),
     })
   }

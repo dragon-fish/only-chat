@@ -12,6 +12,7 @@ import { previousFiles, touchedFiles } from '@/plugins/context-compaction/server
 import { renderContent } from '@/plugins/context-compaction/server/content'
 import { cachedOutputCap } from '@/plugins/context-compaction/server/compose'
 import { summaryInstruction } from '@/plugins/context-compaction/server/instruction'
+import { SERVICE_PROMPT_DEFAULTS } from '@/shared/service-prompts'
 
 function msg(id: number, role: Message['role'], parts: Part[], over: Partial<Message> = {}): Message {
   return {
@@ -299,7 +300,7 @@ describe('checkpoint content', () => {
 })
 
 describe('summary mode', () => {
-  const instruction = textTokens(summaryInstruction({ date: '2026-10-06', focus: null, strict: true }))
+  const instruction = textTokens(summaryInstruction({ template: SERVICE_PROMPT_DEFAULTS.compaction, date: '2026-10-06', focus: null, strict: true }))
 
   it('reuses the cache while the window holds the request, the instruction and the output', () => {
     expect(cachedOutputCap({ trigger: 'auto', model: { ...MODEL, contextLimit: 200_000 } }, 160_000, instruction)).toBe(16_000)
@@ -313,5 +314,18 @@ describe('summary mode', () => {
 
   it('never resends a request that overflowed', () => {
     expect(cachedOutputCap({ trigger: 'overflow', model: MODEL }, 10, instruction)).toBeNull()
+  })
+})
+
+describe('summaryInstruction', () => {
+  it('uses the template whole, fills in the date, and appends the focus and the retry warning', () => {
+    const text = summaryInstruction({ template: 'Summarize. Today: {date}. Again {date}.', date: '2026-10-06', focus: '  numbers  ', strict: true })
+    expect(text.startsWith('Summarize. Today: 2026-10-06. Again 2026-10-06.')).toBe(true)
+    expect(text).toContain('Tools are unavailable for this request')
+    expect(text.trimEnd().endsWith('numbers')).toBe(true)
+  })
+
+  it('adds nothing to a template when there is no focus and no retry', () => {
+    expect(summaryInstruction({ template: 'Just this.', date: '2026-10-06', focus: '   ' })).toBe('Just this.')
   })
 })

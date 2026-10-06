@@ -378,6 +378,19 @@ describe('context compaction plugin', () => {
     expect((await getConversation(db(), conversationId, 1))!.head_message_id).toBe((await checkpointOf(conversationId)).row.id)
   })
 
+  it('asks for the summary with the person’s own compaction instruction, whole', async () => {
+    await setup()
+    await setSettings({ plugins: SWITCHES, service_prompts: { compaction: 'CUSTOM INSTRUCTION as of {date}' } })
+    const { c, conversationId } = await chatted(1000)
+
+    summaries.push(summary('MANUAL SUMMARY'))
+    expect(await compress(c, conversationId, 'r1', 'keep the numbers')).toEqual({ type: 'compress.result', requestId: 'r1', ok: true })
+    const asked = textOf(generated[0]!.options.prompt.at(-1)!)
+    expect(asked).toMatch(/^CUSTOM INSTRUCTION as of \d{4}-\d{2}-\d{2}/)
+    expect(asked).not.toContain('Stop here.')
+    expect(asked).toContain('keep the numbers')
+  })
+
   it('refuses /compress while the conversation is generating', async () => {
     await setup()
     const { c, conversationId } = await chatted(1000)

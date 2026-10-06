@@ -29,6 +29,7 @@ const fileKey = ref('')
 const compactionKey = ref('')
 const filePrompt = ref('')
 const titlePrompt = ref('')
+const compactionPrompt = ref('')
 const loading = ref(true)
 const saving = ref(false)
 
@@ -82,6 +83,8 @@ const savedImage = computed(() => keyOf(sync.settings.service_models?.image))
 const savedCompaction = computed(() => keyOf(sync.settings.service_models?.compaction))
 const savedPrompt = computed(() =>
   sync.settings.service_prompts?.conversation_title ?? SERVICE_PROMPT_DEFAULTS.conversation_title)
+const savedCompactionPrompt = computed(() =>
+  sync.settings.service_prompts?.compaction ?? SERVICE_PROMPT_DEFAULTS.compaction)
 
 const missing = computed(() => missingRequiredPlaceholders(titlePrompt.value))
 /**
@@ -91,12 +94,15 @@ const missing = computed(() => missingRequiredPlaceholders(titlePrompt.value))
  */
 const titleCustom = computed(() => titlePrompt.value !== SERVICE_PROMPT_DEFAULTS.conversation_title)
 const fileCustom = computed(() => filePrompt.value !== SERVICE_PROMPT_DEFAULTS.file_understanding)
+const compactionCustom = computed(() => compactionPrompt.value !== SERVICE_PROMPT_DEFAULTS.compaction)
 const titleOpen = ref(false)
 const fileOpen = ref(false)
+const compactionOpen = ref(false)
 watch([titleCustom, missing], ([custom, absent]) => { if (custom || absent.length) titleOpen.value = true })
 watch([fileCustom, () => filePrompt.value.trim()], ([custom, text]) => { if (custom || !text) fileOpen.value = true })
+watch([compactionCustom, () => compactionPrompt.value.trim()], ([custom, text]) => { if (custom || !text) compactionOpen.value = true })
 const changed = computed(() =>
-  fileKey.value !== savedFile.value || filePrompt.value !== savedFilePrompt.value || textKey.value !== savedText.value || imageKey.value !== savedImage.value || compactionKey.value !== savedCompaction.value || titlePrompt.value !== savedPrompt.value)
+  fileKey.value !== savedFile.value || filePrompt.value !== savedFilePrompt.value || textKey.value !== savedText.value || imageKey.value !== savedImage.value || compactionKey.value !== savedCompaction.value || compactionPrompt.value !== savedCompactionPrompt.value || titlePrompt.value !== savedPrompt.value)
 
 watch(savedFile, value => { fileKey.value = value; saving.value = false })
 watch(savedFilePrompt, value => { filePrompt.value = value; saving.value = false })
@@ -104,6 +110,7 @@ watch(savedText, value => { textKey.value = value; saving.value = false })
 watch(savedImage, value => { imageKey.value = value; saving.value = false })
 watch(savedCompaction, value => { compactionKey.value = value; saving.value = false })
 watch(savedPrompt, value => { titlePrompt.value = value; saving.value = false })
+watch(savedCompactionPrompt, value => { compactionPrompt.value = value; saving.value = false })
 watch(() => sync.lastError, error => { if (error) saving.value = false })
 
 async function load() {
@@ -117,13 +124,14 @@ async function load() {
     imageKey.value = savedImage.value
     compactionKey.value = savedCompaction.value
     titlePrompt.value = savedPrompt.value
+    compactionPrompt.value = savedCompactionPrompt.value
   }
   catch (error) { toast.error(error instanceof Error ? error.message : String(error)) }
   finally { loading.value = false }
 }
 
 function save() {
-  if (missing.value.length > 0 || !filePrompt.value.trim()) return
+  if (missing.value.length > 0 || !filePrompt.value.trim() || !compactionPrompt.value.trim()) return
   saving.value = true
   const sent = sync.send({
     type: 'settings.update', request_id: crypto.randomUUID(),
@@ -136,6 +144,7 @@ function save() {
       service_prompts: {
         conversation_title: servicePromptPatch('conversation_title', titlePrompt.value),
         file_understanding: servicePromptPatch('file_understanding', filePrompt.value),
+        compaction: servicePromptPatch('compaction', compactionPrompt.value),
       },
     },
   })
@@ -242,20 +251,37 @@ onMounted(load)
           CardHeader
             CardTitle.flex.items-center.gap-2
               FoldVerticalIcon
-              | 压缩备用模型
-            CardDescription 对话已超出当前模型窗口时，用这个模型把历史压平后写摘要。建议选便宜、上下文大的模型。未设置时，超长对话无法自动压缩。
+              | 上下文压缩
+            CardDescription 压缩时让模型写摘要的指令，以及对话已超出当前模型窗口时使用的备用模型。
           CardContent
             FieldGroup
               Field
-                FieldLabel(for="service-compaction-model") 模型
+                FieldLabel(for="service-compaction-model") 备用模型
                 SearchableSelect#service-compaction-model(
                   v-model="compactionKey" :options="compactionOptions" :disabled="saving"
                   placeholder="选择压缩备用模型" search-placeholder="搜索供应商、模型名称或 ID…")
-                FieldDescription 只列出能读文本也能写文本的模型。
+                FieldDescription 对话已超出当前模型窗口时，用这个模型把历史压平后写摘要。建议选便宜、上下文大的模型；未设置时，超长对话无法自动压缩。只列出能读文本也能写文本的模型。
+              Collapsible(v-model:open="compactionOpen")
+                CollapsibleTrigger.group.flex.min-h-10.items-center.gap-2.text-sm.text-muted-foreground(class="hover:text-foreground")
+                  ChevronRightIcon(class="size-4 transition-transform group-data-[state=open]:rotate-90")
+                  | 自定义压缩指令
+                  Badge(v-if="compactionCustom" variant="secondary") 已自定义
+                CollapsibleContent
+                  Field.pt-2
+                    FieldLabel(for="service-compaction-prompt") 压缩指令
+                    Textarea#service-compaction-prompt(v-model="compactionPrompt" rows="12" class="max-h-96 overflow-y-auto font-mono text-sm" :disabled="saving")
+                    FieldDescription
+                      | 追加在对话末尾、请模型写摘要的整段指令，可以全部改写。
+                      code {date}
+                      |  会替换为当天日期；手动压缩的重点说明会自动附在后面。
+                    Button.self-start(
+                      type="button" variant="ghost" class="min-h-10"
+                      :disabled="saving || !compactionCustom"
+                      @click="compactionPrompt = SERVICE_PROMPT_DEFAULTS.compaction") 恢复默认
 
         .sticky.bottom-0.-mx-4.flex.items-center.justify-end.gap-3.border-t.p-4.backdrop-blur(class="bg-background/95 pb-[calc(1rem+env(safe-area-inset-bottom))] md:-mx-6 md:px-6 lg:-mx-8 lg:px-8")
           .flex.items-center.gap-2(aria-label="服务模型操作")
             span.text-sm.text-muted-foreground {{ changed ? '有未保存的更改' : '更改已保存' }}
-            Button(type="button" class="min-h-10" :disabled="saving || !changed || missing.length > 0 || !filePrompt.trim()" @click="save")
+            Button(type="button" class="min-h-10" :disabled="saving || !changed || missing.length > 0 || !filePrompt.trim() || !compactionPrompt.trim()" @click="save")
               | {{ saving ? '保存中…' : '保存' }}
 </template>

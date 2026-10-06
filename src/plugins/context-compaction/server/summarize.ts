@@ -44,6 +44,7 @@ export interface CachedSummaryInput {
   request: ComposeRequest
   signal: AbortSignal
   maxOutputTokens: number
+  template: string
   date: string
   focus: string | null
 }
@@ -55,10 +56,10 @@ export interface CachedSummaryInput {
  * `@ai-sdk/anthropic` does for `'none'`, changes the prefix. They carry no `execute`, so a call is
  * never run; a reply that makes one is asked again, once, more firmly.
  */
-export async function summarizeCached({ request, signal, maxOutputTokens, date, focus }: CachedSummaryInput): Promise<SummaryOutcome> {
+export async function summarizeCached({ request, signal, maxOutputTokens, template, date, focus }: CachedSummaryInput): Promise<SummaryOutcome> {
   const steps: StepUsage[] = []
   const ask = async (strict: boolean): Promise<Answer> => {
-    const instruction: ModelMessage = { role: 'user', content: summaryInstruction({ date, focus, strict }) }
+    const instruction: ModelMessage = { role: 'user', content: summaryInstruction({ template, date, focus, strict }) }
     const result = await generateText({
       model: request.languageModel,
       messages: [...request.messages, instruction],
@@ -91,6 +92,7 @@ export interface FlattenedSummaryInput {
   userId: number
   settings: UserSettings
   signal: AbortSignal
+  template: string
   date: string
   focus: string | null
   /** Builds the conversation text for an input budget, in tokens. */
@@ -108,7 +110,7 @@ export async function summarizeFlattened(input: FlattenedSummaryInput): Promise<
   const { provider, providerInterface, model } = resolved
   const limit = model.metadata_resolved.limit
   const maxOutputTokens = Math.min(MAX_SUMMARY_TOKENS, limit?.output || MAX_SUMMARY_TOKENS)
-  const instruction = summaryInstruction({ date: input.date, focus: input.focus })
+  const instruction = summaryInstruction({ template: input.template, date: input.date, focus: input.focus })
   const budget = (limit?.context || DEFAULT_FLATTEN_CONTEXT) - textTokens(instruction) - maxOutputTokens
   if (budget <= 0) return { ok: false, error: NO_FALLBACK_ERROR }
   const conversation = input.flatten(budget)
