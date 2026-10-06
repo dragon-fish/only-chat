@@ -14,6 +14,8 @@ import { MemoryServerPlugin } from '@/plugins/memory/server'
 import { loadCatalog, renderCatalog } from '@/plugins/memory/server/catalog'
 import type { GenerationTurn } from '@/server/plugins/hub/generation-turn'
 import { notesByMessage } from '@/server/plugins/hub/generation'
+import { projectContext } from '@/server/plugins/hub/checkpoint'
+import { orderCheckpointBlocks, type CheckpointComposePayload } from '@/server/plugins/hub/checkpoint-writer'
 import { appendMessageNotes, forkConversation, getMessage, insertMessage } from '@/server/plugins/hub/conversations'
 import type { Message } from '@/shared/models'
 import { ensureTestUser } from './auth-helper'
@@ -91,9 +93,10 @@ interface Turn {
 async function startTurn(h: Harness, options: { toolIds?: string[], path?: Message[], projectId?: number | null, db?: DB } = {}): Promise<Turn> {
   const toolIds = options.toolIds ?? MEMORY_TOOLS
   const projectId = options.projectId === undefined ? h.projectId : options.projectId
+  const { path, checkpoint, visible } = projectContext(options.path ?? [])
   const generation: GenerationTurn = {
     userId: 1, conversationId: h.conversationId, projectId, toolIds,
-    path: options.path ?? [], checkpoint: null, visible: options.path ?? [], state: new Map(), canReadFile: () => false, notes: [],
+    path, checkpoint, visible, state: new Map(), canReadFile: () => false, notes: [],
   }
   await h.ctx.parallel('generation/prepare', generation)
   const runtime: ToolContext = {
@@ -275,6 +278,29 @@ describe('memory in the prompt', () => {
         return turn
       },
       async reply(text: string) { await add('assistant', text) },
+      /** Collects blocks for a checkpoint after the current head, as the core does before writing one. */
+      async compose(options: { toolIds?: string[], projectId?: number | null } = {}) {
+        const payload: CheckpointComposePayload = {
+          userId: 1, conversationId: h.conversationId,
+          projectId: options.projectId === undefined ? h.projectId : options.projectId,
+          toolIds: options.toolIds ?? MEMORY_TOOLS, path, projection: projectContext(path), blocks: [],
+        }
+        await h.ctx.parallel('checkpoint/compose', payload)
+        return orderCheckpointBlocks(payload.blocks)
+      },
+      /** Writes a checkpoint carrying what `compose` collected, then tells the plugins it was written. */
+      async commit(composed: { blocks: Array<{ pluginId: string, text: string }>, contributors: string[] }) {
+        const part = {
+          type: 'checkpoint' as const, plugin: 'context_compaction', attachments: [], data: null,
+          content: ['SUMMARY', ...composed.blocks.map(block => block.text)].join('\n'), contributors: composed.contributors,
+        }
+        const row = await insertMessage(h.db, 1, {
+          conversation_id: h.conversationId, parent_id: path.at(-1)?.id ?? null, seq: seq++, role: 'assistant',
+          parts: [part], provider_id: null, model_id: null, usage: null, status: 'done', error: null, created_at: 0,
+        })
+        path = [...path, row as Message]
+        await h.ctx.parallel('checkpoint/committed', { userId: 1, conversationId: h.conversationId, part, message: row as Message })
+      },
       /** The memory notes on a message of the path. */
       notes(index: number) { return (path.at(index)?.notes ?? []).filter(note => note.plugin === 'memory') },
     }
@@ -412,6 +438,83 @@ describe('memory in the prompt', () => {
     expect(copied.find(message => message.seq === 1)?.notes).toEqual(c.path[0]!.notes)
     expect(copied.find(message => message.seq === 3)?.notes).toEqual(c.path[2]!.notes)
     expect(await h.db.select().from(memoryState).where(eq(memoryState.conversation_id, fork.id))).toHaveLength(1)
+  })
+
+  describe('across a checkpoint', () => {
+    const stateOf = async () => (await h.db.select().from(memoryState).where(eq(memoryState.conversation_id, h.conversationId)))[0]
+
+    it('carries the current catalog into a checkpoint only while the turn offers memory', async () => {
+      await elsewhere('/memory/user/topics/a.md', 'a')
+      const c = conversation()
+      await c.say('hi')
+      await c.reply('hello')
+
+      const composed = await c.compose()
+      expect(composed.contributors).toEqual(['memory'])
+      const catalog = await loadCatalog(h.db, 1, h.projectId, { user: true, project: true }, async () => null)
+      expect(composed.blocks).toEqual([{ pluginId: 'memory', text: renderCatalog(catalog.user, catalog.project) }])
+
+      expect(await c.compose({ toolIds: ['read_file', 'write_file'] })).toEqual({ blocks: [], contributors: [] })
+    })
+
+    it('does not repeat a catalog the checkpoint carries, and knows exactly what that catalog showed', async () => {
+      const c = conversation()
+      await c.say('hi')
+      await elsewhere('/memory/user/topics/food.md', 'spicy')
+      await c.reply('hello')
+      const composed = await c.compose()
+      expect(composed.blocks[0]!.text).toContain('/memory/user/topics/food.md')
+      // Lands while the summary is being written: the checkpoint's catalog never showed it.
+      await elsewhere('/memory/user/topics/drinks.md', 'tea')
+      await c.commit(composed)
+      const known = Object.values((await stateOf())!.known).map(file => file.path)
+      expect(known).toContain('/memory/user/topics/food.md')
+      expect(known).not.toContain('/memory/user/topics/drinks.md')
+
+      await elsewhere('/memory/user/topics/films.md', 'noir')
+      await c.say('next')
+      expect(c.notes(-1)).toHaveLength(1)
+      const { text, at } = c.notes(-1)[0]!
+      expect(at).toBeUndefined()
+      expect(text).toContain('- new /memory/user/topics/drinks.md')
+      expect(text).toContain('- new /memory/user/topics/films.md')
+      expect(text).not.toContain('food.md')
+    })
+
+    it('adds nothing after a checkpoint that carries the catalog while memory stays still', async () => {
+      await elsewhere('/memory/user/topics/a.md', 'a')
+      const c = conversation()
+      await c.say('hi')
+      await c.reply('hello')
+      await c.commit(await c.compose())
+      await c.say('next')
+      expect(c.notes(-1)).toEqual([])
+    })
+
+    it('leads the next memory turn with the catalog again when the checkpoint does not carry it', async () => {
+      await elsewhere('/memory/user/topics/a.md', 'a')
+      const c = conversation()
+      await c.say('hi')
+      await c.reply('hello')
+      await c.commit(await c.compose({ toolIds: ['read_file'] }))
+      await c.say('next')
+      expect(c.notes(-1)).toHaveLength(1)
+      expect(c.notes(-1)[0]).toMatchObject({ at: 'start' })
+      expect(c.notes(-1)[0]!.text).toContain('- /memory/user/topics/a.md')
+    })
+
+    it('leaves what the conversation knows alone when a checkpoint is composed but never written', async () => {
+      const c = conversation()
+      await c.say('hi')
+      const before = await stateOf()
+      await elsewhere('/memory/user/topics/food.md', 'spicy')
+      await c.reply('hello')
+      await c.compose()
+      expect(await stateOf()).toEqual(before)
+
+      await c.say('next')
+      expect(c.notes(-1)[0]!.text).toContain('- new /memory/user/topics/food.md')
+    })
   })
 
   it('says nothing about memory, and opens nothing, in a turn that does not offer it', async () => {

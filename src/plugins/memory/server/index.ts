@@ -13,7 +13,7 @@ import {
   type MemoryCategory, type MemoryScopes, type MemorySaveInput, type MemorySaveOutput, type MemoryToolError,
 } from '../shared'
 import type { ReadMemoryFile } from './catalog'
-import { absorbOwnChanges, copyState, memoryTurnNotes } from './notices'
+import { absorbOwnChanges, catalogSnapshot, copyState, memoryTurnNotes, writeState, type MemoryState } from './notices'
 
 /** Standing instructions. Static on purpose: it is part of the system prompt, ahead of the cache. */
 const GUIDANCE = `You have a memory that outlives this conversation: Markdown files in the workspace.
@@ -25,7 +25,7 @@ Inside a Project, project memory is the primary layer:
 - Where project memory and user memory disagree, project memory wins in this Project. Record a correction in project memory and leave user memory alone, unless the user says the fact has changed everywhere.
 - Save to user memory only what holds across all of this user's conversations. When unsure, save to project memory.
 
-The first user message memory is on for opens with a catalog of these files in a system reminder: each layer's profile and preferences in full, then one line per other file with its description. When memory changes elsewhere later — another conversation, the user's memory page, a switch — a reminder at the end of a later user message says what changed. Your own changes are not repeated back to you. When a file looks relevant, read it before relying on it.
+The first user message memory is on for opens with a catalog of these files in a system reminder: each layer's profile and preferences in full, then one line per other file with its description. When earlier messages are compacted, the catalog moves into the compacted context. When memory changes elsewhere later — another conversation, the user's memory page, a switch — a reminder at the end of a later user message says what changed. Your own changes are not repeated back to you. When a file looks relevant, read it before relying on it.
 
 Both layers are laid out the same way, and where a fact goes depends on what it is about:
 - profile.md, in /memory/user: who the user is — name, occupation, employer, when they started, and whatever else will still be true in three months. Under 300 words.
@@ -117,6 +117,16 @@ async function scopesOf(ctx: Context, userId: number, conversationId: number, pr
   })
 }
 
+/** Reads memory files' text through the layers `scopes` opens, for rendering the catalog. */
+function memoryReader(ctx: Context, userId: number, conversationId: number, projectId: number | null, scopes: MemoryScopes): ReadMemoryFile {
+  const files = new WorkspaceFiles(ctx.db.orm, ctx.assets, userId)
+  const scope = { conversationId, projectId, memory: scopes }
+  return async (mount, relativePath) => {
+    const read = await files.readBytes(mount, scope, relativePath)
+    return read.ok && isTextMime(read.value.mime) ? new TextDecoder().decode(read.value.bytes) : null
+  }
+}
+
 export const MemoryServerPlugin = {
   name: 'memory',
   inject: ['tools', 'db', 'assets', 'promptSections', 'pluginConfig'] as const,
@@ -127,18 +137,42 @@ export const MemoryServerPlugin = {
       if (!turn.toolIds.includes(MEMORY_SAVE_TOOL_ID)) return
       const scopes = await scopesOf(ctx, turn.userId, turn.conversationId, turn.projectId)
       openMemoryMounts(turn.state, scopes)
-      const files = new WorkspaceFiles(ctx.db.orm, ctx.assets, turn.userId)
-      const scope = { conversationId: turn.conversationId, projectId: turn.projectId, memory: scopes }
-      const readFile: ReadMemoryFile = async (mount, relativePath) => {
-        const read = await files.readBytes(mount, scope, relativePath)
-        return read.ok && isTextMime(read.value.mime) ? new TextDecoder().decode(read.value.bytes) : null
-      }
       const notes = await memoryTurnNotes({
         db: ctx.db.orm, userId: turn.userId, conversationId: turn.conversationId, projectId: turn.projectId,
-        scopes, path: turn.path, readFile,
+        scopes, visible: turn.visible, checkpoint: turn.checkpoint,
+        readFile: memoryReader(ctx, turn.userId, turn.conversationId, turn.projectId, scopes),
       })
       // Every note goes on the user message the turn answers; the core stores it there.
       for (const note of notes) turn.notes.push({ pluginId: MEMORY_PLUGIN_ID, messageId: turn.path.at(-1)!.id, ...note })
+    })
+
+    // What each conversation's last composed catalog showed, by conversation id, until its checkpoint
+    // is written. Compose is collect-only because the checkpoint can still fail; a failed one leaves
+    // its entry here and the next compose replaces it. Compose and commit run inside one operation of
+    // this hub, so an in-memory map suffices. Do not record the state as of commit instead: memory
+    // written while the summary was being composed is not in the checkpoint's catalog, and would
+    // never be told.
+    const composed = new Map<number, MemoryState>()
+
+    // The checkpoint replaces the messages that carried the catalog, so it carries the catalog on.
+    ctx.on('checkpoint/compose', async (payload) => {
+      composed.delete(payload.conversationId)
+      if (!payload.toolIds.includes(MEMORY_SAVE_TOOL_ID)) return
+      const { userId, conversationId, projectId } = payload
+      const scopes = await scopesOf(ctx, userId, conversationId, projectId)
+      const { text, state } = await catalogSnapshot({
+        db: ctx.db.orm, userId, projectId, scopes, readFile: memoryReader(ctx, userId, conversationId, projectId, scopes),
+      })
+      composed.set(conversationId, state)
+      payload.blocks.push({ pluginId: MEMORY_PLUGIN_ID, text })
+    })
+
+    // From here on the checkpoint's catalog is what the model has: later turns remind against it.
+    ctx.on('checkpoint/committed', async ({ conversationId, part }) => {
+      const state = composed.get(conversationId)
+      composed.delete(conversationId)
+      if (state === undefined || !part.contributors.includes(MEMORY_PLUGIN_ID)) return
+      await writeState(ctx.db.orm, conversationId, state)
     })
 
     // What the turn changed itself is now known; the rest waits for the next turn's reminder.
