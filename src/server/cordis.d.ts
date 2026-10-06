@@ -12,6 +12,7 @@ import type { PromptSections } from './plugins/prompt-sections'
 import type { PluginConfig } from './plugins/plugin-config'
 import type { PluginChannel } from './plugins/plugin-channel'
 import type { ImageBackends } from './plugins/artifacts/backends'
+import type { CompactionTrigger, ContextManagers } from './plugins/context-manager'
 import type { GenerationTurn } from './plugins/hub/generation-turn'
 import type { CheckpointCommittedPayload, CheckpointComposePayload } from './plugins/hub/checkpoint-writer'
 import type { Message, Project, Conversation } from '@/shared/models'
@@ -32,6 +33,7 @@ declare module 'cordis' {
     pluginConfig: PluginConfig
     pluginChannel: PluginChannel
     imageBackends: ImageBackends
+    contextManager: ContextManagers
   }
 }
 
@@ -76,6 +78,12 @@ declare module 'cordis' {
      * was not. Awaited through `ctx.parallel`; a listener's failure is logged and changes nothing.
      */
     'checkpoint/committed'(payload: CheckpointCommittedPayload): Promise<void>
+    /**
+     * A compaction ended without writing a checkpoint: the context manager's `compose` failed or
+     * threw, the person stopped it, or the head moved first. Emitted for every trigger, so the
+     * plugin can surface it however the compaction started.
+     */
+    'checkpoint/failed'(payload: { userId: number, conversationId: number, trigger: CompactionTrigger, error: string }): void
     'message/before-send'(payload: BeforeSendPayload): void
     'message/done'(message: Message): void
     'project/created'(project: Project): void
