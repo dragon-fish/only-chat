@@ -32,7 +32,8 @@ const links = [
         img.size-14(src="/logo/only-chat-indigo.svg" alt="")
         .flex.flex-col.gap-1
           h1.text-2xl.font-semibold Only Chat
-          p.text-sm.text-muted-foreground 跑在 Cloudflare Workers 上的个人 AI 聊天。
+          p.text-sm.font-medium Only Chat, not only chat.
+          p.text-sm.text-muted-foreground 开源自托管，揣兜随心聊；能简亦能强，插件随你造。
       Card
         CardHeader
           CardTitle 许可与署名

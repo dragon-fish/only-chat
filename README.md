@@ -2,7 +2,9 @@
 
 <img src="public/logo/only-chat-indigo.svg" alt="only-chat" width="160"/>
 
-only-chat — 跑在 Cloudflare Workers 上的个人 AI 聊天。
+**Only Chat, not only chat.**
+
+开源自托管，揣兜随心聊；能简亦能强，插件随你造。
 
 </div>
 
