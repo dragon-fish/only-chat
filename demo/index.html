@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <link rel="icon" type="image/svg+xml" href="/logo/only-chat-indigo.svg" />
+    <title>Only Chat 演示</title>
+    <script>
+      ;(() => {
+        try {
+          const preference = localStorage.getItem('oc.theme')
+          const systemDark = window.matchMedia('(prefers-color-scheme: dark)').matches
+          const dark = preference === 'dark' || (preference !== 'light' && systemDark)
+          document.documentElement.classList.toggle('dark', dark)
+          document.documentElement.style.colorScheme = dark ? 'dark' : 'light'
+        } catch {
+          // Ignore storage and media-query failures before the app mounts.
+        }
+      })()
+    </script>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/client/demo/main.ts"></script>
+  </body>
+</html>

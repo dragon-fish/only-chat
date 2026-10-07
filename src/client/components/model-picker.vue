@@ -57,7 +57,7 @@ component(:is="isDesktop ? Popover : Drawer" v-model:open="open")
     Button(
       :variant="compact ? 'ghost' : 'outline'" size="sm" :title="`${selectedProviderName} · ${selectedName}`"
       :class="cn('min-h-10 md:min-h-7', compact ? 'min-w-10 px-1' : 'min-w-44 max-w-64 justify-start')"
-      :aria-label="`选择模型，当前为 ${selectedName}`")
+      :aria-label="`选择模型，当前为 ${selectedName}`" data-tour="model-picker")
       LabAvatar(:model-id="selected?.model.model_id" :lab-id="selected?.model.lab_id ?? null" :family="selected?.model.metadata.family" :provider-name="selectedProviderName" size="sm")
       span.flex.min-w-0.flex-1.items-baseline.gap-1.overflow-hidden.text-left(v-if="!compact")
         span(class="max-w-full shrink-0 truncate") {{ selectedName }}

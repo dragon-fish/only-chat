@@ -42,5 +42,21 @@ The `mock-image` model serves Image Studio: each run downloads a placeholder pho
 not go through a proxy). Directives do not apply to it. Pass `--user <id>`
 to seed for a user other than `1`. The command is idempotent and local-only.
 
+## Guided demo
+
+`/demo/` (`demo/index.html` → `src/client/demo/`) is a second page built alongside the app: the real
+UI, driven by a fixed driver.js tour, answered entirely in the browser. It needs no login and works on
+a fresh checkout — open `http://localhost:7456/demo/`.
+
+- The entry installs an in-memory `localStorage`, a fake `fetch` for `/api/*` and a fake `WebSocket`
+  for `/ws` *before* importing the app; Better Auth captures `fetch` when its client is created.
+- The fake fetch fails closed: an `/api/*` request with no scripted answer gets a 501 and never
+  reaches the network. The demo shares an origin with the real app, so a request let through would
+  carry this browser's real session.
+- `DemoBackend` answers only the scripted turns (`script.ts`) and refuses every other command. The
+  frames it streams must satisfy `WsEventSchema` — the client drops a frame that does not, silently.
+- Tour targets are `data-tour="…"` attributes on the real components. Renaming or removing one breaks
+  the tour, not the build; walk the tour after touching them.
+
     pnpm typecheck                    # vue-tsc + both tsc projects
     pnpm test                         # vitest (unit + worker pool)

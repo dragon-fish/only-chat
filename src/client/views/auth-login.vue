@@ -86,4 +86,8 @@ main.flex.min-h-dvh.items-center.justify-center.bg-background.p-4
         p.text-center.text-sm.text-muted-foreground(v-if="allowRegister")
           | 还没有账号？
           RouterLink.ml-1.text-foreground.underline-offset-4(:to="registerLocation" class="hover:underline") 注册
+        //- A plain link, not a RouterLink: the demo is a separate page with its own app.
+        p.text-center.text-sm.text-muted-foreground
+          | 想先看看？
+          a.ml-1.text-foreground.underline-offset-4(href="/demo/" class="hover:underline") 先体验一下
 </template>

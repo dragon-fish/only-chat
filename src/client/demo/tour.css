@@ -1,0 +1,58 @@
+/* driver.js ships light-only colours; these follow the app's theme tokens instead. */
+.driver-popover.oc-tour {
+  font-family: inherit;
+  color: var(--popover-foreground);
+  background-color: var(--popover);
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) + 2px);
+  max-width: min(340px, calc(100vw - 32px));
+  padding: 16px;
+  box-shadow: 0 10px 30px rgb(0 0 0 / 0.25);
+}
+
+.oc-tour .driver-popover-title {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.oc-tour .driver-popover-description {
+  margin-top: 6px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--muted-foreground);
+}
+
+.oc-tour .driver-popover-close-btn {
+  color: var(--muted-foreground);
+}
+
+.oc-tour .driver-popover-close-btn:hover,
+.oc-tour .driver-popover-close-btn:focus {
+  color: var(--popover-foreground);
+}
+
+.oc-tour .driver-popover-footer {
+  margin-top: 12px;
+}
+
+.oc-tour .driver-popover-footer-btn {
+  color: var(--primary-foreground);
+  background-color: var(--primary);
+  border: 0;
+  border-radius: calc(var(--radius) - 2px);
+  padding: 6px 14px;
+  font-size: 13px;
+  text-shadow: none;
+}
+
+.oc-tour .driver-popover-footer-btn:hover,
+.oc-tour .driver-popover-footer-btn:focus {
+  background-color: var(--primary);
+  opacity: 0.9;
+}
+
+/* The arrow is a bordered box; only the side facing the target is coloured. */
+.oc-tour .driver-popover-arrow-side-left { border-left-color: var(--popover); }
+.oc-tour .driver-popover-arrow-side-right { border-right-color: var(--popover); }
+.oc-tour .driver-popover-arrow-side-top { border-top-color: var(--popover); }
+.oc-tour .driver-popover-arrow-side-bottom { border-bottom-color: var(--popover); }

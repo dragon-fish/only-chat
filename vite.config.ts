@@ -16,5 +16,10 @@ export default defineConfig({
     cloudflare(),
   ],
   resolve: { alias: { '@': path.resolve(import.meta.dirname, './src') } },
+  environments: {
+    // The guided demo is a second page served from the same static assets at `/demo/`. Scoped to
+    // the client: a top-level `build.input` also reaches the Worker build and breaks it.
+    client: { build: { rolldownOptions: { input: { main: path.resolve(import.meta.dirname, 'index.html'), demo: path.resolve(import.meta.dirname, 'demo/index.html') } } } },
+  },
   server: { port: 7456 },
 })

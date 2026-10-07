@@ -152,7 +152,7 @@ CheckpointDivider(v-else-if="checkpoint" :checkpoint="checkpoint")
 MessageRoot(
   v-else-if="!emptyTurn"
   :align="message.role === 'user' ? 'end' : 'start'"
-  :data-optimistic="optimistic || undefined" :class="cn(optimistic && 'opacity-70')")
+  :data-optimistic="optimistic || undefined" :data-tour="message.role === 'assistant' ? 'assistant-message' : undefined" :class="cn(optimistic && 'opacity-70')")
   MessageAvatar(v-if="message.role === 'assistant'" class="self-start group-has-data-[slot=message-footer]/message:translate-y-0")
     ProjectAvatar(v-if="project" :project="project")
     LabAvatar(v-else :model-id="message.model_id" :lab-id="assistantLabId ?? null" :family="assistantModelFamily" :provider-name="assistantProviderName ?? assistantName ?? '助手'")
@@ -170,7 +170,7 @@ MessageRoot(
             TaskNotificationRow(v-for="notice in notices" :key="notice.task_id" :notification="notice")
           .flex.flex-col.gap-2.pb-2(v-if="files.length")
             FileAttachment(v-for="file in files" :key="file.attachment_id" :attachment-id="file.attachment_id" :mime="file.mime" :filename="file.filename" :source-encoding="file.source_encoding")
-          .flex.flex-wrap.gap-2.pb-1(v-if="images.length")
+          .flex.flex-wrap.gap-2.pb-1(v-if="images.length" data-tour="message-images")
             button.cursor-zoom-in.rounded(
               v-for="(img, i) in images" :key="img.attachment_id" type="button"
               :aria-label="`查看图片 ${img.filename ?? i + 1}`" @click="lightboxIndex = i")
@@ -216,7 +216,7 @@ MessageRoot(
       Button(
         v-if="!readonly && message.role === 'assistant' && !streaming" variant="ghost" size="icon-xs"
         class="min-h-10 min-w-10 md:min-h-6 md:min-w-6"
-        title="重新生成" aria-label="重新生成" @click="regenerate")
+        title="重新生成" aria-label="重新生成" data-tour="regenerate" @click="regenerate")
         RefreshCwIcon(class="size-3.5")
       Button(
         v-if="!readonly && message.role === 'user' && !editing" variant="ghost" size="icon-xs"

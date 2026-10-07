@@ -56,7 +56,7 @@ component(:is="desktop ? Popover : Drawer")
   component(:is="desktop ? PopoverTrigger : DrawerTrigger" as-child)
     //- The count is spelled out rather than badged: a corner badge sat on top of the icon.
     Button(
-      variant="ghost" :size="desktop ? 'xs' : 'icon-sm'" aria-label="选择工具" :title="headerHint"
+      variant="ghost" :size="desktop ? 'xs' : 'icon-sm'" aria-label="选择工具" :title="headerHint" data-tour="tools"
       :class="[desktop ? 'min-h-10 gap-1.5 md:min-h-6' : 'relative size-10', active ? '' : 'text-muted-foreground']")
       component(:is="enabled ? WrenchIcon : WrenchOffIcon" data-icon="inline-start")
       template(v-if="desktop") {{ triggerLabel }}

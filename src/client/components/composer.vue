@@ -460,7 +460,7 @@ onBeforeUnmount(() => { releasePreviews(attachments.value); dropSent() })
           AttachmentAction(class="size-10 md:size-6" title="移除" aria-label="移除文件" @click="removeAttachment(i)")
             X(data-icon="inline-start")
     InputGroupTextarea(
-      ref="box" v-model="text" rows="2" placeholder="输入消息…"
+      ref="box" v-model="text" rows="2" placeholder="输入消息…" data-tour="composer-input"
       class="max-h-[40vh] text-base md:text-sm"
       @keydown="onKeydown" @paste="onPaste" @input="autoGrow")
     //- `align="block-end"` is what makes InputGroup lay out as a column with this row last.
@@ -487,7 +487,7 @@ onBeforeUnmount(() => { releasePreviews(attachments.value); dropSent() })
             InputGroupButton(
               size="icon-sm" :variant="action === 'stop' ? 'destructive' : 'default'"
               :class="actionClass"
-              :aria-label="actionLabel"
+              :aria-label="actionLabel" data-tour="composer-action"
               :aria-disabled="acting || (action === 'send' && sendBlockedReason !== null)" @click="act")
               Spinner(v-if="acting || commandRunning" class="size-4")
               Square(v-else-if="action === 'stop'" data-icon="inline-start")

@@ -8,7 +8,7 @@
 
 开源自托管，揣兜随心聊；能简亦能强，插件随你造。
 
-[<img src="https://deploy.workers.cloudflare.com/button" alt="Deploy to Cloudflare">](https://deploy.workers.cloudflare.com/?url=https://github.com/dragon-fish/only-chat)
+[在线体验](https://chat.epb.wiki/demo/) · [<img src="https://deploy.workers.cloudflare.com/button" alt="Deploy to Cloudflare" align="middle">](https://deploy.workers.cloudflare.com/?url=https://github.com/dragon-fish/only-chat)
 
 </div>
 

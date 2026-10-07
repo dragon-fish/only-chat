@@ -68,7 +68,7 @@ watch([() => sync.projectsLoaded, project], ([loaded, value]) => {
         </Field>
       </FieldGroup>
 
-      <section class="flex flex-col gap-2" aria-labelledby="oc-project-conversations">
+      <section class="flex flex-col gap-2" aria-labelledby="oc-project-conversations" data-tour="project-conversations">
         <h2 id="oc-project-conversations" class="min-h-10 px-2 py-2 text-sm font-medium">对话 {{ conversations.length }}</h2>
         <CollectionState :loaded="sync.conversationsLoaded" :error="sync.conversationsError" :retry="sync.loadConversations" :empty="conversations.length === 0" :empty-title="query.trim() ? '没有匹配的对话' : '还没有对话'" :empty-description="query.trim() ? '试试其他关键词。' : '在这个 Project 中开始一段新对话。'">
           <SidebarMenu>

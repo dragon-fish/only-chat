@@ -82,6 +82,7 @@ function setOpen(next: boolean) {
         <component :is="isDesktop ? PopoverTrigger : DrawerTrigger" as-child>
           <Button
             ref="trigger"
+            data-tour="reasoning"
             type="button"
             :variant="variant"
             size="xs"
