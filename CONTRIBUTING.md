@@ -15,7 +15,8 @@ That second grant is only possible if the copyright holder holds rights broad
 enough to license **every** part of the project under both sets of terms. Your
 contribution is part of the project, so that has to include your contribution.
 
-So, by opening a pull request against this repository, you agree that:
+The grant is made by ticking the licence box in the pull request template.
+Ticking it, you agree that:
 
 1. **You grant dragon-fish a licence broad enough to relicense your work.**
    Specifically: a perpetual, worldwide, non-exclusive, royalty-free,
@@ -54,10 +55,12 @@ held by one person, and the dual licence does not depend on it being. It
 depends on the grant above. Any wording suggesting otherwise is wrong and
 should be reported as a bug in this file.
 
-If you would rather not grant that, say so in the pull request. It is a
-reasonable position, and far better said out loud than discovered later — the
-likely outcome is that the change gets reimplemented rather than merged, which
-is nobody's favourite outcome but beats a licence problem nobody noticed.
+**A pull request without the box ticked is not merged, and no grant is made.**
+Not ticking it is a reasonable position, and far better said out loud than
+discovered later — the likely outcome is that the change gets reimplemented
+rather than merged, which is nobody's favourite outcome but beats a licence
+problem nobody noticed. The box covers the contribution in that pull request,
+including later pushes to it before it is merged.
 
 ## Attribution
 
