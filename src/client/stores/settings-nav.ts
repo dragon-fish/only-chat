@@ -1,7 +1,7 @@
 import { computed, markRaw, type Component } from 'vue'
 import { defineStore } from 'pinia'
 import {
-  CircleUserRoundIcon, FolderIcon, MessagesSquareIcon, PaletteIcon, PlugIcon, ServerCogIcon, ServerIcon,
+  CircleUserRoundIcon, FolderIcon, InfoIcon, MessagesSquareIcon, PaletteIcon, PlugIcon, ServerCogIcon, ServerIcon,
   SettingsIcon, SparklesIcon, UsersIcon,
 } from '@lucide/vue'
 import { useAuditEnabled } from '@/client/composables/use-audit-listing'
@@ -30,6 +30,7 @@ export const useSettingsNavStore = defineStore('settingsNav', () => {
         { label: '全局服务模型', description: '应用自己使用的文本与生图模型', to: '/settings/service-models', icon: markRaw(SparklesIcon) },
         { label: '插件', description: '管理聊天中的工具与扩展', to: '/settings/plugins', icon: markRaw(PlugIcon) },
         { label: '外观', description: '调整主题与显示偏好', to: '/settings/appearance', icon: markRaw(PaletteIcon) },
+        { label: '关于', description: '许可、署名与源代码', to: '/settings/about', icon: markRaw(InfoIcon) },
       ],
     }]
     // Their own group: a plugin page is not a sub-page of 插件, which manages which plugins run.

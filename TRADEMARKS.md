@@ -22,17 +22,20 @@ present your version as only-chat. This page is what keeps those two apart.
 ## You may not, without written permission
 
 - Use the name or logo as the name or branding of a fork, a redistribution or a
-  Public Service. "Powered by only-chat" in a footer is fine; "only-chat" as
-  the product's name is not.
+  Public Service. The "Powered by Only Chat" attribution that `ATTRIBUTION.md`
+  requires is not branding and must stay; "only-chat" as the product's name is
+  not allowed.
 - Modify the logo, or use a name or mark confusingly similar to either.
 - Suggest that the project endorses, sponsors or operates your version.
 
 ## Renaming a fork
 
 Replace the files in `public/logo/` and the places that display the name and
-logo: `index.html` (title and favicon), `src/client/components/layout/sidebar-brand.vue`
-and `README.md`. Everything else may keep its identifiers — package names,
-database names and code symbols are not branding.
+logo: `index.html` (title and favicon),
+`src/client/components/layout/sidebar-brand.vue`, the heading of
+`src/client/views/settings-about.vue` and `README.md` — but not the "Powered by
+Only Chat" attribution on that page. Everything else may keep its identifiers:
+package names, database names and code symbols are not branding.
 
 ## Asking
 

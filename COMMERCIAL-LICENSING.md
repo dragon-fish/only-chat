@@ -10,7 +10,8 @@ only-chat ──────┤
 ```
 
 The free side is the unmodified AGPL (`LICENSE`) plus one additional
-permission for plugins (`PLUGIN-EXCEPTION.md`). The plugins that ship in
+permission for plugins (`PLUGIN-EXCEPTION.md`) and one additional term: keep
+the "Powered by Only Chat" attribution on the About page (`ATTRIBUTION.md`). The plugins that ship in
 `src/plugins/` are MIT on top of that (`src/plugins/LICENSE`), and the name and
 logo are covered by neither grant (`TRADEMARKS.md`).
 
@@ -75,6 +76,7 @@ You need the commercial licence if you want to:
 - run a Public Service without offering its source — closed plugins, a closed
   fork, or both
 - combine the code into a work under a licence incompatible with the AGPL
+- remove the "Powered by Only Chat" attribution (white-label)
 
 Running an independent program alongside only-chat does not put that program
 under the AGPL; the licence calls such a combination an *aggregate*. Where the

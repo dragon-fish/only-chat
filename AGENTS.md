@@ -219,6 +219,8 @@ issue, and include screenshots for UI changes. Report the targeted checks run. N
 
 Core code is AGPL-3.0-only with the plugin exception (`PLUGIN-EXCEPTION.md`); `src/plugins/` is MIT
 (`src/plugins/LICENSE`); the name and the artwork in `public/logo/` are reserved (`TRADEMARKS.md`).
+The "Powered by Only Chat" line on `/settings/about` is a licence term (`ATTRIBUTION.md`) — never
+remove or reword it.
 Code ported from another project keeps its origin and copyright in the file and gets a row in
 `NOTICE.md` — a missing notice is a licence breach, not a style nit.
 

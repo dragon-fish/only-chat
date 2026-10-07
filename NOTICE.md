@@ -1,9 +1,10 @@
 # Third-party components
 
 This repository's own code and documentation are licensed under the GNU AGPL
-version 3 only (`LICENSE`) with the plugin exception (`PLUGIN-EXCEPTION.md`);
-the plugins in `src/plugins/` are MIT (`src/plugins/LICENSE`); a commercial
-licence is available from the copyright holder (`COMMERCIAL-LICENSING.md`).
+version 3 only (`LICENSE`) with the plugin exception (`PLUGIN-EXCEPTION.md`)
+and the attribution term (`ATTRIBUTION.md`); the plugins in `src/plugins/` are
+MIT (`src/plugins/LICENSE`); a commercial licence is available from the
+copyright holder (`COMMERCIAL-LICENSING.md`).
 None of that extends to the components below, which keep their own terms — **a
 commercial licence to this code is not a licence to anything on this page.**
 
