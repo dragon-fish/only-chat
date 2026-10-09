@@ -1,5 +1,4 @@
 import { Context, Service } from 'cordis'
-import { z } from 'zod'
 import { and, eq } from 'drizzle-orm'
 import type { BatchItem } from 'drizzle-orm/batch'
 import type { PluginConfigStatus, PluginManifest } from '@/shared/plugins'
@@ -9,6 +8,7 @@ import type { KeyValueEntry, KeyValueEntryView } from '@/shared/key-value'
 import type { DB } from '../../db/client'
 import { pluginConfigs } from '../../db/schema'
 import { decryptSecret, encryptSecret } from '../llm/crypto'
+import { entriesView, keepSavedSecrets, openEntries, sealEntries } from '../llm/key-value-secrets'
 
 /** `null` clears a secret; omitting the key leaves the stored value alone. */
 export type PluginConfigPatch = Record<string, unknown>
@@ -40,9 +40,7 @@ export class PluginConfig extends Service {
     const out: Record<string, unknown> = {}
     for (const row of rows) {
       if (isKeyValueConfigKey(manifest, row.key)) {
-        out[row.key] = await Promise.all((JSON.parse(row.value) as KeyValueEntry[]).map(async entry => (
-          entry.secret ? { ...entry, value: await decryptSecret(this._secret, entry.value) } : entry
-        )))
+        out[row.key] = await openEntries(this._secret, JSON.parse(row.value) as KeyValueEntry[])
       } else {
         out[row.key] = isSecretConfigKey(manifest, row.key)
           ? await decryptSecret(this._secret, row.value)
@@ -55,9 +53,7 @@ export class PluginConfig extends Service {
   /** How a value is kept at rest: a secret whole, or a key-value list with its secret rows sealed. */
   private async _encode(manifest: PluginManifest, key: string, value: unknown): Promise<string> {
     if (isKeyValueConfigKey(manifest, key)) {
-      return JSON.stringify(await Promise.all((value as KeyValueEntry[]).map(async entry => (
-        entry.secret ? { ...entry, value: await encryptSecret(this._secret, entry.value) } : entry
-      ))))
+      return JSON.stringify(await sealEntries(this._secret, value as KeyValueEntry[]))
     }
     return isSecretConfigKey(manifest, key) ? encryptSecret(this._secret, String(value)) : JSON.stringify(value)
   }
@@ -136,7 +132,7 @@ export class PluginConfig extends Service {
       const secrets: Record<string, boolean> = {}
       const configured = manifest.configSchema.safeParse(stored).success
       for (const [key, value] of Object.entries(stored)) {
-        if (isKeyValueConfigKey(manifest, key)) values[key] = (value as KeyValueEntry[]).map(entry => (entry.secret ? { ...entry, value: null } : entry))
+        if (isKeyValueConfigKey(manifest, key)) values[key] = entriesView(value as KeyValueEntry[])
         else if (isSecretConfigKey(manifest, key)) secrets[key] = String(value).length > 0
         else values[key] = value
       }
@@ -147,21 +143,6 @@ export class PluginConfig extends Service {
     }
     return out
   }
-}
-
-/**
- * The form never received a saved secret's value, so it sends null to mean "unchanged". A row keeps
- * its saved value only under the same name and only while still secret; anything else has to be
- * typed again rather than silently moving a credential to a different header.
- */
-export function keepSavedSecrets(rows: readonly KeyValueEntryView[], saved: readonly KeyValueEntry[] | undefined): KeyValueEntry[] {
-  return rows.map((row) => {
-    if (row.value !== null) return { name: row.name, value: row.value, secret: row.secret }
-    const previous = row.secret ? saved?.find(entry => entry.secret && entry.name === row.name) : undefined
-    // A ZodError, so the route reports it the way it reports every other invalid field.
-    if (!previous) throw new z.ZodError([{ code: 'custom', message: `请填写 ${row.name} 的值`, path: [row.name], input: row }])
-    return { name: row.name, value: previous.value, secret: true }
-  })
 }
 
 export const PluginConfigPlugin = {

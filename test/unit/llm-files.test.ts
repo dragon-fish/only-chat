@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createOpenAIFiles } from '@/server/plugins/llm/files/openai'
 import { createAnthropicFiles } from '@/server/plugins/llm/files/anthropic'
 
-const settings = { baseURL: 'https://gateway.example/api/v1///', apiKey: 'secret-files-key', credentialVersion: 7 }
+const settings = { baseURL: 'https://gateway.example/api/v1///', apiKey: 'secret-files-key', headers: {}, credentialVersion: 7 }
 const upload = { data: { type: 'text' as const, text: 'file bytes' }, mediaType: 'text/plain', filename: 'notes.txt' }
 const openaiFile = { id: 'file-openai', object: 'file', bytes: 10, created_at: 1000, filename: 'notes.txt', purpose: 'user_data', expires_at: 5000 }
 const anthropicFile = { id: 'file-anthropic', type: 'file', filename: 'notes.txt', mime_type: 'text/plain', size_bytes: 10, created_at: '2026-09-08T00:00:00Z', downloadable: false }

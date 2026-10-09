@@ -3,7 +3,7 @@ import { buildImageRunInput, isChatSelectableModel, isStudioImageModel, pendingR
 import type { ModelWithMetadata, ProviderWithInterfaces } from '@/shared/models'
 
 const provider: ProviderWithInterfaces = {
-  id: 1, user_id: 1, name: 'Gateway', has_key: true, enabled: true, models_dev_provider_id: null,
+  id: 1, user_id: 1, name: 'Gateway', has_key: true, headers: [], enabled: true, models_dev_provider_id: null,
   models_dev_provider_source: null, default_image_model_id: null, default_interface_id: 10, credential_version: 1,
   interfaces: [{ id: 10, provider_id: 1, protocol: 'responses', base_url: 'https://example.com/v1', native_files: false, created_at: 0 }],
   created_at: 0,

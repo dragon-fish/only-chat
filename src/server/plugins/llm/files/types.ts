@@ -10,6 +10,8 @@ export interface ScopedFilesClient {
 export interface FilesClientSettings {
   baseURL: string
   apiKey: string
+  /** The provider's custom headers, sent with every Files request. */
+  headers: Record<string, string>
   credentialVersion: number
 }
 

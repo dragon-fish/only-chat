@@ -106,14 +106,14 @@ async function readResponse(response: Response, request: ImageGenerationRequest,
 export function createOpenAIImagesClient(
   baseURL: string,
   apiKey: string,
-  options: { referenceMode?: 'multipart-edits' | 'generation-json' } = {},
+  options: { referenceMode?: 'multipart-edits' | 'generation-json'; headers?: Record<string, string> } = {},
 ): ScopedImagesClient {
   const base = baseURL.replace(/\/+$/, '')
   return {
     async generate(request) {
       const editing = request.references.length > 0
       let body: BodyInit
-      const headers = new Headers({ authorization: `Bearer ${apiKey}`, 'idempotency-key': request.idempotencyKey })
+      const headers = new Headers({ ...options.headers, authorization: `Bearer ${apiKey}`, 'idempotency-key': request.idempotencyKey })
       if (editing && options.referenceMode !== 'generation-json') {
         const form = new FormData()
         form.set('model', request.modelId)

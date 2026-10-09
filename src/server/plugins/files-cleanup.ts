@@ -2,7 +2,7 @@ import { APICallError } from '@ai-sdk/provider'
 import type { Context } from 'cordis'
 import { and, eq, lte, sql, type SQL } from 'drizzle-orm'
 import { attachmentProviderFiles as pointers, providerInterfaces, providers, type AttachmentProviderFileRow, type ProviderInterfaceRow, type ProviderRow } from '../db/schema'
-import { decryptSecret } from './llm/crypto'
+import { providerCredentials } from './llm/credentials'
 import { createAnthropicFiles } from './llm/files/anthropic'
 import { createOpenAIFiles } from './llm/files/openai'
 import { FilesReferenceError, normalizeFilesBaseURL } from './llm/files/shared'
@@ -62,13 +62,15 @@ async function cleanupFiles(ctx: CleanupContext, now: number, where: SQL, option
     if (!client) {
       client = (async () => {
         const provider = snapshot?.provider ?? await db.query.providers.findFirst({ where: eq(providers.id, row.provider_id) })
-        if (!provider || !provider.api_key || provider.credential_version !== row.credential_version) return null
+        if (!provider || provider.credential_version !== row.credential_version) return null
         const interfaces = snapshot?.interfaces ?? await db.select().from(providerInterfaces).where(eq(providerInterfaces.provider_id, row.provider_id))
         const scope = { family: row.file_family, baseURL: row.base_url }
         if (!interfaces.some(endpoint => {
           try { const current = endpointScope(endpoint); return current !== null && sameScope(current, scope) } catch { return false }
         })) return null
-        const settings = { baseURL: row.base_url, credentialVersion: row.credential_version, apiKey: await decryptSecret(ctx.env.KEY_ENCRYPTION_SECRET, provider.api_key) }
+        const credentials = await providerCredentials(ctx.env.KEY_ENCRYPTION_SECRET, provider)
+        if (!credentials) return null
+        const settings = { baseURL: row.base_url, credentialVersion: row.credential_version, ...credentials }
         return row.file_family === 'openai' ? createOpenAIFiles(settings) : createAnthropicFiles(settings)
       })()
       clients.set(key, client)

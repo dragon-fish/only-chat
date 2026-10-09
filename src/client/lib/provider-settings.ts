@@ -5,6 +5,7 @@ export function providerSettingsDraft(provider: ProviderWithInterfaces): Provide
   return {
     name: provider.name,
     api_key: '',
+    headers: provider.headers.map(header => ({ ...header })),
     enabled: provider.enabled,
     interfaces: provider.interfaces.map(({ id, protocol, base_url, native_files }) => protocol === 'vertex-compatible'
       ? { id, protocol, base_url, native_files: false as const }

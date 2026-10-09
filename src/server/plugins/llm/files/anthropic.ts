@@ -2,6 +2,7 @@ import { createAnthropic } from '@ai-sdk/anthropic'
 import { APICallError, type FilesV4 } from '@ai-sdk/provider'
 import { combineHeaders, createJsonResponseHandler, deleteFromApi, type FetchFunction } from '@ai-sdk/provider-utils'
 import { z } from 'zod'
+import { withHeaders } from '../credentials'
 import { FilesReferenceError, filesOperation, normalizeFilesBaseURL } from './shared'
 import { PROVIDER_FILE_TTL_SECONDS, type FilesClientSettings, type ScopedFilesClient } from './types'
 
@@ -12,12 +13,13 @@ function encodeFileId(id: string): string {
 
 export function createAnthropicFiles(settings: FilesClientSettings): ScopedFilesClient {
   const baseURL = normalizeFilesBaseURL(settings.baseURL, 'anthropic')
+  const send = withHeaders(settings.headers, baseURL)
   const uploadFetch: FetchFunction = (input, init) => {
     if (init?.method !== 'POST' || String(input) !== `${baseURL}/files` || !(init.body instanceof FormData)) {
       throw new Error('Unexpected Anthropic Files upload request')
     }
     init.body.set('expires_in_seconds', String(PROVIDER_FILE_TTL_SECONDS))
-    return fetch(input, init)
+    return send(input, init)
   }
   const sdk = createAnthropic({ baseURL, apiKey: settings.apiKey, fetch: uploadFetch }).files()
   const files: FilesV4 = {
@@ -35,6 +37,7 @@ export function createAnthropicFiles(settings: FilesClientSettings): ScopedFiles
           'anthropic-beta': 'files-api-2025-04-14',
         }, options.headers),
         abortSignal: options.abortSignal,
+        fetch: send,
         successfulResponseHandler: createJsonResponseHandler(z.object({ id: z.string(), type: z.literal('file_deleted') })),
         failedResponseHandler: async ({ response, url }) => {
           await response.body?.cancel().catch(() => {})

@@ -3,6 +3,7 @@ import { ModelMetadataOverrideSchema } from './model-metadata'
 import { ImageExtraBodySchema } from './artifacts'
 import { InterfaceProtocolSchema, ConversationParamsSchema } from './models'
 import type { Conversation, ConversationParams, InterfaceProtocol, Message } from './models'
+import { HTTP_HEADER_NAME, KeyValueEntryViewSchema, MAX_KEY_VALUE_ENTRIES } from './key-value'
 export type { ModelRef } from './model-ref'
 export { ModelRefSchema } from './model-ref'
 
@@ -37,11 +38,33 @@ export const ModelsDevProviderAssociationInputSchema = z.discriminatedUnion('sou
 ])
 export type ModelsDevProviderAssociationInput = z.infer<typeof ModelsDevProviderAssociationInputSchema>
 
+/**
+ * Headers every adapter sets from the API key or the request body. A second copy would reach the
+ * upstream with whichever the SDK merged last, so they are refused rather than overridden.
+ */
+const RESERVED_PROVIDER_HEADERS = ['authorization', 'x-api-key', 'x-goog-api-key', 'content-type', 'content-length', 'host']
+
+/** Returns the first problem with a provider's custom headers, or null. */
+export function providerHeadersProblem(headers: readonly { name: string }[]): string | null {
+  const seen = new Set<string>()
+  for (const header of headers) {
+    const name = header.name.trim()
+    if (!HTTP_HEADER_NAME.test(name)) return `请求头名称 ${name} 不合法。`
+    const lower = name.toLowerCase()
+    if (RESERVED_PROVIDER_HEADERS.includes(lower)) return `${name} 由 API Key 或请求本身决定，不能在这里填写。`
+    if (seen.has(lower)) return `请求头 ${name} 重复了。`
+    seen.add(lower)
+  }
+  return null
+}
+
 /** Atomic provider input shares one credential across all configured interfaces. */
 export const ProviderWriteInputSchema = z.strictObject({
   name: z.string().min(1).max(100),
   /** Plaintext key on input only; the API encrypts it before persistence. */
   api_key: z.string().optional(),
+  /** Part of the credential: sent with every upstream request. Omitted keeps the stored set. */
+  headers: z.array(KeyValueEntryViewSchema).max(MAX_KEY_VALUE_ENTRIES).optional(),
   enabled: z.boolean().optional(),
   interfaces: z.array(ProviderInterfaceInputSchema).min(1),
   default_protocol: InterfaceProtocolSchema,
@@ -55,6 +78,8 @@ export const ProviderWriteInputSchema = z.strictObject({
   if (!protocols.includes(value.default_protocol)) {
     context.addIssue({ code: 'custom', message: 'Default protocol must be included in interfaces', path: ['default_protocol'] })
   }
+  const headersProblem = value.headers && providerHeadersProblem(value.headers)
+  if (headersProblem) context.addIssue({ code: 'custom', message: headersProblem, path: ['headers'] })
 })
 export type ProviderWriteInput = z.infer<typeof ProviderWriteInputSchema>
 

@@ -240,7 +240,9 @@ async function persistProvider(submitted: ProviderWriteInput) {
         }
       }
       if (form.api_key === submitted.api_key) form.api_key = ''
-      markSaved(JSON.stringify({ ...submitted, api_key: '' }))
+      // A secret header typed in is sealed now; holding on to its plaintext would show it again.
+      if (JSON.stringify(form.headers) === JSON.stringify(submitted.headers)) form.headers = result.headers
+      markSaved(JSON.stringify({ ...submitted, api_key: '', headers: result.headers }))
       toast.success('已保存供应商')
     }
     return true

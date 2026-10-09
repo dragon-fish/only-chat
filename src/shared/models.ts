@@ -4,6 +4,7 @@ import { PartsSchema } from './parts'
 import { ModelRefSchema } from './model-ref'
 import { ImageExtraBodySchema } from './artifacts'
 import { PluginConfigStatusSchema } from './plugins'
+import { KeyValueEntryViewSchema } from './key-value'
 
 /** Supported provider interfaces. */
 export const InterfaceProtocolSchema = z.enum(['responses', 'chat-completions', 'anthropic', 'vertex-compatible'])
@@ -192,6 +193,8 @@ export const ProviderWithInterfacesSchema = z.strictObject({
   user_id: z.number().int(),
   name: z.string(),
   has_key: z.boolean(),
+  /** A secret header's value is null, like the key behind `has_key`. */
+  headers: z.array(KeyValueEntryViewSchema),
   enabled: z.boolean(),
   models_dev_provider_id: z.string().nullable(),
   models_dev_provider_source: z.enum(['manual', 'endpoint']).nullable(),

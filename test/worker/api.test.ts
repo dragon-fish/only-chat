@@ -244,6 +244,33 @@ describe('atomic provider interface API', () => {
     expect(await (await write()).json()).toMatchObject({ models_dev_provider_id: 'lab', models_dev_provider_source: 'manual' })
   })
 
+  it('seals secret headers, keeps them on null and versions credentials when headers change', async () => {
+    const { request, createProvider } = await catalogApp()
+    const provider = await createProvider({ api_key: 'one' })
+    const write = (headers: unknown) => request('PUT', `/providers/${provider.id}`, {
+      name: provider.name, interfaces: provider.interfaces.map(({ id, protocol, base_url, native_files }) => ({ id, protocol, base_url, native_files })),
+      default_protocol: 'responses', headers,
+    })
+    const first = await (await write([
+      { name: 'anthropic-organization-id', value: 'org-1', secret: false },
+      { name: 'x-gateway-token', value: 'gateway-secret', secret: true },
+    ])).json() as { credential_version: number; headers: unknown[] }
+    expect(first).toMatchObject({ credential_version: 2, headers: [
+      { name: 'anthropic-organization-id', value: 'org-1', secret: false },
+      { name: 'x-gateway-token', value: null, secret: true },
+    ] })
+    const row = await env.DB.prepare('SELECT headers FROM providers WHERE id = ?').bind(provider.id).first<{ headers: string }>()
+    expect(row!.headers).not.toContain('gateway-secret')
+    // Sending back what the form was shown is no change.
+    expect((await (await write(first.headers)).json() as { credential_version: number }).credential_version).toBe(2)
+    const second = await write([{ name: 'anthropic-organization-id', value: 'org-2', secret: false }, { name: 'x-gateway-token', value: null, secret: true }])
+    expect((await second.json() as { credential_version: number }).credential_version).toBe(3)
+    const sealed = JSON.parse((await env.DB.prepare('SELECT headers FROM providers WHERE id = ?').bind(provider.id).first<{ headers: string }>())!.headers) as { value: string }[]
+    expect(await decryptSecret(env.KEY_ENCRYPTION_SECRET, sealed[1]!.value)).toBe('gateway-secret')
+    expect((await write([{ name: 'x-other-token', value: null, secret: true }])).status).toBe(400)
+    expect((await write([{ name: 'Authorization', value: 'Bearer x', secret: true }])).status).toBe(400)
+  })
+
   it('rejects invalid defaults, duplicate protocols, foreign IDs and Vertex Files before changing a provider', async () => {
     const { request, createProvider } = await catalogApp()
     const first = await createProvider()

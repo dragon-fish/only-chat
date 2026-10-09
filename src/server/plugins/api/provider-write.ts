@@ -1,10 +1,13 @@
 import type { Context } from 'cordis'
 import { and, eq, inArray, notInArray, sql } from 'drizzle-orm'
 import type { BatchItem } from 'drizzle-orm/batch'
+import { z } from 'zod'
 import type { ProviderWriteInput } from '@/shared/api'
+import type { KeyValueEntry, KeyValueEntryView } from '@/shared/key-value'
 import { ProviderWithInterfacesSchema } from '@/shared/models'
 import { attachmentProviderFiles, models, providerInterfaces, providers, users, type ProviderRow, type ProviderInterfaceRow } from '@/server/db/schema'
 import { decryptSecret, encryptSecret } from '../llm/crypto'
+import { entriesView, keepSavedSecrets, openEntries, sealEntries } from '../llm/key-value-secrets'
 import { matchProviderByEndpoints } from '../model-catalog/match'
 import { cleanupProviderFilesBeforeChange, invalidatedProviderFiles, normalizeProviderFileScopes } from '../files-cleanup'
 import { catalogForModels, isModelSourceConflict, materializationUpdates, ModelSourceConflict, modelSourceColumns, providerSourceFence, retryModelSource } from './model-write'
@@ -15,7 +18,7 @@ export class ProviderWriteError extends Error {
 
 export function toProviderDto(row: ProviderRow, interfaces: ProviderInterfaceRow[]) {
   return ProviderWithInterfacesSchema.parse({
-    id: row.id, user_id: row.user_id, name: row.name, enabled: row.enabled, has_key: row.api_key !== null,
+    id: row.id, user_id: row.user_id, name: row.name, enabled: row.enabled, has_key: row.api_key !== null, headers: entriesView(row.headers),
     default_interface_id: row.default_interface_id, credential_version: row.credential_version,
     models_dev_provider_id: row.models_dev_provider_id, models_dev_provider_source: row.models_dev_provider_source,
     default_image_model_id: row.default_image_model_id,
@@ -23,11 +26,19 @@ export function toProviderDto(row: ProviderRow, interfaces: ProviderInterfaceRow
   })
 }
 
+function resolveHeaders(input: readonly KeyValueEntryView[], previous: readonly KeyValueEntry[]): KeyValueEntry[] {
+  try { return keepSavedSecrets(input, previous) }
+  catch (error) {
+    if (error instanceof z.ZodError) throw new ProviderWriteError(error.issues[0]!.message)
+    throw error
+  }
+}
+
 type CredentialExpectation = Readonly<Pick<ProviderRow, 'api_key' | 'credential_version'>>
 
 export async function writeProvider(ctx: Context, userId: number, input: ProviderWriteInput, id?: number) {
   let credentialExpectation: CredentialExpectation | undefined
-  if (id !== undefined && input.api_key !== undefined) {
+  if (id !== undefined && (input.api_key !== undefined || input.headers !== undefined)) {
     const original = await ctx.db.orm.query.providers.findFirst({ where: and(eq(providers.id, id), eq(providers.user_id, userId)) })
     if (!original) throw new ProviderWriteError('not found', 404)
     // Source retries may refresh metadata, but must never adopt another request's credential version.
@@ -81,6 +92,12 @@ async function writeProviderAttempt(ctx: Context, userId: number, input: Provide
   const requestedKey = input.api_key === undefined ? previousKey : input.api_key || null
   const keyChanged = requestedKey !== previousKey
   const encryptedKey = keyChanged && requestedKey ? await encryptSecret(ctx.env.KEY_ENCRYPTION_SECRET, requestedKey) : keyChanged ? null : before?.api_key ?? null
+  const previousHeaders = await openEntries(ctx.env.KEY_ENCRYPTION_SECRET, before?.headers ?? [])
+  const requestedHeaders = input.headers === undefined ? previousHeaders : resolveHeaders(input.headers, previousHeaders)
+  // The headers are part of the credential: another organisation id is another account, whose
+  // uploads the previous files were not.
+  const headersChanged = JSON.stringify(requestedHeaders.map(({ name, value }) => [name, value])) !== JSON.stringify(previousHeaders.map(({ name, value }) => [name, value]))
+  const credentialsChanged = keyChanged || headersChanged
   const now = Date.now()
   const fields = {
     name: input.name, ...(input.enabled === undefined ? {} : { enabled: input.enabled }),
@@ -98,14 +115,16 @@ async function writeProviderAttempt(ctx: Context, userId: number, input: Provide
   if (before) operations.push(db.update(providers).set({
     ...fields,
     ...(rows === undefined ? {} : { model_revision: sql`${providers.model_revision} + 1` }),
-    ...(input.api_key === undefined ? {} : {
+    ...(credentialExpectation === undefined ? {} : {
       api_key: encryptedKey,
-      // A stale credential edit must abort the whole batch. Never reuse a version for another key.
-      credential_version: sql`CASE WHEN ${providers.credential_version} = ${credentialExpectation!.credential_version} AND ${providers.api_key} IS ${credentialExpectation!.api_key} THEN ${providers.credential_version} + ${Number(keyChanged)} ELSE NULL END`,
+      headers: await sealEntries(ctx.env.KEY_ENCRYPTION_SECRET, requestedHeaders),
+      // A stale credential edit must abort the whole batch. Never reuse a version for other credentials.
+      credential_version: sql`CASE WHEN ${providers.credential_version} = ${credentialExpectation.credential_version} AND ${providers.api_key} IS ${credentialExpectation.api_key} THEN ${providers.credential_version} + ${Number(credentialsChanged)} ELSE NULL END`,
     }),
   }).where(and(eq(providers.id, before.id), eq(providers.user_id, userId))))
   else operations.push(db.insert(providers).values({
-    ...fields, enabled: input.enabled ?? true, api_key: encryptedKey, credential_version: 1, user_id: userId, created_at: now,
+    ...fields, enabled: input.enabled ?? true, api_key: encryptedKey, headers: await sealEntries(ctx.env.KEY_ENCRYPTION_SECRET, requestedHeaders),
+    credential_version: 1, user_id: userId, created_at: now,
   }))
   if (rows !== undefined || enabledChanged) {
     operations.push(db.update(users).set({ enabled_models_revision: sql`${users.enabled_models_revision} + 1` }).where(eq(users.id, userId)))
@@ -130,7 +149,7 @@ async function writeProviderAttempt(ctx: Context, userId: number, input: Provide
   }
   if (before) {
     await normalizeProviderFileScopes(ctx, before)
-    const invalidated = invalidatedProviderFiles(before, input.interfaces, keyChanged)
+    const invalidated = invalidatedProviderFiles(before, input.interfaces, credentialsChanged)
     await cleanupProviderFilesBeforeChange(ctx, before, existing, invalidated)
     // Prune invalidated pointers in the same transaction as the new configuration, including
     // uploads that completed during remote cleanup. Never store the previous credentials.

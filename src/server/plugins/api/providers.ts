@@ -7,6 +7,7 @@ import { ProviderWriteInputSchema } from '@/shared/api'
 import { models, providerInterfaces, providers, users } from '../../db/schema'
 import { decryptSecret } from '../llm/crypto'
 import { listRemoteModels } from '../llm/list-models'
+import { providerHeaders, withHeaders } from '../llm/credentials'
 import { cleanupProviderFilesBeforeChange, invalidatedProviderFiles } from '../files-cleanup'
 import { elapsed } from '../timings'
 import { parseId } from './params'
@@ -71,9 +72,10 @@ export function providerRoutes(ctx: Context) {
     if (!endpoint) return c.json({ error: 'Configure a default interface first' }, 400)
     if (endpoint.protocol === 'vertex-compatible') return c.json({ error: 'Model listing is not supported for Vertex-compatible interfaces' }, 400)
     const key = provider.api_key ? await decryptSecret(ctx.env.KEY_ENCRYPTION_SECRET, provider.api_key) : null
+    const headers = await providerHeaders(ctx.env.KEY_ENCRYPTION_SECRET, provider)
     // Stage durations only. Never log listing payloads, DB values or credentials.
     const timings = elapsed()
-    const remote = await listRemoteModels(endpoint, key)
+    const remote = await listRemoteModels(endpoint, key, withHeaders(headers, endpoint.base_url))
     const ids = [...new Set(remote.map(model => model.id))]
     const remoteById = new Map(remote.map(model => [model.id, model]))
     timings.mark('listing', { models: ids.length })

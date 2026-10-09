@@ -9,6 +9,13 @@ A provider owns its name, shared API key and enabled state. Each configured form
 and Files setting. Models follow the provider default unless they explicitly select another owned
 interface. API addresses and keys cannot be overridden on an individual model.
 
+A provider can also carry custom request headers (for example `anthropic-organization-id`), edited
+under **API 地址配置**. They are part of the credential: sent with every request to the provider's
+own interfaces — chat, Files, image generation and model import — and never to any other origin. A
+row marked secret is encrypted like the key and never returned to the browser. Headers the adapters
+set themselves (`authorization`, `x-api-key`, `x-goog-api-key`, `content-type`, `content-length`,
+`host`) are refused. Changing the headers bumps the credential version, like replacing the key.
+
 `vertex-compatible` takes an ordinary Base URL and
 a plain API key sent as `Authorization: Bearer <key>`; Google's own `x-goog-api-key` header is
 stripped. Requests are addressed as `{base_url}/v1/publishers/{publisher}/models/{model}`, so model
@@ -62,7 +69,7 @@ With it on:
   Success and HTTP 404/410 remove the pointer. Network errors, SDK-retryable errors (including HTTP
   408/409), HTTP 401/403/429 and server errors defer it by a day; unrecoverable references are logged
   without sensitive data and removed locally.
-- Provider deletion, interface removal, key replacement and endpoint changes attempt affected
+- Provider deletion, interface removal, key or header replacement and endpoint changes attempt affected
   remote deletes before changing the configuration. The operation proceeds despite remote failure;
   invalidated pointers are removed and old credentials are never retained for retries.
 - Expired pointers never participate in generation. Cleanup never deletes R2 originals.

@@ -5,6 +5,7 @@ import type { ArtifactRunStatus, ArtifactUsage, ImageExtraBody, ImageGenerationP
 import type { Part } from '@/shared/parts'
 import type { WorkspaceMount } from '@/shared/workspace-files'
 import type { McpServerStatus, McpTransport, StoredMcpHeader } from '@/shared/mcp'
+import type { KeyValueEntry } from '@/shared/key-value'
 import type {
   InterfaceProtocol, PersistedStatus, ConversationParams, ConversationPluginSettings, ProjectPluginSettings, Usage, UserSettings, MessageNote,
 } from '@/shared/models'
@@ -84,6 +85,8 @@ export const providers = sqliteTable('providers', {
   name: text().notNull(),
   /** AES-GCM ciphertext, base64 "iv.ct"; null when no key stored. */
   api_key: text(),
+  /** Sent with every upstream request; a secret row's value is AES-GCM ciphertext like `api_key`. */
+  headers: text({ mode: 'json' }).$type<KeyValueEntry[]>().notNull().default([]),
   enabled: integer({ mode: 'boolean' }).notNull().default(true),
   default_interface_id: integer().references((): AnySQLiteColumn => providerInterfaces.id, { onDelete: 'set null' }),
   credential_version: integer().notNull().default(1),

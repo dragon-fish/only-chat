@@ -16,11 +16,8 @@ export type KeyValueEntry = z.infer<typeof KeyValueEntrySchema>
  * As the settings form sends and receives a row: a secret's `value` is null both ways — the client
  * is never shown it, and sending null back keeps the saved one.
  */
-export interface KeyValueEntryView {
-  name: string
-  value: string | null
-  secret: boolean
-}
+export const KeyValueEntryViewSchema = KeyValueEntrySchema.extend({ value: z.string().max(8192).nullable() })
+export type KeyValueEntryView = z.infer<typeof KeyValueEntryViewSchema>
 
 export const MAX_KEY_VALUE_ENTRIES = 32
 

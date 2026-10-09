@@ -24,6 +24,7 @@ import {
 } from '@/server/plugins/hub/conversations'
 import { attachmentProviderFiles, attachments, models, projects, providerInterfaces, providers, users } from '@/server/db/schema'
 import type { ProviderInterfaceRow, ProviderRow } from '@/server/db/schema'
+import type { ProviderCredentials } from '@/server/plugins/llm/credentials'
 import { sendCommandFor } from '@/client/stores/sync'
 import type { Message, ConversationParams } from '@/shared/models'
 import type { ModelMetadata } from '@/shared/model-metadata'
@@ -193,7 +194,7 @@ async function installMock(
       apply(c) {
         for (const protocol of protocols) c.llm.register(protocol, {
           createModel: () => { const m = mockFactory(); created.push(m); return m as never },
-          ...(createFiles ? { createFiles: (provider: ProviderRow, selected: ProviderInterfaceRow, apiKey: string) => ({
+          ...(createFiles ? { createFiles: (provider: ProviderRow, selected: ProviderInterfaceRow, { apiKey }: ProviderCredentials) => ({
             family: protocol === 'anthropic' ? 'anthropic' as const : 'openai' as const, baseURL: selected.base_url.replace(/\/+$/, ''), credentialVersion: provider.credential_version,
             files: createFiles(provider, selected, apiKey),
           }) } : {}),
@@ -1543,7 +1544,7 @@ describe('DeepSeek Responses reasoning lifecycle', () => {
     const requests: Array<{ url: string; body: { input: unknown[]; reasoning?: unknown } }> = []
     await runInDurableObject(env.USER_HUB.getByName(String(1)), async (instance: UserHub) => {
       instance.app.llm.register('responses', {
-        createModel(_provider, selected, model, apiKey) {
+        createModel(_provider, selected, model, { apiKey }) {
           return createOpenResponses({
             name: 'responses', url: `${selected.base_url}/responses`, apiKey,
             fetch: async (input, init) => {

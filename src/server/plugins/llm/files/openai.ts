@@ -1,11 +1,12 @@
 import { createOpenAI } from '@ai-sdk/openai'
 import type { FilesV4 } from '@ai-sdk/provider'
+import { withHeaders } from '../credentials'
 import { FilesReferenceError, filesOperation, normalizeFilesBaseURL } from './shared'
 import { PROVIDER_FILE_TTL_SECONDS, type FilesClientSettings, type ScopedFilesClient } from './types'
 
 export function createOpenAIFiles(settings: FilesClientSettings): ScopedFilesClient {
   const baseURL = normalizeFilesBaseURL(settings.baseURL)
-  const sdk = createOpenAI({ baseURL, apiKey: settings.apiKey }).files()
+  const sdk = createOpenAI({ baseURL, apiKey: settings.apiKey, fetch: withHeaders(settings.headers, baseURL) }).files()
   const files: FilesV4 = {
     specificationVersion: sdk.specificationVersion,
     provider: sdk.provider,

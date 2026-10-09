@@ -2,12 +2,13 @@
 import { computed, ref, watch } from 'vue'
 import ResponsiveOverlay from '@/client/components/layout/responsive-overlay.vue'
 import ProviderInterfaceList from '@/client/components/provider-interface-list.vue'
+import SecretRowsEditor from '@/client/components/secret-rows-editor.vue'
 import SearchableSelect from '@/client/components/searchable-select.vue'
 import UnsavedChangesGuard from '@/client/components/unsaved-changes-guard.vue'
 import { Button } from '@/client/ui/button'
 import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/client/ui/field'
 import { Separator } from '@/client/ui/separator'
-import { ProviderWriteInputSchema, type CatalogProviderSummary, type ProviderWriteInput } from '@/shared/api'
+import { providerHeadersProblem, ProviderWriteInputSchema, type CatalogProviderSummary, type ProviderWriteInput } from '@/shared/api'
 
 const props = defineProps<{
   open: boolean
@@ -22,7 +23,10 @@ const draft = ref<ProviderWriteInput>(clone(props.modelValue))
 const baseline = ref('')
 const leaveGuard = ref<InstanceType<typeof UnsavedChangesGuard> | null>(null)
 const dirty = computed(() => JSON.stringify(draft.value) !== baseline.value)
-const valid = computed(() => ProviderWriteInputSchema.safeParse(draft.value).success)
+const headersError = ref<string | null>(null)
+/** The rows editor reads its initial rows once; a new key gives each opening a fresh one. */
+const headersKey = ref(0)
+const valid = computed(() => !headersError.value && ProviderWriteInputSchema.safeParse(draft.value).success)
 const applying = ref(false)
 const associationOptions = computed(() => [
   { value: 'endpoint', label: '按端点自动匹配', description: props.currentCatalogProviderId ?? '当前未匹配' },
@@ -36,6 +40,8 @@ const association = computed({
 function reset() {
   draft.value = clone(props.modelValue)
   baseline.value = JSON.stringify(draft.value)
+  headersError.value = null
+  headersKey.value++
 }
 watch(() => props.open, (open) => { if (open) reset() }, { immediate: true })
 async function setOpen(next: boolean) {
@@ -65,6 +71,13 @@ ResponsiveOverlay(:open="open" title="API 地址配置" @update:open="setOpen")
     ProviderInterfaceList(v-model="draft.interfaces" v-model:default-protocol="draft.default_protocol" :disabled="applying")
     Separator
     FieldGroup
+      Field
+        FieldLabel 自定义请求头
+        SecretRowsEditor(
+          :key="headersKey" :model-value="draft.headers ?? []" v-model:error="headersError"
+          :initial="draft.headers ?? []" noun="请求头" :validate="providerHeadersProblem"
+          @update:model-value="draft.headers = $event")
+        FieldDescription 随每个请求发往这个供应商的所有 API 地址，例如 Anthropic 的组织 ID。修改后，已上传到供应商的文件会重新上传。
       Field
         FieldLabel(for="provider-association") models.dev 关联
         SearchableSelect#provider-association(

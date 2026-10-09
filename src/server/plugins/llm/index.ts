@@ -4,7 +4,7 @@ import type { ScopedFilesClient } from './files/types'
 import type { ScopedImagesClient } from './images/types'
 import type { LlmRequestTrace } from './observability'
 import type { ModelRow, ProviderInterfaceRow, ProviderRow } from '../../db/schema'
-import { decryptSecret } from './crypto'
+import { providerCredentials, type ProviderCredentials } from './credentials'
 import { chatCompletionsProtocol } from './protocols/chat-completions'
 import { responsesProtocol } from './protocols/responses'
 import { anthropicProtocol } from './protocols/anthropic'
@@ -15,9 +15,9 @@ import { vertexCompatibleProtocol } from './protocols/vertex-compatible'
  * capability, and a protocol that has none simply never offers one (spec §4.8).
  */
 export interface LlmProtocolAdapter {
-  createModel(provider: ProviderRow, providerInterface: ProviderInterfaceRow, model: ModelRow, apiKey: string, trace?: LlmRequestTrace): LanguageModel
-  createFiles?: (provider: ProviderRow, providerInterface: ProviderInterfaceRow, apiKey: string) => ScopedFilesClient
-  createImages?: (provider: ProviderRow, providerInterface: ProviderInterfaceRow, apiKey: string) => ScopedImagesClient
+  createModel(provider: ProviderRow, providerInterface: ProviderInterfaceRow, model: ModelRow, credentials: ProviderCredentials, trace?: LlmRequestTrace): LanguageModel
+  createFiles?: (provider: ProviderRow, providerInterface: ProviderInterfaceRow, credentials: ProviderCredentials) => ScopedFilesClient
+  createImages?: (provider: ProviderRow, providerInterface: ProviderInterfaceRow, credentials: ProviderCredentials) => ScopedImagesClient
 }
 
 export class Llm extends Service {
@@ -57,17 +57,18 @@ export class Llm extends Service {
     return this._adapters.get(providerInterface.protocol)?.createImages !== undefined
   }
 
-  async decryptKey(provider: ProviderRow): Promise<string | null> {
-    return provider.api_key ? decryptSecret(this._secret, provider.api_key) : null
+  private async _credentials(provider: ProviderRow): Promise<ProviderCredentials> {
+    const credentials = await providerCredentials(this._secret, provider)
+    if (credentials === null) throw new Error(`provider ${provider.id} has no API key`)
+    return credentials
   }
 
   async createModel(provider: ProviderRow, providerInterface: ProviderInterfaceRow, model: ModelRow, trace?: LlmRequestTrace): Promise<LanguageModel> {
     if (providerInterface.provider_id !== provider.id || model.provider_id !== provider.id) throw new Error('model and interface must belong to the provider')
     const adapter = this._adapters.get(providerInterface.protocol)
     if (!adapter) throw new Error(`no adapter for protocol ${providerInterface.protocol}`)
-    const key = await this.decryptKey(provider)
-    if (key === null) throw new Error(`provider ${provider.id} has no API key`)
-    return adapter.createModel(provider, providerInterface, model, key, trace)
+    const credentials = await this._credentials(provider)
+    return adapter.createModel(provider, providerInterface, model, credentials, trace)
   }
 
   async createFiles(provider: ProviderRow, providerInterface: ProviderInterfaceRow): Promise<ScopedFilesClient> {
@@ -76,18 +77,16 @@ export class Llm extends Service {
     if (!adapter) throw new Error(`no adapter for protocol ${providerInterface.protocol}`)
     if (!providerInterface.native_files) throw new Error(`interface ${providerInterface.id} has native files disabled`)
     if (!adapter.createFiles) throw new Error(`protocol ${providerInterface.protocol} has no Files API`)
-    const key = await this.decryptKey(provider)
-    if (key === null) throw new Error(`provider ${provider.id} has no API key`)
-    return adapter.createFiles(provider, providerInterface, key)
+    const credentials = await this._credentials(provider)
+    return adapter.createFiles(provider, providerInterface, credentials)
   }
 
   async createImages(provider: ProviderRow, providerInterface: ProviderInterfaceRow): Promise<ScopedImagesClient> {
     if (providerInterface.provider_id !== provider.id) throw new Error('interface must belong to the provider')
     const adapter = this._adapters.get(providerInterface.protocol)
     if (!adapter?.createImages) throw new Error(`protocol ${providerInterface.protocol} has no Images API`)
-    const key = await this.decryptKey(provider)
-    if (key === null) throw new Error(`provider ${provider.id} has no API key`)
-    return adapter.createImages(provider, providerInterface, key)
+    const credentials = await this._credentials(provider)
+    return adapter.createImages(provider, providerInterface, credentials)
   }
 }
 

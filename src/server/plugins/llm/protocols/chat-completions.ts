@@ -6,25 +6,27 @@ import { createFileAwareChatModel } from '../files/references'
 import { dashscopeAudioFetch } from './dashscope-audio'
 import { observedProviderFetch } from '../observability'
 import { createOpenAIImagesClient } from '../images/openai'
+import { withHeaders } from '../credentials'
 
 export const chatCompletionsAdapter: LlmProtocolAdapter = {
-  createModel(provider, providerInterface, model, apiKey, trace) {
-    const fetch = dashscopeAudioFetch(providerInterface.base_url, trace ? observedProviderFetch(trace, apiKey) : undefined)
+  createModel(provider, providerInterface, model, { apiKey, headers }, trace) {
+    const send = withHeaders(headers, providerInterface.base_url)
     return createFileAwareChatModel({
       name: COMPAT_PROVIDER_NAME,
       baseURL: providerInterface.base_url,
       apiKey,
       includeUsage: true,
-      ...(fetch ? { fetch } : {}),
+      fetch: dashscopeAudioFetch(providerInterface.base_url, trace ? observedProviderFetch(trace, apiKey, send) : send),
     }, model.model_id, {
       fileReferenceStyle: provider.models_dev_provider_id === 'deepseek' ? 'flat' : 'nested',
     })
   },
-  createFiles(provider, providerInterface, apiKey) {
-    return createOpenAIFiles({ baseURL: providerInterface.base_url, apiKey, credentialVersion: provider.credential_version })
+  createFiles(provider, providerInterface, { apiKey, headers }) {
+    return createOpenAIFiles({ baseURL: providerInterface.base_url, apiKey, headers, credentialVersion: provider.credential_version })
   },
-  createImages(provider, providerInterface, apiKey) {
+  createImages(provider, providerInterface, { apiKey, headers }) {
     return createOpenAIImagesClient(providerInterface.base_url, apiKey, {
+      headers,
       referenceMode: provider.models_dev_provider_id === 'volcengine' ? 'generation-json' : 'multipart-edits',
     })
   },

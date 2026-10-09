@@ -2,6 +2,7 @@ import type { Context } from 'cordis'
 import type { LlmProtocolAdapter } from '../index'
 import { createGoogleVertex } from '@ai-sdk/google-vertex/edge'
 import type { FetchFunction } from '@ai-sdk/provider-utils'
+import { withHeaders } from '../credentials'
 
 /**
  * Vertex-style gateways address models as `{publisher}/{model}`. Only the first slash separates
@@ -18,24 +19,24 @@ export function splitVertexCompatibleModelId(id: string): { publisher: string; m
  * `x-goog-api-key` onto the headers. Compatible gateways take an ordinary bearer token instead, so
  * Google's header is removed rather than merely accompanied.
  */
-function bearerFetch(apiKey: string): FetchFunction {
+function bearerFetch(apiKey: string, upstream: FetchFunction): FetchFunction {
   return (input, init) => {
     const headers = new Headers(init?.headers)
     headers.delete('x-goog-api-key')
     headers.set('Authorization', `Bearer ${apiKey}`)
-    return fetch(input, { ...init, headers })
+    return upstream(input, { ...init, headers })
   }
 }
 
 export const vertexCompatibleAdapter: LlmProtocolAdapter = {
-  createModel(_provider, providerInterface, model, apiKey) {
+  createModel(_provider, providerInterface, model, { apiKey, headers }) {
     // Express Mode is what routes requests through `bearerFetch`; without a key the SDK would
     // silently fall back to Google Cloud IAM, which this protocol never uses.
     if (!apiKey) throw new Error('vertex-compatible requires an API key')
     const { publisher, model: modelId } = splitVertexCompatibleModelId(model.model_id)
     // The Base URL is the deployer's to choose in full; only trailing slashes are removed.
     const baseURL = `${providerInterface.base_url.replace(/\/+$/, '')}/v1/publishers/${publisher}`
-    const p = createGoogleVertex({ apiKey, baseURL, fetch: bearerFetch(apiKey) })
+    const p = createGoogleVertex({ apiKey, baseURL, fetch: bearerFetch(apiKey, withHeaders(headers, baseURL)) })
     // The SDK prefixes `models/` only for a slash-free id, treating anything else as a resource
     // path. Spec §5.5 fixes the shape at `/models/{model}`, so prefix it ourselves when the model
     // half carries slashes of its own.
