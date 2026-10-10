@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, nextTick, onBeforeUnmount, reactive, ref, watch, watchEffect } from 'vue'
+import { computed, inject, nextTick, onBeforeUnmount, provide, reactive, ref, watch, watchEffect } from 'vue'
 import { useMediaQuery } from '@vueuse/core'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import ImageArtifactDetail from '@/client/views/image-artifact-detail.vue'
@@ -23,6 +23,7 @@ import { useWorkspacePanel, MAX_PANEL_SIZE, MIN_PANEL_SIZE } from '@/client/comp
 import type { ClientPluginHost } from '@/client/plugins/host'
 import { defaultToolsForSettings, conversationToolBlockReason } from '@/client/components/tool-selector'
 import { takeHandoff } from '@/client/lib/new-conversation-handoff'
+import { USER_MESSAGE_SENDER, type UserMessageSender } from '@/client/lib/user-message-sender'
 import { pendingHumanCalls } from '@/client/components/tool-part-renderer'
 import { pluginManifests } from '@/client/plugins/loaders'
 import { projectPresentation, conversationPath, canonicalConversationPath, latestAssistantContextUsage } from '@/client/lib/ui-models'
@@ -438,6 +439,16 @@ function onSend(parts: Part[]) {
     },
   }), request_id: requestId })
 }
+const userMessageSender: UserMessageSender = {
+  get available() { return canSend.value && !streaming.value && sync.status === 'open' },
+  send(text) {
+    if (!userMessageSender.available) return false
+    onSend([{ type: 'text', text }])
+    return true
+  },
+}
+provide(USER_MESSAGE_SENDER, userMessageSender)
+
 /**
  * Deliberately not routed through `send`: unlike a settings write, `stop` is idempotent and carries
  * no stale state, so one queued by `WsClient` and delivered on reconnect still does exactly what was
