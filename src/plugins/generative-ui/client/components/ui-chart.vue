@@ -35,8 +35,9 @@ function cssColor(variable: string, alpha = 1): string {
   if (!probe || !raw) return `rgba(128, 128, 128, ${alpha})`
   probe.fillStyle = raw
   probe.fillRect(0, 0, 1, 1)
-  const [r, g, b] = probe.getImageData(0, 0, 1, 1).data
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`
+  // Keep the probe's own alpha: dark-mode --border is white at 10%, and dropping it paints solid grid lines.
+  const [r, g, b, a = 255] = probe.getImageData(0, 0, 1, 1).data
+  return `rgba(${r}, ${g}, ${b}, ${(a / 255) * alpha})`
 }
 
 const labels = computed(() => (props.chart.labels ?? []).map(label => String(label ?? '')))

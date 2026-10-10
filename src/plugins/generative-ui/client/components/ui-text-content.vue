@@ -28,6 +28,8 @@ const SIZE: Record<Size, string> = {
 </template>
 
 <style scoped>
+/* markstream sizes its nodes from --ms-text-body (16px); the size class on the wrapper must win. */
+.oc-genui-markdown :deep(.markdown-renderer) { --ms-text-body: 1em; font-size: inherit; color: inherit; }
 .oc-genui-markdown :deep(p) { margin-block: 0.25rem; }
 .oc-genui-markdown :deep(> div > :first-child) { margin-top: 0; }
 .oc-genui-markdown :deep(> div > :last-child) { margin-bottom: 0; }
