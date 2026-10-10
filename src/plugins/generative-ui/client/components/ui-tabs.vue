@@ -15,7 +15,7 @@ watch(items, (next) => {
 <template lang="pug">
 Tabs.min-w-0(v-model="active")
   //- Scrolls instead of squeezing: five product names will not fit a phone side by side.
-  .max-w-full.overflow-x-auto
+  .max-w-full.overflow-x-auto(class="[scrollbar-width:none]")
     TabsList
       TabsTrigger(v-for="item in items" :key="item.value" :value="item.value" class="min-h-9 md:min-h-0") {{ item.trigger }}
   TabsContent.flex.min-w-0.flex-col.gap-3(v-for="item in items" :key="item.value" :value="item.value" class="pt-2")
