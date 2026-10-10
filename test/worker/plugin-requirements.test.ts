@@ -12,6 +12,8 @@ import { DatetimeServerPlugin } from '@/plugins/datetime/server'
 import { FileReaderServerPlugin } from '@/plugins/file-reader/server'
 import { FileReader } from '@/plugins/file-reader/server/service'
 import { FileUnderstandingServerPlugin } from '@/plugins/file-understanding/server'
+import { GENERATIVE_UI_PLUGIN_ID } from '@/plugins/generative-ui/shared'
+import { GenerativeUiServerPlugin } from '@/plugins/generative-ui/server'
 import { ImageGenerationServerPlugin } from '@/plugins/image-generation/server'
 import { McpServerPlugin } from '@/plugins/mcp/server'
 import { MemoryServerPlugin } from '@/plugins/memory/server'
@@ -27,6 +29,7 @@ const SERVERS: Record<string, { inject?: readonly string[] }> = {
   [DATETIME_PLUGIN_ID]: DatetimeServerPlugin,
   [FILE_READER_PLUGIN_ID]: FileReaderServerPlugin,
   [FILE_UNDERSTANDING_PLUGIN_ID]: FileUnderstandingServerPlugin,
+  [GENERATIVE_UI_PLUGIN_ID]: GenerativeUiServerPlugin,
   [IMAGE_GENERATION_PLUGIN_ID]: ImageGenerationServerPlugin,
   [MCP_PLUGIN_ID]: McpServerPlugin,
   [MEMORY_PLUGIN_ID]: MemoryServerPlugin,
