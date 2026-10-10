@@ -124,13 +124,14 @@ export type TurnBlock =
  * Groups a turn for display. Consecutive thinking and tool calls fold into one collapsible; an
  * agent that calls twenty tools between two sentences costs one line, not twenty.
  *
- * Text is never folded away, even mid-chain. A model that reports progress before continuing is
- * talking to the reader, not thinking out loud, and hiding that turns a conversation into a log.
+ * Text is never folded away, even mid-chain, and neither is an output tool's card. A model that
+ * reports progress before continuing is talking to the reader, not thinking out loud, and hiding
+ * that turns a conversation into a log.
  *
  * A run holding a tool nobody has answered yet is not folded either: the reader is being asked to
  * act on it, and a collapsible pinned open is just a chevron that does nothing.
  */
-export function turnBlocks(segments: readonly MessageSegment[]): TurnBlock[] {
+export function turnBlocks(segments: readonly MessageSegment[], isOutputTool: (name: string) => boolean = () => false): TurnBlock[] {
   const blocks: TurnBlock[] = []
   let run: MessageSegment[] = []
 
@@ -148,7 +149,8 @@ export function turnBlocks(segments: readonly MessageSegment[]): TurnBlock[] {
   }
 
   for (const segment of segments) {
-    if (segment.kind === 'reasoning' || segment.kind === 'tool') run.push(segment)
+    // An output tool's card reads like text — it is what the reader came for — so it breaks the run.
+    if (segment.kind === 'reasoning' || (segment.kind === 'tool' && !isOutputTool(segment.call.name))) run.push(segment)
     else {
       flush()
       blocks.push({ kind: 'segment', key: segment.key, segment })

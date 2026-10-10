@@ -69,6 +69,12 @@ export interface PluginToolDescriptor {
    * call from one the person walked away from without knowing the plugin's result shape.
    */
   human?: { doneStatuses: readonly string[] }
+  /** Its card is part of the answer, not a step toward it: never folded behind a process summary. */
+  output?: true
+}
+
+export function isOutputTool(manifests: readonly PluginManifest[], toolId: string): boolean {
+  return manifests.some(manifest => manifest.tools.some(tool => tool.id === toolId && tool.output === true))
 }
 
 export function humanToolDescriptor(manifests: readonly PluginManifest[], toolId: string): PluginToolDescriptor | undefined {

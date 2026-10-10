@@ -29,6 +29,8 @@ import { Message as MessageRoot, MessageAvatar, MessageContent, MessageFooter, M
 import { Textarea } from '@/client/ui/textarea'
 import type { Message, Project } from '@/shared/models'
 import { isNotificationOnly, type TaskNotificationPart } from '@/shared/parts'
+import { isOutputTool } from '@/shared/plugins'
+import { pluginManifests } from '@/shared/plugin-manifests'
 import { checkpointOf } from '@/shared/checkpoint'
 import { useConversationFork } from '@/client/composables/use-conversation-fork'
 import { useTheme } from '@/client/composables/use-theme'
@@ -84,7 +86,7 @@ const checkpoint = computed(() => checkpointOf(props.message))
 const segments = computed(() => messageSegments(props.message.parts, props.message.usage))
 const activeSegmentKey = computed(() => (streaming.value ? segments.value.at(-1)?.key ?? null : null))
 /** Steps fold into collapsibles; speech and output never do. */
-const blocks = computed(() => turnBlocks(segments.value))
+const blocks = computed(() => turnBlocks(segments.value, name => isOutputTool(pluginManifests, name)))
 const copyText = computed(() => {
   if (props.message.role === 'user') return textParts.value.map(part => part.text).join('\n')
   // Progress before the final thinking/tool step is not part of the final answer.

@@ -9,6 +9,7 @@ const manifest = {
     id: RENDER_UI_TOOL_ID,
     name: '交互卡片',
     description: '用 OpenUI Lang 绘制可交互的卡片。',
+    output: true,
   }],
 } satisfies PluginManifest
 
