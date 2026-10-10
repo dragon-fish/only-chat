@@ -28,6 +28,7 @@ import { BrowserRunServerPlugin } from '@/plugins/cloudflare-browser-run/server'
 import { ContextCompactionServerPlugin } from '@/plugins/context-compaction/server'
 import { ComfyuiServerPlugin } from '@/plugins/comfyui/server'
 import { ComfyuiBackendPlugin } from '@/plugins/comfyui/server/backend'
+import { GenerativeUiServerPlugin } from '@/plugins/generative-ui/server'
 import { ImageBackendsPlugin } from './plugins/artifacts/backends'
 
 export type Side = 'worker' | 'hub'
@@ -88,6 +89,7 @@ export async function createApp(options: AppOptions): Promise<Context> {
       await ctx.plugin(FileUnderstandingServerPlugin)
       await ctx.plugin(McpServerPlugin)
       await ctx.plugin(ComfyuiServerPlugin)
+      await ctx.plugin(GenerativeUiServerPlugin)
       await ctx.plugin(HubPlugin, { userId: options.userId })
       if (!ctx.get('hub')) throw new Error('HubPlugin loaded but ctx.hub is unavailable')
       // Needs the hub for its realtime channel and session store, so it comes after it.
