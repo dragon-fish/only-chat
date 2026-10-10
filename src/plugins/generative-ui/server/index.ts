@@ -13,14 +13,12 @@ const GUIDANCE = [
   'Write UI text in the user\'s language. After render_ui succeeds, do not restate what the UI shows.',
 ].join('\n')
 
-/** Generated once per isolate: the library is static, and the text is a few thousand tokens. */
-const LANGUAGE_REFERENCE = serverLibrary.prompt(promptOptions)
-
 export const GenerativeUiServerPlugin = {
   name: 'generative-ui',
   inject: ['tools', 'promptSections'] as const,
   apply(ctx: Context) {
-    ctx.promptSections.register(GENERATIVE_UI_PLUGIN_ID, whileOffered(manifest, `${GUIDANCE}\n\n${LANGUAGE_REFERENCE}`))
+    const reference = serverLibrary().library.prompt(promptOptions)
+    ctx.promptSections.register(GENERATIVE_UI_PLUGIN_ID, whileOffered(manifest, `${GUIDANCE}\n\n${reference}`))
     ctx.tools.register(GENERATIVE_UI_PLUGIN_ID, RENDER_UI_TOOL_ID, () => tool({
       description: 'Render an interactive UI card in the chat from an OpenUI Lang program (see the OpenUI Lang reference in the system prompt). Returns whether it rendered, or the exact errors to fix.',
       inputSchema: RenderUiInputSchema,

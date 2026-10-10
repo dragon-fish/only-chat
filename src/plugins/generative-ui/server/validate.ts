@@ -1,9 +1,21 @@
-import { createParser } from '@openuidev/lang-core'
+import { createParser, type Parser } from '@openuidev/lang-core'
 import { buildLibrary, ROOT_COMPONENT } from '../library'
 import type { RenderUiResult } from '../shared'
 
-export const serverLibrary = buildLibrary(() => null)
-const parser = createParser(serverLibrary.toJSONSchema(), ROOT_COMPONENT)
+let compiled: { library: ReturnType<typeof buildLibrary>, parser: Parser } | undefined
+
+/**
+ * Built on first use, never at import. `createLibrary` mints its id with `crypto.randomUUID()`, and
+ * Workers reject a script that generates random values in global scope — at upload, not in local
+ * dev, so a module-level call here passes every local check and then fails the deploy.
+ */
+export function serverLibrary() {
+  if (!compiled) {
+    const library = buildLibrary(() => null)
+    compiled = { library, parser: createParser(library.toJSONSchema(), ROOT_COMPONENT) }
+  }
+  return compiled
+}
 
 const RENDERED_MESSAGE = 'The UI is now on the user\'s screen. Do not repeat its contents in prose; at most add one or two sentences the UI does not already say.'
 
@@ -14,7 +26,7 @@ const RENDERED_MESSAGE = 'The UI is now on the user\'s screen. Do not repeat its
 export function validateProgram(code: string): RenderUiResult {
   let result
   try {
-    result = parser.parse(code)
+    result = serverLibrary().parser.parse(code)
   } catch (error) {
     return invalid([`Parser crashed: ${error instanceof Error ? error.message : String(error)}`])
   }
