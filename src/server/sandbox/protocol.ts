@@ -106,6 +106,8 @@ export interface JobRequest {
   conversationId: number
   originMessageId: number
   toolCallId: string
+  /** Names the notification's owner; the DO knows no plugin ids of its own. */
+  pluginId: string
   /** Shown in the notification so the model knows which job finished. */
   summary: string
 }

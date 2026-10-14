@@ -14,6 +14,8 @@ import { notifyToolRun } from './plugins/artifacts/notify'
 import type { Conversation } from '@/shared/models'
 import type { TaskSettlement } from './plugins/hub/tasks'
 export { BrowserGateway, BrowserHost, BrowserRunner } from '@/plugins/cloudflare-browser-run/server/entrypoints'
+export { Sandbox } from './sandbox/durable-object'
+export { DirectoryBackupGateway } from '@cloudflare/sandbox'
 
 let workerApp: Promise<Context> | undefined
 
