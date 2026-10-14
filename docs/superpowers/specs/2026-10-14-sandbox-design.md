@@ -311,7 +311,8 @@ DO 被重置后（部署、驱逐）的第一次 RPC 或 alarm 中，若发现�
 id            integer pk
 user_id       integer not null  → users.id on delete cascade
 unit_kind     text not null     'user' | 'project' | 'conversation'
-unit_id       integer           null 当且仅当 unit_kind = 'user'；不设外键
+unit_id       integer           null 当且仅当 unit_kind = 'user'（CHECK）；不设外键
+backup_id     text not null     DirectoryBackupRecord.id
 r2_key        text not null
 sha256        text not null
 size          integer not null

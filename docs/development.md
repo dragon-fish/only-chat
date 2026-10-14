@@ -14,6 +14,23 @@ and is the fixed administrator. Close registration afterward in `/admin/settings
 Then open `/settings/providers`, choose a catalog provider or a custom provider, configure its
 interfaces and shared API key, add a model, and start a chat.
 
+## Sandbox
+
+`wrangler.jsonc` declares a container, which local dev would build with Docker. To keep `pnpm dev`
+working without Docker, `vite.config.ts` turns containers off unless `SANDBOX_DEV=1`:
+
+    SANDBOX_DEV=1 pnpm dev
+
+That needs a running Docker (on Windows, inside WSL) and builds `sandbox/Dockerfile` (Debian, Python
+3.12 with uv, Node 24 with pnpm, bun, git and common CLI tools). With containers off the sandbox
+tools fail with a clear error and everything else works.
+
+Worker tests never have containers: the vitest pool disables them. The container logic (unit restore,
+alarm, backups, jobs) is unit-tested against fakes, see `test/unit/sandbox-machine.test.ts`.
+`test/worker/sandbox-plugin.test.ts` runs the real `Sandbox` Durable Object without a container and
+covers what needs none: backups marked deleted when a conversation or Project is deleted. Executing,
+restoring, backing up and the file tools are checked by hand with `SANDBOX_DEV=1`.
+
 ## Mock provider
 
 `pnpm seed:mock` creates a local Provider whose interface points at `mock.invalid`, a host reserved

@@ -81,6 +81,10 @@ hub, `ctx.hub` is absent in the Worker), and `await ctx.plugin(X)` resolves even
 stays PENDING on a missing injection — which is why `app.ts` asserts `ctx.get('...')` after each
 load instead of failing later at first use.
 
+It also exports the `Sandbox` Durable Object, which builds no `Context`: one instance per user owns
+that user's container, and the `sandbox` plugin in the hub root drives it over RPC
+(`src/server/sandbox/`, `docs/architecture.md`).
+
 ### Reads are REST, writes and streams are one WebSocket
 
 Initial page loads call `/api/...` (Hono routes under `src/server/plugins/api/`, behind a Better Auth

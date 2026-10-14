@@ -95,6 +95,18 @@ change an `asset:` reference answer `READ_ONLY` and point to `copy_file`.
 The file panel lists 当前会话, 本会话的附件 (the conversation's uploads and generated files across all
 branches, read-only) and 当前项目, and — while the memory plugin is on — 记忆 · 你 and 记忆 · 当前项目.
 
+### Sandbox files
+
+While a sandbox tool is on, `sandbox:/absolute/path` names a file on the user's sandbox machine; a bare
+`/path` still means a workspace file. `read_file` pages a text file like any other, and shows a binary
+file (a chart, a PDF, audio) by storing its bytes as an attachment, up to 20 MiB.
+
+`sandbox_import({ from, to })` copies a workspace path or an `asset:` reference to an absolute sandbox
+path, creating parent directories and replacing an existing file. `sandbox_export({ from, to })`
+publishes a sandbox file under `/project` or `/conversation`. Text up to 1 MiB becomes an ordinary
+workspace text file and follows the same version rules as `write_file` (`expected_version` to replace
+one). Anything else, up to 20 MiB, is published as a binary file and only to a path that is free.
+
 ### Memory mounts
 
 `/memory/user` (the user's, shared by every conversation) and `/memory/project` (the conversation's
