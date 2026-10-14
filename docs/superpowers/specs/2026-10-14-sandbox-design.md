@@ -87,6 +87,8 @@ RPC 面（名称为示意，签名在 plan 中定稿）：
 - manifest：`requires: ['file_reader', 'workspace_files']`，服务端 `inject` 对应服务；默认关闭；**不**声明
   `requiresProject`，所有已持久化的对话都可用。
 - 插件负责：对话 → 单元的映射、`sandbox:` 解析与附件化、导入导出、工具卡片的流式事件、清理事件。
+- 何时用、哪些东西会保留、预装了什么、如何把产物交给用户，写在插件的系统提示段（`promptSections`，启用 sandbox 工具时出现）；
+  工具描述只写各自的调用规则。
 - 注册到三处列表：`src/shared/plugin-manifests.ts`、`src/client/plugins/loaders.ts`、`src/server/app.ts`。
 
 ## 3. 镜像

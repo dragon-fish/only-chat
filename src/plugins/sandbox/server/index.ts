@@ -5,6 +5,7 @@ import { attachments } from '@/server/db/schema'
 import type { ToolContext } from '@/server/plugins/tools'
 import { storeGeneratedAttachment } from '@/server/plugins/api/attachments'
 import { disposeRpcStub } from '@/server/rpc'
+import { whileOffered } from '@/server/plugins/prompt-sections'
 import { markUnitBackupsDeleted } from '@/server/sandbox/backups'
 import {
   MAX_TEXT_READ_BYTES, execFiles, normalizeSandboxPath, unitDir,
@@ -26,6 +27,7 @@ import {
   type SandboxWriteFileResult, type SandboxEditFileResult,
 } from '../shared'
 import { countLines } from '@/server/plugins/workspace-files/path'
+import manifest from '../manifest'
 import { LineBuffer, OutputWindow } from './output'
 import { cwdNotes, summarize, wrapCommand } from './command'
 import { inCallOrder } from './order'
@@ -41,17 +43,24 @@ const BINARY_MIMES: Record<string, string> = {
   zip: 'application/zip', gz: 'application/gzip', tgz: 'application/gzip', tar: 'application/x-tar', '7z': 'application/x-7z-compressed',
 }
 
+/**
+ * When and how to use the machine, offered while any sandbox tool is. The tool descriptions keep
+ * only how to call each tool; what spans tools or should happen unprompted belongs here.
+ */
+const GUIDANCE = [
+  'You have a Linux machine of your own through the sandbox tools: Debian with Python 3.12 (uv, and a default venv holding numpy, pandas, matplotlib, requests, openpyxl, pillow, beautifulsoup4, lxml), Node 24 with pnpm and bun, git, curl, jq, ripgrep, zip, tmux and build-essential, with internet access. Use it whenever running something beats reasoning about it: computing, converting files, testing what you wrote.',
+  'What lasts: this conversation\'s directory (its Project\'s, when it has one) and /workspace/home, which is HOME, are backed up when the machine idles and restored when next used. node_modules/, .venv/, __pycache__/, .cache/ and anything a .gitignore excludes are left out, so reinstall dependencies after a restore. `uv tool install` and npm/pnpm/bun global packages live in HOME and last; `uv pip install` goes into the default venv and lasts only until the machine stops, so put lasting dependencies in the project. Everything else on the machine is gone once it stops.',
+  'Playwright 1.63.0 with a headless Chromium is preinstalled, for checking a web app you serve at localhost: in Python `from playwright.sync_api import sync_playwright` works as is; in Node add exactly `playwright@1.63.0` to the project (any other version downloads a browser of its own). Do not install another browser.',
+  'The user cannot see the machine. Look at what you make with read_file("sandbox:/absolute/path"); an image read that way can be shown in your reply. To let the user keep or download something, publish it with sandbox_export — for a whole project, one zip without dependencies and build output, for example `zip -r /tmp/project.zip . -x "node_modules/*" "dist/*" ".venv/*" "__pycache__/*" ".git/*"`.',
+  'Create and change files with sandbox_write_file and sandbox_edit_file rather than heredocs or sed.',
+].join(' ')
+
 const EXEC_DESCRIPTION = [
-  'Run a command on your own Linux machine (Debian; Python 3.12 with uv and a default venv holding numpy, pandas, matplotlib, requests, openpyxl, pillow, beautifulsoup4, lxml; Node 24 with pnpm and bun; git, curl, jq, ripgrep, zip, tmux, build-essential). It has internet access.',
-  'Playwright 1.63.0 with a headless Chromium is preinstalled, for checking a web app you serve inside the sandbox at localhost: in Python, `from playwright.sync_api import sync_playwright` works as is; in Node, add exactly `playwright@1.63.0` to the project (any other version downloads a browser of its own) and `import { chromium } from "playwright"`. Do not install another browser.',
-  'The default working directory belongs to this conversation (to its Project when it has one) and is kept between conversations: it is backed up when the machine idles and restored when next used. node_modules/, .venv/, __pycache__/, .cache/ and anything .gitignore excludes are not kept, so reinstall dependencies after a restore. /workspace/home is HOME and is kept too: `uv tool install` and npm/pnpm/bun global packages persist there. Packages added with `uv pip install` go into the default venv and last only until the machine stops; put lasting dependencies in the project (pyproject.toml, package.json).',
-  'Set exactly one of command (run by bash -lc) or argv (passed as-is, no quoting needed). stdin is written to the process exactly as given, with no escaping. To create or change a file use sandbox_write_file and sandbox_edit_file rather than heredocs.',
-  'Every call starts in cwd, or in the default directory: a cd lasts only for the call it is in.',
-  'Output keeps the first 4 KiB and last 16 KiB of each stream; the whole output is in log_path. Foreground commands stop at timeout_ms.',
+  'Run a command on your Linux machine.',
+  'Set exactly one of command (run by bash -lc) or argv (passed as-is, no quoting needed). stdin is written to the process exactly as given.',
+  'Every call starts in cwd, or in this conversation\'s directory: a cd lasts only for the call it is in.',
+  'Output keeps the first 4 KiB and last 16 KiB of each stream; the whole output is in log_path. A foreground command stops at timeout_ms.',
   'For anything long — builds, crawls, servers — set background: true. It returns at once with a task id; the outcome arrives later as a <task-notification>. Do not poll or wait for it; carry on or answer the user. Read the log with tail on log_path if you need to look, and stop it with kill <pid>.',
-  'To look at a file you made — an image, a PDF, a CSV — read it with read_file("sandbox:/absolute/path"). A bare /path names a workspace file, not a sandbox one.',
-  'The user cannot browse the sandbox. An image you read from it with read_file can be shown in your reply like any other; to let the user keep or download a file, publish it to the workspace with sandbox_export, and it appears with your reply.',
-  'To hand over a whole project, zip it first, leaving out dependencies and build output — for example `zip -r /tmp/project.zip . -x "node_modules/*" "dist/*" ".venv/*" "__pycache__/*" ".git/*"` — and export the zip.',
 ].join(' ')
 
 const WRITE_FILE_DESCRIPTION = [
@@ -74,7 +83,7 @@ const IMPORT_DESCRIPTION = [
 ].join(' ')
 
 const EXPORT_DESCRIPTION = [
-  'Publish a sandbox file to the workspace, under /project or /conversation, where the user can see and download it. This is how the user gets files out of the sandbox; for a whole project, export one zip that leaves out node_modules, dist and the like rather than many files.',
+  'Publish a sandbox file to the workspace, under /project or /conversation, where the user can see and download it.',
   `Text files up to ${MAX_FILE_BYTES / 1024 / 1024} MiB become ordinary workspace text files: replacing one needs expected_version, as with write_file.`,
   `Anything else is published as a binary file of at most ${MAX_BINARY_BYTES / 1024 / 1024} MiB, and only to a free path — a binary file is never overwritten. Split or compress what is larger.`,
 ].join(' ')
@@ -134,10 +143,12 @@ async function* frames(body: ReadableStream<Uint8Array>): AsyncGenerator<ExecFra
 
 export const SandboxServerPlugin = {
   name: 'sandbox',
-  inject: ['tools', 'env', 'hub', 'db', 'assets', 'fileReader', 'pluginConfig'] as const,
+  inject: ['tools', 'env', 'hub', 'db', 'assets', 'fileReader', 'pluginConfig', 'promptSections'] as const,
   apply(ctx: Context) {
     const env = ctx.env
     const hub = ctx.hub
+
+    ctx.promptSections.register(SANDBOX_PLUGIN_ID, whileOffered(manifest, GUIDANCE))
 
     ctx.tools.register(SANDBOX_PLUGIN_ID, SANDBOX_EXEC_TOOL_ID, runtime => tool({
       description: EXEC_DESCRIPTION,
