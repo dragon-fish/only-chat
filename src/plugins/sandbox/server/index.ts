@@ -47,7 +47,7 @@ const EXEC_DESCRIPTION = [
   'Output keeps the first 4 KiB and last 16 KiB of each stream; the whole output is in log_path. Foreground commands stop at timeout_ms.',
   'For anything long — builds, crawls, servers — set background: true. It returns at once with a task id; the outcome arrives later as a <task-notification>. Do not poll or wait for it; carry on or answer the user. Read the log with tail on log_path if you need to look, and stop it with kill <pid>.',
   'To look at a file you made — an image, a PDF, a CSV — read it with read_file("sandbox:/absolute/path"). A bare /path names a workspace file, not a sandbox one.',
-  'The user cannot see any file in the sandbox, including what read_file showed you from it: an asset: reference to a sandbox file does not display in your reply. To show the user a file or let them download it, publish it to the workspace with sandbox_export; it then appears with your reply.',
+  'The user cannot browse the sandbox. An image you read from it with read_file can be shown in your reply like any other; to let the user keep or download a file, publish it to the workspace with sandbox_export, and it appears with your reply.',
   'To hand over a whole project, zip it first, leaving out dependencies and build output — for example `zip -r /tmp/project.zip . -x "node_modules/*" "dist/*" ".venv/*" "__pycache__/*" ".git/*"` — and export the zip.',
 ].join(' ')
 
@@ -71,7 +71,7 @@ const IMPORT_DESCRIPTION = [
 ].join(' ')
 
 const EXPORT_DESCRIPTION = [
-  'Publish a sandbox file to the workspace, under /project or /conversation, where the user can see and download it. This is the only way to show the user something in the sandbox; for a whole project, export one zip that leaves out node_modules, dist and the like rather than many files.',
+  'Publish a sandbox file to the workspace, under /project or /conversation, where the user can see and download it. This is how the user gets files out of the sandbox; for a whole project, export one zip that leaves out node_modules, dist and the like rather than many files.',
   `Text files up to ${MAX_FILE_BYTES / 1024 / 1024} MiB become ordinary workspace text files: replacing one needs expected_version, as with write_file.`,
   `Anything else is published as a binary file of at most ${MAX_BINARY_BYTES / 1024 / 1024} MiB, and only to a free path — a binary file is never overwritten. Split or compress what is larger.`,
 ].join(' ')

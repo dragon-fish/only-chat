@@ -39,12 +39,12 @@ async function run(conversationId: number, attachmentId: number, deleted: boolea
 }
 
 describe('listConversationAssets', () => {
-  it('lists uploads and generated images across every branch, once each, and nothing else', async () => {
+  it('lists every asset the model can name across every branch, once each, and nothing else', async () => {
     await ensureTestUser(db)
     const conversation = await createConversation(db, { user_id: 1, title: 'assets', provider_id: null, model_id: null })
     const other = await createConversation(db, { user_id: 1, title: 'other', provider_id: null, model_id: null })
-    const [photo, report, inline, runOutput, deletedOutput, studio, delivered, foreign] = await Promise.all([
-      attachment(), attachment('application/pdf'), attachment(), attachment(), attachment(), attachment(), attachment(), attachment(),
+    const [photo, report, inline, runOutput, deletedOutput, studio, delivered, notified, foreign] = await Promise.all([
+      attachment(), attachment('application/pdf'), attachment(), attachment(), attachment(), attachment(), attachment(), attachment(), attachment(),
     ])
     const root = await message(conversation.id, null, 'user', [
       { type: 'image', attachment_id: photo.id, filename: 'cat.png' }, { type: 'text', text: 'hi' },
@@ -56,20 +56,26 @@ describe('listConversationAssets', () => {
       { type: 'tool_result', call_id: 'c', name: 'read_file', content: {}, attachments: [delivered.id] },
     ], 20)
     const branch = await message(conversation.id, root.id, 'assistant', [{ type: 'text', text: 'other branch' }], 30)
-    await message(conversation.id, branch.id, 'user', [
+    const followUp = await message(conversation.id, branch.id, 'user', [
       { type: 'file', attachment_id: report.id, mime: 'application/pdf', filename: 'report.pdf' },
       { type: 'image', attachment_id: photo.id },
     ], 40)
+    await message(conversation.id, followUp.id, 'user', [
+      { type: 'task_notification', task_id: 't:1', plugin_id: 'p', tool_call_id: 'c', status: 'completed', text: 'done', attachments: [notified.id] },
+    ], 45)
     await run(conversation.id, runOutput.id, false)
     await run(conversation.id, deletedOutput.id, true)
     await message(other.id, null, 'user', [{ type: 'image', attachment_id: foreign.id }], 10)
 
-    expect(await listConversationAssets(db, 1, conversation.id)).toEqual([
+    const expected = [
       { attachmentId: photo.id, ref: photo.sha256.slice(0, 8), source: 'upload', mime: 'image/png', size: 3, width: 4, height: 5, filename: 'cat.png', createdAt: 10 },
       { attachmentId: inline.id, ref: inline.sha256.slice(0, 8), source: 'generated', mime: 'image/png', size: 3, width: 4, height: 5, filename: null, createdAt: 20 },
+      { attachmentId: delivered.id, ref: delivered.sha256.slice(0, 8), source: 'tool', mime: 'image/png', size: 3, width: 4, height: 5, filename: null, createdAt: 20 },
       { attachmentId: report.id, ref: report.sha256.slice(0, 8), source: 'upload', mime: 'application/pdf', size: 3, width: null, height: null, filename: 'report.pdf', createdAt: 40 },
+      { attachmentId: notified.id, ref: notified.sha256.slice(0, 8), source: 'tool', mime: 'image/png', size: 3, width: 4, height: 5, filename: null, createdAt: 45 },
       { attachmentId: runOutput.id, ref: runOutput.sha256.slice(0, 8), source: 'generated', mime: 'image/png', size: 3, width: 4, height: 5, filename: null, createdAt: 50 },
-    ])
+    ].sort((a, b) => a.createdAt - b.createdAt || a.attachmentId - b.attachmentId)
+    expect(await listConversationAssets(db, 1, conversation.id)).toEqual(expected)
     expect(await listConversationAssets(db, 2, conversation.id)).toEqual([])
   })
 })

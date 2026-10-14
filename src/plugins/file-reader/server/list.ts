@@ -18,8 +18,10 @@ interface Row {
 
 /**
  * Every asset of one conversation, across all branches: user uploads, images the chat model
- * produced inline, and the live outputs of image runs started from it. Message parts are matched
- * with `json_each` in SQL, never by scanning JSON text, so an id cannot match as a substring.
+ * produced inline, the live outputs of image runs started from it, and files tools handed to the
+ * model. The last matter because the model may show any of them in a reply; they are the same set
+ * `visibleAttachments` builds, across branches. Message parts are matched with `json_each` in SQL,
+ * never by scanning JSON text, so an id cannot match as a substring.
  *
  * Ownership is part of every branch: a conversation or run of another user contributes nothing.
  * An attachment reachable from several places is listed once, where it first appeared.
@@ -40,6 +42,15 @@ export async function listConversationAssets(db: DB, userId: number, conversatio
          OR (m.role = 'assistant' AND json_extract(p.value, '$.type') = 'image'
              AND json_extract(p.value, '$.artifact_id') IS NULL)
        )
+    UNION ALL
+    SELECT a.id, a.sha256, a.mime, a.size, a.width, a.height, NULL, 'tool', m.created_at
+      FROM messages m
+      JOIN conversations c ON c.id = m.conversation_id AND c.user_id = ?1
+      JOIN json_each(m.parts) p
+      JOIN json_each(json_extract(p.value, '$.attachments')) x
+      JOIN attachments a ON a.id = x.value AND a.user_id = ?1
+     WHERE m.conversation_id = ?2
+       AND json_extract(p.value, '$.type') IN ('tool_result', 'task_notification')
     UNION ALL
     SELECT a.id, a.sha256, a.mime, a.size, a.width, a.height, NULL, 'generated', ar.created_at
       FROM artifact_runs r
