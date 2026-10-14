@@ -453,11 +453,11 @@ export class SandboxMachine {
         if (exit !== null) {
           const code = Number(exit.trim())
           const tail = await this.tail(`${job.dir}/log`)
-          const seconds = Math.round((this.deps.now() - job.startedAt) / 1000)
+          // No duration: the alarm finds an exit up to a minute late, and that delay is not the command's.
           notification = {
             ...base,
             status: code === 0 ? 'completed' : 'failed',
-            text: `Background command exited with code ${exit.trim()} after about ${seconds}s: ${job.summary}\n`
+            text: `Background command exited with code ${exit.trim()}: ${job.summary}\n`
               + `Full log: ${job.dir}/log\nLast output:\n${tail}`,
           }
         }
