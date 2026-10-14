@@ -46,7 +46,8 @@ const EXEC_DESCRIPTION = [
   'Set exactly one of command (run by bash -lc) or argv (passed as-is, no quoting needed). stdin is written to the process exactly as given, with no escaping. To create or change a file use sandbox_write_file and sandbox_edit_file rather than heredocs.',
   'Output keeps the first 4 KiB and last 16 KiB of each stream; the whole output is in log_path. Foreground commands stop at timeout_ms.',
   'For anything long — builds, crawls, servers — set background: true. It returns at once with a task id; the outcome arrives later as a <task-notification>. Do not poll or wait for it; carry on or answer the user. Read the log with tail on log_path if you need to look, and stop it with kill <pid>.',
-  'To look at a file you made — an image, a PDF, a CSV — read it with read_file("sandbox:/absolute/path"). A bare /path names a workspace file, not a sandbox one. To hand a file to the user, publish it with sandbox_export.',
+  'To look at a file you made — an image, a PDF, a CSV — read it with read_file("sandbox:/absolute/path"). A bare /path names a workspace file, not a sandbox one.',
+  'The user cannot see anything in the sandbox, including what read_file showed you from it: an asset: reference to a sandbox file does not display in your reply. To show the user a file, publish it with sandbox_export; it then appears with your reply, where they can open and download it.',
 ].join(' ')
 
 const WRITE_FILE_DESCRIPTION = [
@@ -69,7 +70,7 @@ const IMPORT_DESCRIPTION = [
 ].join(' ')
 
 const EXPORT_DESCRIPTION = [
-  'Publish a sandbox file to the workspace, under /project or /conversation, where the user can see and download it.',
+  'Publish a sandbox file to the workspace, under /project or /conversation, where the user can see and download it. This is the only way to show the user something you made in the sandbox.',
   `Text files up to ${MAX_FILE_BYTES / 1024 / 1024} MiB become ordinary workspace text files: replacing one needs expected_version, as with write_file.`,
   `Anything else is published as a binary file of at most ${MAX_BINARY_BYTES / 1024 / 1024} MiB, and only to a free path — a binary file is never overwritten. Split or compress what is larger.`,
 ].join(' ')
