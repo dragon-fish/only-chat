@@ -15,17 +15,22 @@ import { readLines } from '@/shared/text-lines'
 import { binaryFromAttachment } from '@/plugins/file-reader/server/service'
 import { fileToolError, refFailure } from '@/plugins/file-reader/server/refs'
 import type { ReadAssetTextOutput } from '@/plugins/file-reader/shared'
-import { servicesFor, workspaceToolError, writeWorkspaceFile } from '@/plugins/workspace-files/server'
-import { MAX_FILE_BYTES } from '@/server/plugins/workspace-files/service'
+import { MESSAGES, servicesFor, workspaceToolError, writeWorkspaceFile } from '@/plugins/workspace-files/server'
+import { applyTextEdit, MAX_FILE_BYTES } from '@/server/plugins/workspace-files/service'
 import {
   RESULT_HEAD_BYTES, RESULT_TAIL_BYTES, SANDBOX_CONFIG_SCHEMA, SANDBOX_EXEC_TOOL_ID, SANDBOX_EXPORT_TOOL_ID,
-  SANDBOX_IMPORT_TOOL_ID, SANDBOX_PLUGIN_ID, SandboxExecInputSchema, SandboxExportInputSchema, SandboxImportInputSchema,
+  SANDBOX_IMPORT_TOOL_ID, SANDBOX_PLUGIN_ID, SANDBOX_WRITE_FILE_TOOL_ID, SANDBOX_EDIT_FILE_TOOL_ID,
+  SandboxExecInputSchema, SandboxExportInputSchema, SandboxImportInputSchema, SandboxWriteFileInputSchema, SandboxEditFileInputSchema,
   type SandboxExecInput, type SandboxExecOutput, type SandboxExportResult, type SandboxImportResult, type SandboxToolError,
+  type SandboxWriteFileResult, type SandboxEditFileResult,
 } from '../shared'
+import { countLines } from '@/server/plugins/workspace-files/path'
 import { LineBuffer, OutputWindow } from './output'
 import { summarize, wrapCommand } from './command'
 
-const SANDBOX_TOOL_IDS: readonly string[] = [SANDBOX_EXEC_TOOL_ID, SANDBOX_IMPORT_TOOL_ID, SANDBOX_EXPORT_TOOL_ID]
+const SANDBOX_TOOL_IDS: readonly string[] = [
+  SANDBOX_EXEC_TOOL_ID, SANDBOX_IMPORT_TOOL_ID, SANDBOX_EXPORT_TOOL_ID, SANDBOX_WRITE_FILE_TOOL_ID, SANDBOX_EDIT_FILE_TOOL_ID,
+]
 const PROGRESS_FLUSH_MS = 100
 /** Binary bytes cross Durable Object RPC whole, and one RPC message is capped at 32 MiB. */
 const MAX_BINARY_BYTES = MAX_ATTACHMENT_BYTES
@@ -36,10 +41,24 @@ const BINARY_MIMES: Record<string, string> = {
 const EXEC_DESCRIPTION = [
   'Run a command on your own Linux machine (Debian; Python 3.12 with uv and a default venv holding numpy, pandas, matplotlib, requests, openpyxl, pillow, beautifulsoup4, lxml; Node 24 with pnpm and bun; git, curl, jq, ripgrep, zip, tmux, build-essential). It has internet access.',
   'The default working directory belongs to this conversation (to its Project when it has one) and is kept between conversations: it is backed up when the machine idles and restored when next used. node_modules/, .venv/, __pycache__/, .cache/ and anything .gitignore excludes are not kept, so reinstall dependencies after a restore. /workspace/home is HOME and is kept too: `uv tool install` and npm/pnpm/bun global packages persist there. Packages added with `uv pip install` go into the default venv and last only until the machine stops; put lasting dependencies in the project (pyproject.toml, package.json).',
-  'Set exactly one of command (run by bash -lc) or argv (passed as-is, no quoting needed). stdin is written to the process exactly as given: argv ["tee", "path"] with stdin writes a file without any escaping — prefer it to heredocs.',
+  'Set exactly one of command (run by bash -lc) or argv (passed as-is, no quoting needed). stdin is written to the process exactly as given, with no escaping. To create or change a file use sandbox_write_file and sandbox_edit_file rather than heredocs.',
   'Output keeps the first 4 KiB and last 16 KiB of each stream; the whole output is in log_path. Foreground commands stop at timeout_ms.',
   'For anything long — builds, crawls, servers — set background: true. It returns at once with a task id; the outcome arrives later as a <task-notification>. Do not poll or wait for it; carry on or answer the user. Read the log with tail on log_path if you need to look, and stop it with kill <pid>.',
   'To look at a file you made — an image, a PDF, a CSV — read it with read_file("sandbox:/absolute/path"). A bare /path names a workspace file, not a sandbox one. To hand a file to the user, publish it with sandbox_export.',
+].join(' ')
+
+const WRITE_FILE_DESCRIPTION = [
+  'Create a file in the sandbox, or replace one completely: this writes the whole file. Parent directories are created and an existing file is overwritten.',
+  'Sandbox files have no versions, so nothing is kept of what was replaced.',
+  `Limit is ${MAX_FILE_BYTES / 1024 / 1024} MiB of UTF-8 text; generate anything larger with sandbox_exec.`,
+  'Read it back with read_file("sandbox:/absolute/path").',
+].join(' ')
+
+const EDIT_FILE_DESCRIPTION = [
+  'Change part of a sandbox file by naming the text to replace.',
+  'oldText is matched literally, not as a pattern or a regular expression. It must match the file exactly, including indentation — and without the line numbers read_file("sandbox:/absolute/path") prints in front of each line.',
+  'It must match exactly one place, so include enough surrounding lines to be unambiguous; pass replaceAll to change every occurrence instead. An empty newText deletes the matched text.',
+  'Sandbox files have no versions: the edit applies to whatever the file holds now, and the previous content is not kept.',
 ].join(' ')
 
 const IMPORT_DESCRIPTION = [
@@ -188,6 +207,61 @@ export const SandboxServerPlugin = {
             flush()
           }
         })
+      },
+    }))
+
+    ctx.tools.register(SANDBOX_PLUGIN_ID, SANDBOX_WRITE_FILE_TOOL_ID, runtime => tool({
+      description: WRITE_FILE_DESCRIPTION,
+      inputSchema: SandboxWriteFileInputSchema,
+      async execute(input): Promise<SandboxWriteFileResult | SandboxToolError> {
+        const path = normalizeSandboxPath(input.path)
+        if (!path) return { error: `path must be an absolute sandbox path, got ${JSON.stringify(input.path)}.` }
+        const bytes = new TextEncoder().encode(input.content)
+        if (bytes.byteLength > MAX_FILE_BYTES) {
+          return { error: `The content is ${bytes.byteLength.toLocaleString('en-US')} bytes, over the ${MAX_FILE_BYTES / 1024 / 1024} MiB limit. Generate a larger file with sandbox_exec instead.` }
+        }
+        const { defaultTimeoutMs: _timeout, ...machine } = machineOf(runtime.config)
+        try {
+          return await withSandbox(env, runtime.userId, async (sandbox) => {
+            const existing = await sandbox.stat(runtime.userId, machine, path)
+            if (existing && existing.kind !== 'file') return { error: `${path} exists and is not a regular file.` }
+            await sandbox.writeFile({ userId: runtime.userId, machine, path, bytes })
+            return { path, size: bytes.byteLength, totalLines: countLines(input.content), operation: existing ? 'replaced' as const : 'created' as const }
+          })
+        } catch (error) {
+          return { error: message(error) }
+        }
+      },
+    }))
+
+    ctx.tools.register(SANDBOX_PLUGIN_ID, SANDBOX_EDIT_FILE_TOOL_ID, runtime => tool({
+      description: EDIT_FILE_DESCRIPTION,
+      inputSchema: SandboxEditFileInputSchema,
+      async execute(input): Promise<SandboxEditFileResult | SandboxToolError> {
+        const path = normalizeSandboxPath(input.path)
+        if (!path) return { error: `path must be an absolute sandbox path, got ${JSON.stringify(input.path)}.` }
+        const { defaultTimeoutMs: _timeout, ...machine } = machineOf(runtime.config)
+        try {
+          return await withSandbox(env, runtime.userId, async (sandbox) => {
+            const read = await sandbox.readFile({ userId: runtime.userId, machine, path, maxBytes: MAX_FILE_BYTES })
+            if (!read.ok) {
+              if (read.code === 'NOT_FOUND') return { error: `${path} does not exist in the sandbox.` }
+              if (read.code === 'NOT_A_FILE') return { error: `${path} is not a regular file.` }
+              return { error: `${path} is ${read.size?.toLocaleString('en-US')} bytes, over the ${MAX_FILE_BYTES / 1024 / 1024} MiB limit for editing. Change it with sandbox_exec instead.` }
+            }
+            if (!isUtf8Text(read.bytes)) return { error: `${path} is not UTF-8 text, so it cannot be edited as text. Change it with sandbox_exec instead.` }
+            const edited = applyTextEdit(new TextDecoder().decode(read.bytes), input.oldText, input.newText, input.replaceAll)
+            if (!edited.ok) return { error: MESSAGES[edited.error] }
+            const bytes = new TextEncoder().encode(edited.value.content)
+            if (bytes.byteLength > MAX_FILE_BYTES) {
+              return { error: `The edited file would be ${bytes.byteLength.toLocaleString('en-US')} bytes, over the ${MAX_FILE_BYTES / 1024 / 1024} MiB limit. Nothing was changed.` }
+            }
+            await sandbox.writeFile({ userId: runtime.userId, machine, path, bytes })
+            return { path, replacements: edited.value.replacements, size: bytes.byteLength, totalLines: countLines(edited.value.content) }
+          })
+        } catch (error) {
+          return { error: message(error) }
+        }
       },
     }))
 

@@ -1,6 +1,6 @@
 import type { PluginManifest } from '@/shared/plugins'
 import { FILE_READER_PLUGIN_ID, WORKSPACE_FILES_PLUGIN_ID } from '@/shared/plugins'
-import { SANDBOX_CONFIG_SCHEMA, SANDBOX_EXEC_TOOL_ID, SANDBOX_EXPORT_TOOL_ID, SANDBOX_IMPORT_TOOL_ID, SANDBOX_PLUGIN_ID } from './shared'
+import { SANDBOX_CONFIG_SCHEMA, SANDBOX_EXEC_TOOL_ID, SANDBOX_EXPORT_TOOL_ID, SANDBOX_IMPORT_TOOL_ID, SANDBOX_PLUGIN_ID, SANDBOX_WRITE_FILE_TOOL_ID, SANDBOX_EDIT_FILE_TOOL_ID } from './shared'
 
 const manifest = {
   id: SANDBOX_PLUGIN_ID,
@@ -12,6 +12,16 @@ const manifest = {
       id: SANDBOX_EXEC_TOOL_ID,
       name: '执行命令',
       description: '在你的 Sandbox 里运行 shell 命令，可在后台运行长任务。',
+    },
+    {
+      id: SANDBOX_WRITE_FILE_TOOL_ID,
+      name: '写入文件',
+      description: '在 Sandbox 里创建文件，或整个覆盖一个已有文件。',
+    },
+    {
+      id: SANDBOX_EDIT_FILE_TOOL_ID,
+      name: '编辑文件',
+      description: '按文本替换的方式修改 Sandbox 里的文件。',
     },
     {
       id: SANDBOX_IMPORT_TOOL_ID,

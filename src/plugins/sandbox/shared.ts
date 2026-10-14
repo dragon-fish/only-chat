@@ -5,6 +5,8 @@ export const SANDBOX_PLUGIN_ID = 'sandbox' as const
 export const SANDBOX_EXEC_TOOL_ID = 'sandbox_exec' as const
 export const SANDBOX_IMPORT_TOOL_ID = 'sandbox_import' as const
 export const SANDBOX_EXPORT_TOOL_ID = 'sandbox_export' as const
+export const SANDBOX_WRITE_FILE_TOOL_ID = 'sandbox_write_file' as const
+export const SANDBOX_EDIT_FILE_TOOL_ID = 'sandbox_edit_file' as const
 
 export const DEFAULT_TIMEOUT_MS = 120_000
 export const DEFAULT_IDLE_MINUTES = 10
@@ -35,7 +37,7 @@ export const SandboxExecInputSchema = z.object({
   argv: z.array(z.string()).min(1).optional()
     .describe('A program and its arguments, passed as-is with no shell parsing, so nothing needs quoting or escaping. Set this or command, not both.'),
   stdin: z.string().max(MAX_STDIN_BYTES).optional()
-    .describe('Text written to the process\'s standard input. With argv ["tee", "path"] it writes a file exactly as given.'),
+    .describe('Text written to the process\'s standard input. For feeding a program, not for writing files: use sandbox_write_file for that.'),
   cwd: z.string().min(1).optional()
     .describe('Absolute working directory. Defaults to this conversation\'s workspace directory.'),
   timeout_ms: z.number().int().min(1_000).max(MAX_TIMEOUT_MS).optional()
@@ -94,4 +96,34 @@ export interface SandboxExportResult {
   version: number
   size: number
   operation: 'created' | 'updated' | 'replaced'
+}
+
+export const SandboxWriteFileInputSchema = z.strictObject({
+  path: z.string().min(1).describe('Absolute path of the file in the sandbox. Parent directories are created.'),
+  content: z.string().describe('The complete new contents. This is a whole-file replacement.'),
+})
+export type SandboxWriteFileInput = z.infer<typeof SandboxWriteFileInputSchema>
+
+export interface SandboxWriteFileResult {
+  path: string
+  size: number
+  totalLines: number
+  operation: 'created' | 'replaced'
+}
+
+export const SandboxEditFileInputSchema = z.strictObject({
+  path: z.string().min(1).describe('Absolute path of the file in the sandbox.'),
+  oldText: z.string().min(1)
+    .describe('The exact text to replace, copied from the file itself — indentation included, and without the line numbers read_file prints in front of each line.'),
+  newText: z.string().describe('What to put in its place. An empty string deletes the matched text.'),
+  replaceAll: z.boolean().default(false)
+    .describe('Replace every occurrence. Without it, oldText has to appear exactly once.'),
+})
+export type SandboxEditFileInput = z.infer<typeof SandboxEditFileInputSchema>
+
+export interface SandboxEditFileResult {
+  path: string
+  replacements: number
+  size: number
+  totalLines: number
 }
