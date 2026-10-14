@@ -6,11 +6,11 @@
 本文是 [Browser Run spec](2026-09-14-browser-run-workspace-design.md) §Scope 里的第二个子项目，取代那里
 "每个 Project 一台、R2 挂载、终端 tab、hydrate/publish"的设想。
 
-**范围**：每用户一台容器、`sandbox_exec`（前台与后台）、`sandbox:` 文件引用、vfs 导入导出、向用户索取密码、
-按工作目录单元备份到 R2、工具卡片。
+**范围**：每用户一台容器、`sandbox_exec`（前台与后台）、`sandbox:` 文件引用、vfs 导入导出、按工作目录单元备份到 R2、
+工具卡片。
 
-**不做**：网页终端、Sandbox 文件浏览与预览、端口预览、出站凭据注入、专用编辑工具、已删除单元的恢复界面、
-托管版配额。各项的接入点见 §12。
+**不做**：向用户索取密码的工具（需要授权的服务由 Agent 走 OAuth：给出授权链接，自己轮询拿到令牌）、网页终端、Sandbox 文件浏览与预览、端口预览、出站凭据注入、专用编辑工具、已删除单元的恢复界面、
+托管版配额。各项的接入点见 §11。
 
 ## 1. 平台事实
 
@@ -39,7 +39,7 @@
   `basic` 在该策略下不可用。计费按 10 ms：内存与磁盘按配置量，CPU 按实际用量。
 - **隔离**：每个实例是一个 Firecracker microVM；容器内所有进程等同 root。
 - **出网**：`enableInternet` 打开时 80/443 以外的端口不经拦截器。`interceptOutboundHttps` 可把指定主机的请求交给
-  Worker 处理（§12 凭据注入的接入点）。
+  Worker 处理（§11 凭据注入的接入点）。
 - **本地开发**：`wrangler dev` / `vite dev` 用 Docker 运行容器；需要 wrangler ≥ 4.141。`vite dev` 拉不到
   Cloudflare 仓库的镜像。`@cloudflare/vitest-pool-workers` 写死 `enableContainers: false`。
 - **DO RPC**：消息上限 32 MiB，`ReadableStream` 可以流式越过；`AbortSignal` 不能经 RPC 传递。
@@ -77,8 +77,7 @@ RPC 面（名称为示意，签名在 plan 中定稿）：
 | `kill(execId)` | 结束一次前台执行的进程组（生成被停止时调用） |
 | `startJob(req)` | 后台执行（§6.2） |
 | `readFile(unit, path)` / `stat(unit, path)` / `writeFile(unit, path, body)` | `sandbox:` 读取与导入（§7） |
-| `setSecret(name, value)` | 写入密码（§8） |
-| `dropUnit(unit)` | 运行中则删除该单元目录（§9.2） |
+| `dropUnit(unit)` | 运行中则删除该单元目录（§8.2） |
 
 ### 2.2 插件
 
@@ -87,7 +86,7 @@ RPC 面（名称为示意，签名在 plan 中定稿）：
 - 工具与 `sandbox:` 方案在 **hub 根**注册；第一版没有 HTTP 路由，不需要 Worker 根的那一半。
 - manifest：`requires: ['file_reader', 'workspace_files']`，服务端 `inject` 对应服务；默认关闭；**不**声明
   `requiresProject`，所有已持久化的对话都可用。
-- 插件负责：对话 → 单元的映射、`sandbox:` 解析与附件化、导入导出、工具卡片的流式事件、密码卡片、清理事件。
+- 插件负责：对话 → 单元的映射、`sandbox:` 解析与附件化、导入导出、工具卡片的流式事件、清理事件。
 - 注册到三处列表：`src/shared/plugin-manifests.ts`、`src/client/plugins/loaders.ts`、`src/server/app.ts`。
 
 ## 3. 镜像
@@ -136,7 +135,7 @@ BUN_INSTALL=/workspace/home/.bun
 | `conversation:<id>` | `/workspace/conversations/<id>` | 不属于 Project 的对话的默认工作目录 |
 
 - 对话属于哪个单元，由插件在**执行时**按对话当前的 `project_id` 推算。对话被移入或移出 Project 后，默认工作目录
-  随之改变；旧单元里的文件留在原处，按 §9.2 的规则清理。
+  随之改变；旧单元里的文件留在原处，按 §8.2 的规则清理。
 - 模型只看见容器里的绝对路径，不看见"单元"。容器是该用户独占的，模型可以访问任意路径。
 - 任何路径参数（`cwd`、`sandbox:` 路径、导入目标）落在 `/workspace/projects/<id>` 或
   `/workspace/conversations/<id>` 下时，先确保该单元已恢复。单元 id 只用来查**当前用户**的备份记录：不存在的
@@ -173,7 +172,7 @@ Sandbox DO 记录：进行中的前台执行数、进行中的后台任务、最
 1. **后台任务**：检查每个任务的退出文件（§6.2），已退出的投递通知。
 2. **检查点**：距上次备份超过 15 min、存在脏单元、且没有进行中的前台执行时，备份脏单元。
 3. **空闲关机**：没有进行中的前台执行与后台任务，且距最后一次活动超过 `idle_minutes` 时，备份脏单元，然后
-   `destroy()`，清空 DO 内存里的密码（§8），不再设置 alarm。
+   `destroy()`，不再设置 alarm。
 4. 否则设置下一次 alarm。
 
 DO 被重置后（部署、驱逐）的第一次 RPC 或 alarm 中，若发现容器仍在运行，就重新设置 alarm，并把所有带标记
@@ -217,7 +216,7 @@ DO 被重置后（部署、驱逐）的第一次 RPC 或 alarm 中，若发现�
   不好 `anyOf`。
 - `argv` 实际执行 `bash -lc 'exec "$@"' -- <argv…>`：与 `command` 相同的 login 环境与 PATH，参数原样传入。
 - `stdin` 上限 1 MiB；`command` 上限 32 KiB。
-- 每次执行显式传入 §3 的环境变量与 §8 的密码。
+- 每次执行显式传入 §3 的环境变量。
 - 进程以新会话启动（`setsid`），外面包 `timeout --kill-after=5s`，超时杀整个进程组。
 
 ### 6.1 前台
@@ -239,8 +238,8 @@ DO 被重置后（部署、驱逐）的第一次 RPC 或 alarm 中，若发现�
 }
 ```
 
-- 每个流保留前 4 KiB 与后 16 KiB，中间以一行省略说明代替，`truncated: true`。完整输出（stdout、stderr 交错，
-  带前缀）始终写入 `log_path`，模型可以 `grep` 或 `sed -n`。日志在 `/tmp`，关机即失。
+- 每个流保留前 4 KiB 与后 16 KiB，中间以一行省略说明代替，`truncated: true`。完整输出（stdout、stderr 按到达顺序
+  交错）始终写入 `log_path`，模型可以 `grep` 或 `sed -n`。日志在 `/tmp`，关机即失。
 - 输出按 UTF-8 解码，非法字节替换；不做 ANSI 转义清理之外的处理。
 - 生成被停止时，插件调用 `kill(execId)`：`AbortSignal` 不能经 RPC 传递。
 
@@ -269,7 +268,7 @@ DO 被重置后（部署、驱逐）的第一次 RPC 或 alarm 中，若发现�
 插件向 `fileReader` 注册 `sandbox` 方案，形式 `sandbox:/abs/path`。解析时先确保路径所属单元，再 `stat`。
 
 - **文本**（按扩展名与内容嗅探判定）：返回 `ResolvedText`，`read(range)` 用现有的逐行分页规则，内容经
-  `Files.readFile` 流式取得；读到的文本做 §8 的密码脱敏。
+  `Files.readFile` 取得。
 - **二进制**：`fileReader` 要求二进制文件是附件。插件把字节写入 R2 成为附件（复用按 sha256 去重的入库路径），
   以 `asset:` 形式交给模型；同一内容只存一份。上限 `MAX_ATTACHMENT_BYTES`（20 MiB），超过时返回错误并建议
   先压缩或导出。这些附件被工具结果引用，不会被当作孤儿回收。
@@ -296,33 +295,11 @@ DO 被重置后（部署、驱逐）的第一次 RPC 或 alarm 中，若发现�
 "不覆盖未读版本"的规则。文本上限沿用 vfs 文本文件上限；二进制上限为用户上传策略的 `maxBytes`。超限时返回
 错误，建议拆分。
 
-导出的文件与 `write_file` 写入的文件同为普通 vfs 文件，只有来源不同。导出不做密码脱敏：导出是 Agent 显式的
-交付动作。
+导出的文件与 `write_file` 写入的文件同为普通 vfs 文件，只有来源不同。
 
-## 8. 密码：`sandbox_request_secret`
+## 8. 数据与清理
 
-人类回答的工具，没有 `execute`，与 `ask_user` 同一机制。
-
-```ts
-{ name: string /* ^[A-Z][A-Z0-9_]{0,63}$ */, reason: string }
-```
-
-- 卡片显示 `reason` 与一个密码输入框，可以提交或拒绝。
-- **值不走 `tool.respond`**：那条通道把答案写进消息。客户端经 `plugin.command` 把 `{ tool_call_id, name, value }`
-  交给插件；插件调 Sandbox DO `setSecret`，再以与 `tool.respond` 相同的服务端路径完成该工具调用，结果只有
-  `{ "name": "GITHUB_TOKEN", "status": "provided" }`。拒绝走普通的 `tool.respond`，结果 `{ "status": "declined" }`。
-- 值长度 1–4096 字节。只存在 Sandbox DO 内存的 `Map` 里：不进消息、D1、DO storage、备份与日志。`destroy()` 或
-  DO 重置后即失；之后模型需要时重新索取。
-- 每次 `exec` / `startJob` 以环境变量注入全部已提供的密码。
-- **脱敏**：Sandbox DO 在返回或推送任何输出之前，把密码的明文、标准与 URL-safe base64、百分号编码形式替换为
-  `***`；长度不足 4 的值不做替换。流式输出保留与最长待匹配串等长的尾部缓冲，避免密码被切在两个分块之间。
-  后台任务的通知摘要与 §7.1 的文本读取同样脱敏；`log_path` 文件本身不改写。
-- 工具描述写明：值是用户的凭据，只用于当前任务，不要输出它。脱敏防的是意外泄露，不防刻意套取；真正让值不进
-  容器的是 §12 的出站注入。
-
-## 9. 数据与清理
-
-### 9.1 `sandbox_backups`（迁移 0028）
+### 8.1 `sandbox_backups`（迁移 0028）
 
 ```
 id            integer pk
@@ -339,7 +316,7 @@ index (user_id, unit_kind, unit_id, created_at)
 
 `unit_id` 不设外键：对话或 Project 被删除时由事件标记 `deleted_at`，不靠级联抹掉记录。
 
-### 9.2 清理
+### 8.2 清理
 
 - `conversation/before-purge`：该对话单元的备份记录标记 `deleted_at`；容器运行中则 `dropUnit` 删除目录与标记文件。
 - `project/deleted`：同上，对 Project 单元。
@@ -347,7 +324,7 @@ index (user_id, unit_kind, unit_id, created_at)
   `BUCKET` 按 `r2_key` 删除对象，再删除行。
 - 30 天内数据仍在 R2，但第一版没有恢复界面。
 
-## 10. 配置
+## 9. 配置
 
 插件配置（用户级，经 `plugin-config`）：
 
@@ -359,18 +336,22 @@ index (user_id, unit_kind, unit_id, created_at)
 
 `instance_type` 在下一次开机时生效。
 
-## 11. 部署与本地开发
+## 10. 部署与本地开发
 
 - wrangler 升到 ≥ 4.141；新增 `@cloudflare/sandbox` 1.0.x。
 - `wrangler.jsonc`：`containers: [{ class_name: 'Sandbox', scheduling_policy: 'durable_object', images: { sandbox: { dockerfile: './sandbox/Dockerfile' } } }]`、
   DO 绑定 `SANDBOX`、新的 DO migration tag（`new_sqlite_classes: ['Sandbox']`）。
 - `src/server/index.ts` 导出 `Sandbox` 与 `DirectoryBackupGateway`。
 - 远程 D1 迁移 0028 在推送 main 之前执行。
-- **Plan 的第一项任务先验证两件事**，结论写进 `deployment.md` / `development.md`：
-  1. 没装 Docker 时 `pnpm dev` 能否通过配置跳过容器；能则默认跳过，需要 sandbox 的开发者自行开启。
-  2. 免费账户经 Deploy 按钮部署是否因 `containers` 失败。若失败，停下来与用户商定，不擅自做降级方案。
+- **本地开发**：配置里有 `containers` 时，`vite dev` 与 `wrangler dev` 在没有 Docker 时直接启动失败。
+  `vite.config.ts` 经 `cloudflare({ config })` 默认设 `dev.enable_containers: false`，环境变量
+  `SANDBOX_DEV=1` 时才启用。容器关闭时 Sandbox DO 的 `ctx.container` 不存在，RPC 以明确的错误失败。
+- **部署**：`wrangler deploy` 在本地构建并推送镜像，需要 Docker；Workers Builds 的构建环境支持 Dockerfile。
+  非生产分支的 `wrangler versions upload` 不发布镜像。
+- **套餐**：Containers 只在 Workers Paid 提供；`deployment.md` 写明部署需要 Workers Paid。
+- **测试**：`@cloudflare/vitest-plugin` 固定关闭容器，worker 测试里 `ctx.container` 不存在（§12）。
 
-## 12. 后续接入点
+## 11. 后续接入点
 
 - **出站凭据注入**：`interceptOutboundHttps` 按主机交给 Worker 注入请求头；镜像信任
   `/etc/cloudflare/certs/cloudflare-containers-ca.crt`（git、npm、pip、uv）。
@@ -380,7 +361,7 @@ index (user_id, unit_kind, unit_id, created_at)
   浏览不自动开机。
 - **端口预览**：路径式 `/previews/<name>/` 或独立泛域名，经 `getTcpPort().fetch()` 转发。
 
-## 13. 测试
+## 12. 测试
 
 worker 测试池不支持容器，按层拆分：
 
@@ -391,18 +372,16 @@ worker 测试池不支持容器，按层拆分：
   - 备份轮换只保留两条；备份失败不 `destroy`。
   - `command` / `argv` 二选一；`argv` 包装不经 shell 解析。
   - 输出截断与 `log_path`。
-  - 脱敏：明文、两种 base64、百分号编码；跨分块；短值不替换。
 - **worker**（Sandbox DO 的 RPC 以假对象替换）：
   - 单元推算：Project 对话、普通对话、移入 Project 后。
   - `sandbox:` 文本分页；二进制入库为附件且按 sha256 去重。
   - 导出走版本 CAS；导入接受 vfs 与 `asset:` 来源。
-  - 密码值不出现在任何消息 part 中。
   - `conversation/before-purge` / `project/deleted` 标记 `deleted_at`；清扫只删 30 天前的。
   - `plugin-requirements.test.ts` 覆盖新插件。
 - **手动**：本地 Docker 端到端（数据分析、clone 并构建一个仓库、后台任务通知、空闲关机后恢复、导出 zip）；
   部署后在生产上再走一遍（本地与线上在 root 权限、主机名上有差异）。
 
-## 14. 文档
+## 13. 文档
 
 - `docs/architecture.md`：Sandbox DO、容器与单元。
 - `docs/deployment.md`：Workers Paid、镜像构建、DO migration、远程迁移。
