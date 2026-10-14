@@ -6,7 +6,7 @@ import { disposeRpcStub } from '@/server/rpc'
 import { latestBackup, recordBackup, rotateBackups } from './backups'
 import { SandboxMachine, type MachineDeps } from './machine'
 import {
-  BACKUP_PREFIX,
+  BACKUP_PREFIX, PLATFORM_INACTIVITY_MS,
   type ExecRequest, type JobRequest, type JobStarted, type MachineOptions, type ReadRequest, type ReadResult,
   type SandboxRpc, type StatResult, type Unit, type WriteRequest,
 } from './protocol'
@@ -72,6 +72,10 @@ export class Sandbox extends DurableObject<Env> implements SandboxRpc {
     this.machine = new SandboxMachine(deps)
     void ctx.blockConcurrencyWhile(async () => {
       this.owner = await ctx.storage.get<number>(OWNER_KEY)
+      // The inactivity timeout belongs to the object that set it. This one may be a restart (a
+      // deploy, or an eviction between two alarms) in front of a running container, which without
+      // its own timeout is stopped as soon as the object goes idle — files and all, unbacked.
+      if (container?.running) await container.setInactivityTimeout(PLATFORM_INACTIVITY_MS)
     })
   }
 
