@@ -4,6 +4,7 @@ import { createApp } from './app'
 import { createDb } from './db/client'
 import { cleanupExpiredProviderFiles } from './plugins/files-cleanup'
 import { sweepTrash } from '@/server/plugins/workspace-files/service'
+import { sweepSandboxBackups } from './sandbox/backups'
 import { refreshCatalog } from './plugins/model-catalog/refresh'
 import { CatalogStorage } from './plugins/model-catalog/storage'
 import { disposeRpcStub } from './rpc'
@@ -43,6 +44,9 @@ export default {
       sweepTrash(ctx.db.orm, ctx.assets, Date.now())
         .then(({ files, bytes }) => { if (files > 0) console.log('Swept trashed workspace files', { files, bytes }) })
         .catch(error => console.error('Scheduled workspace trash sweep failed', error)),
+      sweepSandboxBackups(ctx.db.orm, env.BUCKET, Date.now())
+        .then(({ backups, bytes }) => { if (backups > 0) console.log('Swept deleted sandbox backups', { backups, bytes }) })
+        .catch(error => console.error('Scheduled sandbox backup sweep failed', error)),
     ])
   },
 } satisfies ExportedHandler<Env>

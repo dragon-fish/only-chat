@@ -19,6 +19,8 @@ import { McpServerPlugin } from '@/plugins/mcp/server'
 import { MemoryServerPlugin } from '@/plugins/memory/server'
 import { TavilyServerPlugin } from '@/plugins/tavily/server'
 import { WorkspaceFilesServerPlugin } from '@/plugins/workspace-files/server'
+import { SANDBOX_PLUGIN_ID } from '@/plugins/sandbox/shared'
+import { SandboxServerPlugin } from '@/plugins/sandbox/server'
 
 /** Each plugin's hub half, which is where tools run and services are injected. */
 const SERVERS: Record<string, { inject?: readonly string[] }> = {
@@ -33,6 +35,7 @@ const SERVERS: Record<string, { inject?: readonly string[] }> = {
   [IMAGE_GENERATION_PLUGIN_ID]: ImageGenerationServerPlugin,
   [MCP_PLUGIN_ID]: McpServerPlugin,
   [MEMORY_PLUGIN_ID]: MemoryServerPlugin,
+  [SANDBOX_PLUGIN_ID]: SandboxServerPlugin,
   [TAVILY_PLUGIN_ID]: TavilyServerPlugin,
   [WORKSPACE_FILES_PLUGIN_ID]: WorkspaceFilesServerPlugin,
 }
@@ -45,10 +48,11 @@ const PROVIDED: Record<string, string> = {
 /**
  * Requirements that are not a service: the plugin does its work through another plugin's tools, so
  * without them in the turn it has nothing to offer. Memory is read, edited and deleted with the
- * workspace file tools.
+ * workspace file tools; sandbox_export publishes through write_file's own path.
  */
 const TOOL_REQUIREMENTS: Record<string, readonly string[]> = {
   [MEMORY_PLUGIN_ID]: [WORKSPACE_FILES_PLUGIN_ID],
+  [SANDBOX_PLUGIN_ID]: [WORKSPACE_FILES_PLUGIN_ID],
 }
 
 describe('plugin requirements', () => {
