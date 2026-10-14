@@ -17,7 +17,7 @@ ARG https_proxy
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      git curl ca-certificates zip unzip jq ripgrep tmux procps less file build-essential xz-utils \
+      git curl ca-certificates zip unzip jq ripgrep tmux procps less file build-essential xz-utils tini \
  && rm -rf /var/lib/apt/lists/*
 
 # uv, Python 3.12 (python/python3 in /usr/local/bin) and the default venv.
@@ -87,4 +87,7 @@ ENV HOME=/workspace/home \
     LANG=C.UTF-8
 
 WORKDIR /
+# tini as PID 1 reaps orphans: background jobs detach on purpose, and `sleep` alone would leave each
+# finished one behind as a zombie.
+ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["sleep", "infinity"]
