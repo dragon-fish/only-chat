@@ -96,12 +96,15 @@ function harness(options: { running?: boolean, files?: Record<string, string>, b
     isMissing: error => error === MISSING,
     now: () => now,
   }
-  return {
+  const harnessed = {
     machine: new SandboxMachine(deps), fs, storage, calls, backupFails,
+    /** A new object over the same storage and container, as after the runtime evicts the DO. */
+    evict: () => { harnessed.machine = new SandboxMachine(deps) },
     setHandler: (next: Handler) => { handler = next },
     advance: (ms: number) => { now += ms },
     stop: () => { running = false },
   }
+  return harnessed
 }
 
 async function frames(body: ReadableStream<Uint8Array>): Promise<ExecFrame[]> {
@@ -176,6 +179,18 @@ describe('SandboxMachine alarm', () => {
     await frames(await h.machine.exec(exec('/workspace/projects/3')))
     h.advance(11 * 60_000)
     await h.machine.alarm()
+    expect(h.calls.backup.sort()).toEqual([HOME_DIR, '/workspace/projects/3'].sort())
+    expect(h.calls.destroy).toBe(1)
+  })
+
+  it('still stops once idle when the object is evicted between alarms', async () => {
+    const h = harness()
+    await frames(await h.machine.exec(exec('/workspace/projects/3')))
+    for (let minute = 0; minute < 11; minute++) {
+      h.evict()
+      h.advance(60_000)
+      await h.machine.alarm()
+    }
     expect(h.calls.backup.sort()).toEqual([HOME_DIR, '/workspace/projects/3'].sort())
     expect(h.calls.destroy).toBe(1)
   })

@@ -61,7 +61,7 @@ export interface MachineDeps {
     readDirectory(path: string): Promise<Array<{ name: string, type: string }>>
   }
   backups: {
-    backup(options: { dir: string, exclude: readonly string[], gitignore: boolean }): Promise<BackupRecordLike>
+    backup(options: { dir: string, exclude: readonly string[], gitignore: boolean, signal: AbortSignal }): Promise<BackupRecordLike>
     restore(record: BackupRecordLike, options: { dir: string }): Promise<void>
   }
   records: {
@@ -96,6 +96,11 @@ export interface StoredJob {
 const JOB_PREFIX = 'job:'
 const JOB_SEQ_KEY = 'job_seq'
 const IDLE_MINUTES_KEY = 'idle_minutes'
+const LAST_ACTIVITY_KEY = 'last_activity'
+const LAST_BACKUP_KEY = 'last_backup_at'
+const DIRTY_KEY = 'dirty'
+/** `DirectoryBackup` never times out on its own, and a hung backup would hold the alarm forever. */
+const BACKUP_TIMEOUT_MS = 10 * 60_000
 
 function keyToUnit(key: string): Unit | null {
   if (key === 'user') return USER_UNIT
@@ -124,9 +129,13 @@ function message(error: unknown): string {
 
 /**
  * One user's machine: starting it, restoring units on demand, running commands, and backing up and
- * stopping it from the alarm (spec §5). Restore state lives in marker files inside the container,
- * never only here: a deploy resets this object without replacing a running container, and
- * trusting memory then would restore an old backup over newer work.
+ * stopping it from the alarm (spec §5).
+ *
+ * Nothing that outlives a call is kept only in memory. The runtime evicts an idle Durable Object
+ * between two alarms, so in-memory activity times reset on every alarm and the machine never looks
+ * idle — it then runs until the platform stops it, unbacked. Activity, dirtiness and the last backup
+ * live in DO storage; which units are restored lives in marker files inside the container, because
+ * a deploy resets storage-backed objects too but keeps the running container.
  */
 export class SandboxMachine {
   /** Units confirmed restored in the current container; a cache of the marker files. */
@@ -153,11 +162,17 @@ export class SandboxMachine {
 
   private touch(): void {
     this.lastActivity = this.deps.now()
+    void this.deps.storage.put(LAST_ACTIVITY_KEY, this.lastActivity)
+  }
+
+  private saveDirty(): void {
+    void this.deps.storage.put(DIRTY_KEY, [...this.dirty])
   }
 
   /**
-   * A container still running after this object was reset: everything restored in it may hold
-   * work newer than its backup, so all of it counts as dirty until backed up again.
+   * A fresh object in front of a container that is still running. Its restored units come from the
+   * markers; what is dirty and when it was last used come from storage. Without stored dirtiness
+   * (storage lost with a deploy) every restored unit counts as dirty until backed up again.
    */
   private async adopt(): Promise<void> {
     if (this.adopted) return
@@ -169,10 +184,11 @@ export class SandboxMachine {
     } catch (error) {
       if (!this.deps.isMissing(error)) throw error
     }
-    for (const marker of markers) {
-      this.known.add(marker.name)
-      this.dirty.add(marker.name)
-    }
+    for (const marker of markers) this.known.add(marker.name)
+    const dirty = await this.deps.storage.get<string[]>(DIRTY_KEY)
+    for (const key of dirty ?? [...this.known]) if (this.known.has(key)) this.dirty.add(key)
+    this.lastActivity = (await this.deps.storage.get<number>(LAST_ACTIVITY_KEY)) ?? this.lastActivity
+    this.lastBackupAt = (await this.deps.storage.get<number>(LAST_BACKUP_KEY)) ?? this.lastBackupAt
     await this.deps.setAlarm(this.deps.now() + ALARM_INTERVAL_MS)
   }
 
@@ -183,6 +199,7 @@ export class SandboxMachine {
     if (container.running) return
     this.known.clear()
     this.dirty.clear()
+    this.saveDirty()
     // The config's image name is not a reference: `start` needs the one the runtime maps it to, and
     // given the bare name the local backend starts nothing and says nothing.
     const image = container.images[SANDBOX_IMAGE]
@@ -263,6 +280,7 @@ export class SandboxMachine {
 
   private markDirty(): void {
     for (const key of this.known) this.dirty.add(key)
+    this.saveDirty()
   }
 
   /** Runs one foreground command and streams NDJSON frames; the work counts as in flight until the stream ends. */
@@ -419,9 +437,12 @@ export class SandboxMachine {
           continue
         }
         try {
-          const record = await this.deps.backups.backup({ dir: unitDir(unit), exclude: BACKUP_EXCLUDE, gitignore: true })
+          const record = await this.deps.backups.backup({
+            dir: unitDir(unit), exclude: BACKUP_EXCLUDE, gitignore: true, signal: AbortSignal.timeout(BACKUP_TIMEOUT_MS),
+          })
           await this.deps.records.record(unit, record)
           this.dirty.delete(key)
+          this.saveDirty()
           await this.deps.records.rotate(unit).catch(error => console.error('sandbox backup rotation failed', key, error))
         } catch (error) {
           ok = false
@@ -436,6 +457,7 @@ export class SandboxMachine {
       this.backingUp = null
     }
     this.lastBackupAt = this.deps.now()
+    await this.deps.storage.put(LAST_BACKUP_KEY, this.lastBackupAt)
     return ok
   }
 
@@ -493,28 +515,33 @@ export class SandboxMachine {
     return new TextDecoder().decode(output.stdout)
   }
 
-  /** Spec §5.3. */
+  /** Spec §5.3. The next alarm is set whatever happens here, as long as the machine is up. */
   async alarm(): Promise<void> {
-    await this.adopt()
-    const runningJobs = await this.settleJobs()
-    const container = this.deps.container
-    if (!container?.running) return
+    let stopped = false
+    try {
+      await this.adopt()
+      const runningJobs = await this.settleJobs()
+      const container = this.deps.container
+      if (!container?.running) return
 
-    const idleMs = ((await this.deps.storage.get<number>(IDLE_MINUTES_KEY)) ?? 10) * 60_000
-    const now = this.deps.now()
-    const idle = this.inflight === 0 && runningJobs === 0 && now - this.lastActivity >= idleMs
-    if (idle) {
-      const activityBefore = this.lastActivity
-      const ok = await this.backupDirty()
-      if (ok && this.inflight === 0 && this.lastActivity === activityBefore) {
-        await container.destroy()
-        this.known.clear()
-        this.dirty.clear()
-        return
+      const idleMs = ((await this.deps.storage.get<number>(IDLE_MINUTES_KEY)) ?? 10) * 60_000
+      const now = this.deps.now()
+      const idle = this.inflight === 0 && runningJobs === 0 && now - this.lastActivity >= idleMs
+      if (idle) {
+        const activityBefore = this.lastActivity
+        const ok = await this.backupDirty()
+        if (ok && this.inflight === 0 && this.lastActivity === activityBefore) {
+          await container.destroy()
+          stopped = true
+          this.known.clear()
+          this.dirty.clear()
+          this.saveDirty()
+        }
+      } else if (this.dirty.size > 0 && this.inflight === 0 && now - this.lastBackupAt >= CHECKPOINT_INTERVAL_MS) {
+        await this.backupDirty()
       }
-    } else if (this.dirty.size > 0 && this.inflight === 0 && now - this.lastBackupAt >= CHECKPOINT_INTERVAL_MS) {
-      await this.backupDirty()
+    } finally {
+      if (!stopped && this.deps.container?.running) await this.deps.setAlarm(this.deps.now() + ALARM_INTERVAL_MS)
     }
-    await this.deps.setAlarm(this.deps.now() + ALARM_INTERVAL_MS)
   }
 }
