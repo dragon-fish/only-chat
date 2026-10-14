@@ -479,6 +479,32 @@ export const mcpServers = sqliteTable('mcp_servers', {
   check('mcp_servers_transport_check', sql`${t.transport} IN ('http', 'sse')`),
 ])
 
+/**
+ * A `DirectoryBackup` of one sandbox unit (spec 2026-10-14-sandbox-design §8). The package keeps no
+ * index of its own, so this table is the only record of what is in R2 under `sandbox-backups/`.
+ *
+ * `unit_id` is a Project or Conversation id without a foreign key: deleting either marks its
+ * backups `deleted_at` through hub events, and the nightly sweep reclaims them 30 days later. A
+ * cascade would erase the rows and strand the objects in R2.
+ */
+export const sandboxBackups = sqliteTable('sandbox_backups', {
+  id: integer().primaryKey({ autoIncrement: true }),
+  user_id: integer().notNull().references(() => users.id, { onDelete: 'cascade' }),
+  unit_kind: text().$type<'user' | 'project' | 'conversation'>().notNull(),
+  unit_id: integer(),
+  /** The package's record id; the object key is `r2_key`. */
+  backup_id: text().notNull(),
+  r2_key: text().notNull(),
+  sha256: text().notNull(),
+  size: integer().notNull(),
+  created_at: integer().notNull(),
+  deleted_at: integer(),
+}, t => [
+  index('sandbox_backups_unit_idx').on(t.user_id, t.unit_kind, t.unit_id, t.created_at),
+  index('sandbox_backups_deleted_idx').on(t.deleted_at),
+  check('sandbox_backups_unit_check', sql`(${t.unit_kind} = 'user') = (${t.unit_id} IS NULL)`),
+])
+
 export type UserRow = typeof users.$inferSelect
 export type McpServerRow = typeof mcpServers.$inferSelect
 export type PluginConfigRow = typeof pluginConfigs.$inferSelect
@@ -495,3 +521,4 @@ export type AttachmentProviderFileRow = typeof attachmentProviderFiles.$inferSel
 export type WorkspaceFileRow = typeof workspaceFiles.$inferSelect
 export type WorkspaceFileVersionRow = typeof workspaceFileVersions.$inferSelect
 export type MemoryRow = typeof memories.$inferSelect
+export type SandboxBackupRow = typeof sandboxBackups.$inferSelect

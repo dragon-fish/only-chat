@@ -29,8 +29,19 @@
     "run_worker_first": ["/api/*", "/ws"]
   },
   "durable_objects": {
-    "bindings": [{ "name": "USER_HUB", "class_name": "UserHub" }]
+    "bindings": [
+      { "name": "USER_HUB", "class_name": "UserHub" },
+      { "name": "SANDBOX", "class_name": "Sandbox" }
+    ]
   },
+  // Local dev skips containers unless SANDBOX_DEV=1 (vite.config.ts): building the image needs Docker.
+  "containers": [
+    {
+      "class_name": "Sandbox",
+      "scheduling_policy": "durable_object",
+      "images": { "sandbox": { "dockerfile": "./sandbox/Dockerfile" } }
+    }
+  ],
   "workflows": [
     {
       "name": "only-chat-model-catalog-refresh",
@@ -43,7 +54,10 @@
       "class_name": "ArtifactGenerationWorkflow"
     }
   ],
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["UserHub"] }],
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["UserHub"] },
+    { "tag": "v2", "new_sqlite_classes": ["Sandbox"] }
+  ],
   "d1_databases": [
     {
       "binding": "DB",

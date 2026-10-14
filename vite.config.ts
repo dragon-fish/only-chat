@@ -13,7 +13,8 @@ export default defineConfig({
     }),
     vue(),
     tailwindcss(),
-    cloudflare(),
+    // Containers need Docker to build their image, so local dev leaves them off unless asked.
+    cloudflare({ config: process.env.SANDBOX_DEV === '1' ? {} : { dev: { enable_containers: false } } }),
   ],
   resolve: { alias: { '@': path.resolve(import.meta.dirname, './src') } },
   server: { port: 7456 },
