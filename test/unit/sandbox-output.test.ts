@@ -50,7 +50,7 @@ describe('wrapCommand', () => {
   it.skipIf(process.platform === 'win32')('passes argv through bash untouched', () => {
     const args = ['a b', '$HOME', '"quoted"', "it's", '*', '']
     const argv = wrapCommand({ argv: ['printf', '[%s]\\n', ...args] })!
-    const out = execFileSync(argv[0]!, argv.slice(1), { encoding: 'utf8', env: { PATH: process.env.PATH, HOME: '/nowhere' } })
+    const out = execFileSync(argv[0]!, argv.slice(1), { encoding: 'utf8', env: { PATH: process.env.PATH ?? '', HOME: '/nowhere' } as unknown as NodeJS.ProcessEnv })
     expect(out).toBe(args.map(arg => `[${arg}]\n`).join(''))
   })
 })
