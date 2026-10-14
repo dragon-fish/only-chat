@@ -11,6 +11,9 @@ import type {
   Message, MessageNote, MessageStatus, PersistedStatus, ConversationParams, ConversationPluginSettings, Usage, UserSettings,
 } from '@/shared/models'
 import { isAuthoredParts, type FilePart, type ImagePart, type Part, type ToolResultPart } from '@/shared/parts'
+import { isAuthAdmin } from '@/shared/auth'
+import { accessiblePluginSwitches } from '@/shared/plugins'
+import { pluginManifests } from '@/shared/plugin-manifests'
 
 /** Row → wire DTO. Persisted rows only carry the persisted statuses; live ones pass `status` in. */
 export function toMessage(row: MessageRow, status: MessageStatus = row.status): Message {
@@ -399,8 +402,15 @@ export async function maxSeq(db: DB, conversationId: number, userId: number): Pr
   return row?.max ?? 0
 }
 
+/**
+ * The user with the plugin switches they may actually use. Everything that reads switches — tool
+ * resolution, `/api/me`, settings updates — comes through here, so an admin-only plugin is off for
+ * anyone else, including someone who switched it on before losing the role.
+ */
 export async function getUser(db: DB, id: number): Promise<UserRow | undefined> {
-  return db.query.users.findFirst({ where: eq(users.id, id) })
+  const row = await db.query.users.findFirst({ where: eq(users.id, id) })
+  if (!row || isAuthAdmin(row)) return row
+  return { ...row, settings: { ...row.settings, plugins: accessiblePluginSwitches(pluginManifests, row.settings.plugins, false) } }
 }
 
 export async function updateUserSettings(db: DB, id: number, settings: UserSettings): Promise<UserRow> {

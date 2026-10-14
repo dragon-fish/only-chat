@@ -157,7 +157,8 @@ registered as separate plugins (see `workspace-files`, which has both `server/in
 
 A plugin that cannot work without another declares it in its manifest's `requires` and injects that
 plugin's service on the server; `test/worker/plugin-requirements.test.ts` holds the two to each
-other. Switches and tool selections cascade along `requires` (`src/shared/plugins.ts`).
+other. Switches and tool selections cascade along `requires` (`src/shared/plugins.ts`). An
+`adminOnly` plugin is off for non-administrators, enforced once where `getUser` reads the switches.
 
 Registration is explicit in three lists, and adding a plugin means editing all three:
 `src/shared/plugin-manifests.ts` (the declarations both sides read), `src/client/plugins/loaders.ts`

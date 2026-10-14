@@ -12,7 +12,8 @@ import {
 import { suggestConversationTitle } from './service-model'
 import { canServeAsServiceModel, canServeAsFileModel } from '@/shared/service-model'
 import { mergeServicePrompts, missingRequiredPlaceholders } from '@/shared/service-prompts'
-import { cascadePluginSwitches, parseConversationPluginSettings, parseProjectPluginSettings } from '@/shared/plugins'
+import { accessiblePluginSwitches, cascadePluginSwitches, parseConversationPluginSettings, parseProjectPluginSettings } from '@/shared/plugins'
+import { isAuthAdmin } from '@/shared/auth'
 import { pluginManifests } from '@/shared/plugin-manifests'
 import { createProject, deleteProject, getProject, listProjectConversations, updateProject, validateProjectIcon } from './projects'
 import { SeqAllocator } from './seq'
@@ -399,7 +400,11 @@ export class Hub extends Service {
     }
     const settings: UserSettings = {
       ...user.settings,
-      plugins: { ...user.settings.plugins, ...cascadePluginSwitches(pluginManifests, patch.plugins ?? {}) },
+      plugins: accessiblePluginSwitches(
+        pluginManifests,
+        { ...user.settings.plugins, ...cascadePluginSwitches(pluginManifests, patch.plugins ?? {}) },
+        isAuthAdmin(user),
+      ),
       ...(patch.service_models === undefined
         ? {}
         : { service_models: { ...user.settings.service_models, ...patch.service_models } }),

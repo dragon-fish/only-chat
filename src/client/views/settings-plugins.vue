@@ -15,8 +15,10 @@ export function pluginSettingsRows(
   manifests: readonly PluginManifest[],
   settings: Readonly<Record<string, boolean>>,
   status: PluginConfigStatusMap = {},
+  admin = true,
 ): PluginSettingsRow[] {
   return [...manifests]
+    .filter(manifest => admin || !manifest.adminOnly)
     .sort((a, b) => a.id.localeCompare(b.id))
     .map(manifest => ({
       ...manifest,
@@ -41,12 +43,15 @@ import { Button } from '@/client/ui/button'
 import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle } from '@/client/ui/item'
 import { Switch } from '@/client/ui/switch'
 import { DISCONNECTED_MESSAGE, useSyncStore } from '@/client/stores/sync'
+import { useAuthStore } from '@/client/stores/auth'
+import { isAuthAdmin } from '@/shared/auth'
 import { pluginManifests } from '@/client/plugins/loaders'
 import { findPluginManifest } from '@/shared/plugin-manifests'
 import { cascadePluginSwitches } from '@/shared/plugins'
 
 const sync = useSyncStore()
-const plugins = computed(() => pluginSettingsRows(pluginManifests, sync.settings.plugins, sync.pluginConfig))
+const auth = useAuthStore()
+const plugins = computed(() => pluginSettingsRows(pluginManifests, sync.settings.plugins, sync.pluginConfig, isAuthAdmin(auth.authUser)))
 const pending = reactive(new Map<string, boolean>())
 
 /** Plugins a switch flipped along with the one it was on, by the plugin it was on. */

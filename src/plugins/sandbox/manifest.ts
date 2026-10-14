@@ -7,6 +7,7 @@ const manifest = {
   name: 'Sandbox',
   description: '给模型一台能执行代码的 Linux 机器：装依赖、跑脚本、处理文件，成果导出到工作区。',
   requires: [FILE_READER_PLUGIN_ID, WORKSPACE_FILES_PLUGIN_ID],
+  adminOnly: true,
   tools: [
     {
       id: SANDBOX_EXEC_TOOL_ID,

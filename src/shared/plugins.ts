@@ -159,6 +159,11 @@ export interface PluginManifest {
   /** Its tools only make sense inside a Project; a conversation without one is never offered them. */
   requiresProject?: boolean
   /**
+   * Costs the site owner money per use, so only administrators may have it on. Enforced where a
+   * user's switches are read, which every surface goes through; see `accessiblePluginSwitches`.
+   */
+  adminOnly?: true
+  /**
    * Plugins this one cannot work without. The switch and selection counterpart of the server half
    * injecting their services: whatever its server `inject`s from another plugin must be listed here,
    * which a test checks. Enabling this enables them; disabling one of them disables this.
@@ -323,6 +328,17 @@ export function effectivePluginSwitches(
 ): Record<string, boolean> {
   const out: Record<string, boolean> = { ...settings }
   for (const id of requiredPlugins(manifests, Object.keys(settings).filter(id => settings[id] === true))) out[id] = true
+  return out
+}
+
+/** A user's switches as they may use them: an admin-only plugin is off for anyone else. */
+export function accessiblePluginSwitches(
+  manifests: readonly PluginManifest[],
+  settings: Readonly<Record<string, boolean>>,
+  admin: boolean,
+): Record<string, boolean> {
+  const out = { ...settings }
+  if (!admin) for (const manifest of manifests) if (manifest.adminOnly) delete out[manifest.id]
   return out
 }
 

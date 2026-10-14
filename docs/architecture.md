@@ -45,6 +45,10 @@ selection follows the same rule, and each generation adds required tools rather 
 stored selection. Stored switches count a requirement as on, so settings saved before a plugin gained
 one keep working.
 
+A plugin that costs the site owner money per use (Sandbox, Browser) declares `adminOnly`. For anyone
+who is not an administrator its switch reads as off: `getUser` filters the switches every surface
+reads (tool resolution, `/api/me`, settings updates), and an update never stores it on for them.
+
 A plugin can also keep settings per Project: it declares `projectConfigSchema`, and
 `projects.plugin_settings` holds the values keyed by plugin id, validated and merged per plugin by
 `project.update` the way conversation settings are. Core renders no form for them; a plugin that

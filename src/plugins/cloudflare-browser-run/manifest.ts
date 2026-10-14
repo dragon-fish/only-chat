@@ -7,6 +7,7 @@ const manifest = {
   name: '浏览器',
   description: '给模型一个真实的浏览器：它写 Playwright 代码操作网页，你在旁边看着，随时接手。',
   requiresProject: true,
+  adminOnly: true,
   workspaceTab: { label: '浏览器' },
   tools: [
     {
