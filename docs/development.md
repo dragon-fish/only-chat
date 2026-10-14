@@ -25,6 +25,11 @@ That needs a running Docker (on Windows, inside WSL) and builds `sandbox/Dockerf
 3.12 with uv, Node 24 with pnpm, bun, git and common CLI tools). With containers off the sandbox
 tools fail with a clear error and everything else works.
 
+The first build downloads toolchains from GitHub and nodejs.org and Playwright's Chromium from
+Google's CDN, inside Docker. A proxy set only in your shell does not reach the build, so where those
+hosts need one, route Docker's traffic through it at the system level (for example a TUN-mode proxy)
+for that first build; later builds reuse the cached layers.
+
 Worker tests never have containers: the vitest pool disables them. The container logic (unit restore,
 alarm, backups, jobs) is unit-tested against fakes, see `test/unit/sandbox-machine.test.ts`.
 `test/worker/sandbox-plugin.test.ts` runs the real `Sandbox` Durable Object without a container and
