@@ -121,7 +121,7 @@ describe('read_file on an asset reference', () => {
   it('inlines a small text upload with its reference, and reads it back as numbered lines', async () => {
     const { prefix, result } = await readUpload(false, 'text/html')
     expect(firstUser(prompts[0]!).content[0]).toMatchObject({ type: 'text', text: `<file asset="${prefix}">\n<p>hi</p>\n</file>` })
-    expect(result).toMatchObject({ content: { file: `asset:${prefix}`, content: '1 | <p>hi</p>', totalLines: 1 } })
+    expect(result).toMatchObject({ content: { file: `asset:${prefix}`, content: '     1\t<p>hi</p>', totalLines: 1 } })
     expect(result?.attachments).toBeUndefined()
   })
 

@@ -2,6 +2,9 @@
  * How any text file is read to a model, a page at a time: `cat -n` numbering, 1-based offsets.
  * Workspace files and text assets go through this one function, so a model never has to learn two
  * formats for the same act.
+ *
+ * The prefix is a right-aligned number and one tab — the format agent models read files in most.
+ * Keep the separator a tab: a space-based one such as `1 | ` runs into the line's own indentation.
  */
 
 export const DEFAULT_READ_LINES = 2000
@@ -31,7 +34,7 @@ export function readLines(content: string, range: { offset?: number, limit?: num
   const selected: string[] = []
   let usedBytes = 0
   for (let index = offset - 1; index < Math.min(lines.length, offset - 1 + limit); index++) {
-    const rendered = `${index + 1} | ${lines[index]}`
+    const rendered = `${String(index + 1).padStart(6)}\t${lines[index]}`
     // Never silently drop content: stop at the budget and report the range that did fit.
     if (usedBytes + rendered.length > MAX_RESULT_BYTES && selected.length > 0) break
     selected.push(rendered)
@@ -50,4 +53,16 @@ export function readLines(content: string, range: { offset?: number, limit?: num
     nextOffset: truncated ? endLine + 1 : null,
     empty: false,
   }
+}
+
+/**
+ * A page as a reader wants it: the number apart from the text, so it can sit in a gutter that a copy
+ * never picks up. Only the first tab separates them. A line without that prefix — a result stored
+ * before the format was `cat -n` — is kept whole with no number.
+ */
+export function splitNumberedLines(content: string): Array<{ number: number | null, text: string }> {
+  return content.split('\n').map((line) => {
+    const match = /^ *(\d+)\t/.exec(line)
+    return match ? { number: Number(match[1]), text: line.slice(match[0].length) } : { number: null, text: line }
+  })
 }

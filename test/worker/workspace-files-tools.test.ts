@@ -319,7 +319,7 @@ describe('workspace file tools', () => {
     const { result } = await callTool(providerId, 'read_file', { file: '/conversation/a.md', offset: 2, limit: 1 }, conversationId)
 
     expect(result?.content).toMatchObject({
-      content: '2 | y', startLine: 2, returnedLines: 1, totalLines: 3, truncated: true, nextOffset: 3, version: 1,
+      content: '     2\ty', startLine: 2, returnedLines: 1, totalLines: 3, truncated: true, nextOffset: 3, version: 1,
     })
   })
 

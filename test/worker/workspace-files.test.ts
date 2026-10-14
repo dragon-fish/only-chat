@@ -248,7 +248,7 @@ describe('workspace files service', () => {
     expect(result).toMatchObject({ ok: true })
     if (!result.ok) return
     expect(result.value).toMatchObject({
-      content: '2 | b\n3 | c', startLine: 2, returnedLines: 2, totalLines: 4, truncated: true, nextOffset: 4, version: 1,
+      content: '     2\tb\n     3\tc', startLine: 2, returnedLines: 2, totalLines: 4, truncated: true, nextOffset: 4, version: 1,
     })
   })
 

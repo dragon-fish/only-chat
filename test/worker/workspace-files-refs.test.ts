@@ -138,7 +138,7 @@ describe('workspace files and file references', () => {
     const f = await fixture()
     expect(await run(f, 'write_file', { path: 'vfs:/conversation/notes.md', content: 'one\ntwo' })).toMatchObject({ path: '/conversation/notes.md' })
     expect(await run(f, 'copy_file', { from: 'vfs:/conversation/notes.md', to: '/project/notes.md' })).toMatchObject({ path: '/project/notes.md', version: 1 })
-    expect(await run(f, 'read_file', { file: '/project/notes.md' })).toMatchObject({ path: '/project/notes.md', content: '1 | one\n2 | two', totalLines: 2 })
+    expect(await run(f, 'read_file', { file: '/project/notes.md' })).toMatchObject({ path: '/project/notes.md', content: '     1\tone\n     2\ttwo', totalLines: 2 })
     expect(await run(f, 'copy_file', { from: '/conversation/notes.md', to: 'vfs:/project/notes.md' })).toMatchObject({ error: 'FILE_ALREADY_EXISTS' })
     // Text resolves as text, which read_file pages through; tools that want media refuse it themselves.
     expect(await resolve(f, 'vfs:/project/notes.md')).toMatchObject({ ok: true, value: { kind: 'text', ref: '/project/notes.md', mime: expect.stringMatching(/^text\//) } })

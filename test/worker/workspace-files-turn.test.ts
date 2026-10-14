@@ -154,7 +154,7 @@ describe('workspace files per-turn read tracking', () => {
     ])
     expect(first).toMatchObject({ version: 2 })
     expect(second).toMatchObject({ version: 3 })
-    expect(await run(f.tools.read_file!, { file: '/conversation/d.md' })).toMatchObject({ content: '1 | ALPHA\n2 | BETA' })
+    expect(await run(f.tools.read_file!, { file: '/conversation/d.md' })).toMatchObject({ content: '     1\tALPHA\n     2\tBETA' })
   })
 
   it('says nothing about staleness when the file was never read this turn', async () => {

@@ -9,7 +9,7 @@ import type { ToolCallPart, ToolResultPart } from '@/shared/parts'
 import { useAttachmentUrl } from '@/client/lib/audit-context'
 import FileThumb from '@/client/components/file-thumb.vue'
 import { fileAction, fileLabel, formatFileSize } from '@/client/components/workspace-files'
-import type { LinesRead } from '@/shared/text-lines'
+import { splitNumberedLines, type LinesRead } from '@/shared/text-lines'
 import type { FileToolError, ReadDeliveredOutput, ReadFileInput } from '../shared'
 
 /**
@@ -47,6 +47,8 @@ const range = computed(() => {
   const shown = value.returnedLines === value.totalLines ? `${value.totalLines} 行` : `${value.startLine}–${end} / ${value.totalLines} 行`
   return value.truncated ? `${shown} · 未读完` : shown
 })
+/** The page as two columns: numbers in a gutter a copy skips, the text exactly as stored. */
+const lines = computed(() => (output.value ? splitNumberedLines(output.value.content) : []))
 </script>
 
 <template lang="pug">
@@ -83,7 +85,10 @@ const range = computed(() => {
           template(v-if="output.version !== undefined")  · v{{ output.version }}
         p.text-sm.text-muted-foreground(v-if="output.empty") 这个文件是空的。
         pre.oc-scroll.max-h-80.overflow-auto.rounded.bg-muted.p-2(v-else)
-          code.text-xs {{ output.content }}
+          code(class="grid w-max min-w-full grid-cols-[auto_1fr] text-xs [tab-size:4]")
+            template(v-for="(line, index) in lines" :key="index")
+              span.select-none.pr-3.text-right.text-muted-foreground {{ line.number ?? '' }}
+              span {{ line.text }}
   .oc-turn-row.text-sm.text-muted-foreground(v-else)
     TriangleAlertIcon(class="size-4 shrink-0")
     span 工具结果无法解析

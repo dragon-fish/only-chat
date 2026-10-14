@@ -79,7 +79,7 @@ const closed = (conversationId: number, projectId: number | null): WorkspaceScop
 async function text(files: WorkspaceFiles, path: string, scope: WorkspaceScope) {
   const read = await files.read({ path, ...scope })
   // `read` numbers its lines for the model; these tests only care what the file says.
-  return read.ok ? read.value.content.replace(/^\s*\d+ \| /gm, '') : read.error
+  return read.ok ? read.value.content.replace(/^ *\d+\t/gm, '') : read.error
 }
 
 describe('memory mounts', () => {
