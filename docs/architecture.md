@@ -45,6 +45,10 @@ selection follows the same rule, and each generation adds required tools rather 
 stored selection. Stored switches count a requirement as on, so settings saved before a plugin gained
 one keep working.
 
+A plugin that costs the site owner money per use (Sandbox, Browser) declares `adminOnly`. For anyone
+who is not an administrator its switch reads as off: `getUser` filters the switches every surface
+reads (tool resolution, `/api/me`, settings updates), and an update never stores it on for them.
+
 A plugin can also keep settings per Project: it declares `projectConfigSchema`, and
 `projects.plugin_settings` holds the values keyed by plugin id, validated and merged per plugin by
 `project.update` the way conversation settings are. Core renders no form for them; a plugin that
@@ -142,11 +146,60 @@ API sends its notification from the Worker. The ComfyUI plugin is the one backen
 in the tool call, so ComfyUI's validation errors reach the model at once, and only the wait for the
 images runs in the Workflow.
 
+## Sandbox
+
+The sandbox plugin gives the model a Linux machine of its own. It lives in the hub root and calls the
+`Sandbox` Durable Object over RPC; the DO knows nothing about conversations, models or plugin
+configuration, so every call carries the unit, the instance type, the idle time and the ids needed to
+report back.
+
+There is one `Sandbox` DO per user (`env.SANDBOX.getByName(String(userId))`, `src/server/sandbox/`).
+It owns one container (Cloudflare Containers, image from `sandbox/Dockerfile`, `scheduling_policy:
+durable_object`) that is started on demand with the instance type from the plugin settings. The
+container's disk and processes are lost whenever it stops, so what must survive is split into
+**units**, each a directory backed up on its own:
+
+| Unit | Directory | Used as |
+| --- | --- | --- |
+| `user` | `/workspace/home` | `HOME`, shared by every conversation |
+| `project:<id>` | `/workspace/projects/<id>` | default working directory of the Project's conversations |
+| `conversation:<id>` | `/workspace/conversations/<id>` | default working directory of a conversation without a Project |
+
+The plugin derives the default unit at execution time from the conversation's current `project_id`.
+Any path under a unit directory restores that unit first; other paths are scratch and vanish with the
+container. Whether a unit is restored is decided by a marker file inside the container
+(`/workspace/.units/<kind>-<id>`), never by DO memory: a deploy resets the DO but not a running
+container, and trusting memory would restore an old backup over newer work. A failed restore fails the
+call instead of falling back to an empty directory.
+
+An alarm fires every 60 s while the container runs. It delivers finished background jobs, takes a
+checkpoint of dirty units every 15 minutes (skipped while a foreground command runs), and, once
+nothing has run for `idle_minutes`, backs up the dirty units and destroys the container. A failed
+backup keeps the container alive for the next alarm. Any `exec`, `startJob` or write marks every
+restored unit dirty.
+
+Backups use `DirectoryBackup` from `@cloudflare/sandbox` (`tar+zstd`, whole directory each time,
+`node_modules/`, `.venv/`, `__pycache__/`, `.cache/` and `.gitignore`d paths excluded) into the R2
+`BUCKET` under `sandbox-backups/`. Each is recorded in D1 `sandbox_backups`; the two newest per unit
+are kept. Restores and backups are serialised inside the DO.
+
+A background command (`sandbox_exec` with `background: true`) runs under the `job-run` wrapper, which
+writes its pid, log and exit code under `/workspace/.jobs/<id>/`. The alarm notices the exit file and
+settles the task through `UserHub.settleTask`, the same path as other background tasks; a job whose
+container disappeared settles as failed.
+
+Deleting a conversation (`conversation/before-purge`) or Project (`project/deleted`) marks the unit's
+backups `deleted_at` and, while the container runs, removes the unit directory. The nightly
+`scheduled` run deletes the R2 objects and rows whose `deleted_at` is older than 30 days. Files
+cross the boundary through `sandbox:` references, `sandbox_import` and `sandbox_export`; see
+[files.md](files.md). The spec is `docs/superpowers/specs/2026-10-14-sandbox-design.md`.
+
 ## Source layout
 
     src/server/       Worker entry, cordis app, plugins (database, assets, llm, hub, api)
     src/server/plugins/llm/protocols/   one plugin per provider protocol
     src/server/plugins/hub/             UserHub DO: WebSocket hub, Conversation commands, generation
+    src/server/sandbox/                 Sandbox DO: container lifecycle, unit restore, backups
     src/client/       Vue 3 SPA (pages, views, components, stores)
     src/shared/       zod schemas shared by both sides (models, parts, ws)
     migrations/       D1 migrations
@@ -168,3 +221,5 @@ backends.
 mounts and plugin prompt contributions.
 `docs/superpowers/specs/2026-10-06-context-compaction-design.md` defines checkpoints, the context
 manager hook, the context compaction plugin and slash commands.
+`docs/superpowers/specs/2026-10-14-sandbox-design.md` defines the sandbox plugin, its container and
+backups.

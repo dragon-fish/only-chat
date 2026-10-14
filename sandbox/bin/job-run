@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Background launcher: job-run <dir> -- <command...>
+# Writes <dir>/pid, <dir>/log (stdout+stderr) and, when the job ends, <dir>/exit
+# (atomically, via exit.tmp). A job killed by a signal records 128+signo.
+set -u
+
+if [ "$#" -lt 3 ] || [ "$2" != "--" ]; then
+  echo "usage: job-run <dir> -- <command...>" >&2
+  exit 2
+fi
+
+dir=$1
+shift 2
+mkdir -p -- "$dir"
+dir=$(cd -- "$dir" && pwd)
+
+# The supervisor is a new session (setsid) so it outlives the exec stream that
+# started us. $$ inside it is the job's pid and process-group leader. The
+# command runs as a child so the supervisor can record how it ended.
+setsid bash -c '
+  dir=$1; shift
+  echo $$ > "$dir/pid.tmp" && mv "$dir/pid.tmp" "$dir/pid"
+  "$@" &
+  child=$!
+  # Stop the whole job group. The supervisor ignores the signal itself so the
+  # group kill does not re-enter the handler, and keeps waiting for the exit.
+  stop() { trap "" TERM INT HUP; kill -TERM -- -$$ 2>/dev/null; }
+  trap stop TERM INT HUP
+  wait "$child"
+  status=$?
+  while kill -0 "$child" 2>/dev/null; do wait "$child"; status=$?; done
+  echo "$status" > "$dir/exit.tmp" && mv "$dir/exit.tmp" "$dir/exit"
+' job-run "$dir" "$@" < /dev/null > "$dir/log" 2>&1 &
+
+# pid is written by the supervisor; wait for it so the caller can rely on it.
+for _ in $(seq 1 500); do
+  [ -s "$dir/pid" ] && break
+  sleep 0.01
+done
+[ -s "$dir/pid" ] || { echo "job-run: job did not start" >&2; exit 1; }
+cat "$dir/pid"

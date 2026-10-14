@@ -58,6 +58,29 @@ function matchStarts(content: string, oldText: string): number[] {
   return starts
 }
 
+/**
+ * `edit_file`'s text replacement, shared by every tool that edits text so the model meets one set
+ * of matching rules. Spliced by index, last first so the earlier ones stay valid; never `replace`,
+ * which would expand `$&` and `$1` in whatever the model wrote.
+ */
+export function applyTextEdit(
+  content: string,
+  oldText: string,
+  newText: string,
+  replaceAll: boolean,
+): Result<{ content: string, replacements: number }> {
+  const starts = matchStarts(content, oldText)
+  if (starts.length === 0) return fail('NO_MATCH')
+  // Editing the first of several is the one outcome nobody can review: it reads as success.
+  if (starts.length > 1 && !replaceAll) return fail('AMBIGUOUS_MATCH')
+  const spans = replaceAll ? starts : starts.slice(0, 1)
+  let next = content
+  for (const start of [...spans].reverse()) {
+    next = next.slice(0, start) + newText + next.slice(start + oldText.length)
+  }
+  return succeed({ content: next, replacements: spans.length })
+}
+
 export const MAX_FILE_BYTES = 1024 * 1024
 const MIME = 'text/markdown; charset=utf-8'
 
@@ -443,22 +466,12 @@ export class WorkspaceFiles {
     if (!isTextMime(stored.value.mime)) return fail('BINARY_FILE')
     const content = new TextDecoder().decode(stored.value.bytes)
 
-    const starts = matchStarts(content, input.oldText)
-    if (starts.length === 0) return fail('NO_MATCH')
-    // Editing the first of several is the one outcome nobody can review: it reads as success.
-    if (starts.length > 1 && input.replaceAll !== true) return fail('AMBIGUOUS_MATCH')
-
-    // Spliced by index, last first so the earlier ones stay valid. Never `replace`, which would
-    // expand `$&` and `$1` in whatever the model wrote.
-    const spans = input.replaceAll === true ? starts : starts.slice(0, 1)
-    let next = content
-    for (const start of [...spans].reverse()) {
-      next = next.slice(0, start) + input.newText + next.slice(start + input.oldText.length)
-    }
+    const edited = applyTextEdit(content, input.oldText, input.newText, input.replaceAll === true)
+    if (!edited.ok) return edited
 
     const written = await this.write({
       path: input.path,
-      content: next,
+      content: edited.value.content,
       expectedVersion: existing.current_version,
       conversationId: input.conversationId,
       projectId: input.projectId,
@@ -467,7 +480,7 @@ export class WorkspaceFiles {
       toolCallId: input.toolCallId,
     })
     if (!written.ok) return written
-    return succeed({ ...written.value, replacements: spans.length })
+    return succeed({ ...written.value, replacements: edited.value.replacements })
   }
 
   /**

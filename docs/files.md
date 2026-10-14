@@ -68,6 +68,12 @@ path from the root to the current message, plus files delivered earlier in the s
 elsewhere is `FILE_NOT_FOUND`, never a hint that it exists; a prefix matching two assets is
 `AMBIGUOUS_ASSET` and lists longer prefixes.
 
+Any image the model can name it may show in a reply as `![description](asset:<prefix>)`: uploads,
+generated images, and files a tool handed it — a workspace image it read, a screenshot, an image read
+from the sandbox. The chat resolves the reference against the conversation's asset list
+(`GET /api/plugins/file_reader/conversations/:id/assets`), which carries all of them; tool-delivered
+ones come back with `source: 'tool'`.
+
 `read_file({ file, offset?, limit? })` reads text as numbered lines, a page at a time, and shows a
 binary file whole: the tool result is a short receipt (`{ file, mime, message }`), and the file
 follows in a user message wrapped in `<tool_attachment call_id="…" asset="…">` … `</tool_attachment>`.
@@ -93,7 +99,19 @@ and `edit_file` refuse a binary file with `BINARY_FILE`. Assets are immutable: t
 change an `asset:` reference answer `READ_ONLY` and point to `copy_file`.
 
 The file panel lists 当前会话, 本会话的附件 (the conversation's uploads and generated files across all
-branches, read-only) and 当前项目, and — while the memory plugin is on — 记忆 · 你 and 记忆 · 当前项目.
+branches, read-only; tool-delivered assets are left out, being copies of files listed elsewhere) and 当前项目, and — while the memory plugin is on — 记忆 · 你 and 记忆 · 当前项目.
+
+### Sandbox files
+
+While a sandbox tool is on, `sandbox:/absolute/path` names a file on the user's sandbox machine; a bare
+`/path` still means a workspace file. `read_file` pages a text file like any other, and shows a binary
+file (a chart, a PDF, audio) by storing its bytes as an attachment, up to 20 MiB.
+
+`sandbox_import({ from, to })` copies a workspace path or an `asset:` reference to an absolute sandbox
+path, creating parent directories and replacing an existing file. `sandbox_export({ from, to })`
+publishes a sandbox file under `/project` or `/conversation`. Text up to 1 MiB becomes an ordinary
+workspace text file and follows the same version rules as `write_file` (`expected_version` to replace
+one). Anything else, up to 20 MiB, is published as a binary file and only to a path that is free.
 
 ### Memory mounts
 

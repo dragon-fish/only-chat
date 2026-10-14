@@ -304,6 +304,7 @@ describe('REST api', () => {
         comfyui: { configured: false, values: {}, secrets: {} },
         memory: { configured: true, values: {}, secrets: {} },
         context_compaction: { configured: true, values: {}, secrets: {} },
+        sandbox: { configured: true, values: {}, secrets: {} },
       },
       created_at: stored!.created_at,
     })

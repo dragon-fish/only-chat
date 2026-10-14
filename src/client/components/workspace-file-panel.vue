@@ -140,7 +140,9 @@ async function load() {
       projectFiles.value = body.projectFiles
       memoryFiles.value = body.memoryFiles ?? null
       projectId.value = body.projectId
-      assets.value = assetBody.assets
+      // What a tool handed the model is listed for references in replies, not here: it is a copy
+      // of a file the panel already shows, or a screenshot its own card shows.
+      assets.value = assetBody.assets.filter(asset => asset.source !== 'tool')
     }
   }
   catch (cause) {

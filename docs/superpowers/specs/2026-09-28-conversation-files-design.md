@@ -159,7 +159,7 @@ interface ResolvedText {
 
 ### 4.7 附件列表
 
-Worker 端路由 `GET /api/plugins/file_reader/conversations/:id/assets` 列出本会话所有分支的 asset：`{ attachmentId, ref, source: 'upload' | 'generated', mime, size, width, height, filename, createdAt }`。来源为 user 消息的 `image` / `file` part、assistant 消息中不带 `artifact_id` 的 `image` part、`artifact_runs.conversation_id` 为本会话且未删除的产物；消息 part 用 `json_each(parts)` 在 SQL 中匹配。
+Worker 端路由 `GET /api/plugins/file_reader/conversations/:id/assets` 列出本会话所有分支的 asset：`{ attachmentId, ref, source: 'upload' | 'generated', mime, size, width, height, filename, createdAt }`。来源为 user 消息的 `image` / `file` part、assistant 消息中不带 `artifact_id` 的 `image` part、`artifact_runs.conversation_id` 为本会话且未删除的产物，以及 `tool_result` / `task_notification` part 的 `attachments`（`source: 'tool'`）；消息 part 用 `json_each(parts)` 在 SQL 中匹配。列表覆盖可见集合（§4.2）的全部来源，所以模型能引用的图片都能在回复中以 `![…](asset:<hex>)` 显示；文件面板只列 `upload` 与 `generated`。
 
 ## 5. `workspace_files` 插件
 

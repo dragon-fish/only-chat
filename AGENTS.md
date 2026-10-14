@@ -81,6 +81,10 @@ hub, `ctx.hub` is absent in the Worker), and `await ctx.plugin(X)` resolves even
 stays PENDING on a missing injection — which is why `app.ts` asserts `ctx.get('...')` after each
 load instead of failing later at first use.
 
+It also exports the `Sandbox` Durable Object, which builds no `Context`: one instance per user owns
+that user's container, and the `sandbox` plugin in the hub root drives it over RPC
+(`src/server/sandbox/`, `docs/architecture.md`).
+
 ### Reads are REST, writes and streams are one WebSocket
 
 Initial page loads call `/api/...` (Hono routes under `src/server/plugins/api/`, behind a Better Auth
@@ -153,7 +157,8 @@ registered as separate plugins (see `workspace-files`, which has both `server/in
 
 A plugin that cannot work without another declares it in its manifest's `requires` and injects that
 plugin's service on the server; `test/worker/plugin-requirements.test.ts` holds the two to each
-other. Switches and tool selections cascade along `requires` (`src/shared/plugins.ts`).
+other. Switches and tool selections cascade along `requires` (`src/shared/plugins.ts`). An
+`adminOnly` plugin is off for non-administrators, enforced once where `getUser` reads the switches.
 
 Registration is explicit in three lists, and adding a plugin means editing all three:
 `src/shared/plugin-manifests.ts` (the declarations both sides read), `src/client/plugins/loaders.ts`

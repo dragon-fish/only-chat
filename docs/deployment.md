@@ -41,6 +41,23 @@ two read-only site-wide listings, `/admin/audit/conversations` (with transcripts
 deploy (`keep_vars` only protects undeclared ones), so a deployment enables it in its Workers Builds
 deploy command: `npx wrangler deploy --var ENABLE_AUDIT:true`.
 
+## Sandbox (containers)
+
+Deploying needs the **Workers Paid** plan: the sandbox plugin runs code in a Cloudflare Container,
+and a Worker that declares one cannot be deployed to a free account. `wrangler.jsonc` declares the `Sandbox` Durable Object (binding `SANDBOX`, migration tag `v2`)
+and a `containers` entry whose image is built from `sandbox/Dockerfile`.
+
+- `wrangler deploy` builds the image and pushes it to Cloudflare's registry, which needs Docker on the
+  machine that runs it. Workers Builds supports Dockerfile builds. `wrangler versions upload` for a
+  non-production branch does not publish images.
+- Backups are written to the existing R2 bucket under `sandbox-backups/` and tracked in D1 table
+  `sandbox_backups` (migration `0028`). Run `pnpm db:migrate:remote` before pushing `main`.
+- `scheduling_policy: "durable_object"` cannot be switched back, not even by `wrangler rollback`.
+  A deploy resets the Durable Object but leaves a running container alone; a new image takes effect
+  the next time the container starts.
+- The plugin is off by default and can be disabled per user; an idle container is destroyed after
+  `idle_minutes` (default 10), and containers are billed while running.
+
 ## Upgrading an existing deployment
 
 Before the schema/code cutover, update `wrangler.jsonc`: point `routes` at this deployment's own
