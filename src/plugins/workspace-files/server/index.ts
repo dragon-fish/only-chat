@@ -24,7 +24,7 @@ import { touchPaths } from './touched'
 import { whileOffered } from '@/server/plugins/prompt-sections'
 
 /** Each expected failure reads as a fact the model can act on, never as a malfunction. */
-const MESSAGES: Record<WorkspaceError, string> = {
+export const MESSAGES: Record<WorkspaceError, string> = {
   INVALID_PATH: 'Not a valid workspace path. Paths are absolute and start with /project or /conversation (or the same as vfs:/project/…), with no . or .. segments.',
   MOUNT_UNAVAILABLE: 'That mount is not available here. /project and /memory/project need this conversation to belong to a project, and /memory exists only while memory is on. /conversation is always available.',
   FILE_NOT_FOUND: 'No such file. Use list_files to see what exists.',
