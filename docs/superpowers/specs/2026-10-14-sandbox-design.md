@@ -215,7 +215,7 @@ DO 被重置后（部署、驱逐）的第一次 RPC 或 alarm 中，若发现�
 - `command` 与 `argv` 必须恰有一个，否则返回参数错误。不用 `string | string[]` 联合：部分供应商的严格模式处理
   不好 `anyOf`。
 - `argv` 实际执行 `bash -lc 'exec "$@"' -- <argv…>`：与 `command` 相同的 login 环境与 PATH，参数原样传入。
-- `stdin` 上限 1 MiB；`command` 上限 32 KiB。
+- `stdin` 上限 1 MiB；`command` 上限 32 KiB。后台执行不接受 `stdin`。
 - 每次执行显式传入 §3 的环境变量。
 - 进程以新会话启动（`setsid`），外面包 `timeout --kill-after=5s`，超时杀整个进程组。
 
@@ -265,7 +265,8 @@ DO 被重置后（部署、驱逐）的第一次 RPC 或 alarm 中，若发现�
 
 ### 7.1 `sandbox:` 引用
 
-插件向 `fileReader` 注册 `sandbox` 方案，形式 `sandbox:/abs/path`。解析时先确保路径所属单元，再 `stat`。
+插件向 `fileReader` 注册 `sandbox` 方案，形式 `sandbox:/abs/path`，只在本轮启用了 sandbox 工具时生效。裸的
+`/path` 归 workspace-files 解析，不是 sandbox 路径。解析时先确保路径所属单元，再 `stat`。
 
 - **文本**（按扩展名与内容嗅探判定）：返回 `ResolvedText`，`read(range)` 用现有的逐行分页规则，内容经
   `Files.readFile` 取得。
@@ -291,9 +292,14 @@ DO 被重置后（部署、驱逐）的第一次 RPC 或 alarm 中，若发现�
 { from: string /* sandbox 绝对路径 */, to: string /* vfs 路径 */, expected_version?: number }
 ```
 
-读出字节，经 workspace-files 的发布入口写入 vfs，带 conversation、message、tool call 来源，遵守其版本 CAS 与
-"不覆盖未读版本"的规则。文本上限沿用 vfs 文本文件上限；二进制上限为用户上传策略的 `maxBytes`。超限时返回
-错误，建议拆分。
+读出字节后按类型分两路，都带 conversation、message、tool call 来源：
+
+- **文本**（扩展名是文本类型或内容是合法 UTF-8，且不超过 vfs 文本上限 1 MiB）：走 `write_file` 的同一路径
+  （`writeWorkspaceFile`），遵守版本 CAS 与"不覆盖未读版本"的规则。
+- **其余**：存为附件后经 `WorkspaceFiles.copy` 发布为二进制文件，上限 20 MiB（字节整块经 DO RPC 传递，单条
+  消息上限 32 MiB）。`copy` 从不覆盖，所以二进制只能导出到空闲路径。
+
+超限时返回错误，建议拆分或压缩。
 
 导出的文件与 `write_file` 写入的文件同为普通 vfs 文件，只有来源不同。
 
