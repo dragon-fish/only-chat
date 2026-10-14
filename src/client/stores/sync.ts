@@ -1,4 +1,5 @@
 import { computed, reactive, ref, shallowRef } from 'vue'
+import { assetsChanged } from '@/client/lib/asset-refs'
 import { defineStore } from 'pinia'
 import { useAuthStore } from './auth'
 import { api } from '@/client/lib/api'
@@ -835,7 +836,7 @@ export const useSyncStore = defineStore('sync', () => {
       }
       case 'message.done': {
         const m = findMessage(e.message_id)
-        if (m) { m.status = e.status; m.usage = e.usage; m.error = e.error }
+        if (m) { m.status = e.status; m.usage = e.usage; m.error = e.error; assetsChanged(m.conversation_id) }
         streamingIds.delete(e.message_id)
         break
       }

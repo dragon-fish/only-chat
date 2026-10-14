@@ -3,7 +3,7 @@ import { ref, watch } from 'vue'
 import { ImageNode } from 'markstream-vue'
 import { ImageOffIcon } from '@lucide/vue'
 import AttachmentLightbox from '@/client/components/attachment-lightbox.vue'
-import { assetRefOf, resolveAssetRef, useAssetScope } from '@/client/lib/asset-refs'
+import { assetRefOf, assetsRevision, resolveAssetRef, useAssetScope } from '@/client/lib/asset-refs'
 import { useAttachmentUrl } from '@/client/lib/audit-context'
 
 /**
@@ -23,7 +23,7 @@ const url = ref<string | null>(null)
 const missing = ref(false)
 const lightboxIndex = ref<number | null>(null)
 
-watch(() => props.node.src, async (src) => {
+async function resolve(src: string) {
   const assetRef = assetRefOf(src)
   url.value = null
   missing.value = false
@@ -36,7 +36,13 @@ watch(() => props.node.src, async (src) => {
   } catch {
     if (props.node.src === src) missing.value = true
   }
-}, { immediate: true })
+}
+
+watch(() => props.node.src, resolve, { immediate: true })
+// Only a miss asks again: the reply naming a tool's file may have been stored since.
+watch(() => (conversationId === null ? 0 : assetsRevision(conversationId)), () => {
+  if (missing.value) void resolve(props.node.src)
+})
 </script>
 
 <template lang="pug">

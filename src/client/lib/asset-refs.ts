@@ -1,4 +1,4 @@
-import { inject, provide, type InjectionKey } from 'vue'
+import { inject, provide, reactive, type InjectionKey } from 'vue'
 import { api } from '@/client/lib/api'
 import { ASSET_REF_LENGTH, ASSET_SCHEME } from '@/shared/asset-ref'
 import type { ConversationAsset } from '@/shared/conversation-assets'
@@ -51,3 +51,18 @@ export function createAssetResolver(fetchAssets: Fetch = id => api.conversationA
 }
 
 export const resolveAssetRef = createAssetResolver()
+
+const revisions = reactive(new Map<number, number>())
+
+/**
+ * A conversation's asset list may have grown. A file a tool hands over mid-reply is stored only when
+ * the reply is, so an image naming it can miss while the reply streams; one that missed asks again
+ * when this changes.
+ */
+export function assetsChanged(conversationId: number): void {
+  revisions.set(conversationId, (revisions.get(conversationId) ?? 0) + 1)
+}
+
+export function assetsRevision(conversationId: number): number {
+  return revisions.get(conversationId) ?? 0
+}
