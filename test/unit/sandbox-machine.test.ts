@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { SandboxMachine, type BackupRecordLike, type MachineDeps, type StoredBackupRef, type StoredJob } from '@/server/sandbox/machine'
-import { HOME_DIR, UNITS_DIR, unitKey, type ExecFrame, type MachineOptions, type Unit } from '@/server/sandbox/protocol'
+import { HOME_DIR, UNITS_DIR, execFiles, unitKey, type ExecFrame, type MachineOptions, type Unit } from '@/server/sandbox/protocol'
 import type { TaskNotificationPart } from '@/shared/parts'
 
 const MACHINE: MachineOptions = { instance: 'standard-1', idleMinutes: 10 }
@@ -170,6 +170,25 @@ describe('SandboxMachine exec', () => {
     })
     await frames(await h.machine.exec({ ...exec('/workspace/conversations/1'), argv: ['tee', 'a b.txt'], stdin: 'x = "$HOME"\n' }))
     expect(seen).toBe('x = "$HOME"\n')
+  })
+})
+
+describe('SandboxMachine cwd', () => {
+  it('says where the shell ended when it left its start, and whether that place is saved', async () => {
+    const h = harness()
+    h.setHandler(() => {
+      h.fs.set(execFiles('call-1').cwd, '/workspace/projects/9\n')
+      return {}
+    })
+    const result = await frames(await h.machine.exec(exec('/workspace/conversations/1')))
+    expect(result.at(-1)).toMatchObject({ type: 'end', finalCwd: '/workspace/projects/9', finalCwdUnsaved: true })
+
+    h.setHandler(() => {
+      h.fs.set(execFiles('call-2').cwd, '/workspace/conversations/1\n')
+      return {}
+    })
+    const stayed = await frames(await h.machine.exec(exec('/workspace/conversations/1', 'call-2')))
+    expect(stayed.at(-1)).not.toHaveProperty('finalCwd')
   })
 })
 

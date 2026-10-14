@@ -90,11 +90,24 @@ export interface ExecRequest {
   timeoutMs: number
 }
 
+/** The files one foreground execution leaves in the container, named after its tool call. */
+export function execFiles(execId: string): { log: string, pid: string, cwd: string } {
+  // Tool call ids are provider-chosen, so they are made safe to use as a file name.
+  const name = execId.replace(/[^A-Za-z0-9_.-]/g, '_').slice(0, 120) || 'exec'
+  return { log: `${EXEC_LOG_DIR}/${name}.log`, pid: `${EXEC_LOG_DIR}/${name}.pid`, cwd: `${EXEC_LOG_DIR}/${name}.cwd` }
+}
+
 /** NDJSON frames of the stream `exec` returns. */
 export type ExecFrame =
   | { type: 'notes', notes: string[] }
   | { type: 'out', stream: 'stdout' | 'stderr', data: string }
-  | { type: 'end', exitCode: number, timedOut: boolean, durationMs: number, logPath: string }
+  | {
+    type: 'end', exitCode: number, timedOut: boolean, durationMs: number, logPath: string
+    /** Where the command's shell ended, when that is not where it started. */
+    finalCwd?: string
+    /** `finalCwd` lies in a unit not restored into this container: what was written there is not saved. */
+    finalCwdUnsaved?: boolean
+  }
   | { type: 'error', message: string }
 
 export interface JobRequest {

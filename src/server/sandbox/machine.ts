@@ -1,7 +1,7 @@
 import type { TaskNotificationPart } from '@/shared/parts'
 import {
-  ALARM_INTERVAL_MS, BACKUP_EXCLUDE, CHECKPOINT_INTERVAL_MS, EXEC_LOG_DIR, JOB_RUN, JOBS_DIR, PLATFORM_INACTIVITY_MS,
-  SANDBOX_IMAGE, SANDBOX_RUN, UNITS_DIR, USER_UNIT, jobTaskId, unitDir, unitKey, unitOfPath,
+  ALARM_INTERVAL_MS, BACKUP_EXCLUDE, CHECKPOINT_INTERVAL_MS, JOB_RUN, JOBS_DIR, PLATFORM_INACTIVITY_MS,
+  SANDBOX_IMAGE, SANDBOX_RUN, UNITS_DIR, USER_UNIT, execFiles, jobTaskId, normalizeSandboxPath, unitDir, unitKey, unitOfPath,
   type ExecFrame, type ExecRequest, type JobRequest, type JobStarted, type MachineOptions, type ReadRequest,
   type ReadResult, type StatResult, type Unit, type WriteRequest,
 } from './protocol'
@@ -106,11 +106,6 @@ function keyToUnit(key: string): Unit | null {
   if (key === 'user') return USER_UNIT
   const match = /^(project|conversation)-(\d+)$/.exec(key)
   return match ? { kind: match[1] as 'project' | 'conversation', id: Number(match[2]) } : null
-}
-
-/** A file name for an id the model can influence (tool call ids are provider-chosen). */
-function safeName(id: string): string {
-  return id.replace(/[^A-Za-z0-9_.-]/g, '_').slice(0, 120) || 'exec'
 }
 
 function bytesOf(text: string | undefined): ReadableStream<Uint8Array> {
@@ -290,9 +285,7 @@ export class SandboxMachine {
     this.inflight++
     this.touch()
     const started = this.deps.now()
-    const name = safeName(request.execId)
-    const logPath = `${EXEC_LOG_DIR}/${name}.log`
-    const pidPath = `${EXEC_LOG_DIR}/${name}.pid`
+    const { log: logPath, pid: pidPath, cwd: cwdPath } = execFiles(request.execId)
     let process: ExecProcess
     let notes: string[]
     try {
@@ -335,7 +328,7 @@ export class SandboxMachine {
           const exitCode = await process.exitCode
           const durationMs = this.deps.now() - started
           const timedOut = exitCode === 124 || (exitCode === 137 && durationMs >= request.timeoutMs)
-          send({ type: 'end', exitCode, timedOut, durationMs, logPath })
+          send({ type: 'end', exitCode, timedOut, durationMs, logPath, ...(await this.movedTo(cwdPath, request.cwd)) })
         } catch (error) {
           send({ type: 'error', message: message(error) })
         } finally {
@@ -344,6 +337,18 @@ export class SandboxMachine {
         }
       },
     })
+  }
+
+  /**
+   * Where a command's shell ended up, when it left its start directory. The wrapper writes the
+   * final `pwd` beside the log; a command that exits early writes nothing, which reads as no move.
+   */
+  private async movedTo(cwdPath: string, start: string): Promise<{ finalCwd?: string, finalCwdUnsaved?: boolean }> {
+    const written = await this.readText(cwdPath).catch(() => null)
+    const finalCwd = written === null ? null : normalizeSandboxPath(written.trim())
+    if (!finalCwd || finalCwd === normalizeSandboxPath(start)) return {}
+    const unit = unitOfPath(finalCwd)
+    return { finalCwd, ...(unit && !this.known.has(unitKey(unit)) ? { finalCwdUnsaved: true } : {}) }
   }
 
   /** Stops a foreground command's whole process group: `AbortSignal` cannot cross RPC. */

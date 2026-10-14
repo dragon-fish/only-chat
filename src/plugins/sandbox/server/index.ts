@@ -7,7 +7,7 @@ import { storeGeneratedAttachment } from '@/server/plugins/api/attachments'
 import { disposeRpcStub } from '@/server/rpc'
 import { markUnitBackupsDeleted } from '@/server/sandbox/backups'
 import {
-  MAX_TEXT_READ_BYTES, normalizeSandboxPath, unitDir,
+  MAX_TEXT_READ_BYTES, execFiles, normalizeSandboxPath, unitDir,
   type ExecFrame, type MachineOptions, type SandboxRpc, type Unit,
 } from '@/server/sandbox/protocol'
 import { isTextMime, isUtf8Text, MAX_ATTACHMENT_BYTES, mimeFromExtension, textMimeFromFilename } from '@/shared/file-media'
@@ -27,7 +27,7 @@ import {
 } from '../shared'
 import { countLines } from '@/server/plugins/workspace-files/path'
 import { LineBuffer, OutputWindow } from './output'
-import { summarize, wrapCommand } from './command'
+import { cwdNotes, summarize, wrapCommand } from './command'
 import { inCallOrder } from './order'
 
 const SANDBOX_TOOL_IDS: readonly string[] = [
@@ -44,6 +44,7 @@ const EXEC_DESCRIPTION = [
   'Run a command on your own Linux machine (Debian; Python 3.12 with uv and a default venv holding numpy, pandas, matplotlib, requests, openpyxl, pillow, beautifulsoup4, lxml; Node 24 with pnpm and bun; git, curl, jq, ripgrep, zip, tmux, build-essential). It has internet access.',
   'The default working directory belongs to this conversation (to its Project when it has one) and is kept between conversations: it is backed up when the machine idles and restored when next used. node_modules/, .venv/, __pycache__/, .cache/ and anything .gitignore excludes are not kept, so reinstall dependencies after a restore. /workspace/home is HOME and is kept too: `uv tool install` and npm/pnpm/bun global packages persist there. Packages added with `uv pip install` go into the default venv and last only until the machine stops; put lasting dependencies in the project (pyproject.toml, package.json).',
   'Set exactly one of command (run by bash -lc) or argv (passed as-is, no quoting needed). stdin is written to the process exactly as given, with no escaping. To create or change a file use sandbox_write_file and sandbox_edit_file rather than heredocs.',
+  'Every call starts in cwd, or in the default directory: a cd lasts only for the call it is in.',
   'Output keeps the first 4 KiB and last 16 KiB of each stream; the whole output is in log_path. Foreground commands stop at timeout_ms.',
   'For anything long — builds, crawls, servers — set background: true. It returns at once with a task id; the outcome arrives later as a <task-notification>. Do not poll or wait for it; carry on or answer the user. Read the log with tail on log_path if you need to look, and stop it with kill <pid>.',
   'To look at a file you made — an image, a PDF, a CSV — read it with read_file("sandbox:/absolute/path"). A bare /path names a workspace file, not a sandbox one.',
@@ -140,7 +141,7 @@ export const SandboxServerPlugin = {
       description: EXEC_DESCRIPTION,
       inputSchema: SandboxExecInputSchema,
       execute: inCallOrder(runtime, async (input: SandboxExecInput, { toolCallId }: { toolCallId: string }): Promise<SandboxExecOutput> => {
-        const argv = wrapCommand(input)
+        const argv = wrapCommand(input, input.background ? undefined : execFiles(toolCallId).cwd)
         if (!argv) return { error: 'Set exactly one of command or argv.' }
         if (input.background && input.stdin !== undefined) return { error: 'A background command cannot take stdin. Write the input to a file first and redirect it.' }
         const cwd = input.cwd === undefined ? unitDir(defaultUnit(runtime)) : normalizeSandboxPath(input.cwd)
@@ -195,6 +196,7 @@ export const SandboxServerPlugin = {
                   return { error: frame.message } satisfies SandboxToolError
                 case 'end':
                   pending.push(...lines.flush())
+                  notes = [...notes, ...cwdNotes(frame, unitDir(defaultUnit(runtime)))]
                   return {
                     exit_code: frame.exitCode, timed_out: frame.timedOut, duration_ms: frame.durationMs,
                     stdout: stdout.text(), stderr: stderr.text(), truncated: stdout.truncated || stderr.truncated,

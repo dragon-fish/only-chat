@@ -1,4 +1,7 @@
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
+import { mkdtempSync, readFileSync, realpathSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { LineBuffer, OutputWindow } from '@/plugins/sandbox/server/output'
 import { wrapCommand } from '@/plugins/sandbox/server/command'
@@ -52,5 +55,15 @@ describe('wrapCommand', () => {
     const argv = wrapCommand({ argv: ['printf', '[%s]\\n', ...args] })!
     const out = execFileSync(argv[0]!, argv.slice(1), { encoding: 'utf8', env: { PATH: process.env.PATH ?? '', HOME: '/nowhere' } as unknown as NodeJS.ProcessEnv })
     expect(out).toBe(args.map(arg => `[${arg}]\n`).join(''))
+  })
+
+  it.skipIf(process.platform === 'win32')('records where a command string ended without changing what it sees or returns', () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), 'sandbox-cwd-')))
+    const cwdFile = join(dir, 'cwd')
+    const argv = wrapCommand({ command: `cd ${dir} && echo "[$1][$#]" && false` }, cwdFile)!
+    const result = spawnSync(argv[0]!, argv.slice(1), { encoding: 'utf8', env: { PATH: process.env.PATH ?? '', HOME: '/nowhere' } as unknown as NodeJS.ProcessEnv })
+    expect(result.stdout).toBe('[][0]\n')
+    expect(result.status).toBe(1)
+    expect(readFileSync(cwdFile, 'utf8').trim()).toBe(dir)
   })
 })
