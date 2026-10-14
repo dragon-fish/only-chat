@@ -29,6 +29,7 @@ import { countLines } from '@/server/plugins/workspace-files/path'
 import { LineBuffer, OutputWindow } from './output'
 import { cwdNotes, summarize, wrapCommand } from './command'
 import { inCallOrder } from './order'
+import { STALL_MARGIN_MS, STALLED, nextBefore } from './stall'
 
 const SANDBOX_TOOL_IDS: readonly string[] = [
   SANDBOX_EXEC_TOOL_ID, SANDBOX_IMPORT_TOOL_ID, SANDBOX_EXPORT_TOOL_ID, SANDBOX_WRITE_FILE_TOOL_ID, SANDBOX_EDIT_FILE_TOOL_ID,
@@ -184,7 +185,17 @@ export const SandboxServerPlugin = {
           let notes: string[] = []
           try {
             const body = await sandbox.exec({ userId: runtime.userId, machine, execId: toolCallId, argv, stdin: input.stdin, cwd, timeoutMs })
-            for await (const frame of frames(body)) {
+            const iterator = frames(body)
+            const deadline = Date.now() + timeoutMs + STALL_MARGIN_MS
+            while (true) {
+              const next = await nextBefore(iterator, deadline)
+              if (next === STALLED) {
+                void iterator.return(undefined)
+                void sandbox.kill(runtime.userId, toolCallId).catch(error => console.error('sandbox kill failed', error))
+                return { error: 'The sandbox stopped answering before the command finished; it may have been restarted, losing unsaved files. Check the directory before relying on earlier output.' }
+              }
+              if (next.done) break
+              const frame = next.value
               switch (frame.type) {
                 case 'notes':
                   notes = frame.notes
