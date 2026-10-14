@@ -21,12 +21,14 @@ import {
   RESULT_HEAD_BYTES, RESULT_TAIL_BYTES, SANDBOX_CONFIG_SCHEMA, SANDBOX_EXEC_TOOL_ID, SANDBOX_EXPORT_TOOL_ID,
   SANDBOX_IMPORT_TOOL_ID, SANDBOX_PLUGIN_ID, SANDBOX_WRITE_FILE_TOOL_ID, SANDBOX_EDIT_FILE_TOOL_ID,
   SandboxExecInputSchema, SandboxExportInputSchema, SandboxImportInputSchema, SandboxWriteFileInputSchema, SandboxEditFileInputSchema,
-  type SandboxExecInput, type SandboxExecOutput, type SandboxExportResult, type SandboxImportResult, type SandboxToolError,
+  type SandboxExecInput, type SandboxExecOutput, type SandboxExportResult, type SandboxImportInput, type SandboxImportResult, type SandboxToolError,
+  type SandboxWriteFileInput, type SandboxEditFileInput,
   type SandboxWriteFileResult, type SandboxEditFileResult,
 } from '../shared'
 import { countLines } from '@/server/plugins/workspace-files/path'
 import { LineBuffer, OutputWindow } from './output'
 import { summarize, wrapCommand } from './command'
+import { inCallOrder } from './order'
 
 const SANDBOX_TOOL_IDS: readonly string[] = [
   SANDBOX_EXEC_TOOL_ID, SANDBOX_IMPORT_TOOL_ID, SANDBOX_EXPORT_TOOL_ID, SANDBOX_WRITE_FILE_TOOL_ID, SANDBOX_EDIT_FILE_TOOL_ID,
@@ -135,7 +137,7 @@ export const SandboxServerPlugin = {
     ctx.tools.register(SANDBOX_PLUGIN_ID, SANDBOX_EXEC_TOOL_ID, runtime => tool({
       description: EXEC_DESCRIPTION,
       inputSchema: SandboxExecInputSchema,
-      async execute(input, { toolCallId }): Promise<SandboxExecOutput> {
+      execute: inCallOrder(runtime, async (input: SandboxExecInput, { toolCallId }: { toolCallId: string }): Promise<SandboxExecOutput> => {
         const argv = wrapCommand(input)
         if (!argv) return { error: 'Set exactly one of command or argv.' }
         if (input.background && input.stdin !== undefined) return { error: 'A background command cannot take stdin. Write the input to a file first and redirect it.' }
@@ -207,13 +209,13 @@ export const SandboxServerPlugin = {
             flush()
           }
         })
-      },
+      }),
     }))
 
     ctx.tools.register(SANDBOX_PLUGIN_ID, SANDBOX_WRITE_FILE_TOOL_ID, runtime => tool({
       description: WRITE_FILE_DESCRIPTION,
       inputSchema: SandboxWriteFileInputSchema,
-      async execute(input): Promise<SandboxWriteFileResult | SandboxToolError> {
+      execute: inCallOrder(runtime, async (input: SandboxWriteFileInput, _options: unknown): Promise<SandboxWriteFileResult | SandboxToolError> => {
         const path = normalizeSandboxPath(input.path)
         if (!path) return { error: `path must be an absolute sandbox path, got ${JSON.stringify(input.path)}.` }
         const bytes = new TextEncoder().encode(input.content)
@@ -231,13 +233,13 @@ export const SandboxServerPlugin = {
         } catch (error) {
           return { error: message(error) }
         }
-      },
+      }),
     }))
 
     ctx.tools.register(SANDBOX_PLUGIN_ID, SANDBOX_EDIT_FILE_TOOL_ID, runtime => tool({
       description: EDIT_FILE_DESCRIPTION,
       inputSchema: SandboxEditFileInputSchema,
-      async execute(input): Promise<SandboxEditFileResult | SandboxToolError> {
+      execute: inCallOrder(runtime, async (input: SandboxEditFileInput, _options: unknown): Promise<SandboxEditFileResult | SandboxToolError> => {
         const path = normalizeSandboxPath(input.path)
         if (!path) return { error: `path must be an absolute sandbox path, got ${JSON.stringify(input.path)}.` }
         const { defaultTimeoutMs: _timeout, ...machine } = machineOf(runtime.config)
@@ -262,13 +264,13 @@ export const SandboxServerPlugin = {
         } catch (error) {
           return { error: message(error) }
         }
-      },
+      }),
     }))
 
     ctx.tools.register(SANDBOX_PLUGIN_ID, SANDBOX_IMPORT_TOOL_ID, runtime => tool({
       description: IMPORT_DESCRIPTION,
       inputSchema: SandboxImportInputSchema,
-      async execute(input): Promise<SandboxImportResult | SandboxToolError | { error: string, message: string }> {
+      execute: inCallOrder(runtime, async (input: SandboxImportInput, _options: unknown): Promise<SandboxImportResult | SandboxToolError | { error: string, message: string }> => {
         const to = normalizeSandboxPath(input.to)
         if (!to) return { error: `to must be an absolute path, got ${JSON.stringify(input.to)}.` }
         const resolved = await ctx.fileReader.resolve(ctx.fileReader.turnOf(runtime.turn), input.from)
@@ -286,7 +288,7 @@ export const SandboxServerPlugin = {
           return { error: message(error) }
         }
         return { to, size: stored.bytes.byteLength }
-      },
+      }),
     }))
 
     ctx.tools.register(SANDBOX_PLUGIN_ID, SANDBOX_EXPORT_TOOL_ID, runtime => tool({
