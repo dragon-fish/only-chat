@@ -119,7 +119,12 @@ PATH=/opt/venv/bin:/workspace/home/.local/bin:/workspace/home/.bun/bin:/opt/sand
 UV_TOOL_DIR=/workspace/home/.local/share/uv/tools   UV_TOOL_BIN_DIR=/workspace/home/.local/bin
 NPM_CONFIG_PREFIX=/workspace/home/.local            PNPM_HOME=/workspace/home/.local/bin
 BUN_INSTALL=/workspace/home/.bun
+UV_CACHE_DIR=/tmp/uv-cache  npm_config_cache=/tmp/npm-cache  pnpm_config_store_dir=/tmp/pnpm-store
+BUN_INSTALL_CACHE_DIR=/tmp/bun-cache  UV_LINK_MODE=copy
 ```
+
+包缓存放在 `/tmp`：放在 HOME 下会随每次 `user` 单元备份一起打包。Debian 的 `/etc/profile` 会覆盖 PATH，镜像用
+`/etc/profile.d/00-sandbox-path.sh` 在 `bash -lc` 里补回。
 
 于是：`uv pip install x` 装进 `/opt/venv`，关机即失；`uv tool install`、npm / pnpm / bun 的全局包落在 HOME，
 随 `user` 单元持久。这条约定写进 `sandbox_exec` 的描述。

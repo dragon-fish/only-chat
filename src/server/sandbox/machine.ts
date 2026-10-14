@@ -15,6 +15,12 @@ export const SANDBOX_ENV: Record<string, string> = {
   PATH: '/opt/venv/bin:/workspace/home/.local/bin:/workspace/home/.bun/bin:/opt/sandbox/bin:/usr/local/bin:/usr/bin:/bin',
   VIRTUAL_ENV: '/opt/venv',
   UV_PYTHON_INSTALL_DIR: '/opt/uv/python',
+  UV_LINK_MODE: 'copy',
+  // Package caches stay out of HOME, which is backed up whole.
+  UV_CACHE_DIR: '/tmp/uv-cache',
+  npm_config_cache: '/tmp/npm-cache',
+  pnpm_config_store_dir: '/tmp/pnpm-store',
+  BUN_INSTALL_CACHE_DIR: '/tmp/bun-cache',
   UV_TOOL_DIR: '/workspace/home/.local/share/uv/tools',
   UV_TOOL_BIN_DIR: '/workspace/home/.local/bin',
   NPM_CONFIG_PREFIX: '/workspace/home/.local',
