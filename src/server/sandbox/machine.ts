@@ -183,7 +183,11 @@ export class SandboxMachine {
     if (container.running) return
     this.known.clear()
     this.dirty.clear()
-    container.start({ image: SANDBOX_IMAGE, instance: machine.instance, enableInternet: true, env: SANDBOX_ENV })
+    // The config's image name is not a reference: `start` needs the one the runtime maps it to, and
+    // given the bare name the local backend starts nothing and says nothing.
+    const image = container.images[SANDBOX_IMAGE]
+    if (!image) throw new Error(`No container image named "${SANDBOX_IMAGE}" is configured for the Sandbox class.`)
+    container.start({ image, instance: machine.instance, enableInternet: true, env: SANDBOX_ENV })
     await this.waitReady(container)
     await container.setInactivityTimeout(PLATFORM_INACTIVITY_MS)
     this.lastBackupAt = this.deps.now()

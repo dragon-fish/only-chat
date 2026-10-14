@@ -24,13 +24,14 @@ function harness(options: { running?: boolean, files?: Record<string, string>, b
   let now = 1_000_000
   const fs = new Map(Object.entries(options.files ?? {}))
   const storage = new Map<string, unknown>()
-  const calls = { start: 0, destroy: 0, restore: [] as string[], backup: [] as string[], settled: [] as TaskNotificationPart[], alarms: [] as number[] }
+  const calls = { startedWith: [] as unknown[], start: 0, destroy: 0, restore: [] as string[], backup: [] as string[], settled: [] as TaskNotificationPart[], alarms: [] as number[] }
   let handler: Handler = () => ({})
   const backupFails = new Set<string>()
 
   const container = {
     get running() { return running },
-    start: () => { running = true; calls.start++ },
+    images: { sandbox: 'registry.example/sandbox@sha256:abc' },
+    start: (startOptions: unknown) => { running = true; calls.start++; calls.startedWith.push(startOptions) },
     destroy: async () => { running = false; calls.destroy++ },
     setInactivityTimeout: async () => {},
     exec: async (argv: string[], execOptions?: ContainerExecOptions) => {
@@ -118,6 +119,7 @@ describe('SandboxMachine restore', () => {
     expect(h.calls.restore).toEqual(['/workspace/projects/3'])
     expect(first[0]).toMatchObject({ type: 'notes' })
     expect(h.fs.has(`${UNITS_DIR}/project-3`)).toBe(true)
+    expect(h.calls.startedWith).toMatchObject([{ image: 'registry.example/sandbox@sha256:abc', instance: 'standard-1', enableInternet: true }])
 
     const second = await frames(await h.machine.exec(exec('/workspace/projects/3', 'call-2')))
     expect(h.calls.restore).toEqual(['/workspace/projects/3'])

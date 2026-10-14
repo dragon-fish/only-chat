@@ -17,7 +17,7 @@ export const EXEC_LOG_DIR = '/tmp/sandbox-logs'
 export const SANDBOX_RUN = '/opt/sandbox/bin/sandbox-run'
 export const JOB_RUN = '/opt/sandbox/bin/job-run'
 
-/** Named in wrangler.jsonc `containers[].images`. */
+/** Named in wrangler.jsonc `containers[].images`; `ctx.container.images` maps it to the reference `start` takes. */
 export const SANDBOX_IMAGE = 'sandbox'
 
 export const BACKUP_PREFIX = 'sandbox-backups/'
