@@ -43,8 +43,8 @@ deploy command: `npx wrangler deploy --var ENABLE_AUDIT:true`.
 
 ## Sandbox (containers)
 
-The sandbox plugin runs code in a Cloudflare Container, so the account needs the **Workers Paid**
-plan. `wrangler.jsonc` declares the `Sandbox` Durable Object (binding `SANDBOX`, migration tag `v2`)
+Deploying needs the **Workers Paid** plan: the sandbox plugin runs code in a Cloudflare Container,
+and a Worker that declares one cannot be deployed to a free account. `wrangler.jsonc` declares the `Sandbox` Durable Object (binding `SANDBOX`, migration tag `v2`)
 and a `containers` entry whose image is built from `sandbox/Dockerfile`.
 
 - `wrangler deploy` builds the image and pushes it to Cloudflare's registry, which needs Docker on the

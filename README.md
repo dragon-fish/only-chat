@@ -22,14 +22,14 @@
 - **插件**：读取文件、工作区文件、文件理解、生成图片、联网搜索、浏览器、向用户提问……按会话选择开启。
 - **记忆**：模型跨会话记住你的偏好与项目背景。记忆就是工作区里的文件，分「你的」和「项目的」两层，可以在全局、Project 和单个会话里分别关闭；记忆页可以查看、删除，或者一句话交给模型去改。
 - **上下文压缩**：对话接近模型上下文上限时，自动把之前的内容总结成摘要再继续，单轮里大量工具调用也不会撑爆窗口；也可以在输入框里用 `/compress [重点说明]` 手动压缩。完整历史照常显示。
-- **Sandbox**：给模型一台属于你的 Linux 机器（Cloudflare Containers），能装依赖、跑脚本、克隆仓库、在后台跑长任务；工作目录空闲关机前自动备份、下次用到时恢复，成果导出到工作区。需要 Workers Paid。
+- **Sandbox**：给模型一台属于你的 Linux 机器（Cloudflare Containers），能装依赖、跑脚本、克隆仓库、在后台跑长任务；工作目录空闲关机前自动备份、下次用到时恢复，成果导出到工作区。
 - **ComfyUI**：连接你自己的 ComfyUI，模型可以查模型和节点、套用模板或直接提交工作流出图，图片进画廊并自动回到对话。
 - **MCP**：接入任意远程 MCP 服务（Streamable HTTP / SSE），支持自定义请求头与 OAuth 授权；模型按需查找服务和工具，接入再多也不占每轮的提示。
 - **多用户**：注册、登录与账号管理，第一个注册的账号是管理员。
 
 ## Deploy / 部署
 
-需要一个 Cloudflare 账号，以及 [Node.js](https://nodejs.org/) LTS 与 [pnpm](https://pnpm.io/)。
+需要一个开通了 Workers Paid 的 Cloudflare 账号（Sandbox 用到 Cloudflare Containers，免费账户部署不了），以及 [Docker](https://www.docker.com/)（部署时构建 Sandbox 镜像）、[Node.js](https://nodejs.org/) LTS 与 [pnpm](https://pnpm.io/)。
 
 ```bash
 pnpm install
@@ -49,8 +49,6 @@ pnpm deploy
 **第一个账号**：注册默认关闭。部署时临时把 `ALLOW_REGISTER` 设为 `true`，注册的第一个账号就是管理员（`uid=1`），之后立刻关掉注册（也可以在 `/admin/settings` 里关）。
 
 **更新**：拉取代码后，如果 `migrations/` 里有新文件，先 `pnpm db:migrate:remote` 再 `pnpm deploy`。未迁移的数据库配上新代码会直接无法工作。
-
-使用 Sandbox 插件需要 Workers Paid，部署时会用 Docker 构建镜像。
 
 更多细节（Cloudflare Access、所有者审计、Sandbox 容器、从旧版本升级、找回账号）见 [部署文档](docs/deployment.md)。
 
