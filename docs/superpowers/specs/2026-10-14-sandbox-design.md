@@ -105,6 +105,7 @@ apt 与 Debian 系的路径和报错；平台托管镜像与文档示例同为 D
 | 默认 venv | `/opt/venv`，置于 PATH 最前；预装 numpy、pandas、matplotlib、requests、openpyxl、pillow、beautifulsoup4、lxml |
 | Node 24 LTS | 官方二进制包，`/usr/local` |
 | pnpm、bun | 官方安装方式，可执行文件放 `/usr/local/bin` |
+| Playwright 1.63.0 | Python 包进 `/opt/venv`，npm 包全局安装；`--with-deps --only-shell chromium` 装无头 Chromium 到 `/opt/ms-playwright`（`PLAYWRIGHT_BROWSERS_PATH`），供模型自测在 sandbox 里起的网页。版本写在 `sandbox_exec` 的描述里，Node 项目用同一版本才复用这个浏览器 |
 | `sandbox-shim` | `COPY --from=cloudflare/sandbox:1.0.1` |
 | `job-run` | 本仓库的后台任务包装脚本（§6.2），放 `/opt/sandbox/bin` |
 

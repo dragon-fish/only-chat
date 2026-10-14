@@ -21,6 +21,7 @@ export const SANDBOX_ENV: Record<string, string> = {
   npm_config_cache: '/tmp/npm-cache',
   pnpm_config_store_dir: '/tmp/pnpm-store',
   BUN_INSTALL_CACHE_DIR: '/tmp/bun-cache',
+  PLAYWRIGHT_BROWSERS_PATH: '/opt/ms-playwright',
   UV_TOOL_DIR: '/workspace/home/.local/share/uv/tools',
   UV_TOOL_BIN_DIR: '/workspace/home/.local/bin',
   NPM_CONFIG_PREFIX: '/workspace/home/.local',

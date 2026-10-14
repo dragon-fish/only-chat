@@ -10,6 +10,9 @@ ARG UV_VERSION=0.12.21
 ARG NODE_VERSION=24.21.0
 ARG PNPM_VERSION=12.8.2
 ARG BUN_VERSION=1.4.2
+# Quoted in the sandbox_exec tool description (src/plugins/sandbox/server/index.ts); change both together.
+# The PyPI and npm packages must stay on this same version so they share one browser build.
+ARG PLAYWRIGHT_VERSION=1.63.0
 
 # Build-time proxy only (ARG is not persisted in the image environment).
 ARG http_proxy
@@ -57,6 +60,15 @@ RUN set -eux; \
     unzip -q "$f"; install -m 0755 "bun-linux-${a}/bun" /usr/local/bin/bun; \
     ln -s bun /usr/local/bin/bunx; \
     rm -rf /tmp/*
+
+# Playwright with a headless Chromium shell. The browser lives in /opt (not HOME, never /workspace) and
+# the Python and npm packages share it; npm must not download a second copy.
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
+RUN set -eux; \
+    VIRTUAL_ENV=/opt/venv uv pip install --link-mode=copy "playwright==${PLAYWRIGHT_VERSION}"; \
+    /opt/venv/bin/playwright install --with-deps --only-shell chromium; \
+    PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 NPM_CONFIG_PREFIX=/usr/local npm install -g "playwright@${PLAYWRIGHT_VERSION}"; \
+    rm -rf /var/lib/apt/lists/* /root/.npm /root/.cache /tmp/*
 
 # Used by Files / DirectoryBackup from @cloudflare/sandbox 1.0.1.
 COPY --from=docker.io/cloudflare/sandbox:1.0.1 /usr/local/bin/sandbox-shim /usr/local/bin/sandbox-shim
