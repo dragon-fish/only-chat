@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed, onMounted } from 'vue'
 import { CheckIcon } from '@lucide/vue'
 import { Badge } from '@/client/ui/badge'
 import { Checkbox } from '@/client/ui/checkbox'
@@ -6,7 +7,8 @@ import { Field, FieldDescription, FieldLabel } from '@/client/ui/field'
 import { Input } from '@/client/ui/input'
 import { NativeSelect, NativeSelectOption } from '@/client/ui/native-select'
 import SecretRowsEditor from '@/client/components/secret-rows-editor.vue'
-import type { PluginConfigControl } from '@/client/lib/plugin-config-form'
+import { providerOptions, visibleControls, type PluginConfigControl, type ProviderOption } from '@/client/lib/plugin-config-form'
+import { useConfigStore } from '@/client/stores/config'
 import type { KeyValueEntryView } from '@/shared/key-value'
 
 const props = defineProps<{
@@ -15,6 +17,29 @@ const props = defineProps<{
   disabled?: boolean
 }>()
 const emit = defineEmits<{ 'update:modelValue': [values: Record<string, unknown>] }>()
+const config = useConfigStore()
+
+const shown = computed(() => visibleControls(props.controls, props.modelValue))
+
+onMounted(async () => {
+  if (!props.controls.some(control => control.type === 'provider') || config.loaded) return
+  // The list only fills the select; a failure leaves the none choice, and saving still validates.
+  await config.load().catch(() => {})
+})
+
+function optionsOf(control: PluginConfigControl): ProviderOption[] {
+  return control.provider ? providerOptions(control.provider, config.providers, props.modelValue[control.key]) : []
+}
+
+/** A native select speaks strings; null travels as the empty one. */
+function providerValue(key: string): string {
+  const value = props.modelValue[key]
+  return typeof value === 'number' ? String(value) : ''
+}
+
+function setProvider(key: string, value: unknown) {
+  set(key, value === '' || value === undefined || value === null ? null : Number(value))
+}
 
 function set(key: string, value: unknown) {
   emit('update:modelValue', { ...props.modelValue, [key]: value })
@@ -41,7 +66,7 @@ function rowsKey(control: PluginConfigControl): string {
 
 <template lang="pug">
 .flex.flex-col.gap-5
-  Field(v-for="control in controls" :key="control.key")
+  Field(v-for="control in shown" :key="control.key")
     FieldLabel.flex.items-center.gap-2(:for="`plugin-config-${control.key}`")
       span {{ control.label }}
       Badge(v-if="control.type === 'secret' && control.configured" variant="secondary")
@@ -51,7 +76,14 @@ function rowsKey(control: PluginConfigControl): string {
       v-if="control.type === 'select'" :id="`plugin-config-${control.key}`"
       :model-value="String(modelValue[control.key] ?? '')" :disabled="disabled" class="w-full"
       @update:model-value="set(control.key, $event)")
-      NativeSelectOption(v-for="option in control.options" :key="option" :value="option") {{ option }}
+      NativeSelectOption(v-for="option in control.options" :key="option" :value="option") {{ control.optionLabels[option] ?? option }}
+    NativeSelect(
+      v-else-if="control.type === 'provider'" :id="`plugin-config-${control.key}`"
+      :model-value="providerValue(control.key)" :disabled="disabled" class="w-full"
+      @update:model-value="setProvider(control.key, $event)")
+      NativeSelectOption(
+        v-for="option in optionsOf(control)" :key="option.value ?? 'none'"
+        :value="option.value === null ? '' : String(option.value)") {{ option.label }}
     SecretRowsEditor(
       v-else-if="control.type === 'key_value'" :key="rowsKey(control)" :initial="rowsOf(control.value)" :noun="control.label"
       :model-value="rowsOf(modelValue[control.key])" @update:model-value="set(control.key, $event)")

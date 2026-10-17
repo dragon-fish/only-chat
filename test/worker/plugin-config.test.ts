@@ -2,9 +2,9 @@ import { env } from 'cloudflare:workers'
 import { and, eq } from 'drizzle-orm'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createDb } from '@/server/db/client'
-import { pluginConfigs } from '@/server/db/schema'
+import { pluginConfigs, providers, users } from '@/server/db/schema'
 import { createApp } from '@/server/app'
-import { COMFYUI_PLUGIN_ID, TAVILY_PLUGIN_ID } from '@/shared/plugins'
+import { COMFYUI_PLUGIN_ID, WEB_SEARCH_PLUGIN_ID } from '@/shared/plugins'
 import type { PluginConfigStatusMap } from '@/shared/plugins'
 import { ensureTestUser, authenticatedFetch } from './auth-helper'
 
@@ -26,7 +26,7 @@ const json = (method: string, path: string, body?: unknown) =>
 const storedValue = async (key: string) => {
   const [row] = await createDb(env.DB).select().from(pluginConfigs).where(and(
     eq(pluginConfigs.user_id, userId),
-    eq(pluginConfigs.plugin_id, TAVILY_PLUGIN_ID),
+    eq(pluginConfigs.plugin_id, WEB_SEARCH_PLUGIN_ID),
     eq(pluginConfigs.key, key),
   ))
   return row?.value
@@ -35,44 +35,45 @@ const storedValue = async (key: string) => {
 describe('plugin configuration', () => {
   it('reports an unconfigured plugin rather than failing', async () => {
     const me = await (await json('GET', '/api/me')).json() as { plugin_config: PluginConfigStatusMap }
-    expect(me.plugin_config[TAVILY_PLUGIN_ID]).toEqual({ configured: false, values: {}, secrets: { api_key: false } })
+    expect(me.plugin_config[WEB_SEARCH_PLUGIN_ID]).toEqual({ configured: false, values: {}, secrets: { deepseek_api_key: false, tavily_api_key: false } })
   })
 
   it('stores the API key encrypted and never returns it', async () => {
-    const response = await json('PUT', `/api/plugins/${TAVILY_PLUGIN_ID}/config`, {
-      api_key: 'tvly-secret-value',
-      search_depth: 'advanced',
+    const response = await json('PUT', `/api/plugins/${WEB_SEARCH_PLUGIN_ID}/config`, {
+      backend: 'tavily',
+      tavily_api_key: 'tvly-secret-value',
+      tavily_search_depth: 'advanced',
       search_calls_per_turn: 4,
       extract_calls_per_turn: 2,
     })
     expect(response.status).toBe(200)
     const status = await response.json() as PluginConfigStatusMap
 
-    expect(status[TAVILY_PLUGIN_ID]).toEqual({
+    expect(status[WEB_SEARCH_PLUGIN_ID]).toEqual({
       configured: true,
-      values: { search_depth: 'advanced', search_calls_per_turn: 4, extract_calls_per_turn: 2 },
-      secrets: { api_key: true },
+      values: { backend: 'tavily', deepseek_provider_id: null, tavily_search_depth: 'advanced', search_calls_per_turn: 4, extract_calls_per_turn: 2 },
+      secrets: { deepseek_api_key: false, tavily_api_key: true },
     })
     expect(JSON.stringify(status)).not.toContain('tvly-secret-value')
 
-    const ciphertext = await storedValue('api_key')
+    const ciphertext = await storedValue('tavily_api_key')
     expect(ciphertext).toBeDefined()
     expect(ciphertext).not.toContain('tvly-secret-value')
 
     const ctx = await createApp({ env, side: 'worker' })
-    expect(await ctx.pluginConfig.read(userId, TAVILY_PLUGIN_ID)).toMatchObject({ api_key: 'tvly-secret-value' })
+    expect(await ctx.pluginConfig.read(userId, WEB_SEARCH_PLUGIN_ID)).toMatchObject({ tavily_api_key: 'tvly-secret-value' })
   })
 
   it('keeps the stored key when a later save omits it', async () => {
-    await json('PUT', `/api/plugins/${TAVILY_PLUGIN_ID}/config`, { api_key: 'tvly-original' })
-    const before = await storedValue('api_key')
+    await json('PUT', `/api/plugins/${WEB_SEARCH_PLUGIN_ID}/config`, { backend: 'tavily', tavily_api_key: 'tvly-original' })
+    const before = await storedValue('tavily_api_key')
 
-    const response = await json('PUT', `/api/plugins/${TAVILY_PLUGIN_ID}/config`, { search_calls_per_turn: 7 })
+    const response = await json('PUT', `/api/plugins/${WEB_SEARCH_PLUGIN_ID}/config`, { search_calls_per_turn: 7 })
     expect(response.status).toBe(200)
 
     const ctx = await createApp({ env, side: 'worker' })
-    expect(await ctx.pluginConfig.read(userId, TAVILY_PLUGIN_ID)).toMatchObject({
-      api_key: 'tvly-original',
+    expect(await ctx.pluginConfig.read(userId, WEB_SEARCH_PLUGIN_ID)).toMatchObject({
+      tavily_api_key: 'tvly-original',
       search_calls_per_turn: 7,
     })
     // Re-encrypting an unchanged secret is allowed; losing it is not.
@@ -80,9 +81,79 @@ describe('plugin configuration', () => {
   })
 
   it('rejects an invalid value without writing anything', async () => {
-    const response = await json('PUT', `/api/plugins/${TAVILY_PLUGIN_ID}/config`, { api_key: '' })
+    const response = await json('PUT', `/api/plugins/${WEB_SEARCH_PLUGIN_ID}/config`, { backend: 'tavily', tavily_api_key: '' })
     expect(response.status).toBe(400)
-    expect(await storedValue('api_key')).toBeUndefined()
+    expect(await storedValue('tavily_api_key')).toBeUndefined()
+  })
+
+  it('requires the credential of the live backend only', async () => {
+    expect((await json('PUT', `/api/plugins/${WEB_SEARCH_PLUGIN_ID}/config`, { backend: 'deepseek', tavily_api_key: 'tvly-k' })).status).toBe(400)
+    expect((await json('PUT', `/api/plugins/${WEB_SEARCH_PLUGIN_ID}/config`, { backend: 'tavily', tavily_api_key: 'tvly-k' })).status).toBe(200)
+  })
+
+  describe('provider references', () => {
+    const deepseekInterfaces = [{ protocol: 'chat-completions', base_url: 'https://api.deepseek.com/v1' }]
+    const createProvider = async (name: string, baseUrl: string, apiKey?: string) => {
+      const response = await json('POST', '/api/providers', {
+        name,
+        interfaces: [{ protocol: 'chat-completions', base_url: baseUrl }],
+        default_protocol: 'chat-completions',
+        ...(apiKey ? { api_key: apiKey } : {}),
+      })
+      expect(response.ok).toBe(true)
+      return (await response.json() as { id: number }).id
+    }
+    const choose = (providerId: number, extra: Record<string, unknown> = {}) =>
+      json('PUT', `/api/plugins/${WEB_SEARCH_PLUGIN_ID}/config`, { backend: 'deepseek', deepseek_provider_id: providerId, ...extra })
+
+    it('lends a chosen DeepSeek provider its key, as the key is now', async () => {
+      const providerId = await createProvider('DeepSeek', 'https://api.deepseek.com/v1', 'sk-first')
+      const response = await choose(providerId)
+      expect(response.status).toBe(200)
+      expect((await response.json() as PluginConfigStatusMap)[WEB_SEARCH_PLUGIN_ID]?.configured).toBe(true)
+
+      const ctx = await createApp({ env, side: 'worker' })
+      expect(await ctx.pluginConfig.providerCredentials(userId, WEB_SEARCH_PLUGIN_ID, 'deepseek_provider_id', providerId))
+        .toMatchObject({ apiKey: 'sk-first' })
+
+      const rotated = await json('PUT', `/api/providers/${providerId}`, {
+        name: 'DeepSeek', interfaces: deepseekInterfaces, default_protocol: 'chat-completions', api_key: 'sk-rotated',
+      })
+      expect(rotated.ok).toBe(true)
+      expect(await ctx.pluginConfig.providerCredentials(userId, WEB_SEARCH_PLUGIN_ID, 'deepseek_provider_id', providerId))
+        .toMatchObject({ apiKey: 'sk-rotated' })
+    })
+
+    it('refuses a provider on another host, or one without a key', async () => {
+      const relay = await createProvider('Relay', 'https://relay.example/v1', 'sk-relay')
+      const keyless = await createProvider('DeepSeek', 'https://api.deepseek.com/v1')
+      expect((await choose(relay)).status).toBe(400)
+      expect((await choose(keyless)).status).toBe(400)
+      expect(await storedValue('deepseek_provider_id')).toBeUndefined()
+    })
+
+    it("refuses another user's provider", async () => {
+      const db = createDb(env.DB)
+      const [other] = await db.insert(users).values({
+        name: 'other', email: `${crypto.randomUUID()}@example.com`, settings: { plugins: {} }, createdAt: new Date(0), updatedAt: new Date(0),
+      }).returning()
+      const [foreign] = await db.insert(providers).values({ user_id: other!.id, name: 'theirs', created_at: 0 }).returning()
+      expect((await choose(foreign!.id)).status).toBe(400)
+    })
+
+    it('stops counting as configured once the provider is deleted, unless another backend is live', async () => {
+      const providerId = await createProvider('DeepSeek', 'https://api.deepseek.com/v1', 'sk-ds')
+      expect((await choose(providerId, { tavily_api_key: 'tvly-k' })).status).toBe(200)
+      expect((await json('DELETE', `/api/providers/${providerId}`)).ok).toBe(true)
+
+      const ctx = await createApp({ env, side: 'worker' })
+      expect(await ctx.pluginConfig.isConfigured(userId, WEB_SEARCH_PLUGIN_ID)).toBe(false)
+      await expect(ctx.pluginConfig.read(userId, WEB_SEARCH_PLUGIN_ID)).rejects.toThrow('所选供应商')
+
+      // The dangling reference sits behind a backend nobody uses, so it does not block Tavily.
+      expect((await json('PUT', `/api/plugins/${WEB_SEARCH_PLUGIN_ID}/config`, { backend: 'tavily' })).status).toBe(200)
+      expect(await ctx.pluginConfig.isConfigured(userId, WEB_SEARCH_PLUGIN_ID)).toBe(true)
+    })
   })
 
   it('404s a plugin that declares no configuration', async () => {

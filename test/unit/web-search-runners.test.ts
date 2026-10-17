@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
-import { runWebExtract, runWebSearch } from '@/plugins/tavily/server/runners'
-import type { WebExtractClient, WebSearchClient } from '@/plugins/tavily/shared'
+import { runWebExtract, runWebSearch } from '@/plugins/web-search/server/runners'
+import type { WebExtractClient, WebSearchClient } from '@/plugins/web-search/shared'
 
-const searchClient = (results: { title: string; url: string; content: string }[] = []): WebSearchClient => ({
+const searchClient = (results: { title: string; url: string; content: string }[] = []): WebSearchClient<{ query: string }> => ({
   search: vi.fn(async () => results),
 })
 
@@ -13,7 +13,7 @@ const extractClient = (): WebExtractClient => ({
   })),
 })
 
-describe('tavily runners', () => {
+describe('web search runners', () => {
   it('refuses further calls once the per-turn cap is reached, without touching the client', async () => {
     const turn = new Map<string, unknown>()
     const client = searchClient([{ title: 'T', url: 'https://a.test', content: 'c' }])
@@ -31,7 +31,7 @@ describe('tavily runners', () => {
     const last = await runWebSearch(
       { query: 'q' },
       searchClient([{ title: 'T', url: 'https://a.test', content: 'c' }]),
-      new Map([['tavily.search.calls', 2]]),
+      new Map([['web_search.calls', 2]]),
       3,
     )
     expect(last).toMatchObject({ query: 'q', results: [{ url: 'https://a.test' }] })
@@ -51,26 +51,16 @@ describe('tavily runners', () => {
 
   it('turns a client failure into a result the model can read, not a thrown error', async () => {
     const turn = new Map<string, unknown>()
-    const failing: WebSearchClient = { search: vi.fn(async () => { throw new Error('network down') }) }
+    const failing: WebSearchClient<{ query: string }> = { search: vi.fn(async () => { throw new Error('network down') }) }
     expect(await runWebSearch({ query: 'q' }, failing, turn, 3)).toEqual({ error: expect.stringContaining('network down') })
   })
 
   it('a failed call still consumes its budget', async () => {
     const turn = new Map<string, unknown>()
-    const failing: WebSearchClient = { search: vi.fn(async () => { throw new Error('boom') }) }
+    const failing: WebSearchClient<{ query: string }> = { search: vi.fn(async () => { throw new Error('boom') }) }
     await runWebSearch({ query: 'q' }, failing, turn, 1)
     expect(await runWebSearch({ query: 'q' }, failing, turn, 1)).toEqual({ refused: expect.any(String) })
     expect(failing.search).toHaveBeenCalledTimes(1)
-  })
-
-  it('clamps max_results to the documented range and defaults when absent', async () => {
-    const turn = new Map<string, unknown>()
-    const client = searchClient()
-    await runWebSearch({ query: 'q' }, client, turn, 5)
-    await runWebSearch({ query: 'q', max_results: 99 }, client, turn, 5)
-    await runWebSearch({ query: 'q', max_results: 2 }, client, turn, 5)
-    expect((client.search as ReturnType<typeof vi.fn>).mock.calls.map(([input]) => input.maxResults))
-      .toEqual([5, 10, 2])
   })
 
   it('passes extraction failures through instead of discarding the whole batch', async () => {

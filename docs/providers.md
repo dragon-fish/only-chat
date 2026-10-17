@@ -16,6 +16,11 @@ row marked secret is encrypted like the key and never returned to the browser. H
 set themselves (`authorization`, `x-api-key`, `x-goog-api-key`, `content-type`, `content-length`,
 `host`) are refused. Changing the headers bumps the credential version, like replacing the key.
 
+A plugin may borrow a provider's credential instead of asking for its own: web search on the
+DeepSeek backend offers every provider with a key and an interface on `api.deepseek.com`, since
+DeepSeek's Search and Fetch APIs bill the same account. The key and headers are read at each call
+and sent only to that host.
+
 `vertex-compatible` takes an ordinary Base URL and
 a plain API key sent as `Authorization: Bearer <key>`; Google's own `x-goog-api-key` header is
 stripped. Requests are addressed as `{base_url}/v1/publishers/{publisher}/models/{model}`, so model

@@ -197,6 +197,13 @@
       "when": 1791949600957,
       "tag": "0028_sandbox-backups",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "6",
+      "when": 1792227913347,
+      "tag": "0029_web-search-plugin",
+      "breakpoints": true
     }
   ]
 }

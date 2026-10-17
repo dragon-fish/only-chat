@@ -6,12 +6,12 @@ import { Badge } from '@/client/ui/badge'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/client/ui/collapsible'
 import { Spinner } from '@/client/ui/spinner'
 import type { ToolCallPart, ToolResultPart } from '@/shared/parts'
-import { ToolErrorSchema, ToolRefusalSchema, WebSearchInputSchema, WebSearchOutputSchema } from '../shared'
-import { hostOf } from './format'
+import { ToolErrorSchema, ToolRefusalSchema, WebSearchOutputSchema, WebSearchQuerySchema } from '../shared'
+import { dateOf, hostOf } from './format'
 
 const props = defineProps<{ call: ToolCallPart; result: ToolResultPart | null }>()
 
-const query = computed(() => WebSearchInputSchema.safeParse(props.call.args).data?.query ?? null)
+const query = computed(() => WebSearchQuerySchema.safeParse(props.call.args).data?.query ?? null)
 const output = computed(() => WebSearchOutputSchema.safeParse(props.result?.content).data ?? null)
 const failure = computed(() => ToolErrorSchema.safeParse(props.result?.content).data?.error ?? null)
 // A spent budget is not a failure: the tool stopped on purpose, so it reads as a plain note.
@@ -45,10 +45,17 @@ const unreadable = computed(() => props.result !== null && !output.value && !fai
           a.text-sm.font-medium.underline-offset-2(
             :href="item.url" target="_blank" rel="noopener noreferrer" class="hover:underline")
             | {{ item.title || item.url }}
-          .flex.items-center.gap-1.text-xs.text-muted-foreground
-            GlobeIcon(class="size-3 shrink-0")
-            span.truncate {{ hostOf(item.url) }}
-          p.text-sm.text-muted-foreground(v-if="item.content") {{ item.content }}
+          .flex.min-w-0.items-center.gap-1.text-xs.text-muted-foreground
+            img(v-if="item.site_icon" :src="item.site_icon" alt="" class="size-3 shrink-0 rounded-sm" loading="lazy" referrerpolicy="no-referrer")
+            GlobeIcon(v-else class="size-3 shrink-0")
+            span.truncate {{ item.site_name || hostOf(item.url) }}
+            template(v-if="item.date")
+              span.shrink-0 ·
+              time.shrink-0(:datetime="item.date") {{ dateOf(item.date) }}
+          p.line-clamp-4.text-sm.text-muted-foreground(v-if="item.content") {{ item.content }}
+          details(v-if="item.full_text")
+            summary.cursor-pointer.text-xs.text-muted-foreground 全文
+            p.oc-scroll.mt-2.max-h-64.overflow-y-auto.whitespace-pre-wrap.text-sm.text-muted-foreground {{ item.full_text }}
   pre.oc-scroll.max-h-64.overflow-auto.rounded-md.bg-muted.p-3.text-xs(v-else-if="unreadable")
     | {{ JSON.stringify(result?.content, null, 2) }}
 </template>

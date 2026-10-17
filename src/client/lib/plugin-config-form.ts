@@ -1,5 +1,9 @@
 import { z } from 'zod'
-import type { PluginConfigField, PluginConfigFieldType, PluginConfigStatus, PluginManifest } from '@/shared/plugins'
+import type { ProviderWithInterfaces } from '@/shared/models'
+import type {
+  PluginConfigField, PluginConfigFieldType, PluginConfigProviderFilter, PluginConfigStatus, PluginManifest,
+} from '@/shared/plugins'
+import { configFieldApplies, providerFitsFilter } from '@/shared/plugins'
 
 export interface PluginConfigControl {
   key: string
@@ -9,6 +13,12 @@ export interface PluginConfigControl {
   placeholder?: string
   /** `select` only, taken from the schema's enum. */
   options: string[]
+  /** `select` only: what each option shows, falling back to the option itself. */
+  optionLabels: Readonly<Record<string, string>>
+  /** `provider` only. */
+  provider?: PluginConfigProviderFilter
+  /** See `PluginConfigField.when`. */
+  when?: Readonly<Record<string, unknown>>
   min?: number
   max?: number
   default?: unknown
@@ -67,6 +77,9 @@ function controlsFrom(
       type: field.type,
       ...(field.placeholder === undefined ? {} : { placeholder: field.placeholder }),
       options: (property.enum ?? []).filter((option): option is string => typeof option === 'string'),
+      optionLabels: field.optionLabels ?? {},
+      ...(field.provider === undefined ? {} : { provider: field.provider }),
+      ...(field.when === undefined ? {} : { when: field.when }),
       ...(property.minimum === undefined ? {} : { min: property.minimum }),
       ...(property.maximum === undefined ? {} : { max: property.maximum }),
       ...(property.default === undefined ? {} : { default: property.default }),
@@ -82,7 +95,41 @@ function controlsFrom(
 function emptyValue(type: PluginConfigFieldType): unknown {
   if (type === 'boolean') return false
   if (type === 'key_value') return []
+  if (type === 'provider') return null
   return ''
+}
+
+/** The controls that apply to what the form currently holds; the rest are neither shown nor sent. */
+export function visibleControls(
+  controls: readonly PluginConfigControl[],
+  values: Readonly<Record<string, unknown>>,
+): PluginConfigControl[] {
+  return controls.filter(control => configFieldApplies(control, values))
+}
+
+export interface ProviderOption {
+  /** Null is the field's `noneLabel` choice. */
+  value: number | null
+  label: string
+}
+
+/**
+ * The user's providers a `provider` field admits, then the none choice. A stored id that no longer
+ * qualifies stays listed and says so: dropping it would show the none choice for a value that is not
+ * null, and saving would then quietly change it.
+ */
+export function providerOptions(
+  filter: PluginConfigProviderFilter,
+  providers: readonly ProviderWithInterfaces[],
+  current: unknown,
+): ProviderOption[] {
+  const fitting = providers
+    .filter(provider => providerFitsFilter({ has_key: provider.has_key, base_urls: provider.interfaces.map(item => item.base_url) }, filter))
+    .map(provider => ({ value: provider.id, label: provider.name }))
+  const stale = typeof current === 'number' && !fitting.some(option => option.value === current)
+    ? [{ value: current, label: `${providers.find(provider => provider.id === current)?.name ?? '已删除的供应商'}（不可用）` }]
+    : []
+  return [...fitting, ...stale, { value: null, label: filter.noneLabel }]
 }
 
 /** A secret always starts blank: the form shows that one is stored, never what it is. */
@@ -103,7 +150,7 @@ export function buildConfigPatch(
   values: Readonly<Record<string, unknown>>,
 ): Record<string, unknown> {
   const patch: Record<string, unknown> = {}
-  for (const control of controls) {
+  for (const control of visibleControls(controls, values)) {
     const value = values[control.key]
     if (control.type === 'secret') {
       if (typeof value === 'string' && value.trim().length > 0) patch[control.key] = value.trim()

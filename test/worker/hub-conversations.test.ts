@@ -152,7 +152,7 @@ describe('project realtime commands', () => {
     ws.send(JSON.stringify({ type: 'project.update', project_id: project.id, name: 'renamed' }))
     expect(await nextAfter('project.updated', 2)).toMatchObject({ project: { name: 'renamed', plugin_settings: { memory: { project_memory: false } } } })
 
-    ws.send(JSON.stringify({ type: 'project.update', project_id: project.id, plugin_settings: { tavily: { anything: 1 } }, request_id: 'r3' }))
+    ws.send(JSON.stringify({ type: 'project.update', project_id: project.id, plugin_settings: { web_search: { anything: 1 } }, request_id: 'r3' }))
     expect(await next('error')).toMatchObject({ type: 'error', request_id: 'r3' })
     expect((await getProject(db, project.id, 1))!.plugin_settings).toEqual({ memory: { project_memory: false, use_user_memory: true } })
   })

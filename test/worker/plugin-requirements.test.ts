@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { pluginManifests } from '@/shared/plugin-manifests'
 import {
   ASK_USER_PLUGIN_ID, BROWSER_RUN_PLUGIN_ID, COMFYUI_PLUGIN_ID, CONTEXT_COMPACTION_PLUGIN_ID, DATETIME_PLUGIN_ID, FILE_READER_PLUGIN_ID, FILE_UNDERSTANDING_PLUGIN_ID,
-  IMAGE_GENERATION_PLUGIN_ID, MCP_PLUGIN_ID, MEMORY_PLUGIN_ID, TAVILY_PLUGIN_ID, WORKSPACE_FILES_PLUGIN_ID,
+  IMAGE_GENERATION_PLUGIN_ID, MCP_PLUGIN_ID, MEMORY_PLUGIN_ID, WEB_SEARCH_PLUGIN_ID, WORKSPACE_FILES_PLUGIN_ID,
 } from '@/shared/plugins'
 import { AskUserServerPlugin } from '@/plugins/ask-user/server'
 import { BrowserRunServerPlugin } from '@/plugins/cloudflare-browser-run/server'
@@ -17,7 +17,7 @@ import { GenerativeUiServerPlugin } from '@/plugins/generative-ui/server'
 import { ImageGenerationServerPlugin } from '@/plugins/image-generation/server'
 import { McpServerPlugin } from '@/plugins/mcp/server'
 import { MemoryServerPlugin } from '@/plugins/memory/server'
-import { TavilyServerPlugin } from '@/plugins/tavily/server'
+import { WebSearchServerPlugin } from '@/plugins/web-search/server'
 import { WorkspaceFilesServerPlugin } from '@/plugins/workspace-files/server'
 import { SANDBOX_PLUGIN_ID } from '@/plugins/sandbox/shared'
 import { SandboxServerPlugin } from '@/plugins/sandbox/server'
@@ -36,7 +36,7 @@ const SERVERS: Record<string, { inject?: readonly string[] }> = {
   [MCP_PLUGIN_ID]: McpServerPlugin,
   [MEMORY_PLUGIN_ID]: MemoryServerPlugin,
   [SANDBOX_PLUGIN_ID]: SandboxServerPlugin,
-  [TAVILY_PLUGIN_ID]: TavilyServerPlugin,
+  [WEB_SEARCH_PLUGIN_ID]: WebSearchServerPlugin,
   [WORKSPACE_FILES_PLUGIN_ID]: WorkspaceFilesServerPlugin,
 }
 

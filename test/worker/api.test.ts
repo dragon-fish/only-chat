@@ -297,7 +297,7 @@ describe('REST api', () => {
     expect(await res.json()).toEqual({
       id: userId, name: 'owner', email: 'owner@example.com', role: 'user', settings: { plugins: {} },
       plugin_config: {
-        tavily: { configured: false, values: {}, secrets: { api_key: false } },
+        web_search: { configured: false, values: {}, secrets: { deepseek_api_key: false, tavily_api_key: false } },
         // Every field has a default, so these plugins are configured before anyone touches them.
         workspace_files: { configured: true, values: {}, secrets: {} },
         cloudflare_browser_run: { configured: true, values: {}, secrets: {} },

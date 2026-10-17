@@ -12,7 +12,7 @@ import { PluginChannelPlugin } from './plugins/plugin-channel'
 import { PromptSectionsPlugin } from './plugins/prompt-sections'
 import { ContextManagersPlugin } from './plugins/context-manager'
 import { AskUserServerPlugin } from '@/plugins/ask-user/server'
-import { TavilyServerPlugin } from '@/plugins/tavily/server'
+import { WebSearchServerPlugin } from '@/plugins/web-search/server'
 import { DatetimeServerPlugin } from '@/plugins/datetime/server'
 import { ImageGenerationServerPlugin } from '@/plugins/image-generation/server'
 import { WorkspaceFilesServerPlugin } from '@/plugins/workspace-files/server'
@@ -79,7 +79,7 @@ export async function createApp(options: AppOptions): Promise<Context> {
       await ctx.plugin(ContextManagersPlugin)
       if (!ctx.get('contextManager')) throw new Error('ContextManagersPlugin loaded but ctx.contextManager is unavailable')
       await ctx.plugin(AskUserServerPlugin)
-      await ctx.plugin(TavilyServerPlugin)
+      await ctx.plugin(WebSearchServerPlugin)
       await ctx.plugin(DatetimeServerPlugin)
       // Before everything that injects `fileReader`, so none of them waits PENDING on it.
       await ctx.plugin(FileReaderServerPlugin)

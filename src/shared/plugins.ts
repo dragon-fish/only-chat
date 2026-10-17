@@ -4,7 +4,7 @@ import type { ConversationPluginSettings, ProjectPluginSettings } from './models
 /** Stable built-in IDs; persisted Conversation snapshots must never depend on display names. */
 export const ASK_USER_PLUGIN_ID = 'ask_user' as const
 export const ASK_USER_TOOL_ID = 'ask_user' as const
-export const TAVILY_PLUGIN_ID = 'tavily' as const
+export const WEB_SEARCH_PLUGIN_ID = 'web_search' as const
 export const WEB_SEARCH_TOOL_ID = 'web_search' as const
 export const WEB_EXTRACT_TOOL_ID = 'web_extract' as const
 export const DATETIME_PLUGIN_ID = 'datetime' as const
@@ -41,7 +41,7 @@ export const MEMORY_PLUGIN_ID = 'memory' as const
 export const MEMORY_SAVE_TOOL_ID = 'memory_save' as const
 export const CONTEXT_COMPACTION_PLUGIN_ID = 'context_compaction' as const
 
-export type BuiltInPluginId = typeof ASK_USER_PLUGIN_ID | typeof TAVILY_PLUGIN_ID | typeof DATETIME_PLUGIN_ID
+export type BuiltInPluginId = typeof ASK_USER_PLUGIN_ID | typeof WEB_SEARCH_PLUGIN_ID | typeof DATETIME_PLUGIN_ID
   | typeof WORKSPACE_FILES_PLUGIN_ID | typeof BROWSER_RUN_PLUGIN_ID | typeof IMAGE_GENERATION_PLUGIN_ID
   | typeof FILE_UNDERSTANDING_PLUGIN_ID | typeof FILE_READER_PLUGIN_ID | typeof MCP_PLUGIN_ID | typeof COMFYUI_PLUGIN_ID
   | typeof MEMORY_PLUGIN_ID | typeof CONTEXT_COMPACTION_PLUGIN_ID
@@ -106,8 +106,22 @@ export interface PluginToolGroup {
   tools: readonly string[]
 }
 
-/** `key_value` rows are shown by name; a row marked secret has its value encrypted and never returned. */
-export type PluginConfigFieldType = 'text' | 'secret' | 'number' | 'boolean' | 'select' | 'key_value'
+/**
+ * `key_value` rows are shown by name; a row marked secret has its value encrypted and never returned.
+ * `provider` holds the id of one of the user's own providers, or null for none of them.
+ */
+export type PluginConfigFieldType = 'text' | 'secret' | 'number' | 'boolean' | 'select' | 'key_value' | 'provider'
+
+/**
+ * Which providers a `provider` field offers. A reference is checked on every write and read, not
+ * only when the form lists it: the provider can be deleted or repointed after it was chosen.
+ */
+export interface PluginConfigProviderFilter {
+  /** Offered only when one of its interfaces has a `base_url` on exactly this host. */
+  host: string
+  /** The option that stores null, saying what choosing no provider means. */
+  noneLabel: string
+}
 
 /**
  * Presentation only. Options, bounds and defaults are read from `configSchema` via
@@ -119,6 +133,15 @@ export interface PluginConfigField {
   help: string
   type: PluginConfigFieldType
   placeholder?: string
+  /**
+   * Shown, and submitted, only while every named field holds the given value. A hidden field keeps
+   * whatever is stored; whether it is needed is the schema's call, not the form's.
+   */
+  when?: Readonly<Record<string, unknown>>
+  /** `select` only: the text an option shows. An option without one shows its value. */
+  optionLabels?: Readonly<Record<string, string>>
+  /** `provider` only. */
+  provider?: PluginConfigProviderFilter
 }
 
 /** A credential form is half about what you type in and half about where to get it. */
@@ -498,5 +521,28 @@ export function isKeyValueConfigKey(manifest: PluginManifest, key: string): bool
 export function isSecretConfigKey(manifest: PluginManifest, key: string): boolean {
   const field = manifest.config?.find(candidate => candidate.key === key)
   return field === undefined || field.type === 'secret'
+}
+
+/**
+ * Whether a field is in play for these values. One rule for both halves: the form shows only what
+ * applies, and the server checks a provider reference only where it applies, so a stale reference
+ * behind a backend nobody uses cannot stop the one that is.
+ */
+export function configFieldApplies(field: PluginConfigField, values: Readonly<Record<string, unknown>>): boolean {
+  return Object.entries(field.when ?? {}).every(([key, expected]) => (values[key] ?? null) === expected)
+}
+
+/** A provider may back a `provider` field when it has a key and an interface on the filter's host. */
+export function providerFitsFilter(
+  provider: { has_key: boolean; base_urls: readonly string[] },
+  filter: PluginConfigProviderFilter,
+): boolean {
+  return provider.has_key && provider.base_urls.some((url) => {
+    try {
+      return new URL(url).hostname === filter.host
+    } catch {
+      return false
+    }
+  })
 }
 
