@@ -1,5 +1,5 @@
 import { Context, Service } from 'cordis'
-import type { LanguageModel } from 'ai'
+import { wrapLanguageModel, type LanguageModel } from 'ai'
 import type { ScopedFilesClient } from './files/types'
 import type { ScopedImagesClient } from './images/types'
 import type { LlmRequestTrace } from './observability'
@@ -9,6 +9,7 @@ import { chatCompletionsProtocol } from './protocols/chat-completions'
 import { responsesProtocol } from './protocols/responses'
 import { anthropicProtocol } from './protocols/anthropic'
 import { vertexCompatibleProtocol } from './protocols/vertex-compatible'
+import { deltaCoalescing } from './delta-coalesce'
 
 /**
  * One protocol's bindings to a provider SDK. `createFiles` is optional: a Files API is a provider
@@ -68,7 +69,9 @@ export class Llm extends Service {
     const adapter = this._adapters.get(providerInterface.protocol)
     if (!adapter) throw new Error(`no adapter for protocol ${providerInterface.protocol}`)
     const credentials = await this._credentials(provider)
-    return adapter.createModel(provider, providerInterface, model, credentials, trace)
+    const created = adapter.createModel(provider, providerInterface, model, credentials, trace)
+    if (typeof created === 'string') throw new Error(`adapter for protocol ${providerInterface.protocol} returned a model id, not a model`)
+    return wrapLanguageModel({ model: created, middleware: deltaCoalescing })
   }
 
   async createFiles(provider: ProviderRow, providerInterface: ProviderInterfaceRow): Promise<ScopedFilesClient> {

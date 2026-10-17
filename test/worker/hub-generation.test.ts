@@ -1153,7 +1153,10 @@ describe('generation', () => {
       'snapshot', 'conversation.created', 'message.created', 'head.changed', 'conversation.updated',
       'message.created', 'head.changed', 'conversation.updated',
     ])
-    expect(types.filter((t) => t === 'message.delta')).toHaveLength(3)
+    // Deltas within a coalescing window arrive merged, so the text is what is pinned, not the frame count.
+    const joined = (a.events.filter((e) => e.type === 'message.delta') as { kind: string; delta: string }[])
+      .reduce<Record<string, string>>((acc, e) => ({ ...acc, [e.kind]: (acc[e.kind] ?? '') + e.delta }), {})
+    expect(joined).toEqual({ reasoning: 'think', text: 'Hello, world!' })
     await b.next('message.done')
     expect(b.events.filter((e) => e.type === 'message.delta')).toEqual(a.events.filter((e) => e.type === 'message.delta'))
 
@@ -1173,7 +1176,8 @@ describe('generation', () => {
   it('finishes the current generation when its initiating session expires mid-stream', async () => {
     const providerId = await seedProvider()
     await installMock(() => new MockLanguageModelV4({
-      doStream: async () => ({ stream: simulateReadableStream({ chunks: [...STREAM], chunkDelayInMs: 30, initialDelayInMs: null }) }),
+      // Wider than the delta coalescing window, so each delta stays its own frame and expiry lands mid-stream.
+      doStream: async () => ({ stream: simulateReadableStream({ chunks: [...STREAM], chunkDelayInMs: 80, initialDelayInMs: null }) }),
     }))
     const auth = await seedTestUser()
     const session = await (await auth.request('/api/auth/get-session')).json() as { session: { id: string } }
