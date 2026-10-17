@@ -49,6 +49,16 @@ A plugin that costs the site owner money per use (Sandbox, Browser) declares `ad
 who is not an administrator its switch reads as off: `getUser` filters the switches every surface
 reads (tool resolution, `/api/me`, settings updates), and an update never stores it on for them.
 
+A plugin's user configuration (`configSchema` + `config`) can depend on itself. A field with `when`
+is shown and submitted only while the named fields hold the given values, and a schema
+`superRefine` decides what is required, so a plugin with alternative backends asks only for the
+live one's credential. A `provider` field stores the id of one of the user's own providers — the
+select lists those with a key and an interface on the field's host — so a plugin can borrow a
+credential the user already saved instead of asking for it twice. The reference is checked
+wherever it applies, on save and on every read, because the provider can be deleted or repointed
+afterwards; the plugin asks `pluginConfig.providerCredentials` for the key when it is about to use
+it, so a rotated key is followed. The web search plugin uses both for its DeepSeek backend.
+
 A plugin can also keep settings per Project: it declares `projectConfigSchema`, and
 `projects.plugin_settings` holds the values keyed by plugin id, validated and merged per plugin by
 `project.update` the way conversation settings are. Core renders no form for them; a plugin that

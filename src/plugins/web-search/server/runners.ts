@@ -1,11 +1,10 @@
-import {
-  DEFAULT_SEARCH_RESULTS, MAX_SEARCH_RESULTS,
-  type ToolError, type ToolRefusal, type WebExtractClient, type WebExtractInput, type WebExtractOutput,
-  type WebSearchClient, type WebSearchInput, type WebSearchOutput,
+import type {
+  ToolError, ToolRefusal, WebExtractClient, WebExtractInput, WebExtractOutput, WebSearchClient, WebSearchOutput,
 } from '../shared'
 
-const SEARCH_CALLS = 'tavily.search.calls'
-const EXTRACT_CALLS = 'tavily.extract.calls'
+/** Keyed by tool, not by backend: only one backend is live, and the budget is the tool's. */
+const SEARCH_CALLS = 'web_search.calls'
+const EXTRACT_CALLS = 'web_extract.calls'
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
@@ -49,9 +48,9 @@ function spend(turn: Map<string, unknown>, key: string, cap: number): number | n
   return cap - used - 1
 }
 
-export async function runWebSearch(
-  input: WebSearchInput,
-  client: WebSearchClient,
+export async function runWebSearch<Input extends { query: string }>(
+  input: Input,
+  client: WebSearchClient<Input>,
   turn: Map<string, unknown>,
   cap: number,
 ): Promise<WebSearchOutput | ToolError | ToolRefusal> {
@@ -59,9 +58,8 @@ export async function runWebSearch(
   if (callsLeft === null) {
     return { refused: budgetRefusal('web_search', cap) }
   }
-  const maxResults = Math.min(Math.max(input.max_results ?? DEFAULT_SEARCH_RESULTS, 1), MAX_SEARCH_RESULTS)
   try {
-    const results = await client.search({ query: input.query, maxResults })
+    const results = await client.search(input)
     return { query: input.query, results, note: budgetNote('web_search', callsLeft, cap) }
   } catch (error) {
     return { error: `web_search failed: ${message(error)}` }

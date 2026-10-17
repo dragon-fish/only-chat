@@ -1,4 +1,4 @@
-import { ASK_USER_PLUGIN_ID, BROWSER_RUN_PLUGIN_ID, COMFYUI_PLUGIN_ID, DATETIME_PLUGIN_ID, FILE_READER_PLUGIN_ID, FILE_UNDERSTANDING_PLUGIN_ID, CONTEXT_COMPACTION_PLUGIN_ID, IMAGE_GENERATION_PLUGIN_ID, MCP_PLUGIN_ID, MEMORY_PLUGIN_ID, TAVILY_PLUGIN_ID, WORKSPACE_FILES_PLUGIN_ID } from '@/shared/plugins'
+import { ASK_USER_PLUGIN_ID, BROWSER_RUN_PLUGIN_ID, COMFYUI_PLUGIN_ID, DATETIME_PLUGIN_ID, FILE_READER_PLUGIN_ID, FILE_UNDERSTANDING_PLUGIN_ID, CONTEXT_COMPACTION_PLUGIN_ID, IMAGE_GENERATION_PLUGIN_ID, MCP_PLUGIN_ID, MEMORY_PLUGIN_ID, WEB_SEARCH_PLUGIN_ID, WORKSPACE_FILES_PLUGIN_ID } from '@/shared/plugins'
 import { pluginManifests } from '@/shared/plugin-manifests'
 import { GENERATIVE_UI_PLUGIN_ID } from '@/plugins/generative-ui/shared'
 import { SANDBOX_PLUGIN_ID } from '@/plugins/sandbox/shared'
@@ -13,7 +13,7 @@ export { pluginManifests }
  */
 export const pluginLoaders: Record<string, ClientPluginLoader> = {
   [ASK_USER_PLUGIN_ID]: () => import('@/plugins/ask-user/client/index') as Promise<ClientPluginModule>,
-  [TAVILY_PLUGIN_ID]: () => import('@/plugins/tavily/client/index') as Promise<ClientPluginModule>,
+  [WEB_SEARCH_PLUGIN_ID]: () => import('@/plugins/web-search/client/index') as Promise<ClientPluginModule>,
   [DATETIME_PLUGIN_ID]: () => import('@/plugins/datetime/client/index') as Promise<ClientPluginModule>,
   [FILE_READER_PLUGIN_ID]: () => import('@/plugins/file-reader/client/index') as Promise<ClientPluginModule>,
   [IMAGE_GENERATION_PLUGIN_ID]: () => import('@/plugins/image-generation/client/index') as Promise<ClientPluginModule>,

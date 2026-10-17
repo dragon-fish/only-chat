@@ -2,6 +2,7 @@ import type { Context } from 'cordis'
 import { Hono } from 'hono'
 import { z } from 'zod'
 import { findPluginManifest } from '@/shared/plugin-manifests'
+import { PluginConfigInvalidError } from '../plugin-config'
 import { authUserId, type ApiEnv } from './auth'
 
 /** `null` clears a field; a key the form did not send keeps whatever is stored. */
@@ -26,6 +27,7 @@ export function pluginConfigRoutes(ctx: Context) {
     } catch (error) {
       // Schema failures are the operator's to fix and their messages are written for them; nothing
       // here echoes a submitted value back.
+      if (error instanceof PluginConfigInvalidError) return c.json({ error: error.message }, 400)
       return c.json({ error: error instanceof z.ZodError ? error.issues[0]?.message ?? '配置无效' : '保存失败' }, 400)
     }
     return c.json(await ctx.pluginConfig.status(authUserId(c)))

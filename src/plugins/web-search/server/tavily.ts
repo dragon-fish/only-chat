@@ -1,4 +1,7 @@
-import type { WebExtractClient, WebExtractOutput, WebSearchClient, WebSearchOutput } from '../shared'
+import {
+  DEFAULT_SEARCH_RESULTS,
+  type TavilySearchInput, type WebExtractClient, type WebExtractOutput, type WebSearchClient, type WebSearchResult,
+} from '../shared'
 
 const BASE_URL = 'https://api.tavily.com'
 
@@ -20,7 +23,7 @@ export interface TavilyClientOptions {
  * Plain `fetch` rather than `@tavily/core`: that SDK pulls in axios and https-proxy-agent, which
  * need node's net/http and do not run on Workers. Two endpoints do not justify the dependency.
  */
-export class TavilyClient implements WebSearchClient, WebExtractClient {
+export class TavilyClient implements WebSearchClient<TavilySearchInput>, WebExtractClient {
   constructor(private readonly options: TavilyClientOptions) {
     if (!options.apiKey) throw new Error('TavilyClient: apiKey is required')
   }
@@ -36,11 +39,11 @@ export class TavilyClient implements WebSearchClient, WebExtractClient {
     return await response.json() as T
   }
 
-  async search(input: { query: string; maxResults: number }): Promise<WebSearchOutput['results']> {
+  async search(input: TavilySearchInput): Promise<WebSearchResult[]> {
     const wire = await this._post<TavilySearchWire>('search', {
       query: input.query,
       search_depth: this.options.searchDepth,
-      max_results: input.maxResults,
+      max_results: input.max_results ?? DEFAULT_SEARCH_RESULTS,
       // This product has its own model; Tavily's synthesized answer is a second wait for nothing.
       include_answer: false,
     })
@@ -52,7 +55,7 @@ export class TavilyClient implements WebSearchClient, WebExtractClient {
     }))
   }
 
-  async extract(urls: string[]): Promise<WebExtractOutput> {
+  async extract(urls: string[]): Promise<Omit<WebExtractOutput, 'note'>> {
     const wire = await this._post<TavilyExtractWire>('extract', {
       urls,
       extract_depth: 'basic',

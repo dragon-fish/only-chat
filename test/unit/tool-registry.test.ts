@@ -5,8 +5,8 @@ import { z } from 'zod'
 import { ToolRegistry, ToolRegistryPlugin, type ToolContext } from '@/server/plugins/tools'
 import { PromptSectionsPlugin } from '@/server/plugins/prompt-sections'
 import { AskUserServerPlugin } from '@/plugins/ask-user/server'
-import { TavilyServerPlugin } from '@/plugins/tavily/server'
-import { EDIT_FILE_TOOL_ID, FILE_READER_PLUGIN_ID, READ_FILE_TOOL_ID, TAVILY_PLUGIN_ID, WORKSPACE_FILES_PLUGIN_ID, WRITE_FILE_TOOL_ID } from '@/shared/plugins'
+import { WebSearchServerPlugin } from '@/plugins/web-search/server'
+import { EDIT_FILE_TOOL_ID, FILE_READER_PLUGIN_ID, READ_FILE_TOOL_ID, WEB_SEARCH_PLUGIN_ID, WORKSPACE_FILES_PLUGIN_ID, WRITE_FILE_TOOL_ID } from '@/shared/plugins'
 
 const registeredTool = (description: string) => tool({ description, inputSchema: z.object({}) })
 
@@ -126,12 +126,15 @@ describe('ToolRegistry', () => {
     expect(askUser.execute).toBeUndefined()
   })
 
-  it('registers both Tavily tools as executing tools', async () => {
-    const ctx = contextWith({ [TAVILY_PLUGIN_ID]: { api_key: 'k', search_depth: 'basic', search_calls_per_turn: 3, extract_calls_per_turn: 2 } })
+  it.each([
+    ['tavily', { tavily_api_key: 'k' }],
+    ['deepseek', { deepseek_api_key: 'k' }],
+  ])('registers both web search tools as executing tools on the %s backend', async (backend, credential) => {
+    const ctx = contextWith({ [WEB_SEARCH_PLUGIN_ID]: { backend, ...credential } })
     await ctx.plugin(ToolRegistryPlugin)
     await ctx.plugin(PromptSectionsPlugin)
-    await ctx.plugin(TavilyServerPlugin)
-    const resolved = await ctx.tools.resolve(['web_search', 'web_extract'], { [TAVILY_PLUGIN_ID]: true }, resolution)
+    await ctx.plugin(WebSearchServerPlugin)
+    const resolved = await ctx.tools.resolve(['web_search', 'web_extract'], { [WEB_SEARCH_PLUGIN_ID]: true }, resolution)
     expect(resolved.map(([id]) => id)).toEqual(['web_extract', 'web_search'])
     expect(resolved.every(([, entry]) => typeof entry.execute === 'function')).toBe(true)
   })
