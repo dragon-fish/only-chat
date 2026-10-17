@@ -126,8 +126,8 @@ export const WEB_SEARCH_CONFIG_SCHEMA = z.object({
   deepseek_api_key: z.string().trim().min(1).optional(),
   tavily_api_key: z.string().trim().min(1).optional(),
   tavily_search_depth: z.enum(['basic', 'advanced']).default('basic'),
-  search_calls_per_turn: z.number().int().min(1).max(10).default(3),
-  extract_calls_per_turn: z.number().int().min(1).max(10).default(2),
+  search_calls_per_turn: z.number().int().min(1).default(3),
+  extract_calls_per_turn: z.number().int().min(1).default(2),
 }).superRefine((config, ctx) => {
   // Only the live backend's credential is required: switching away keeps the other one stored.
   if (config.backend === 'tavily' && !config.tavily_api_key) {
