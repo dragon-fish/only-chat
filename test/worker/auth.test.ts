@@ -145,7 +145,10 @@ describe('registration policy and route protection', () => {
     const user = await registerAndLogin({ ...signupBody, email: 'user@example.com' })
     expect((await owner.json('POST', '/api/auth/admin/ban-user', { userId: '2' })).status).toBe(200)
     expect((await user.request('/api/conversations')).status).toBe(401)
-    expect((await user.request('/ws', { headers: { Upgrade: 'websocket' } })).status).toBe(401)
+    const upgrade = await user.request('/ws', { headers: { Upgrade: 'websocket' } })
+    expect(upgrade.status).toBe(101)
+    upgrade.webSocket!.accept()
+    upgrade.webSocket!.close()
     expect((await json('POST', '/api/auth/sign-in/email', { ...signupBody, email: 'user@example.com' })).status).toBe(403)
     expect((await owner.json('POST', '/api/auth/sign-out', {})).status).toBe(200)
     expect((await owner.request('/api/me')).status).toBe(401)
@@ -160,11 +163,10 @@ describe('registration policy and route protection', () => {
 
     const api = await user.request('/api/conversations')
     const socket = await user.request('/ws', { headers: { Upgrade: 'websocket' } })
-    if (socket.webSocket) {
-      socket.webSocket.accept()
-      socket.webSocket.close()
-    }
-    expect([api.status, socket.status]).toEqual([401, 401])
+    const ws = socket.webSocket!
+    const code = new Promise<number>(resolve => ws.addEventListener('close', event => resolve(event.code), { once: true }))
+    ws.accept()
+    expect([api.status, socket.status, await code]).toEqual([401, 101, 4001])
   })
 
   it('uses current stored permissions and allows normal owner profile updates', async () => {
