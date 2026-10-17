@@ -1,7 +1,7 @@
 import { Context, Service } from 'cordis'
 import { ZodError } from 'zod'
 import type { DB } from '../../db/client'
-import { GENERATION_TIMEOUT_MS } from '@/shared/constants'
+import { GENERATION_IDLE_TIMEOUT_MS, GENERATION_MAX_MS } from '@/shared/constants'
 import type { Message, Project, Conversation, UserSettings } from '@/shared/models'
 import type { Part } from '@/shared/parts'
 import { encodeEvent, parseCommand, type WsCommand, type WsEvent } from '@/shared/ws'
@@ -37,6 +37,10 @@ export interface InflightJob {
   conversationId: number
   controller: AbortController
   startedAt: number
+  /** When the stream last produced a part; see `generationDeadline`. */
+  lastProgressAt: number
+  /** Ids of the server tool calls executing now. */
+  toolsRunning: Set<string>
   parts: Part[]
   /** Resolves once the job untracked itself. Assigned by `trackInflight`; awaited by `stop`. */
   settled: Promise<void>
@@ -52,6 +56,17 @@ interface StoredInflight {
   message: Message
   parts: Part[]
   startedAt: number
+}
+
+/**
+ * When a generation counts as stuck: idle for GENERATION_IDLE_TIMEOUT_MS with no server tool
+ * running, or past GENERATION_MAX_MS however busy. A total wall-clock cap alone aborted long agent
+ * turns that were working the whole time. While a tool runs the idle clock restarts at every
+ * check, so the alarm re-examines the job rather than sleeping until the hard cap.
+ */
+export function generationDeadline(job: Pick<InflightJob, 'startedAt' | 'lastProgressAt' | 'toolsRunning'>, now: number): number {
+  const idleFrom = job.toolsRunning.size > 0 ? now : job.lastProgressAt
+  return Math.min(job.startedAt + GENERATION_MAX_MS, idleFrom + GENERATION_IDLE_TIMEOUT_MS)
 }
 
 const INFLIGHT_PREFIX = 'inflight:'
@@ -576,7 +591,7 @@ export class Hub extends Service {
 
   async ensureAlarm(): Promise<void> {
     if ((await this.state.storage.getAlarm()) === null) {
-      await this.state.storage.setAlarm(Date.now() + GENERATION_TIMEOUT_MS)
+      await this.state.storage.setAlarm(Date.now() + GENERATION_IDLE_TIMEOUT_MS)
     }
   }
 
@@ -584,10 +599,12 @@ export class Hub extends Service {
     const now = Date.now()
     let earliest = Infinity
     for (const job of this._inflight.values()) {
-      if (now - job.startedAt >= GENERATION_TIMEOUT_MS) job.controller.abort('timeout')
-      else earliest = Math.min(earliest, job.startedAt)
+      if (job.controller.signal.aborted) continue
+      const deadline = generationDeadline(job, now)
+      if (now >= deadline) job.controller.abort('timeout')
+      else earliest = Math.min(earliest, deadline)
     }
-    if (earliest !== Infinity) await this.state.storage.setAlarm(earliest + GENERATION_TIMEOUT_MS)
+    if (earliest !== Infinity) await this.state.storage.setAlarm(earliest)
     // Everything left is already aborted but not yet untracked: keep watching instead of going dark.
     else if (this._inflight.size > 0) await this.state.storage.setAlarm(now + ALARM_WATCHDOG_MS)
     else {

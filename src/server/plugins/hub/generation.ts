@@ -447,7 +447,10 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
   let shownLast: string[] = []
   /** Parts of the replies this run already handed off. */
   const handedOff: Part[] = []
-  const job = { message: shell, conversationId: target.conversation.id, controller, startedAt: Date.now(), parts: acc.parts, stash: [] as Part[] }
+  const job = {
+    message: shell, conversationId: target.conversation.id, controller,
+    startedAt: Date.now(), lastProgressAt: Date.now(), toolsRunning: new Set<string>(), parts: acc.parts, stash: [] as Part[],
+  }
   // `trackInflight` assigns `settled` onto this very object, so the reference stays usable. A held
   // compaction is released only now: from here on the reply itself keeps the conversation busy.
   try {
@@ -651,7 +654,7 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
       acc = new PartAccumulator()
       const next = {
         message: shell, conversationId: target.conversation.id, controller,
-        startedAt: Date.now(), parts: acc.parts, stash: [] as Part[],
+        startedAt: Date.now(), lastProgressAt: Date.now(), toolsRunning: new Set<string>(), parts: acc.parts, stash: [] as Part[],
       }
       await hub.trackInflight(next)
       tracked = next as InflightJob
@@ -668,6 +671,9 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
     // opening with a tool call never produces — and then every part of the stream logs this line.
     let announcedFirstChunk = false
     for await (const part of result.stream) {
+      tracked.lastProgressAt = Date.now()
+      if (part.type === 'tool-call' && !part.providerExecuted && tools[part.toolName]?.execute !== undefined) tracked.toolsRunning.add(part.toolCallId)
+      else if (part.type === 'tool-result' || part.type === 'tool-error') tracked.toolsRunning.delete(part.toolCallId)
       // Cleared at both boundaries: a step whose request fails outright never emits `start-step`.
       if (part.type === 'start-step' || part.type === 'finish-step') stepProduced = false
       else if (OUTPUT_PARTS.has(part.type)) stepProduced = true

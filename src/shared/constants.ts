@@ -1,5 +1,11 @@
 export const MAX_IMAGE_EDGE = 2048
-export const GENERATION_TIMEOUT_MS = 10 * 60 * 1000
+/**
+ * A generation with no stream part for this long, and no server tool running, is stuck and is
+ * aborted. Time inside a tool is not idle: each tool owns its own timeout.
+ */
+export const GENERATION_IDLE_TIMEOUT_MS = 5 * 60 * 1000
+/** Ceiling on one generation's wall time, however steadily it progresses. */
+export const GENERATION_MAX_MS = 60 * 60 * 1000
 export const INFLIGHT_FLUSH_INTERVAL_MS = 1000
 /**
  * Ceiling on model steps in one generation. Tools that execute need more than the SDK's default of

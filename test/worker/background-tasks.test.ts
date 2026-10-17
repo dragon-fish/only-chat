@@ -142,7 +142,7 @@ describe('background task delivery', () => {
       const hub = instance.app.hub
       // Stands in for a turn in progress; only its conversation id matters to delivery.
       const running = { id: -1, conversation_id: conversationId } as Message
-      await hub.trackInflight({ message: running, conversationId, controller: new AbortController(), startedAt: Date.now(), parts: [], stash: [] })
+      await hub.trackInflight({ message: running, conversationId, controller: new AbortController(), startedAt: Date.now(), lastProgressAt: Date.now(), toolsRunning: new Set<string>(), parts: [], stash: [] })
       await hub.settleTask(settlement(conversationId, origin, 'image_run:running'))
       expect(await rolesOf(conversationId)).toHaveLength(2)
       await hub.untrackInflight(running.id)
