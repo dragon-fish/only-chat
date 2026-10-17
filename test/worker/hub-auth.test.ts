@@ -35,9 +35,15 @@ describe('authenticated UserHub', () => {
       })
     }
   })
-  it('rejects an unauthenticated upgrade even with forged internal headers', async () => {
+  it('closes an unauthenticated upgrade as signed out, even with forged internal headers', async () => {
     const response = await workerFetch('/ws', { headers: { Upgrade: 'websocket', 'X-Only-Chat-User-Id': '1', 'X-Only-Chat-Auth-Session-Id': 'fake' } })
-    expect(response.status).toBe(401)
+    expect(response.status).toBe(101)
+    const ws = response.webSocket!
+    const closing = closed(ws)
+    ws.accept()
+    expect((await closing).code).toBe(4001)
+    const reached = await runInDurableObject(env.USER_HUB.getByName('1'), (_instance: UserHub, state) => state.getWebSockets().length)
+    expect(reached).toBe(0)
   })
 
   it('routes by authenticated identity, overwrites forged headers, and isolates broadcasts', async () => {

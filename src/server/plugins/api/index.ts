@@ -1,6 +1,6 @@
 import { Context } from 'cordis'
 import { Hono } from 'hono'
-import { INTERNAL_USER_ID_HEADER, INTERNAL_AUTH_SESSION_ID_HEADER } from '../hub/identity'
+import { AUTH_REVOKED_CLOSE_CODE, INTERNAL_USER_ID_HEADER, INTERNAL_AUTH_SESSION_ID_HEADER } from '../hub/identity'
 import { meRoutes } from './me'
 import { conversationRoutes } from './conversations'
 import { providerRoutes } from './providers'
@@ -73,7 +73,19 @@ export const ApiPlugin = {
       for (const prefix of publicPluginPrefixes) if (c.req.path.startsWith(prefix)) return next()
       return guard(c, next)
     })
-    app.use('/ws', requireAuth(ctx))
+    // A refused upgrade reaches the browser only as close 1006, which reads as a network blip, so a
+    // page whose session ended kept reconnecting every 30 s forever, each attempt a billed request.
+    // The upgrade is accepted and closed with the code the client treats as signed out instead: it
+    // stops reconnecting and shows the login.
+    const wsGuard = requireAuth(ctx)
+    app.use('/ws', async (c, next) => {
+      const refused = await wsGuard(c, next)
+      if (refused?.status !== 401 || c.req.header('Upgrade') !== 'websocket') return refused
+      const { 0: client, 1: server } = new WebSocketPair()
+      server.accept()
+      server.close(AUTH_REVOKED_CLOSE_CODE, 'Authentication required')
+      return new Response(null, { status: 101, webSocket: client })
+    })
     app.route('/api', adminSiteSettingsRoutes(ctx))
     app.route('/api', auditRoutes(ctx))
     app.get('/ws', (c) => {
