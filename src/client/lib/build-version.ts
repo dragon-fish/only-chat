@@ -13,8 +13,8 @@ let shown = false
 function promptReload(): void {
   if (shown) return
   shown = true
-  toast.warning('网页已更新到新版本', {
-    description: '刷新后再继续，否则部分功能可能加载失败。',
+  toast.warning('有新版本啦', {
+    description: '点击刷新按钮，立即体验最新功能',
     duration: Infinity,
     action: { label: '刷新', onClick: () => location.reload() },
   })
