@@ -3,6 +3,8 @@ import type { Message, ModelListSnapshot, ModelWithMetadata, Project, ProviderWi
 import type { PresetProvider } from '@/server/plugins/llm/presets'
 import type { AdminSiteSettings, AdminSiteSettingsUpdate, SiteConfig } from '@/shared/auth'
 import { useAuthStore } from '@/client/stores/auth'
+import { noticeServerBuild } from '@/client/lib/build-version'
+import { BUILD_HEADER } from '@/shared/build'
 import type { ArtifactDto, ArtifactPage, ArtifactRunDto, CreateImageRunInput, CreateImageRunResponse } from '@/shared/artifacts'
 import type { PluginConfigStatusMap } from '@/shared/plugins'
 import type { FileRecord } from '@/shared/workspace-files'
@@ -58,6 +60,7 @@ async function request<T>(method: string, path: string, body?: unknown, init: Re
     headers: body instanceof Blob ? init.headers : { 'content-type': 'application/json', ...(init.headers ?? {}) },
     body: body === undefined ? undefined : body instanceof Blob ? body : JSON.stringify(body),
   })
+  noticeServerBuild(res.headers.get(BUILD_HEADER) ?? undefined)
   if (!res.ok) {
     let detail = ''
     try {

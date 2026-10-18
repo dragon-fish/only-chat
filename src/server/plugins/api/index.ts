@@ -1,6 +1,7 @@
 import { Context } from 'cordis'
 import { Hono } from 'hono'
 import { AUTH_REVOKED_CLOSE_CODE, INTERNAL_USER_ID_HEADER, INTERNAL_AUTH_SESSION_ID_HEADER } from '../hub/identity'
+import { BUILD_HEADER } from '@/shared/build'
 import { meRoutes } from './me'
 import { conversationRoutes } from './conversations'
 import { providerRoutes } from './providers'
@@ -42,6 +43,15 @@ export const ApiPlugin = {
   inject: ['env', 'db', 'auth', 'assets', 'modelCatalog', 'pluginConfig', 'imageBackends'],
   apply(ctx: Context) {
     const app: ApiApp = new Hono()
+    // Every API response names the build that served it, so a page learns it outlived a deploy on
+    // its next request. Reconnecting cannot be relied on for that: hibernated WebSockets survive a
+    // deploy and are handed to the new code without the page noticing.
+    // A fetch() response passed through unchanged has immutable headers and would throw here; a
+    // route that proxies one wraps it in `new Response(body, response)` first.
+    app.use('/api/*', async (c, next) => {
+      await next()
+      c.res.headers.set(BUILD_HEADER, import.meta.env.BUILD_VERSION ?? 'dev')
+    })
     app.use('/api/auth/admin/*', async (c, next) => {
       if (!adminEndpoints.has(`${c.req.method} ${c.req.path}`)) return c.json({ error: 'Forbidden' }, 403)
       await next()

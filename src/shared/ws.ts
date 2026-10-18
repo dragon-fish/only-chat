@@ -237,8 +237,8 @@ export const WsEventSchema = z.discriminatedUnion('type', [
      */
     compacting: z.array(z.number().int()).optional(),
     /**
-     * The commit the Worker was built from. A deploy restarts every Durable Object, so every page
-     * reconnects and learns here that its own bundle is older; its lazy chunks are gone by then.
+     * The commit the Worker was built from, compared on every (re)connect. Hibernated sockets survive
+     * a deploy, so this alone does not reach an open page; `BUILD_HEADER` on API responses does.
      */
     build: z.string().optional(),
   }),
