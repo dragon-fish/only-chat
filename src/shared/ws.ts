@@ -236,6 +236,11 @@ export const WsEventSchema = z.discriminatedUnion('type', [
      * reconnects mid-compaction still shows it. The server always sends it; absent reads as none.
      */
     compacting: z.array(z.number().int()).optional(),
+    /**
+     * The commit the Worker was built from. A deploy restarts every Durable Object, so every page
+     * reconnects and learns here that its own bundle is older; its lazy chunks are gone by then.
+     */
+    build: z.string().optional(),
   }),
   z.object({ type: z.literal('conversation.created'), conversation: ConversationSchema }),
   z.object({ type: z.literal('conversation.updated'), conversation: ConversationSchema }),

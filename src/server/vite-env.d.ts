@@ -6,6 +6,8 @@
 interface ImportMetaEnv {
   readonly DEV: boolean
   readonly PROD: boolean
+  /** The commit this bundle was built from, or 'dev'; see vite.config.ts. Undefined under vitest. */
+  readonly BUILD_VERSION: string | undefined
 }
 
 interface ImportMeta {
