@@ -198,6 +198,7 @@ export class Hub extends Service {
       type: 'snapshot',
       inflight: this.inflight().map((j) => ({ ...j.message, parts: j.parts })),
       compacting: this.operations.heldConversations(),
+      build: import.meta.env.BUILD_VERSION ?? 'dev',
     }))
   }
 

@@ -4,6 +4,7 @@ import { defineStore } from 'pinia'
 import { useAuthStore } from './auth'
 import { api } from '@/client/lib/api'
 import { WsClient, type WsStatus } from '@/client/lib/ws-client'
+import { noticeServerBuild } from '@/client/lib/build-version'
 import type { ModelRef } from '@/shared/api'
 import type { Message, Project, Conversation, ConversationParams, ConversationPluginSettings, UserSettings } from '@/shared/models'
 import type { ModelMetadata } from '@/shared/model-metadata'
@@ -767,6 +768,7 @@ export const useSyncStore = defineStore('sync', () => {
   function applyEvent(e: WsEvent): void {
     switch (e.type) {
       case 'snapshot':
+        noticeServerBuild(e.build)
         // Authoritative: streams that finished while we were offline must leave the set, so a
         // REST reload can overwrite them.
         streamingIds.clear()
