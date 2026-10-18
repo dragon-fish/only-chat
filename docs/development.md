@@ -21,14 +21,15 @@ working without Docker, `vite.config.ts` turns containers off unless `SANDBOX_DE
 
     SANDBOX_DEV=1 pnpm dev
 
-That needs a running Docker (on Windows, inside WSL) and builds `sandbox/Dockerfile` (Debian, Python
-3.12 with uv, Node 24 with pnpm, bun, git and common CLI tools). With containers off the sandbox
-tools fail with a clear error and everything else works.
+That needs a running Docker (on Windows, inside WSL) and builds `sandbox/Dockerfile`, a thin layer
+over `ghcr.io/onlychathq/sandbox-base` (Debian, Python 3.12 with uv, Node 24 with pnpm, bun,
+Playwright with Chromium, git and common CLI tools), built in
+[OnlyChatHQ/sandbox-image](https://github.com/OnlyChatHQ/sandbox-image). With containers off the
+sandbox tools fail with a clear error and everything else works.
 
-The first build downloads toolchains from GitHub and nodejs.org and Playwright's Chromium from
-Google's CDN, inside Docker. A proxy set only in your shell does not reach the build, so where those
-hosts need one, route Docker's traffic through it at the system level (for example a TUN-mode proxy)
-for that first build; later builds reuse the cached layers.
+The first build pulls that base image (about 700 MB) from ghcr.io inside Docker. A proxy set only in
+your shell does not reach Docker, so where ghcr.io needs one, give Docker its own proxy setting (or
+route its traffic at the system level); later builds reuse the pulled image.
 
 Worker tests never have containers: the vitest pool disables them. The container logic (unit restore,
 alarm, backups, jobs) is unit-tested against fakes, see `test/unit/sandbox-machine.test.ts`.

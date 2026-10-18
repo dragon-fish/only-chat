@@ -164,7 +164,8 @@ configuration, so every call carries the unit, the instance type, the idle time 
 report back.
 
 There is one `Sandbox` DO per user (`env.SANDBOX.getByName(String(userId))`, `src/server/sandbox/`).
-It owns one container (Cloudflare Containers, image from `sandbox/Dockerfile`, `scheduling_policy:
+It owns one container (Cloudflare Containers, image from `sandbox/Dockerfile` over the prebuilt
+`ghcr.io/onlychathq/sandbox-base`, `scheduling_policy:
 durable_object`) that is started on demand with the instance type from the plugin settings. The
 container's disk and processes are lost whenever it stops, so what must survive is split into
 **units**, each a directory backed up on its own:
