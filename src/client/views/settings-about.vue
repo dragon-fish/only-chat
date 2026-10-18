@@ -13,6 +13,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/cli
 const UPSTREAM_URL = 'https://github.com/dragon-fish/only-chat'
 const SOURCE_URL = UPSTREAM_URL
 
+/** The commit this page was built from; see vite.config.ts. Links into `SOURCE_URL`, so a fork's points at its own history. */
+const BUILD = import.meta.env.BUILD_VERSION ?? 'dev'
+const buildLabel = BUILD === 'dev' ? '开发版' : BUILD.slice(0, 7)
+const buildHref = BUILD === 'dev' ? undefined : `${SOURCE_URL}/commit/${BUILD}`
+
 const links = [
   { label: '源代码', href: SOURCE_URL },
   { label: '许可证（AGPL-3.0）', href: `${UPSTREAM_URL}/blob/main/LICENSE` },
@@ -34,6 +39,10 @@ const links = [
           h1.text-2xl.font-semibold Only Chat
           p.text-sm.font-medium Only Chat, not only chat.
           p.text-sm.text-muted-foreground 开源自托管，揣兜随心聊；能简亦能强，插件随你造。
+          p.flex.gap-1.text-xs.text-muted-foreground
+            span 版本
+            a.font-mono.underline-offset-4(v-if="buildHref" :href="buildHref" target="_blank" rel="noopener" class="hover:underline") {{ buildLabel }}
+            span(v-else) {{ buildLabel }}
       Card
         CardHeader
           CardTitle 许可与署名
