@@ -48,7 +48,10 @@ and a Worker that declares one cannot be deployed to a free account. `wrangler.j
 and a `containers` entry whose image is built from `sandbox/Dockerfile`.
 
 - `wrangler deploy` builds the image and pushes it to Cloudflare's registry, which needs Docker on the
-  machine that runs it. Workers Builds supports Dockerfile builds. `wrangler versions upload` for a
+  machine that runs it. Workers Builds supports Dockerfile builds. The Dockerfile only adds a few small
+  layers over the public `ghcr.io/onlychathq/sandbox-base`, pinned by digest, so a deploy pulls the
+  toolchains instead of building them. Upgrading a toolchain means publishing a new base image from
+  [OnlyChatHQ/sandbox-image](https://github.com/OnlyChatHQ/sandbox-image) and moving the pin. `wrangler versions upload` for a
   non-production branch does not publish images.
 - Backups are written to the existing R2 bucket under `sandbox-backups/` and tracked in D1 table
   `sandbox_backups` (migration `0028`). Run `pnpm db:migrate:remote` before pushing `main`.
