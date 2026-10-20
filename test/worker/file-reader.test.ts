@@ -50,7 +50,7 @@ async function reader(): Promise<Context> {
 
 async function turnOver(path: Message[], options: { toolIds?: string[], canRead?: (mime: string) => boolean } = {}): Promise<FileTurn> {
   return {
-    userId: 1, conversationId: 1, projectId: null, toolIds: options.toolIds ?? [], path, state: new Map(),
+    userId: 1, conversationId: 1, projectId: null, toolIds: options.toolIds ?? [], path, state: new Map(), signal: new AbortController().signal,
     canReadFile: options.canRead ?? (mime => mime.startsWith('image/')),
     visible: await loadVisibleAssets(db, 1, path),
   }

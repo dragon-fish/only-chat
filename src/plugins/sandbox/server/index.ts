@@ -13,8 +13,8 @@ import {
 } from '@/server/sandbox/protocol'
 import { isTextMime, isUtf8Text, MAX_ATTACHMENT_BYTES, mimeFromExtension, textMimeFromFilename } from '@/shared/file-media'
 import { readLines } from '@/shared/text-lines'
-import { binaryFromAttachment } from '@/plugins/file-reader/server/service'
-import { fileToolError, refFailure } from '@/plugins/file-reader/server/refs'
+import { binaryFromAttachment, type ResolvedFile } from '@/plugins/file-reader/server/service'
+import { fileToolError, refFailure, type FileResult } from '@/plugins/file-reader/server/refs'
 import type { ReadAssetTextOutput } from '@/plugins/file-reader/shared'
 import { MESSAGES, servicesFor, workspaceToolError, writeWorkspaceFile } from '@/plugins/workspace-files/server'
 import { applyTextEdit, MAX_FILE_BYTES } from '@/server/plugins/workspace-files/service'
@@ -407,7 +407,7 @@ export const SandboxServerPlugin = {
       const path = normalizeSandboxPath(body)
       if (!path) return refFailure('INVALID_FILE_REF', `${cited} is not an absolute sandbox path.`)
       const { defaultTimeoutMs: _timeout, ...machine } = machineOf(await ctx.pluginConfig.read(turn.userId, SANDBOX_PLUGIN_ID))
-      return withSandbox(env, turn.userId, async (sandbox) => {
+      const resolved = await forTurn(env, turn, async (sandbox): Promise<FileResult<ResolvedFile>> => {
         const stat = await sandbox.stat(turn.userId, machine, path)
         if (!stat) return refFailure('FILE_NOT_FOUND', `${path} does not exist in the sandbox.`)
         if (stat.kind !== 'file') return refFailure('UNSUPPORTED_FILE', `${path} is not a regular file; list a directory with sandbox_exec.`)
@@ -437,6 +437,8 @@ export const SandboxServerPlugin = {
         }
         const read = await sandbox.readFile({ userId: turn.userId, machine, path, maxBytes: MAX_BINARY_BYTES })
         if (!read.ok) return refFailure('FILE_NOT_FOUND', `${path} could not be read.`)
+        // Nothing is stored for a turn that has already answered: the attachment would be an orphan.
+        if (turn.signal.aborted) return refFailure('STOPPED', STOPPED_WAITING)
         const mime = extensionMime ?? BINARY_MIMES[extensionOf(path)] ?? 'application/octet-stream'
         const attachmentId = await storeGeneratedAttachment(ctx.db.orm, ctx.assets, turn.userId, read.bytes, mime)
         const [row] = await ctx.db.orm.select().from(attachments)
@@ -444,6 +446,7 @@ export const SandboxServerPlugin = {
         if (!row) return refFailure('FILE_NOT_FOUND', `${path} could not be stored.`)
         return { ok: true as const, value: binaryFromAttachment(row, name) }
       })
+      return resolved === STOPPED ? refFailure('STOPPED', STOPPED_WAITING) : resolved
     })
 
     // Deleting a conversation or Project trashes its backups for the nightly sweep instead of

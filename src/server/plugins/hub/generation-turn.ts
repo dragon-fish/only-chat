@@ -28,6 +28,8 @@ export interface GenerationTurn {
    */
   visible: readonly Message[]
   state: Map<string, unknown>
+  /** Aborted when the generation is stopped, as `ToolContext.signal` is: work done for the turn gives up with it. */
+  signal: AbortSignal
   /** Whether the generating model can take a file of this MIME (spec §3.4). */
   canReadFile(mime: string): boolean
   /** Set by at most one plugin. Absent, files reach the model with nothing said about them. */

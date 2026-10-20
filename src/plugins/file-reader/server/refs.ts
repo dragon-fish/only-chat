@@ -7,7 +7,7 @@ import { ASSET_SCHEME } from '@/shared/asset-ref'
  */
 
 export type FileRefError =
-  | 'INVALID_FILE_REF' | 'UNSUPPORTED_SCHEME' | 'FILE_NOT_FOUND' | 'AMBIGUOUS_ASSET' | 'UNSUPPORTED_FILE' | 'READ_RANGE_TOO_LARGE'
+  | 'INVALID_FILE_REF' | 'UNSUPPORTED_SCHEME' | 'FILE_NOT_FOUND' | 'AMBIGUOUS_ASSET' | 'UNSUPPORTED_FILE' | 'READ_RANGE_TOO_LARGE' | 'STOPPED'
 
 /** A failure the model can act on, with the sentence that tells it how. */
 export interface FileRefFailure {
