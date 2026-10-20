@@ -32,6 +32,7 @@ import { LineBuffer, OutputWindow } from './output'
 import { cwdNotes, summarize, wrapCommand } from './command'
 import { inCallOrder } from './order'
 import { STALL_MARGIN_MS, STALLED, nextBefore } from './stall'
+import { STOPPED, untilStopped } from './stop'
 
 const SANDBOX_TOOL_IDS: readonly string[] = [
   SANDBOX_EXEC_TOOL_ID, SANDBOX_IMPORT_TOOL_ID, SANDBOX_EXPORT_TOOL_ID, SANDBOX_WRITE_FILE_TOOL_ID, SANDBOX_EDIT_FILE_TOOL_ID,
@@ -102,6 +103,26 @@ async function withSandbox<T>(env: Env, userId: number, use: (sandbox: SandboxRp
   }
 }
 
+/**
+ * `withSandbox` for a tool call: a stopped turn gets `STOPPED` at once rather than wait for the
+ * machine (see `untilStopped`). The stub is still released only when the call itself settles.
+ */
+function forTurn<T>(env: Env, runtime: Pick<ToolContext, 'userId' | 'signal'>, use: (sandbox: SandboxRpc) => Promise<T>): Promise<T | typeof STOPPED> {
+  return untilStopped(runtime.signal, withSandbox(env, runtime.userId, use))
+}
+
+/**
+ * Asks the machine to stop what one tool call started, launched or not yet. On a stub of its own,
+ * so releasing the call's stub cannot cut it off.
+ */
+function killCall(env: Env, userId: number, callId: string): void {
+  void withSandbox(env, userId, sandbox => sandbox.kill(userId, callId))
+    .catch(error => console.error('sandbox kill failed', error))
+}
+
+const STOPPED_WAITING = 'The generation was stopped while waiting for the sandbox.'
+const STOPPED_WRITE = `${STOPPED_WAITING} The change was not confirmed and may still be applied once the machine is up.`
+
 function defaultUnit(runtime: Pick<ToolContext, 'projectId' | 'conversationId'>): Unit {
   return runtime.projectId !== null ? { kind: 'project', id: runtime.projectId } : { kind: 'conversation', id: runtime.conversationId }
 }
@@ -161,81 +182,98 @@ export const SandboxServerPlugin = {
         if (!cwd) return { error: `cwd must be an absolute path, got ${JSON.stringify(input.cwd)}.` }
         const { defaultTimeoutMs, ...machine } = machineOf(runtime.config)
 
-        if (input.background) {
-          try {
-            const started = await withSandbox(env, runtime.userId, sandbox => sandbox.startJob({
-              userId: runtime.userId, machine, argv, cwd, conversationId: runtime.conversationId,
-              originMessageId: runtime.assistantMessageId, toolCallId, pluginId: SANDBOX_PLUGIN_ID, summary: summarize(input),
-            }))
-            return {
-              task_id: started.taskId, status: 'started', pid: started.pid, log_path: started.logPath,
-              ...(started.notes.length > 0 ? { notes: started.notes } : {}),
+        // A stopped turn asks the machine to stop this call at whatever stage it is in, and answers at
+        // once rather than wait: on a cold start the machine holds the call until it is up.
+        const kill = () => killCall(env, runtime.userId, toolCallId)
+        runtime.signal.addEventListener('abort', kill, { once: true })
+        try {
+          if (input.background) {
+            try {
+              const started = await forTurn(env, runtime, sandbox => sandbox.startJob({
+                userId: runtime.userId, machine, argv, cwd, conversationId: runtime.conversationId,
+                originMessageId: runtime.assistantMessageId, toolCallId, pluginId: SANDBOX_PLUGIN_ID, summary: summarize(input),
+              }))
+              if (started === STOPPED) return { error: 'The generation was stopped before the background command started. It was cancelled, or stopped if it had already started.' }
+              return {
+                task_id: started.taskId, status: 'started', pid: started.pid, log_path: started.logPath,
+                ...(started.notes.length > 0 ? { notes: started.notes } : {}),
+              }
+            } catch (error) {
+              return { error: message(error) }
             }
-          } catch (error) {
-            return { error: message(error) }
           }
-        }
 
-        const timeoutMs = input.timeout_ms ?? defaultTimeoutMs
-        return withSandbox(env, runtime.userId, async (sandbox) => {
-          const stdout = new OutputWindow(RESULT_HEAD_BYTES, RESULT_TAIL_BYTES)
-          const stderr = new OutputWindow(RESULT_HEAD_BYTES, RESULT_TAIL_BYTES)
-          const lines = new LineBuffer()
-          let pending: string[] = []
-          const flush = () => {
-            if (pending.length === 0) return
-            const batch = pending
-            pending = []
-            void hub.broadcastGeneration({ type: 'tool.progress', message_id: runtime.assistantMessageId, call_id: toolCallId, lines: batch })
-          }
-          const timer = setInterval(flush, PROGRESS_FLUSH_MS)
-          const onAbort = () => {
-            void sandbox.kill(runtime.userId, toolCallId).catch(error => console.error('sandbox kill failed', error))
-          }
-          runtime.signal.addEventListener('abort', onAbort, { once: true })
-          let notes: string[] = []
-          try {
-            const body = await sandbox.exec({ userId: runtime.userId, machine, execId: toolCallId, argv, stdin: input.stdin, cwd, timeoutMs })
-            const iterator = frames(body)
-            const deadline = Date.now() + timeoutMs + STALL_MARGIN_MS
-            while (true) {
-              const next = await nextBefore(iterator, deadline)
-              if (next === STALLED) {
-                void iterator.return(undefined)
-                void sandbox.kill(runtime.userId, toolCallId).catch(error => console.error('sandbox kill failed', error))
-                return { error: 'The sandbox stopped answering before the command finished; it may have been restarted, losing unsaved files. Check the directory before relying on earlier output.' }
-              }
-              if (next.done) break
-              const frame = next.value
-              switch (frame.type) {
-                case 'notes':
-                  notes = frame.notes
-                  break
-                case 'out':
-                  ;(frame.stream === 'stdout' ? stdout : stderr).push(frame.data)
-                  pending.push(...lines.push(frame.data))
-                  break
-                case 'error':
-                  return { error: frame.message } satisfies SandboxToolError
-                case 'end':
-                  pending.push(...lines.flush())
-                  notes = [...notes, ...cwdNotes(frame, unitDir(defaultUnit(runtime)))]
-                  return {
-                    exit_code: frame.exitCode, timed_out: frame.timedOut, duration_ms: frame.durationMs,
-                    stdout: stdout.text(), stderr: stderr.text(), truncated: stdout.truncated || stderr.truncated,
-                    log_path: frame.logPath, ...(notes.length > 0 ? { notes } : {}),
-                  }
-              }
+          const timeoutMs = input.timeout_ms ?? defaultTimeoutMs
+          const result = await forTurn(env, runtime, async (sandbox): Promise<SandboxExecOutput> => {
+            const stdout = new OutputWindow(RESULT_HEAD_BYTES, RESULT_TAIL_BYTES)
+            const stderr = new OutputWindow(RESULT_HEAD_BYTES, RESULT_TAIL_BYTES)
+            const lines = new LineBuffer()
+            let pending: string[] = []
+            const flush = () => {
+              if (pending.length === 0) return
+              const batch = pending
+              pending = []
+              void hub.broadcastGeneration({ type: 'tool.progress', message_id: runtime.assistantMessageId, call_id: toolCallId, lines: batch })
             }
-            return { error: 'The sandbox closed the command\'s output before it finished.' }
-          } catch (error) {
-            return { error: message(error) }
-          } finally {
-            runtime.signal.removeEventListener('abort', onAbort)
-            clearInterval(timer)
-            flush()
+            const timer = setInterval(flush, PROGRESS_FLUSH_MS)
+            let notes: string[] = []
+            try {
+              const body = await sandbox.exec({ userId: runtime.userId, machine, execId: toolCallId, argv, stdin: input.stdin, cwd, timeoutMs })
+              // The tool has answered already; only the stream is left to release.
+              if (runtime.signal.aborted) {
+                void body.cancel().catch(() => {})
+                return { error: STOPPED_WAITING }
+              }
+              const iterator = frames(body)
+              const deadline = Date.now() + timeoutMs + STALL_MARGIN_MS
+              while (true) {
+                const next = await untilStopped(runtime.signal, nextBefore(iterator, deadline))
+                if (next === STOPPED) {
+                  void iterator.return(undefined)
+                  return { error: STOPPED_WAITING }
+                }
+                if (next === STALLED) {
+                  void iterator.return(undefined)
+                  kill()
+                  return { error: 'The sandbox stopped answering before the command finished; it may have been restarted, losing unsaved files. Check the directory before relying on earlier output.' }
+                }
+                if (next.done) break
+                const frame = next.value
+                switch (frame.type) {
+                  case 'notes':
+                    notes = frame.notes
+                    break
+                  case 'out':
+                    ;(frame.stream === 'stdout' ? stdout : stderr).push(frame.data)
+                    pending.push(...lines.push(frame.data))
+                    break
+                  case 'error':
+                    return { error: frame.message } satisfies SandboxToolError
+                  case 'end':
+                    pending.push(...lines.flush())
+                    notes = [...notes, ...cwdNotes(frame, unitDir(defaultUnit(runtime)))]
+                    return {
+                      exit_code: frame.exitCode, timed_out: frame.timedOut, duration_ms: frame.durationMs,
+                      stdout: stdout.text(), stderr: stderr.text(), truncated: stdout.truncated || stderr.truncated,
+                      log_path: frame.logPath, ...(notes.length > 0 ? { notes } : {}),
+                    }
+                }
+              }
+              return { error: 'The sandbox closed the command\'s output before it finished.' }
+            } catch (error) {
+              return { error: message(error) }
+            } finally {
+              clearInterval(timer)
+              flush()
+            }
+          })
+          if (result === STOPPED) {
+            return { error: `The generation was stopped before the command finished. It was cancelled, or killed if it had already started; whatever it printed is in ${execFiles(toolCallId).log}.` }
           }
-        })
+          return result
+        } finally {
+          runtime.signal.removeEventListener('abort', kill)
+        }
       }),
     }))
 
@@ -251,12 +289,14 @@ export const SandboxServerPlugin = {
         }
         const { defaultTimeoutMs: _timeout, ...machine } = machineOf(runtime.config)
         try {
-          return await withSandbox(env, runtime.userId, async (sandbox) => {
+          const written = await forTurn(env, runtime, async (sandbox): Promise<SandboxWriteFileResult | SandboxToolError> => {
             const existing = await sandbox.stat(runtime.userId, machine, path)
             if (existing && existing.kind !== 'file') return { error: `${path} exists and is not a regular file.` }
+            if (runtime.signal.aborted) return { error: STOPPED_WAITING }
             await sandbox.writeFile({ userId: runtime.userId, machine, path, bytes })
             return { path, size: bytes.byteLength, totalLines: countLines(input.content), operation: existing ? 'replaced' as const : 'created' as const }
           })
+          return written === STOPPED ? { error: STOPPED_WRITE } : written
         } catch (error) {
           return { error: message(error) }
         }
@@ -271,7 +311,7 @@ export const SandboxServerPlugin = {
         if (!path) return { error: `path must be an absolute sandbox path, got ${JSON.stringify(input.path)}.` }
         const { defaultTimeoutMs: _timeout, ...machine } = machineOf(runtime.config)
         try {
-          return await withSandbox(env, runtime.userId, async (sandbox) => {
+          const result = await forTurn(env, runtime, async (sandbox): Promise<SandboxEditFileResult | SandboxToolError> => {
             const read = await sandbox.readFile({ userId: runtime.userId, machine, path, maxBytes: MAX_FILE_BYTES })
             if (!read.ok) {
               if (read.code === 'NOT_FOUND') return { error: `${path} does not exist in the sandbox.` }
@@ -285,9 +325,11 @@ export const SandboxServerPlugin = {
             if (bytes.byteLength > MAX_FILE_BYTES) {
               return { error: `The edited file would be ${bytes.byteLength.toLocaleString('en-US')} bytes, over the ${MAX_FILE_BYTES / 1024 / 1024} MiB limit. Nothing was changed.` }
             }
+            if (runtime.signal.aborted) return { error: STOPPED_WAITING }
             await sandbox.writeFile({ userId: runtime.userId, machine, path, bytes })
             return { path, replacements: edited.value.replacements, size: bytes.byteLength, totalLines: countLines(edited.value.content) }
           })
+          return result === STOPPED ? { error: STOPPED_WRITE } : result
         } catch (error) {
           return { error: message(error) }
         }
@@ -310,7 +352,8 @@ export const SandboxServerPlugin = {
         if (!stored) return { error: `${input.from} is no longer stored.` }
         const { defaultTimeoutMs: _timeout, ...machine } = machineOf(runtime.config)
         try {
-          await withSandbox(env, runtime.userId, sandbox => sandbox.writeFile({ userId: runtime.userId, machine, path: to, bytes: stored.bytes }))
+          const written = await forTurn(env, runtime, sandbox => sandbox.writeFile({ userId: runtime.userId, machine, path: to, bytes: stored.bytes }))
+          if (written === STOPPED) return { error: STOPPED_WRITE }
         } catch (error) {
           return { error: message(error) }
         }
@@ -327,10 +370,11 @@ export const SandboxServerPlugin = {
         const { defaultTimeoutMs: _timeout, ...machine } = machineOf(runtime.config)
         let read
         try {
-          read = await withSandbox(env, runtime.userId, sandbox => sandbox.readFile({ userId: runtime.userId, machine, path: from, maxBytes: MAX_BINARY_BYTES }))
+          read = await forTurn(env, runtime, sandbox => sandbox.readFile({ userId: runtime.userId, machine, path: from, maxBytes: MAX_BINARY_BYTES }))
         } catch (error) {
           return { error: message(error) }
         }
+        if (read === STOPPED) return { error: `${STOPPED_WAITING} Nothing was published.` }
         if (!read.ok) {
           if (read.code === 'NOT_FOUND') return { error: `${from} does not exist in the sandbox.` }
           if (read.code === 'NOT_A_FILE') return { error: `${from} is not a regular file. Archive a directory first (zip -r).` }
