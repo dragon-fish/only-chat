@@ -316,6 +316,7 @@ async function prepareRequest(
   hub: Hub,
   target: Target,
   leafMessageId: number,
+  signal: AbortSignal,
   prepared: (turn: GenerationTurn) => void,
 ): Promise<PreparedRequest> {
   const { path, attachments } = await assembleContext(hub, target, leafMessageId)
@@ -329,7 +330,7 @@ async function prepareRequest(
   const turn: GenerationTurn = {
     userId: hub.userId, conversationId: target.conversation.id, projectId: target.conversation.project_id,
     toolIds: target.toolIds, path: projection.path, checkpoint: projection.checkpoint, visible: projection.visible,
-    state: new Map<string, unknown>(), canReadFile: canRead(target), notes: [],
+    state: new Map<string, unknown>(), signal, canReadFile: canRead(target), notes: [],
   }
   prepared(turn)
   await hub.app.parallel('generation/prepare', turn)
@@ -404,7 +405,7 @@ function standaloneRequest(hub: Hub, target: Target, leafMessageId: number): Com
         .catch(err => console.error('generation/settled listener failed', err))
     }
     try {
-      const prepared = await prepareRequest(hub, target, leafMessageId, (prepared) => { turn = prepared })
+      const prepared = await prepareRequest(hub, target, leafMessageId, signal, (prepared) => { turn = prepared })
       const languageModel = await hub.app.llm.createModel(target.provider, target.providerInterface, target.model, traceOf(target, leafMessageId))
       const tools = await resolveTools(hub, target, leafMessageId, prepared, signal)
       return {
@@ -478,7 +479,7 @@ async function generate(hub: Hub, target: Target, shell: Message, leafMessageId:
   const stepUsage: StepUsage[] = []
 
   try {
-    const prepared = await prepareRequest(hub, target, leafMessageId, (turn) => { preparedTurn = turn })
+    const prepared = await prepareRequest(hub, target, leafMessageId, controller.signal, (turn) => { preparedTurn = turn })
     const { payload, turn, attachments, messages } = prepared
     if (!options.logical) logical.inputs = turnInputsOnPath(payload.path)
     const params: ConversationParams = target.config.params

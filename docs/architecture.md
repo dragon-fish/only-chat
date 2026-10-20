@@ -199,6 +199,13 @@ writes its pid, log and exit code under `/workspace/.jobs/<id>/`. The alarm noti
 settles the task through `UserHub.settleTask`, the same path as other background tasks; a job whose
 container disappeared settles as failed.
 
+Stopping a generation never waits on the machine: a call held by a cold start returns at once, and
+the plugin sends `kill(<tool call id>)` on a stub of its own. The DO honours it in any order. A
+command not launched yet — the container still starting, units still restoring — is never launched;
+a running foreground command loses its process group; a background job the stopped call had already
+started is stopped and its record dropped, so no notification follows. A write already sent may
+still land. The container is left to the idle alarm.
+
 Deleting a conversation (`conversation/before-purge`) or Project (`project/deleted`) marks the unit's
 backups `deleted_at` and, while the container runs, removes the unit directory. The nightly
 `scheduled` run deletes the R2 objects and rows whose `deleted_at` is older than 30 days. Files

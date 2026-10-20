@@ -55,14 +55,18 @@ function readable(event: string, fields: LifecycleFields): string {
  * The object goes out as an object: a pre-encoded string arrives as an opaque blob with nothing to
  * filter a conversation by, which is how a turn's own history becomes unsearchable.
  */
-export function logLifecycle(event: string, fields: LifecycleFields): void {
+export function logEvent(name: string, fields: LifecycleFields): void {
   try {
-    const name = `chat.${event}`
     const tidied = tidy(fields)
     console.info({ message: readable(name, tidied), event: name, ...tidied })
   } catch {
     // Logging must never be the reason a turn fails.
   }
+}
+
+/** A turn's own events, under `chat.`. */
+export function logLifecycle(event: string, fields: LifecycleFields): void {
+  logEvent(`chat.${event}`, fields)
 }
 
 /** The size of what was said, without saying it. */

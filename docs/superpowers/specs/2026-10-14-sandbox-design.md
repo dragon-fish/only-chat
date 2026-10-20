@@ -74,7 +74,7 @@ RPC 面（名称为示意，签名在 plan 中定稿）：
 | 方法 | 作用 |
 | --- | --- |
 | `exec(req)` | 前台执行，返回输出流与结束信息（§6.1） |
-| `kill(execId)` | 结束一次前台执行的进程组（生成被停止时调用） |
+| `kill(execId)` | 停止一次工具调用启动的命令（生成被停止时调用）：未启动的不再启动，前台的结束进程组，刚启动的后台任务一并停止 |
 | `startJob(req)` | 后台执行（§6.2） |
 | `readFile(unit, path)` / `stat(unit, path)` / `writeFile(unit, path, body)` | `sandbox:` 读取与导入（§7） |
 | `dropUnit(unit)` | 运行中则删除该单元目录（§8.2） |
