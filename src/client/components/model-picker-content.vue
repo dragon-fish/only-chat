@@ -18,7 +18,7 @@ import type { ModelRef } from '@/shared/api'
 import type { ModelQuery } from '@/shared/models'
 import { isChatSelectableModel } from '@/client/lib/image-studio'
 
-const props = defineProps<{ modelValue: ModelRef | null }>()
+const props = withDefaults(defineProps<{ modelValue: ModelRef | null, autoFocusSearch?: boolean }>(), { autoFocusSearch: true })
 const emit = defineEmits<{ select: [ModelRef]; editProvider: [providerId: number] }>()
 const config = useConfigStore()
 const filters = ref<Partial<ModelQuery>>({})
@@ -68,7 +68,7 @@ function onSelect(value: unknown) {
 <template lang="pug">
 .contents(ref="root")
   Command(:key="searchKey" :model-value="currentKey" :should-filter="false" class="min-h-0" @update:model-value="onSelect")
-    CommandInput(placeholder="搜索模型名称或 ID…" @input="onSearch")
+    CommandInput(placeholder="搜索模型名称或 ID…" :auto-focus="autoFocusSearch" @input="onSearch")
       template(#inline-end)
         ModelFilterMenu(:model-value="filters" :providers="config.providers" :search="false" :lab="false" :chips="false" @update:model-value="updateFilters")
           template(#trigger="{ activeCount }")

@@ -26,6 +26,12 @@ const open = ref(false)
 const quickSettingsOpen = ref(false)
 const quickSettingsProviderId = ref<number | null>(null)
 const isDesktop = useMediaQuery('(min-width: 768px)')
+// Without a mouse or trackpad there is most likely no hardware keyboard either: focusing the search
+// box would pop the on-screen keyboard over the list, so opening leaves focus where it was.
+const touchOnly = useMediaQuery('not (any-pointer: fine)')
+function onOpenAutoFocus(event: Event) {
+  if (touchOnly.value) event.preventDefault()
+}
 const selected = computed(() => config.modelFor(props.modelValue))
 const selectedName = computed(() => selected.value?.model.metadata.name ?? props.modelValue?.model_id ?? '选择模型')
 const selectedProviderName = computed(() => selected.value?.provider.name ?? '模型')
@@ -66,11 +72,12 @@ component(:is="isDesktop ? Popover : Drawer" v-model:open="open")
   component(
     :is="isDesktop ? PopoverContent : DrawerContent"
     :align="isDesktop ? 'start' : undefined" :side-offset="isDesktop ? 8 : undefined"
+    @open-auto-focus="onOpenAutoFocus"
     :class="cn(isDesktop ? 'w-[24rem] max-h-[calc(100dvh-2rem)] max-w-[calc(100vw-2rem)] overflow-y-auto p-0' : 'overflow-y-auto pb-[max(1rem,env(safe-area-inset-bottom))]')")
     DrawerHeader(v-if="!isDesktop")
       DrawerTitle 选择模型
       DrawerDescription 搜索模型，或按已声明的能力筛选。
     p.px-3.py-2.text-sm.text-muted-foreground(v-if="selectedError" role="status") 当前选择的模型无法加载：{{ selectedError }}
-    ModelPickerContent(:model-value="modelValue" @select="onSelect" @edit-provider="editProvider")
+    ModelPickerContent(:model-value="modelValue" :auto-focus-search="!touchOnly" @select="onSelect" @edit-provider="editProvider")
 ProviderQuickSettingsDialog(v-model:open="quickSettingsOpen" :provider-id="quickSettingsProviderId")
 </template>
