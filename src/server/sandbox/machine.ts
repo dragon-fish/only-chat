@@ -1,4 +1,5 @@
 import type { TaskNotificationPart } from '@/shared/parts'
+import { logEvent } from '@/server/plugins/hub/lifecycle-log'
 import {
   ALARM_INTERVAL_MS, BACKUP_EXCLUDE, CHECKPOINT_INTERVAL_MS, JOB_RUN, JOBS_DIR, PLATFORM_INACTIVITY_MS,
   SANDBOX_IMAGE, SANDBOX_RUN, UNITS_DIR, USER_UNIT, execFiles, jobTaskId, normalizeSandboxPath, unitDir, unitKey, unitOfPath,
@@ -222,8 +223,10 @@ export class SandboxMachine {
     // given the bare name the local backend starts nothing and says nothing.
     const image = container.images[SANDBOX_IMAGE]
     if (!image) throw new Error(`No container image named "${SANDBOX_IMAGE}" is configured for the Sandbox class.`)
+    const starting = this.deps.now()
     container.start({ image, instance: machine.instance, enableInternet: true, env: SANDBOX_ENV })
     await this.waitReady(container)
+    logEvent('sandbox.container.ready', { durationMs: this.deps.now() - starting })
     await container.setInactivityTimeout(PLATFORM_INACTIVITY_MS)
     this.lastBackupAt = this.deps.now()
     this.touch()
