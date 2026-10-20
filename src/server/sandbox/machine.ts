@@ -34,6 +34,22 @@ export const SANDBOX_ENV: Record<string, string> = {
 /** How much of a finished job's log the notification quotes. */
 const JOB_TAIL_BYTES = 4 * 1024
 const READY_TIMEOUT_MS = 30_000
+/** Kills that found nothing to stop yet, kept for the call they name; only the newest are remembered. */
+const MAX_CANCELLED = 64
+const CANCELLED = 'The call was cancelled before its command started.'
+/**
+ * Stops a process group by the pid its launcher writes. A kill can arrive the moment the launch
+ * returns, before the launcher has written the pid, so it waits for the file. Before `timeout` has
+ * made its own group the group kill finds nothing, and the pid itself is signalled instead.
+ */
+const KILL_GROUP_SCRIPT = [
+  'p=; for _ in $(seq 1 100); do p=$(cat "$1" 2>/dev/null) && [ -n "$p" ] && break; sleep 0.1; done',
+  '[ -n "$p" ] || exit 0',
+  'kill -TERM -- "-$p" 2>/dev/null || kill -TERM "$p" 2>/dev/null',
+  'sleep 5',
+  'kill -KILL -- "-$p" 2>/dev/null || kill -KILL "$p" 2>/dev/null',
+  'exit 0',
+].join('\n')
 
 export interface StoredBackupRef {
   backupId: string
@@ -139,6 +155,12 @@ export class SandboxMachine {
   private readonly dirty = new Set<string>()
   private readonly restoring = new Map<string, Promise<string | null>>()
   private readonly running = new Map<string, string>()
+  /**
+   * Call ids whose kill arrived before their command was launched. A stopped turn's kill can
+   * overtake a call still waiting on a cold start; the call must then not launch at all, or the
+   * command runs — and bills — with nobody waiting for it.
+   */
+  private readonly cancelled = new Set<string>()
   private inflight = 0
   private lastActivity: number
   private lastBackupAt: number
@@ -291,6 +313,7 @@ export class SandboxMachine {
     let notes: string[]
     try {
       notes = await this.ensureUnits([request.cwd])
+      if (this.cancelled.delete(request.execId)) throw new Error(CANCELLED)
       const seconds = Math.max(1, Math.ceil(request.timeoutMs / 1000))
       process = await this.container.exec([SANDBOX_RUN, logPath, pidPath, String(seconds), '--', ...request.argv], {
         cwd: request.cwd, env: SANDBOX_ENV, stdin: bytesOf(request.stdin), stdout: 'pipe', stderr: 'pipe',
@@ -301,7 +324,10 @@ export class SandboxMachine {
       throw error
     }
     this.markDirty()
+    // Registered and checked in one step: a kill that came while the launch was on its way found
+    // nothing running and left only the cancellation, so it is carried out here.
     this.running.set(request.execId, pidPath)
+    if (this.cancelled.delete(request.execId)) void this.killGroup(pidPath)
 
     const encoder = new TextEncoder()
     const finish = () => {
@@ -352,13 +378,39 @@ export class SandboxMachine {
     return { finalCwd, ...(unit && !this.known.has(unitKey(unit)) ? { finalCwdUnsaved: true } : {}) }
   }
 
-  /** Stops a foreground command's whole process group: `AbortSignal` cannot cross RPC. */
+  /**
+   * Stops what one tool call started: `AbortSignal` cannot cross RPC. A foreground command that is
+   * running loses its whole process group. One not launched yet never launches, whatever the call is
+   * still waiting on, and neither does a background job; a job the call already started is stopped
+   * and forgotten, since the turn that would have heard of it is gone.
+   */
   async kill(execId: string): Promise<void> {
     const pidPath = this.running.get(execId)
-    if (!pidPath || !this.deps.container?.running) return
-    const script = 'p=$(cat "$1" 2>/dev/null) || exit 0; kill -TERM -- "-$p" 2>/dev/null; sleep 5; kill -KILL -- "-$p" 2>/dev/null; exit 0'
-    const process = await this.container.exec(['bash', '-c', script, 'kill', pidPath], { env: SANDBOX_ENV })
+    if (pidPath) {
+      await this.killGroup(pidPath)
+      return
+    }
+    this.cancelled.delete(execId)
+    this.cancelled.add(execId)
+    if (this.cancelled.size > MAX_CANCELLED) this.cancelled.delete(this.cancelled.values().next().value!)
+    const jobs = await this.deps.storage.list<StoredJob>({ prefix: JOB_PREFIX })
+    for (const [key, job] of jobs) {
+      if (job.toolCallId !== execId) continue
+      this.cancelled.delete(execId)
+      await this.dropJob(key, job.dir)
+    }
+  }
+
+  private async killGroup(pidPath: string): Promise<void> {
+    if (!this.deps.container?.running) return
+    const process = await this.container.exec(['bash', '-c', KILL_GROUP_SCRIPT, 'kill', pidPath], { env: SANDBOX_ENV })
     void process.exitCode.catch(() => {})
+  }
+
+  /** Stops a background job and drops its record, so no notification is ever sent for it. */
+  private async dropJob(key: string, dir: string): Promise<void> {
+    await this.killGroup(`${dir}/pid`)
+    await this.deps.storage.delete(key)
   }
 
   async startJob(request: JobRequest): Promise<JobStarted> {
@@ -366,6 +418,7 @@ export class SandboxMachine {
     if (this.backingUp) await this.backingUp
     this.touch()
     const notes = await this.ensureUnits([request.cwd])
+    if (this.cancelled.delete(request.toolCallId)) throw new Error(CANCELLED)
     const id = ((await this.deps.storage.get<number>(JOB_SEQ_KEY)) ?? 0) + 1
     await this.deps.storage.put(JOB_SEQ_KEY, id)
     const dir = `${JOBS_DIR}/${id}`
@@ -384,6 +437,11 @@ export class SandboxMachine {
     }
     await this.deps.storage.put(`${JOB_PREFIX}${id}`, job)
     this.markDirty()
+    // A kill that came while the job was being launched found no record yet to stop.
+    if (this.cancelled.delete(request.toolCallId)) {
+      await this.dropJob(`${JOB_PREFIX}${id}`, dir)
+      throw new Error('The call was cancelled, and the background command it had just started was stopped.')
+    }
     return { taskId: jobTaskId(id), pid, logPath: `${dir}/log`, notes }
   }
 

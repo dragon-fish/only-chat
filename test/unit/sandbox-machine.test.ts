@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { SandboxMachine, type BackupRecordLike, type MachineDeps, type StoredBackupRef, type StoredJob } from '@/server/sandbox/machine'
-import { HOME_DIR, UNITS_DIR, execFiles, unitKey, type ExecFrame, type MachineOptions, type Unit } from '@/server/sandbox/protocol'
+import { HOME_DIR, SANDBOX_RUN, UNITS_DIR, execFiles, unitKey, type ExecFrame, type MachineOptions, type Unit } from '@/server/sandbox/protocol'
 import type { TaskNotificationPart } from '@/shared/parts'
 
 const MACHINE: MachineOptions = { instance: 'standard-1', idleMinutes: 10 }
@@ -19,7 +19,7 @@ function stream(text: string, hold?: Promise<void>): ReadableStream<Uint8Array> 
 }
 
 /** An in-memory machine: a container whose exec is scripted, a filesystem map, backups that record calls. */
-function harness(options: { running?: boolean, files?: Record<string, string>, backups?: Partial<Record<string, StoredBackupRef>> } = {}) {
+function harness(options: { running?: boolean, files?: Record<string, string>, backups?: Partial<Record<string, StoredBackupRef>>, ready?: Promise<void> } = {}) {
   let running = options.running ?? false
   let now = 1_000_000
   const fs = new Map(Object.entries(options.files ?? {}))
@@ -36,6 +36,8 @@ function harness(options: { running?: boolean, files?: Record<string, string>, b
     setInactivityTimeout: async () => {},
     exec: async (argv: string[], execOptions?: ContainerExecOptions) => {
       if (!running) throw new Error('container not running')
+      // The readiness probe stands for a cold start: held until the test lets the machine come up.
+      if (argv[0] === 'true') await options.ready
       const result = argv[0] === 'true' ? {} : handler(argv, execOptions)
       const exitCode = (async () => { await result.hold; return result.exitCode ?? 0 })()
       return {
@@ -170,6 +172,23 @@ describe('SandboxMachine exec', () => {
     })
     await frames(await h.machine.exec({ ...exec('/workspace/conversations/1'), argv: ['tee', 'a b.txt'], stdin: 'x = "$HOME"\n' }))
     expect(seen).toBe('x = "$HOME"\n')
+  })
+})
+
+describe('SandboxMachine kill', () => {
+  it('never launches a command whose kill arrived while the machine was still starting', async () => {
+    let up!: () => void
+    const h = harness({ ready: new Promise<void>(resolve => { up = resolve }) })
+    const launched: string[][] = []
+    h.setHandler((argv) => {
+      launched.push(argv)
+      return {}
+    })
+    const call = h.machine.exec(exec('/workspace/conversations/1'))
+    await h.machine.kill('call-1')
+    up()
+    await expect(call).rejects.toThrow(/cancel/i)
+    expect(launched.filter(argv => argv[0] === SANDBOX_RUN)).toEqual([])
   })
 })
 
