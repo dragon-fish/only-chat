@@ -57,6 +57,48 @@ describe('listRemoteModels', () => {
     expect(models[1]!.providerMetadata).toMatchObject({ owned_by: 'openai', capabilities: { reasoning: false } })
   })
 
+  it('pages the Workers AI catalogue for Text Generation models and reads their properties', async () => {
+    const root = 'https://api.cloudflare.com/client/v4/accounts/acc/ai'
+    const entry = (name: string, properties: Array<{ property_id: string, value: unknown }> = []) => ({
+      id: crypto.randomUUID(), source: 1, name, description: `${name} model`,
+      task: { id: 't', name: 'Text Generation', description: '' }, tags: [], properties,
+    })
+    const pages = [
+      [
+        entry('@cf/qwen/vision', [
+          { property_id: 'context_window', value: '131072' },
+          { property_id: 'function_calling', value: 'true' },
+          { property_id: 'reasoning', value: 'true' },
+          { property_id: 'vision', value: 'true' },
+          { property_id: 'price', value: [{ unit: 'per M input tokens', price: 0.1, currency: 'USD' }] },
+        ]),
+        ...Array.from({ length: 99 }, (_, index) => entry(`@cf/filler/${String(index).padStart(2, '0')}`)),
+      ],
+      [entry('@cf/meta/plain', [{ property_id: 'context_window', value: '8192' }])],
+    ]
+    const urls: string[] = []
+    let authorization: string | undefined
+    const fetchFn = (async (url: string, init?: RequestInit) => {
+      urls.push(url)
+      authorization = (init!.headers as Record<string, string>).Authorization
+      const page = Number(new URL(url).searchParams.get('page'))
+      return Response.json({ success: true, errors: [], messages: [], result: pages[page - 1] ?? [] })
+    }) as unknown as typeof fetch
+    const models = await listRemoteModels({ ...base, base_url: `${root}/v1` }, 'cf-token', fetchFn)
+
+    expect(urls).toEqual([1, 2].map(page => `${root}/models/search?task=Text+Generation&per_page=100&page=${page}`))
+    expect(authorization).toBe('Bearer cf-token')
+    expect(models).toHaveLength(101)
+    expect(models.find(model => model.id === '@cf/qwen/vision')).toMatchObject({
+      metadata: {
+        description: '@cf/qwen/vision model', modalities: { input: ['text', 'image'], output: ['text'] },
+        reasoning: true, tool_call: true, limit: { context: 131072 },
+      },
+      providerMetadata: { name: '@cf/qwen/vision', task: { name: 'Text Generation' } },
+    })
+    expect(models.find(model => model.id === '@cf/meta/plain')!.metadata).toEqual({ description: '@cf/meta/plain model', limit: { context: 8192 } })
+  })
+
   // A Vertex-shaped Base URL has no `/models` listing: the gateway's catalogue lives under its
   // separate OpenAI-compatible base, which we must not guess at.
   it('refuses vertex-compatible without probing the base URL', async () => {
